@@ -1008,11 +1008,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           "Replay completed: {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
           eventsProcessed, perspectiveName, streamId, lastSuccessfulEventId);
 
-      // Create snapshot after replay if configured
+      // Create snapshot after replay if configured.
+      // Slice 26.11 / production G3: resolve commit_sequence so the snapshot row carries it.
+      // Without this, GetLatestSnapshotBeforeCommitSequenceAsync (which filters
+      // snapshot_commit_sequence IS NOT NULL) silently misses this snapshot on subsequent
+      // rewinds — defeating the deterministic-replay invariant the column was added for.
       if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
           && !pendingPurge && updatedModel is not null && lastSuccessfulEventId.HasValue) {
+        var afterReplayCommitSequence = await _eventStore.GetCommitSequenceAsync(
+            lastSuccessfulEventId.Value, cancellationToken);
         await _snapshotStore.CreateSnapshotAsync(
             streamId, perspectiveName, lastSuccessfulEventId.Value,
+            afterReplayCommitSequence,
             ToSnapshotJson(updatedModel), cancellationToken);
         await _snapshotStore.PruneOldSnapshotsAsync(
             streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
@@ -1048,8 +1055,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     }
 
     var snapshotData = ToSnapshotJson(model);
+    // Slice 26.11 / production G4: bootstrap must stamp commit_sequence so the bootstrap snapshot
+    // participates in commit-sequence-anchored rewind lookups. Without this, every late event
+    // would force a full replay because GetLatestSnapshotBeforeCommitSequenceAsync skips the
+    // NULL-commit_sequence rows the legacy overload produced.
+    var bootstrapCommitSequence = await _eventStore.GetCommitSequenceAsync(
+        lastProcessedEventId, cancellationToken);
     await _snapshotStore.CreateSnapshotAsync(
-        streamId, perspectiveName, lastProcessedEventId, snapshotData, cancellationToken);
+        streamId, perspectiveName, lastProcessedEventId, bootstrapCommitSequence, snapshotData, cancellationToken);
 
     _logger.LogDebug(
         "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} at event {EventId}",

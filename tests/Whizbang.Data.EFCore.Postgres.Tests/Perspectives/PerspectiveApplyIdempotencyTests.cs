@@ -33,7 +33,9 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
 
   private static async Task<IPerspectiveRunner> CreateRunnerAsync(
       IEventStore eventStore,
-      EFCorePostgresPerspectiveStore<ActionTestModel> perspectiveStore) {
+      EFCorePostgresPerspectiveStore<ActionTestModel> perspectiveStore,
+      IPerspectiveSnapshotStore? snapshotStore = null,
+      Microsoft.Extensions.Options.IOptions<Whizbang.Core.Perspectives.PerspectiveSnapshotOptions>? snapshotOptions = null) {
 
     var services = new ServiceCollection();
     services.AddTransient<ActionTestPerspective>();
@@ -60,8 +62,8 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       (IPerspectiveStore<ActionTestModel>)perspectiveStore,
       sp.GetRequiredService<IServiceScopeFactory>(),
       null, // tracingOptions
-      null, // snapshotStore
-      null, // snapshotOptions
+      snapshotStore, // optional snapshot store
+      snapshotOptions, // optional snapshot options
       null  // applyCoordinator
     ]);
   }
@@ -393,6 +395,52 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// production regression (G3 + G4): the runner's snapshot Create calls in BootstrapSnapshotAsync
+  /// and the after-replay branch of RewindAndRunAsync must thread commit_sequence through the
+  /// 5-arg overload. Without it, snapshot rows get NULL <c>snapshot_commit_sequence</c> and
+  /// the commit-sequence-anchored rewind lookup (<c>GetLatestSnapshotBeforeCommitSequenceAsync</c>)
+  /// silently misses them — defeating the deterministic-replay invariant the column was added for.
+  /// </summary>
+  [Test]
+  public async Task BootstrapSnapshotAsync_PassesCommitSequenceToSnapshotStoreAsync() {
+    var streamId = Guid.NewGuid();
+    var innerStore = new InMemoryEventStore();
+    var checkpointId = await AppendEventAsync(innerStore, streamId, new ActionTestCreatedEvent {
+      StreamId = streamId,
+      Name = "Bootstrap",
+      Value = 5
+    });
+    const long expectedCommitSequence = 571800L;
+    var stampingStore = new _CommitSequenceStampingEventStore(
+      innerStore, new Dictionary<Guid, long?> { [checkpointId.Value] = expectedCommitSequence });
+
+    await using var storeCtx = CreateDbContext();
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeCtx, "action_test");
+
+    // Pre-seed the row so BootstrapSnapshotAsync finds something to snapshot.
+    await perspectiveStore.UpsertAsync(streamId, new ActionTestModel { Id = streamId, Name = "x", Value = 1 });
+
+    var recording = new _RecordingSnapshotStore();
+    var snapshotOpts = Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Perspectives.PerspectiveSnapshotOptions {
+      Enabled = true,
+      SnapshotEveryNEvents = 1,
+      MaxSnapshotsPerStream = 5
+    });
+    var runner = await CreateRunnerAsync(stampingStore, perspectiveStore, recording, snapshotOpts);
+
+    // BootstrapSnapshotAsync is on the generated runner, not on IPerspectiveRunner — invoke it via reflection.
+    var bootstrapMethod = runner.GetType().GetMethod("BootstrapSnapshotAsync")
+      ?? throw new InvalidOperationException("BootstrapSnapshotAsync not found");
+    var task = (Task)bootstrapMethod.Invoke(runner, [streamId, "action_test", checkpointId.Value, CancellationToken.None])!;
+    await task;
+
+    await Assert.That(recording.Calls).Count().IsEqualTo(1);
+    await Assert.That(recording.Calls[0].SnapshotCommitSequence)
+      .IsEqualTo(expectedCommitSequence)
+      .Because("snapshot store must receive commit_sequence so commit-sequence-anchored rewind lookups succeed");
+  }
+
+  /// <summary>
   /// Test wrapper: delegates to an inner <see cref="InMemoryEventStore"/> for everything, but
   /// returns canned <c>commit_sequence</c> values from an external map for
   /// <see cref="IEventStore.GetCommitSequenceAsync"/>. Lets the test prove the runner
@@ -428,5 +476,34 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       inner.GetLastSequenceAsync(streamId, ct);
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
       inner.DeserializeStreamEvents(streamEvents, eventTypes);
+  }
+
+  /// <summary>
+  /// Test wrapper: records each <see cref="IPerspectiveSnapshotStore.CreateSnapshotAsync"/>
+  /// call so tests can assert what arguments were passed. Specifically G3 + G4 use this to
+  /// verify <c>snapshotCommitSequence</c> threads through the 5-arg overload — without G3/G4
+  /// the runner calls the legacy 4-arg overload and the recording captures null.
+  /// </summary>
+  private sealed class _RecordingSnapshotStore : IPerspectiveSnapshotStore {
+    public sealed record CreateCall(Guid StreamId, string PerspectiveName, Guid SnapshotEventId, long? SnapshotCommitSequence);
+    public List<CreateCall> Calls { get; } = [];
+    public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, System.Text.Json.JsonDocument snapshotData, CancellationToken ct = default) {
+      Calls.Add(new CreateCall(streamId, perspectiveName, snapshotEventId, null));
+      return Task.CompletedTask;
+    }
+    public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, long? snapshotCommitSequence, System.Text.Json.JsonDocument snapshotData, CancellationToken ct = default) {
+      Calls.Add(new CreateCall(streamId, perspectiveName, snapshotEventId, snapshotCommitSequence));
+      return Task.CompletedTask;
+    }
+    public Task<(Guid SnapshotEventId, System.Text.Json.JsonDocument SnapshotData)?> GetLatestSnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+      Task.FromResult<(Guid, System.Text.Json.JsonDocument)?>(null);
+    public Task<(Guid SnapshotEventId, System.Text.Json.JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
+      Task.FromResult<(Guid, System.Text.Json.JsonDocument)?>(null);
+    public Task<bool> HasAnySnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+      Task.FromResult(false);
+    public Task PruneOldSnapshotsAsync(Guid streamId, string perspectiveName, int keepCount, CancellationToken ct = default) =>
+      Task.CompletedTask;
+    public Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+      Task.CompletedTask;
   }
 }
