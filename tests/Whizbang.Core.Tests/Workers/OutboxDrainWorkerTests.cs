@@ -324,6 +324,192 @@ public class OutboxDrainWorkerTests {
       .Because("PublishAsync MUST NOT be called when SupportsBulkPublish is true and a batch is available");
   }
 
+  /// <summary>Bulk strategy that returns a mix of success and failure results — covers
+  /// the per-result routing branches in <c>_publishBulkAsync</c>.</summary>
+  private sealed class _BulkMixedResultStrategy(HashSet<Guid> failIds) : IMessagePublishStrategy {
+    public List<IReadOnlyList<OutboxWork>> BatchCalls { get; } = [];
+    public bool SupportsBulkPublish => true;
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+      Task.FromResult(new MessagePublishResult { MessageId = work.MessageId, Success = true, CompletedStatus = MessageProcessingStatus.Published });
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
+      lock (BatchCalls) { BatchCalls.Add(works); }
+      var results = works.Select(w => new MessagePublishResult {
+        MessageId = w.MessageId,
+        Success = !failIds.Contains(w.MessageId),
+        CompletedStatus = failIds.Contains(w.MessageId) ? w.Status : MessageProcessingStatus.Published,
+        Error = failIds.Contains(w.MessageId) ? "broker said no" : null,
+      }).ToList();
+      return Task.FromResult<IReadOnlyList<MessagePublishResult>>(results);
+    }
+  }
+
+  /// <summary>Bulk strategy whose batch call throws — covers the "whole batch fails" branch
+  /// that fans every row out to the failure channel.</summary>
+  private sealed class _BulkThrowingPublishStrategy : IMessagePublishStrategy {
+    public bool SupportsBulkPublish => true;
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+      throw new InvalidOperationException("PublishAsync should not be called on bulk-capable strategy");
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) =>
+      throw new InvalidOperationException("transport down");
+  }
+
+  /// <summary>production throughput fix coverage: per-result routing when the batch call
+  /// returns a mix of success and failure. Locks that successful rows enqueue completion
+  /// and failed rows enqueue a <see cref="MessageFailure"/> with the broker error.</summary>
+  [Test]
+  public async Task OutboxDrainWorker_BulkResultsMixed_RoutesSuccessToCompletion_FailureToFailureChannelAsync() {
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var ok1 = (Guid)TrackedGuid.NewMedo();
+    var bad = (Guid)TrackedGuid.NewMedo();
+    var ok2 = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(ok1, streamId), _row(bad, streamId), _row(ok2, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new _BulkMixedResultStrategy([bad]);
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+    worker.OnOutboxMessagePublished += _ => {
+      if (completion.AllIds.Count + failure.All.Count >= 3) {
+        done.TrySetResult(true);
+      }
+    };
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    _ = await Task.WhenAny(done.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(completion.AllIds).Contains(ok1);
+    await Assert.That(completion.AllIds).Contains(ok2);
+    await Assert.That(completion.AllIds).DoesNotContain(bad);
+    await Assert.That(failure.All.Count).IsEqualTo(1);
+    await Assert.That(failure.All.Single().MessageId).IsEqualTo(bad);
+    await Assert.That(failure.All.Single().Error).IsEqualTo("broker said no");
+  }
+
+  /// <summary>production throughput fix coverage: whole-batch publish exception fans every row
+  /// out to the failure channel so claim_orphaned_outbox can re-lease them next cycle.</summary>
+  [Test]
+  public async Task OutboxDrainWorker_BulkPublishThrows_RoutesAllRowsToFailureChannelAsync() {
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgIds = Enumerable.Range(0, 5).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [.. msgIds.Select(id => _row(id, streamId))];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new _BulkThrowingPublishStrategy();
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+    // OnWorkProcessingIdle fires once the batch finishes — even when every row failed.
+    // Use it as the completion signal so the test stays deterministic without Task.Delay.
+    var idle = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idle.TrySetResult(true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(idle.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(failure.All.Count)
+      .IsEqualTo(msgIds.Length)
+      .Because("PublishBatchAsync throwing must route every row in the batch to the failure channel");
+    foreach (var id in msgIds) {
+      await Assert.That(failure.All.Any(f => f.MessageId == id)).IsTrue();
+    }
+    await Assert.That(completion.AllIds).IsEmpty();
+  }
+
+  /// <summary>production throughput fix: backward-compat — setting MaxConcurrentStreams=1
+  /// restores the pre-fix serial cross-stream behavior while preserving correctness.</summary>
+  [Test]
+  public async Task OutboxDrainWorker_MaxConcurrentStreams_OneRestoresSerialCrossStreamDrainAsync() {
+    var streamA = (Guid)TrackedGuid.NewMedo();
+    var streamB = (Guid)TrackedGuid.NewMedo();
+    var msgA = (Guid)TrackedGuid.NewMedo();
+    var msgB = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamA] = [_row(msgA, streamA)];
+    coord.RowsByStream[streamB] = [_row(msgB, streamB)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy { TargetCount = 2 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = 1,
+      }),
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamA);
+    await drainChannel.WriteAsync(streamB);
+
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(publish.Published.Count).IsEqualTo(2);
+  }
+
   [Test]
   public async Task OutboxDrainWorker_OnStreamId_FetchesBatch_PublishesEach_EnqueuesCompletionAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
