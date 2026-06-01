@@ -57,4 +57,15 @@ public class PerspectiveMetadata {
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs</tests>
   public string? CausationId { get; set; }
+
+  /// <summary>
+  /// <c>wh_event_store.commit_sequence</c> of the last applied event. Monotonic per database,
+  /// stamped at commit completion (slice 26). When both this and an incoming event's local
+  /// commit_sequence are present, the runner's idempotency filter compares commit_sequence
+  /// instead of event_id — needed because UUIDv7 event_ids can invert under concurrent
+  /// emission while commit_sequence cannot.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WithMetadata_PersistsCommitSequenceForOrderedIdempotencyAsync</tests>
+  public long? CommitSequence { get; set; }
 }
