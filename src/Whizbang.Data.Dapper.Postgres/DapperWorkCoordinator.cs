@@ -446,7 +446,7 @@ public partial class DapperWorkCoordinator(
       "SELECT * FROM fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id)",
       new { p_stream_id = streamId, p_perspective_name = perspectiveName, p_instance_id = instanceId });
 
-    return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id))];
+    return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id, r.out_commit_sequence))];
   }
 
   /// <inheritdoc />
@@ -474,7 +474,7 @@ public partial class DapperWorkCoordinator(
         p_now = now,
       });
 
-    return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id))];
+    return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id, r.out_commit_sequence))];
   }
 
   /// <inheritdoc />
@@ -538,6 +538,7 @@ public partial class DapperWorkCoordinator(
   private sealed class PendingPerspectiveEventDto {
     public Guid out_event_work_id { get; set; }
     public Guid out_event_id { get; set; }
+    public long? out_commit_sequence { get; set; }
   }
 
   private sealed class EventBodyRowDto {

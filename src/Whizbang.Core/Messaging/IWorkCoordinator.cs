@@ -1574,8 +1574,15 @@ public record PerspectiveEventCompletion {
 /// scoped body fetch. Never carries event bodies — those are fetched separately for the subset
 /// of rows that survive filtering.
 /// </summary>
+/// <remarks>
+/// Slot-3 G6: <see cref="CommitSequence"/> carries <c>wh_event_store.commit_sequence</c> via
+/// a LEFT JOIN inside the SQL fn. The drainer's inversion detector compares against the
+/// cached cursor's commit_sequence directly — no per-event GetCommitSequence round-trip,
+/// no UUIDv7 lex-inversion edge case. Null when the stamper hasn't caught up yet; callers
+/// fall back to event_id compare.
+/// </remarks>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
-public sealed record PendingPerspectiveEvent(Guid EventWorkId, Guid EventId);
+public sealed record PendingPerspectiveEvent(Guid EventWorkId, Guid EventId, long? CommitSequence = null);
 
 /// <summary>
 /// One leased outbox row returned from <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/>.
