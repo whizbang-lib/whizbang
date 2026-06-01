@@ -48,7 +48,8 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
       sp.GetRequiredService<IServiceScopeFactory>(),
       null, // tracingOptions
       null, // snapshotStore
-      null  // snapshotOptions
+      null, // snapshotOptions
+      null  // applyCoordinator (added in IPerspectiveApplyCoordinator rewind-race fix)
     ]);
   }
 
