@@ -293,6 +293,92 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// Stamper-lag mixed-mode regression: metadata has <c>CommitSequence</c> set (the runner is
+  /// "in commit_sequence mode") but the late-arriving envelope's <c>LocalCommitSequence</c> is
+  /// null because the post-commit stamper hasn't caught up to this event yet. The pre-fix
+  /// filter fell back to event_id lex compare in that case — the same UUIDv7 inversion the
+  /// commit_sequence-based filter exists to avoid. The result was that a never-applied event
+  /// with lex-smaller event_id got silently dropped.
+  ///
+  /// Fix: 3-way branch in the runner filter — when metadata has commit_sequence but the
+  /// envelope's is null, do NOT filter. Pass the event through to Apply; Apply's natural
+  /// idempotency guards (Contains, Version check, value-mutate-only no-op, etc.) handle
+  /// real duplicates without guessing from event_id.
+  ///
+  /// Synthetic UUIDv7 prefixes 4c17/4a1e represent the inversion shape: <c>4a1e</c> is
+  /// lex-smaller than <c>4c17</c>, the pre-fix fallback would compare them and drop the
+  /// "smaller" one even though it represents the later-fetched but never-applied event.
+  /// </summary>
+  [Test]
+  public async Task RunWithEvents_MetadataHasCommitSequence_EnvelopeMissingCommitSequence_LexSmallerEventId_IsAppliedAsync() {
+    var streamId = Guid.NewGuid();
+    var innerStore = new InMemoryEventStore();
+
+    // First apply: SET the metadata floor at (lex-large event_id, large cs).
+    var firstId = MessageId.From(Guid.Parse("00000000-4c17-7000-8000-000000000000"));
+    var firstEnvelope = new MessageEnvelope<ActionTestCreatedEvent> {
+      MessageId = firstId,
+      Payload = new ActionTestCreatedEvent { StreamId = streamId, Name = "First", Value = 1 },
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+    await innerStore.AppendAsync(streamId, firstEnvelope);
+
+    var stamping = new Dictionary<Guid, long?> {
+      [firstId.Value] = 200_000L
+    };
+    var stampingStore = new _CommitSequenceStampingEventStore(innerStore, stamping);
+
+    await using (var ctx = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
+      var runner = await CreateRunnerAsync(stampingStore, ps);
+      var firstResult = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
+      await Assert.That(firstResult.EventsProcessed).IsEqualTo(1);
+    }
+
+    // Late-arriving event with lex-smaller event_id AND null LocalCommitSequence
+    // (stamper hasn't caught up). Pre-fix dropped this; post-fix passes it through.
+    var lateId = MessageId.From(Guid.Parse("00000000-4a1e-7000-8000-000000000000"));
+    var lateEnvelope = new MessageEnvelope<ActionTestUpdatedEvent> {
+      MessageId = lateId,
+      Payload = new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 },
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+    await innerStore.AppendAsync(streamId, lateEnvelope);
+    // NOTE: deliberately NOT stamping lateId in the map — envelope.LocalCommitSequence will be null.
+
+    await using (var ctx2 = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "action_test");
+      var runner = await CreateRunnerAsync(stampingStore, ps);
+
+      var lateEnvelopePoly = new MessageEnvelope<IEvent> {
+        MessageId = lateId,
+        Payload = lateEnvelope.Payload,
+        DispatchContext = lateEnvelope.DispatchContext,
+        Hops = lateEnvelope.Hops,
+        LocalCommitSequence = null  // <-- the stamper-lag race: unstamped envelope
+      };
+      var lateResult = await runner.RunWithEventsAsync(
+        streamId, "action_test", firstId.Value,
+        [lateEnvelopePoly], CancellationToken.None);
+
+      await Assert.That(lateResult.EventsProcessed)
+        .IsEqualTo(1)
+        .Because("when metadata has cs but envelope's cs is null (stamper lag), we can't reliably tell duplicate from missed — let it through to Apply's idempotency guards");
+    }
+
+    await using (var verifyData = CreateDbContext()) {
+      var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
+          .AsNoTracking()
+          .FirstAsync(r => r.Id == streamId);
+      await Assert.That(row.Data.Value)
+        .IsEqualTo(999)
+        .Because("late event with unstamped commit_sequence must reach Apply to mutate the model");
+    }
+  }
+
+  /// <summary>
   /// Slot-3 regression (G5): events with smaller event_id but larger commit_sequence than
   /// metadata.CommitSequence MUST be applied, not silently dropped. Concretely reproduces the
   /// JDX bulk-import miss: pre-populate metadata with (EventId = X-large, CommitSequence = Y-small);
