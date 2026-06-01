@@ -447,11 +447,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               streamId
           );
         } else if (updatedModel != null && hasWrittenUpdate) {
+          var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
+              lastSuccessfulEventId!.Value, cancellationToken);
           await SaveModelAndCheckpointAsync(
               streamId,
               updatedModel,
               lastSuccessfulEventId!.Value,
               lastSuccessfulEventType ?? string.Empty,
+              checkpointCommitSequence,
               cancellationToken,
               lastScope?.FilterByFields(_inheritScopeOnCreate),
               scopeChanged
@@ -588,11 +591,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // Only save if we have a model AND Apply has produced one (skip if purge was pending
           // or the only events were ApplyResult.None() on a new stream)
           if (updatedModel != null && hasWrittenUpdate) {
+            var partialCheckpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
+                lastSuccessfulEventId.Value, cancellationToken);
             await SaveModelAndCheckpointAsync(
                 streamId,
                 updatedModel,
                 lastSuccessfulEventId.Value,
                 lastSuccessfulEventType ?? string.Empty,
+                partialCheckpointCommitSequence,
                 cancellationToken,
                 lastScope?.FilterByFields(_inheritScopeOnCreate),
                 scopeChanged
@@ -682,17 +688,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       __MODEL_TYPE_NAME__ model,
       Guid checkpointEventId,
       string checkpointEventType,
+      long? checkpointCommitSequence,
       CancellationToken cancellationToken,
       PerspectiveScope? scope = null,
       bool forceUpdateScope = false) {
 
-    // Build metadata that captures the last applied event id. The runner reads this back
-    // on the next run via GetMetadataByStreamIdAsync to filter out already-applied events,
-    // making projections idempotent across worker crashes between row upsert and cursor advance.
+    // Build metadata that captures the last applied event's identity AND commit_sequence.
+    // The runner reads metadata back on the next run via GetMetadataByStreamIdAsync to filter
+    // out already-applied events (idempotency across worker crashes between row upsert and
+    // cursor advance). CommitSequence is the load-bearing field for that filter: UUIDv7
+    // event_ids can invert under concurrent emission, so event_id-only comparison silently
+    // drops late-delivered events with smaller event_id but larger commit_sequence (slot-3
+    // bug). When commit_sequence is available on both sides, the filter prefers it.
     var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
       EventId = checkpointEventId.ToString("D"),
       EventType = checkpointEventType,
-      Timestamp = DateTime.UtcNow
+      Timestamp = DateTime.UtcNow,
+      CommitSequence = checkpointCommitSequence
     };
 
     #region UPSERT_CALL
@@ -970,8 +982,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       if (pendingPurge) {
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
       } else if (updatedModel != null) {
+        var replayCheckpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
+            lastSuccessfulEventId!.Value, cancellationToken);
         await SaveModelAndCheckpointAsync(
-            streamId, updatedModel, lastSuccessfulEventId!.Value, lastSuccessfulEventType ?? string.Empty, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
+            streamId, updatedModel, lastSuccessfulEventId!.Value, lastSuccessfulEventType ?? string.Empty,
+            replayCheckpointCommitSequence, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
       }
 
       await _perspectiveStore.FlushAsync(cancellationToken);

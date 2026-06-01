@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
 
   private static async Task<IPerspectiveRunner> CreateRunnerAsync(
-      InMemoryEventStore eventStore,
+      IEventStore eventStore,
       EFCorePostgresPerspectiveStore<ActionTestModel> perspectiveStore) {
 
     var services = new ServiceCollection();
@@ -251,6 +251,46 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// Slot-3 regression (G2): the runner must persist <see cref="PerspectiveMetadata.CommitSequence"/>
+  /// alongside <see cref="PerspectiveMetadata.EventId"/>. Without this, the idempotency filter has
+  /// no commit-sequence floor to compare incoming events against — late-delivered events whose
+  /// event_id sorts lex-smaller (UUIDv7 inversion) but whose commit_sequence is larger get
+  /// silently dropped.
+  /// </summary>
+  [Test]
+  public async Task RunAsync_PersistsLastAppliedCommitSequenceInMetadataAsync() {
+    var streamId = Guid.NewGuid();
+    var innerStore = new InMemoryEventStore();
+    var stampingMap = new Dictionary<Guid, long?>();
+    var stampingStore = new _CommitSequenceStampingEventStore(innerStore, stampingMap);
+
+    var createdId = await AppendEventAsync(innerStore, streamId, new ActionTestCreatedEvent {
+      StreamId = streamId,
+      Name = "WithCommitSeq",
+      Value = 1
+    });
+    const long expectedCommitSequence = 234198L;
+    stampingMap[createdId.Value] = expectedCommitSequence;
+
+    await using var storeContext = CreateDbContext();
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var runner = await CreateRunnerAsync(stampingStore, perspectiveStore);
+
+    var result = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
+
+    await Assert.That(result.EventsProcessed).IsEqualTo(1);
+
+    await using var verifyContext = CreateDbContext();
+    var verifyStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(verifyContext, "action_test");
+    var metadata = await verifyStore.GetMetadataByStreamIdAsync(streamId);
+
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.CommitSequence)
+      .IsEqualTo(expectedCommitSequence)
+      .Because("runner must stamp wh_event_store.commit_sequence onto metadata so the idempotency filter has a commit_sequence floor");
+  }
+
+  /// <summary>
   /// <see cref="IPerspectiveStore{TModel}.GetMetadataByStreamIdAsync"/> on a non-existent stream
   /// returns null — required so the runner's filter path knows it has never run for this stream
   /// and applies every event.
@@ -263,5 +303,35 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var metadata = await perspectiveStore.GetMetadataByStreamIdAsync(Guid.NewGuid());
 
     await Assert.That(metadata).IsNull();
+  }
+
+  /// <summary>
+  /// Test wrapper: delegates to an inner <see cref="InMemoryEventStore"/> for everything, but
+  /// returns canned <c>commit_sequence</c> values from an external map for
+  /// <see cref="IEventStore.GetCommitSequenceAsync"/>. Lets the test prove the runner
+  /// reads the value and threads it onto persisted metadata.
+  /// </summary>
+  private sealed class _CommitSequenceStampingEventStore(
+      InMemoryEventStore inner, IReadOnlyDictionary<Guid, long?> stamps) : IEventStore {
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken ct = default) =>
+      inner.AppendAsync(streamId, envelope, ct);
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken ct = default) where TMessage : notnull =>
+      inner.AppendAsync(streamId, message, ct);
+    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken ct = default) =>
+      Task.FromResult(stamps.TryGetValue(eventId, out var v) ? v : null);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken ct = default) =>
+      inner.ReadAsync<TMessage>(streamId, fromSequence, ct);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken ct = default) =>
+      inner.ReadAsync<TMessage>(streamId, fromEventId, ct);
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
+      inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, ct);
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) =>
+      inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, ct);
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
+      inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, ct);
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
+      inner.GetLastSequenceAsync(streamId, ct);
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
+      inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
 }
