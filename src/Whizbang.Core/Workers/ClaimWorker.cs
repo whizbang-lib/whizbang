@@ -288,6 +288,21 @@ public sealed partial class ClaimWorker : BackgroundService {
     if (_signalingGate?.IsAvailable == false) {
       return baseMs;
     }
+    // 2026-06-02 (PR #227) — when LISTEN/NOTIFY is healthy AND an operator has opted into
+    // a relaxed steady-state cadence, use NotifyHealthyPollingIntervalMilliseconds as the
+    // baseline instead of the tight PollingIntervalMilliseconds. Rationale: under load,
+    // every pod polling at 250 ms each generates N×4 claim_work calls per second
+    // hammering wh_active_streams' unique index and producing 40P01 deadlocks on the
+    // index leaf page. With NOTIFY healthy, the listener wakes the worker the moment new
+    // work arrives — tight 250 ms polling becomes wasted contention. Default null means
+    // no behavior change; operators on Azure / multi-pod deployments opt in by setting
+    // a value like 1000 (1 s) or 2000 (2 s). The wh_active_streams deadlock root cause
+    // is mitigated structurally by migrations 024/025/027 split-UPSERT; this knob is the
+    // throughput-reducer that complements it.
+    var notifyHealthyBase = _options.NotifyHealthyPollingIntervalMilliseconds;
+    if (_signalingGate?.IsAvailable == true && notifyHealthyBase.HasValue && notifyHealthyBase.Value > baseMs) {
+      baseMs = notifyHealthyBase.Value;
+    }
     var maxMs = _options.PollingMaxIntervalMilliseconds;
     var empty = Volatile.Read(ref _consecutiveEmptyPolls);
     if (maxMs <= baseMs || empty <= 0) {
@@ -332,6 +347,28 @@ public sealed class ClaimWorkerOptions {
   /// Constrained at startup to <c>AbandonStaleInstanceThresholdSeconds × 1000 / 3</c>
   /// to preserve heartbeat-budget freshness.</summary>
   public int PollingMaxIntervalMilliseconds { get; set; } = 10_000;
+
+  /// <summary>
+  /// Optional relaxed baseline polling cadence when LISTEN/NOTIFY is verified healthy.
+  /// When set, replaces <see cref="PollingIntervalMilliseconds"/> as the loop's base wait
+  /// while the gate reports <c>IsAvailable=true</c>. Only takes effect when its value is
+  /// greater than <see cref="PollingIntervalMilliseconds"/>; otherwise ignored.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Default <c>null</c> = no behavior change (matches pre-PR-#227 default).
+  /// </para>
+  /// <para>
+  /// Set this on multi-pod deployments where NOTIFY is reliably delivering signals. With
+  /// LISTEN/NOTIFY healthy, the listener short-circuits the wait the moment new work
+  /// arrives, so tight 250 ms polling is wasted DB pressure that produces
+  /// <c>wh_active_streams</c> unique-index contention. Typical values: <c>1000</c> (1 s)
+  /// or <c>2000</c> (2 s). Falls back to the tight base cadence automatically the moment
+  /// NOTIFY availability flips to false (so a broker outage doesn't silently increase
+  /// claim latency).
+  /// </para>
+  /// </remarks>
+  public int? NotifyHealthyPollingIntervalMilliseconds { get; set; }
   /// <summary>Cap on rows returned per claim_work call. Default 1000.</summary>
   public int MaxStreamsPerBatch { get; set; } = 1000;
 

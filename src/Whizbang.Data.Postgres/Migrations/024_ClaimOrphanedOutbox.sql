@@ -74,17 +74,45 @@ BEGIN
       )
     RETURNING o.message_id AS c_message_id, o.stream_id AS c_stream_id, o.partition_number AS c_partition_number
   ),
-  -- Slice 6 fix: see claim_orphaned_perspective_events (mig 027) for full rationale.
-  -- Any successful UNOWNED-path claim UPSERTs wh_active_streams so the ownership ledger
-  -- stays current. INSERT creates a row when producer-side pinning never fired (NULL
-  -- p_instance_id from strategy-flush); DO UPDATE refreshes last_activity_at always
-  -- and re-binds assigned_instance_id only when NULL or pointing to a dead instance.
+  -- 2026-06-02: split the wh_active_streams ledger maintenance into two paths to
+  -- eliminate the unique-index leaf-page deadlock observed on dev slot 3 under N pods ×
+  -- 250 ms polling. See Whizbang PR #227 for the full diagnosis.
+  --
+  -- REFRESH path (steady-state, >99% of claims under load): if this instance already
+  -- owns the stream with a live lease, the prior UPSERT was wasted work that only
+  -- bumped last_activity_at on a row we already owned, yet still took the unique-index
+  -- leaf-page lock on each INSERT...ON CONFLICT. A plain row UPDATE achieves the same
+  -- semantic (refresh last_activity_at) without touching the unique-index INSERT path
+  -- at all → no leaf-page contention, no deadlock possible on this code path.
+  refreshed AS (
+    UPDATE __SCHEMA__.wh_active_streams ast
+    SET last_activity_at = p_now
+    FROM claimed c
+    WHERE ast.stream_id = c.c_stream_id
+      AND c.c_stream_id IS NOT NULL
+      AND ast.assigned_instance_id = p_instance_id
+      AND ast.lease_expiry > p_now
+    RETURNING ast.stream_id AS refreshed_stream_id
+  ),
+  -- PIN path (rare): only fires for streams NOT covered by REFRESH — first-time pinning
+  -- (producer-side strategy-flush left assigned_instance_id NULL), abandoned-owner
+  -- reassignment, or orphan-claim transferring ownership across instances. ORDER BY
+  -- stream_id forces concurrent pods to acquire the unique-index leaf-page locks in a
+  -- consistent order, which prevents lock-cycle deadlocks on this remaining path as
+  -- well (lock-ordering precludes cycle formation).
   pinned AS (
     INSERT INTO __SCHEMA__.wh_active_streams AS ast
       (stream_id, partition_number, assigned_instance_id, last_activity_at)
-    SELECT DISTINCT c.c_stream_id, COALESCE(c.c_partition_number, 0), p_instance_id, p_now
-    FROM claimed c
-    WHERE c.c_stream_id IS NOT NULL
+    SELECT DISTINCT ON (sub.stream_id) sub.stream_id, sub.partition_number, p_instance_id, p_now
+    FROM (
+      SELECT c.c_stream_id AS stream_id, COALESCE(c.c_partition_number, 0) AS partition_number
+      FROM claimed c
+      WHERE c.c_stream_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM refreshed r WHERE r.refreshed_stream_id = c.c_stream_id
+        )
+    ) sub
+    ORDER BY sub.stream_id
     ON CONFLICT (stream_id) DO UPDATE
       SET last_activity_at = EXCLUDED.last_activity_at,
           assigned_instance_id = CASE

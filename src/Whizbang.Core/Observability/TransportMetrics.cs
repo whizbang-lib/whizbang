@@ -68,6 +68,15 @@ public sealed class TransportMetrics {
   /// <summary>Retry attempts.</summary>
   public Counter<long> OutboxPublishRetries { get; }
 
+  /// <summary>
+  /// Broker-side throttle events observed during publish, tagged by <c>transport</c>
+  /// (e.g., <c>asb</c>, <c>rabbitmq</c>). Incremented once per detected throttle
+  /// (Azure Service Bus <c>ServiceBusy</c>, RabbitMQ flow-control). Separate from
+  /// <see cref="OutboxMessagesFailed"/> so dashboards can alert specifically on
+  /// "broker is asking us to slow down" without false-positives from generic outages.
+  /// </summary>
+  public Counter<long> OutboxPublishThrottled { get; }
+
   // Concurrency and batching
 
   /// <summary>Time waiting for concurrency semaphore slot (ms).</summary>
@@ -125,8 +134,11 @@ public sealed class TransportMetrics {
     OutboxReadinessWaitDuration = meter.CreateHistogram<double>("whizbang.transport.outbox.readiness_wait.duration", "ms", "Time waiting for transport readiness");
 
     OutboxMessagesPublished = meter.CreateCounter<long>("whizbang.transport.outbox.messages_published", description: "Messages published to transport");
-    OutboxMessagesFailed = meter.CreateCounter<long>("whizbang.transport.outbox.messages_failed", description: "Publish failures by reason");
+    OutboxMessagesFailed = meter.CreateCounter<long>("whizbang.transport.outbox.messages_failed", description: "Publish failures (tag by reason where available)");
     OutboxPublishRetries = meter.CreateCounter<long>("whizbang.transport.outbox.publish_retries", description: "Retry attempts");
+    OutboxPublishThrottled = meter.CreateCounter<long>(
+      "whizbang.transport.outbox.publish_throttled",
+      description: "Broker-side throttle events observed during publish (tagged by transport)");
 
     InboxConcurrencyWaitDuration = meter.CreateHistogram<double>("whizbang.transport.inbox.concurrency_wait.duration", "ms", "Time waiting for concurrency semaphore slot");
     InboxConcurrentMessages = meter.CreateUpDownCounter<int>("whizbang.transport.inbox.concurrent_messages", description: "Current concurrent message handlers");
