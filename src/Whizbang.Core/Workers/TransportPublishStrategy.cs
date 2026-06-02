@@ -40,7 +40,14 @@ namespace Whizbang.Core.Workers;
 /// <param name="transport">The transport to publish messages to</param>
 /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
 /// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
-public partial class TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, string inboxTopic, ILoggerFactory? loggerFactory = null) : IMessagePublishStrategy {
+public partial class TransportPublishStrategy(
+  ITransport transport,
+  ITransportReadinessCheck readinessCheck,
+  string inboxTopic,
+  ILoggerFactory? loggerFactory = null,
+  ThrottleRetryOptions? throttleRetryOptions = null,
+  TransportMetrics? metrics = null
+) : IMessagePublishStrategy {
   private const string LOG_CATEGORY = "Whizbang.Core.Transport";
 
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -49,6 +56,18 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
   private readonly ILogger _logger = loggerFactory?.CreateLogger(LOG_CATEGORY) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 #pragma warning restore S4487
+  private readonly ThrottleRetryOptions _throttleRetry = throttleRetryOptions ?? new ThrottleRetryOptions();
+  private readonly TransportMetrics? _metrics = metrics;
+
+  // Derived once: short transport tag for OTEL dimensions. Maps "AzureServiceBusTransport"
+  // → "asb", "RabbitMQTransport" → "rabbitmq", etc. Unknown transport types fall back to the
+  // class name so the dashboard still shows *something* distinguishable.
+  private string _transportTag => _transport.GetType().Name switch {
+    "AzureServiceBusTransport" => "asb",
+    "RabbitMQTransport" => "rabbitmq",
+    "InMemoryTransport" => "inmemory",
+    var name => name,
+  };
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Skipping transport for event-store-only message: {MessageType}")]
   private partial void LogSkippingEventStoreOnly(string messageType);
@@ -61,6 +80,22 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
 
   [LoggerMessage(Level = LogLevel.Warning, Message = "Batch publish failed for group {Address}: {Error}")]
   private partial void LogBatchPublishGroupFailed(string address, string error);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Broker throttle on publish ({Transport}) — message {MessageId} attempt {Attempt}/{MaxAttempts}; sleeping {DelayMs:F0}ms before retry")]
+  private partial void LogThrottleRetry(Guid messageId, int attempt, int maxAttempts, double delayMs, string transport);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Broker throttle on batch publish ({Transport}) — batch of {Count} messages attempt {Attempt}/{MaxAttempts}; sleeping {DelayMs:F0}ms before retry")]
+  private partial void LogThrottleRetryBatch(int count, int attempt, int maxAttempts, double delayMs, string transport);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Broker throttle budget exhausted ({Transport}) after {Attempts} attempts for message {MessageId} — returning Throttled to failure channel")]
+  private partial void LogThrottleBudgetExhausted(Guid messageId, int attempts, string transport);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Broker throttle budget exhausted ({Transport}) after {Attempts} attempts for batch of {Count} — returning Throttled to failure channel")]
+  private partial void LogThrottleBudgetExhaustedBatch(int count, int attempts, string transport);
 
   /// <summary>
   /// Creates a new TransportPublishStrategy with default inbox topic.
@@ -99,52 +134,74 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
   /// <docs>fundamentals/dispatcher/dispatcher#event-store-only</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullDestination_*</tests>
   public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
-    try {
-      // Skip transport publishing for event-store-only messages (destination is null)
-      // These messages are stored in event store via process_work_batch but should not be transported
-      if (string.IsNullOrEmpty(work.Destination)) {
-        LogSkippingEventStoreOnly(work.MessageType);
-        return new MessagePublishResult {
-          MessageId = work.MessageId,
-          Success = true,
-          CompletedStatus = MessageProcessingStatus.Published,  // Mark as published (processed)
-          Error = null
-        };
-      }
-
-      // Resolve transport destination
-      // PRIMARY: Uses destination from outbox (set correctly by Dispatcher when IOutboxRoutingStrategy is configured)
-      // FALLBACK: Applies routing transformation for messages stored before routing was properly configured
-      var destination = _resolveDestination(work);
-
-      // Carry StreamId in destination metadata for transport-level FIFO ordering
-      // Transports that support ordering (e.g., ASB sessions) use this to set SessionId
-      if (work.StreamId.HasValue) {
-        destination = _addStreamIdToMetadata(destination, work.StreamId.Value);
-      }
-
-      LogPublishingMessage(work.MessageType, work.Destination, destination.Address, destination.RoutingKey);
-
-      // Publish to transport - envelope is already deserialized
-      // OutboxWork is non-generic, Envelope is IMessageEnvelope<object>
-      // Pass EnvelopeType from OutboxWork to preserve original payload type information
-      await _transport.PublishAsync(work.Envelope, destination, work.EnvelopeType, cancellationToken);
-
-      // Return success result
+    // Skip transport publishing for event-store-only messages (destination is null)
+    // These messages are stored in event store via process_work_batch but should not be transported
+    if (string.IsNullOrEmpty(work.Destination)) {
+      LogSkippingEventStoreOnly(work.MessageType);
       return new MessagePublishResult {
         MessageId = work.MessageId,
         Success = true,
-        CompletedStatus = MessageProcessingStatus.Published,
+        CompletedStatus = MessageProcessingStatus.Published,  // Mark as published (processed)
         Error = null
       };
-    } catch (Exception ex) {
-      // Return failure result with error details
-      return new MessagePublishResult {
-        MessageId = work.MessageId,
-        Success = false,
-        CompletedStatus = work.Status, // Already stored, publish failed
-        Error = $"{ex.GetType().Name}: {ex.Message}"
-      };
+    }
+
+    // Resolve transport destination (constant across retries within a single publish call)
+    // PRIMARY: Uses destination from outbox (set correctly by Dispatcher when IOutboxRoutingStrategy is configured)
+    // FALLBACK: Applies routing transformation for messages stored before routing was properly configured
+    var destination = _resolveDestination(work);
+
+    // Carry StreamId in destination metadata for transport-level FIFO ordering
+    // Transports that support ordering (e.g., ASB sessions) use this to set SessionId
+    if (work.StreamId.HasValue) {
+      destination = _addStreamIdToMetadata(destination, work.StreamId.Value);
+    }
+
+    // In-memory retry loop on broker-side throttling. Lease is already held; the broker
+    // pause is typically sub-second to a few seconds; releasing the lease and waiting for
+    // claim_orphaned_outbox would prematurely burn down the dead-letter budget AND add
+    // tens of seconds of latency on transient pressure. See ThrottleRetryOptions docs.
+    var attempt = 1;
+    while (true) {
+      try {
+        LogPublishingMessage(work.MessageType, work.Destination, destination.Address, destination.RoutingKey);
+
+        // Publish to transport - envelope is already deserialized
+        // OutboxWork is non-generic, Envelope is IMessageEnvelope<object>
+        // Pass EnvelopeType from OutboxWork to preserve original payload type information
+        await _transport.PublishAsync(work.Envelope, destination, work.EnvelopeType, cancellationToken);
+
+        return new MessagePublishResult {
+          MessageId = work.MessageId,
+          Success = true,
+          CompletedStatus = MessageProcessingStatus.Published,
+          Error = null
+        };
+      } catch (Exception ex) {
+        var reason = TransportFailureClassifier.Classify(ex);
+        if (reason == MessageFailureReason.Throttled && attempt < _throttleRetry.MaxAttempts) {
+          _metrics?.OutboxPublishThrottled.Add(1, new KeyValuePair<string, object?>("transport", _transportTag));
+          var delay = _throttleRetry.ComputeDelay(attempt);
+          LogThrottleRetry(work.MessageId, attempt, _throttleRetry.MaxAttempts, delay.TotalMilliseconds, _transportTag);
+          await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+          attempt++;
+          continue;
+        }
+
+        // Either non-throttle failure OR throttle budget exhausted. Return failure with the
+        // classified reason so the worker / failure channel / dashboards can distinguish
+        // broker throttling (raise tier) from outright outages (fix the outage).
+        if (reason == MessageFailureReason.Throttled) {
+          LogThrottleBudgetExhausted(work.MessageId, attempt, _transportTag);
+        }
+        return new MessagePublishResult {
+          MessageId = work.MessageId,
+          Success = false,
+          CompletedStatus = work.Status, // Already stored, publish failed
+          Error = $"{ex.GetType().Name}: {ex.Message}",
+          Reason = reason,
+        };
+      }
     }
   }
 
@@ -220,31 +277,64 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
         });
       }
 
-      try {
-        LogPublishingBatch(bulkItems.Count, sharedDestination.Address);
-        var batchResults = await _transport.PublishBatchAsync(bulkItems, sharedDestination, cancellationToken);
+      // In-memory throttle retry for the whole batch group. Broker throttling on bulk send
+      // is namespace-wide (not per-item), so retrying the whole group is correct. We retry
+      // either when the batch CALL itself throws a throttle exception OR when every returned
+      // item carries Reason=Throttled. Mixed-success batches are not retried — they reflect
+      // per-message conditions, not a uniform broker pause.
+      var batchAttempt = 1;
+      while (true) {
+        Exception? caught = null;
+        IReadOnlyList<BulkPublishItemResult>? batchResults = null;
+        try {
+          LogPublishingBatch(bulkItems.Count, sharedDestination.Address);
+          batchResults = await _transport.PublishBatchAsync(bulkItems, sharedDestination, cancellationToken);
+        } catch (Exception ex) {
+          caught = ex;
+        }
 
-        // Map transport results back to MessagePublishResult
-        foreach (var batchResult in batchResults) {
-          var originalWork = groupItems.First(g => g.Work.MessageId == batchResult.MessageId).Work;
-          results.Add(new MessagePublishResult {
-            MessageId = batchResult.MessageId,
-            Success = batchResult.Success,
-            CompletedStatus = batchResult.Success ? MessageProcessingStatus.Published : originalWork.Status,
-            Error = batchResult.Error
-          });
+        var batchThrottled = caught is not null
+          ? TransportFailureClassifier.Classify(caught) == MessageFailureReason.Throttled
+          : batchResults!.All(r => !r.Success
+              && TransportFailureClassifier.Classify(new InvalidOperationException(r.Error ?? "")) == MessageFailureReason.Throttled);
+
+        if (batchThrottled && batchAttempt < _throttleRetry.MaxAttempts) {
+          _metrics?.OutboxPublishThrottled.Add(bulkItems.Count, new KeyValuePair<string, object?>("transport", _transportTag));
+          var delay = _throttleRetry.ComputeDelay(batchAttempt);
+          LogThrottleRetryBatch(bulkItems.Count, batchAttempt, _throttleRetry.MaxAttempts, delay.TotalMilliseconds, _transportTag);
+          await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+          batchAttempt++;
+          continue;
         }
-      } catch (Exception ex) {
-        LogBatchPublishGroupFailed(sharedDestination.Address, ex.Message);
-        // All items in this group fail
-        foreach (var (work, _) in groupItems) {
-          results.Add(new MessagePublishResult {
-            MessageId = work.MessageId,
-            Success = false,
-            CompletedStatus = work.Status,
-            Error = $"{ex.GetType().Name}: {ex.Message}"
-          });
+
+        if (caught is not null) {
+          LogBatchPublishGroupFailed(sharedDestination.Address, caught.Message);
+          var reason = TransportFailureClassifier.Classify(caught);
+          if (reason == MessageFailureReason.Throttled) {
+            LogThrottleBudgetExhaustedBatch(bulkItems.Count, batchAttempt, _transportTag);
+          }
+          foreach (var (work, _) in groupItems) {
+            results.Add(new MessagePublishResult {
+              MessageId = work.MessageId,
+              Success = false,
+              CompletedStatus = work.Status,
+              Error = $"{caught.GetType().Name}: {caught.Message}",
+              Reason = reason,
+            });
+          }
+        } else {
+          // Happy/mixed path — map per-item results.
+          foreach (var batchResult in batchResults!) {
+            var originalWork = groupItems.First(g => g.Work.MessageId == batchResult.MessageId).Work;
+            results.Add(new MessagePublishResult {
+              MessageId = batchResult.MessageId,
+              Success = batchResult.Success,
+              CompletedStatus = batchResult.Success ? MessageProcessingStatus.Published : originalWork.Status,
+              Error = batchResult.Error
+            });
+          }
         }
+        break;
       }
     }
 
