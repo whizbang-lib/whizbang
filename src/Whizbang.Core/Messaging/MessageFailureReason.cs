@@ -56,6 +56,16 @@ public enum MessageFailureReason {
   EventStorageFailure = 7,
 
   /// <summary>
+  /// Broker-side throttling (e.g., Azure Service Bus ServiceBusy 50009, RabbitMQ flow-control,
+  /// connection.blocked). Distinguished from <see cref="TransportException"/> so dashboards
+  /// can separate "we're going faster than the namespace tier can absorb" from "the broker is
+  /// down or auth is broken." Retry semantics are typically the same — back off and try again —
+  /// but the operational response differs (raise the tier / upgrade Premium MUs vs. fix the
+  /// outage).
+  /// </summary>
+  Throttled = 8,
+
+  /// <summary>
   /// Unclassified error - reason not determined.
   /// </summary>
   Unknown = 99

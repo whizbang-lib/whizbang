@@ -16,6 +16,8 @@ public class MessageFailureReasonTests {
     await Assert.That((int)MessageFailureReason.ValidationError).IsEqualTo(4);
     await Assert.That((int)MessageFailureReason.MaxAttemptsExceeded).IsEqualTo(5);
     await Assert.That((int)MessageFailureReason.LeaseExpired).IsEqualTo(6);
+    await Assert.That((int)MessageFailureReason.EventStorageFailure).IsEqualTo(7);
+    await Assert.That((int)MessageFailureReason.Throttled).IsEqualTo(8);
     await Assert.That((int)MessageFailureReason.Unknown).IsEqualTo(99);
 #pragma warning restore TUnitAssertions0005
   }
