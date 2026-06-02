@@ -244,6 +244,7 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
 
     var eventId = (Guid)TrackedGuid.NewMedo();
     var workId = (Guid)TrackedGuid.NewMedo();
+    await _ensureBackingEventStoreRowAsync(conn, eventId, streamId);
     // Insert with EXPIRED lease (already past).
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = @"
@@ -288,6 +289,88 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// Stamper-lag gate: when an event row exists in <c>wh_event_store</c> but
+  /// <c>commit_sequence</c> hasn't been stamped yet (post-commit stamper hasn't run),
+  /// the prefetch MUST NOT return its <c>wh_perspective_events</c> row. Reasoning: any
+  /// downstream filter that compares against the projection's persisted
+  /// <c>metadata.CommitSequence</c> needs an authoritative commit_sequence on the
+  /// incoming event; without it, the filter falls back to event_id lex compare and
+  /// silently drops never-applied events whose UUIDv7 sorts earlier than the floor.
+  /// Closing the race at the SQL source (filter on <c>commit_sequence IS NOT NULL</c>)
+  /// is a stronger guarantee than tolerating it downstream.
+  /// </summary>
+  [Test]
+  public async Task FetchPendingPerspectiveEvents_UnstampedRow_IsNotReturnedAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    const string perspectiveName = "MyApp.Test+Projection";
+    await _registerInstanceAsync(connection, instanceId);
+
+    var stampedEventId = (Guid)TrackedGuid.NewMedo();
+    var unstampedEventId = (Guid)TrackedGuid.NewMedo();
+    var stampedWorkId = (Guid)TrackedGuid.NewMedo();
+    var unstampedWorkId = (Guid)TrackedGuid.NewMedo();
+    await _insertEventStoreRowAsync(connection, stampedEventId, streamId, commitSequence: 100L);
+    await _insertEventStoreRowUnstampedAsync(connection, unstampedEventId, streamId);
+    await _insertPerspectiveEventAsync(connection, stampedWorkId, streamId, perspectiveName, stampedEventId, instanceId);
+    await _insertPerspectiveEventAsync(connection, unstampedWorkId, streamId, perspectiveName, unstampedEventId, instanceId);
+
+    var fetched = await _fetchAsync(connection, streamId, perspectiveName, instanceId);
+
+    await Assert.That(fetched.Count)
+      .IsEqualTo(1)
+      .Because("only the stamped row may be returned; the unstamped row must stay invisible to the drainer until the stamper catches up");
+    await Assert.That(fetched[0].EventId).IsEqualTo(stampedEventId);
+  }
+
+  /// <summary>Companion: same gate for the atomic claim+fetch variant.</summary>
+  [Test]
+  public async Task ClaimAndFetchPendingPerspectiveEvents_UnstampedRow_IsNotClaimedOrReturnedAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    const string perspectiveName = "MyApp.Test+Projection";
+    await _registerInstanceAsync(connection, instanceId);
+
+    var stampedEventId = (Guid)TrackedGuid.NewMedo();
+    var unstampedEventId = (Guid)TrackedGuid.NewMedo();
+    var stampedWorkId = (Guid)TrackedGuid.NewMedo();
+    var unstampedWorkId = (Guid)TrackedGuid.NewMedo();
+    await _insertEventStoreRowAsync(connection, stampedEventId, streamId, commitSequence: 200L);
+    await _insertEventStoreRowUnstampedAsync(connection, unstampedEventId, streamId);
+    // Unowned so the atomic claim path would have eligible work to lease.
+    await _insertUnownedPerspectiveEventAsync(connection, stampedWorkId, streamId, perspectiveName, stampedEventId);
+    await _insertUnownedPerspectiveEventAsync(connection, unstampedWorkId, streamId, perspectiveName, unstampedEventId);
+
+    var fetched = await _claimAndFetchAsync(connection, streamId, perspectiveName, instanceId);
+
+    await Assert.That(fetched.Count)
+      .IsEqualTo(1)
+      .Because("the claim CTE must not lease unstamped rows; the return-fetch must not surface them");
+    await Assert.That(fetched[0].EventId).IsEqualTo(stampedEventId);
+
+    // And the unstamped row must still be unowned (not claimed by us).
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT instance_id FROM wh_perspective_events WHERE event_work_id = @id";
+    cmd.Parameters.AddWithValue("id", unstampedWorkId);
+    var leasedTo = await cmd.ExecuteScalarAsync();
+    await Assert.That(leasedTo is null || leasedTo == DBNull.Value)
+      .IsTrue()
+      .Because("unstamped row must remain unowned so the next claim cycle (post-stamping) picks it up");
+  }
+
+  /// <summary>
   /// production regression (G6): the prefetch tuple must carry <c>wh_event_store.commit_sequence</c>
   /// so the drainer's inversion detector can compare against the cached cursor's commit_sequence
   /// directly, with no separate round-trip. Without this column, the detector either falls back
@@ -323,13 +406,14 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Null-branch coverage for G6: when the stamper hasn't caught up to the row (or there's
-  /// no matching wh_event_store entry for the perspective_event yet), the LEFT JOIN yields
-  /// NULL and the C# reader must surface that as <c>CommitSequence = null</c>. Callers fall
-  /// back to event_id compare in that case.
+  /// Defense-in-depth invariant: with the stamper-lag gate active (INNER JOIN wh_event_store
+  /// + commit_sequence IS NOT NULL), a perspective_events row with no backing event_store
+  /// row never appears in the drainer's view. Production already guarantees the backing
+  /// row exists via the wh_event_store trigger; this test locks that the gate would refuse
+  /// to surface a wh_perspective_events orphan even if one slipped through somehow.
   /// </summary>
   [Test]
-  public async Task FetchPendingPerspectiveEvents_NoEventStoreRow_ReturnsNullCommitSequenceAsync() {
+  public async Task FetchPendingPerspectiveEvents_NoEventStoreRow_IsNotReturnedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
@@ -342,15 +426,26 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
 
     var eventId = (Guid)TrackedGuid.NewMedo();
     var workId = (Guid)TrackedGuid.NewMedo();
-    // No wh_event_store row inserted — LEFT JOIN yields NULL.
-    await _insertPerspectiveEventAsync(connection, workId, streamId, "MyApp.Test+Projection", eventId, instanceId);
+    // Insert wh_perspective_events ONLY — bypass the helper to skip backing row creation.
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_perspective_events
+          (event_work_id, stream_id, perspective_name, event_id, instance_id, lease_expiry,
+           partition_number, status, attempts, created_at, claimed_at, processed_at)
+        VALUES (@work, @stream, 'MyApp.Test+Projection', @event, @inst, NOW() + INTERVAL '5 minutes',
+                0, 0, 0, NOW(), NOW(), NULL)";
+      ins.Parameters.AddWithValue("work", workId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      ins.Parameters.AddWithValue("event", eventId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      await ins.ExecuteNonQueryAsync();
+    }
 
     var fetched = await _fetchAsync(connection, streamId, "MyApp.Test+Projection", instanceId);
 
-    await Assert.That(fetched.Count).IsEqualTo(1);
-    await Assert.That(fetched[0].CommitSequence)
-      .IsNull()
-      .Because("missing event_store row → LEFT JOIN NULL → reader's IsDBNullAsync branch must surface null");
+    await Assert.That(fetched.Count)
+      .IsEqualTo(0)
+      .Because("INNER JOIN gate hides orphan perspective_events rows without a backing event_store row");
   }
 
   /// <summary>Companion to the test above for the atomic claim variant.</summary>
@@ -445,18 +540,64 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     public long? CommitSequence { get; init; }
   }
 
+  private static int _eventStoreVersionCounter;
+
   private static async Task _insertEventStoreRowAsync(
       NpgsqlConnection connection, Guid eventId, Guid streamId, long commitSequence) {
+    var ver = Interlocked.Increment(ref _eventStoreVersionCounter);
     await using var ins = connection.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
          event_data, metadata, created_at, commit_sequence)
-      VALUES (@id, @stream, @stream, 'TestAgg', 1, 'TestEvt',
+      VALUES (@id, @stream, @stream, 'TestAgg', @ver, 'TestEvt',
               '{}'::jsonb, '{}'::jsonb, NOW(), @cs)";
     ins.Parameters.AddWithValue("id", eventId);
     ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.AddWithValue("ver", ver);
     ins.Parameters.AddWithValue("cs", commitSequence);
+    await ins.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>Inserts a wh_event_store row with <c>commit_sequence = NULL</c> — simulates
+  /// the window between event commit and the post-commit stamper assigning a sequence.</summary>
+  private static async Task _insertEventStoreRowUnstampedAsync(
+      NpgsqlConnection connection, Guid eventId, Guid streamId) {
+    var ver = Interlocked.Increment(ref _eventStoreVersionCounter);
+    await using var ins = connection.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_event_store
+        (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
+         event_data, metadata, created_at, commit_sequence)
+      VALUES (@id, @stream, @stream, 'TestAgg', @ver, 'TestEvt',
+              '{}'::jsonb, '{}'::jsonb, NOW(), NULL)";
+    ins.Parameters.AddWithValue("id", eventId);
+    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.AddWithValue("ver", ver);
+    await ins.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// Default-stamps the backing wh_event_store row when the caller hasn't already inserted
+  /// one. Required because production-mode fetch_pending_perspective_events INNER JOINs
+  /// wh_event_store and gates on commit_sequence IS NOT NULL — perspective_events rows
+  /// without a backing event-store row never appear in production (trigger guarantees it)
+  /// so tests must mirror the invariant.
+  /// </summary>
+  private static async Task _ensureBackingEventStoreRowAsync(
+      NpgsqlConnection connection, Guid eventId, Guid streamId) {
+    var ver = Interlocked.Increment(ref _eventStoreVersionCounter);
+    await using var ins = connection.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_event_store
+        (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
+         event_data, metadata, created_at, commit_sequence)
+      VALUES (@id, @stream, @stream, 'TestAgg', @ver, 'TestEvt',
+              '{}'::jsonb, '{}'::jsonb, NOW(), nextval('wh_commit_seq'))
+      ON CONFLICT (event_id) DO NOTHING";
+    ins.Parameters.AddWithValue("id", eventId);
+    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.AddWithValue("ver", ver);
     await ins.ExecuteNonQueryAsync();
   }
 
@@ -466,6 +607,7 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       Guid streamId,
       string perspectiveName,
       Guid eventId) {
+    await _ensureBackingEventStoreRowAsync(connection, eventId, streamId);
     await using var ins = connection.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_perspective_events
@@ -487,6 +629,7 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       Guid eventId,
       Guid instanceId,
       DateTimeOffset? processedAt = null) {
+    await _ensureBackingEventStoreRowAsync(connection, eventId, streamId);
     await using var ins = connection.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_perspective_events

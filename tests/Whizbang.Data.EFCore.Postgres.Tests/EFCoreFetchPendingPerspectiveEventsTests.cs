@@ -58,6 +58,21 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
       await ins.ExecuteNonQueryAsync();
     }
 
+    // Backing wh_event_store row required by the stamper-lag gate on the SQL fn —
+    // INNER JOIN excludes rows without one. Stamper-assigned cs here makes the row
+    // visible to the drainer.
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_event_store
+          (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
+           event_data, metadata, created_at, commit_sequence)
+        VALUES (@id, @stream, @stream, 'TestAgg', 1, 'TestEvt',
+                '{}'::jsonb, '{}'::jsonb, NOW(), nextval('wh_commit_seq'))";
+      ins.Parameters.AddWithValue("id", eventId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = @"
         INSERT INTO wh_perspective_events
@@ -79,8 +94,8 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
     await Assert.That(rows[0].EventWorkId).IsEqualTo(workId);
     await Assert.That(rows[0].EventId).IsEqualTo(eventId);
     await Assert.That(rows[0].CommitSequence)
-      .IsNull()
-      .Because("no wh_event_store row → LEFT JOIN NULL → reader's IsDBNullAsync true-branch surfaces null");
+      .IsNotNull()
+      .Because("backing event_store row is stamped, so the C# reader's non-null branch must surface the value");
   }
 
   /// <summary>
