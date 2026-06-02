@@ -62,6 +62,15 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       IConfigureOptions<WhizbangNotificationOptions>,
       ConfigureWhizbangNotificationOptionsFromConfiguration>());
 
+    // NotifyMetrics: counters + UpDownCounter for the LISTEN/NOTIFY work-signaling path.
+    // Registered as singleton so the same instances are observed across the connection
+    // singleton + every per-channel listener.
+    // NotifyMetrics depends on WhizbangMetrics. TryAddSingleton it here so callers that
+    // AddWhizbangPostgresNotifications without first calling AddWhizbangCore (e.g. some
+    // narrow unit-tests) still resolve cleanly. No-op when AddWhizbangCore ran first.
+    services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
+    services.TryAddSingleton<NotifyMetrics>();
+
     // Slice 33 — shared direct connection: ONE NpgsqlConnection per pod multiplexes
     // every per-channel subscription. PgSharedNotifyConnection is the singleton that
     // implements both INotifySignalingGate (killswitch + functionality probe) and
