@@ -91,20 +91,33 @@ BEGIN
     WHERE pe.event_work_id = ce.event_work_id
     RETURNING pe.event_work_id AS c_event_work_id, pe.stream_id AS c_stream_id, pe.perspective_name AS c_perspective_name, pe.partition_number AS c_partition_number
   ),
-  -- Slice 6 fix: any successful claim UPSERTs wh_active_streams so ownership ledger
-  -- stays current. INSERT creates a row when the producer-side pinning never fired
-  -- (e.g., strategy-flush path calls store_outbox_messages with NULL p_instance_id);
-  -- DO UPDATE refreshes last_activity_at always and re-binds assigned_instance_id only
-  -- when it's NULL or pointing to a dead instance. A live different owner is preserved
-  -- (the claim filter would have blocked the row anyway, so this branch is defensive).
-  -- Pre-fix on a consumer: 499 rows on appservice-db sat with NULL assigned_instance_id after
-  -- every deploy because cleanup_stale_instances nulls them and no path re-pinned.
-  -- Slice 27's routed NOTIFY infrastructure depends on this column being populated.
+  -- 2026-06-02: split the wh_active_streams ledger maintenance into REFRESH (row-only
+  -- UPDATE for already-owned-with-live-lease streams) + PIN (INSERT...ON CONFLICT for
+  -- the rare ownership-transition case, with ORDER BY stream_id for consistent lock
+  -- acquisition). Symmetric with the fix in claim_orphaned_outbox (mig 024); see that
+  -- migration for the full rationale. Eliminates the 40P01 deadlock observed on dev
+  -- production (Whizbang PR #227).
+  refreshed AS (
+    UPDATE __SCHEMA__.wh_active_streams ast
+    SET last_activity_at = p_now
+    FROM claimed c
+    WHERE ast.stream_id = c.c_stream_id
+      AND ast.assigned_instance_id = p_instance_id
+      AND ast.lease_expiry > p_now
+    RETURNING ast.stream_id AS refreshed_stream_id
+  ),
   pinned AS (
     INSERT INTO __SCHEMA__.wh_active_streams AS ast
       (stream_id, partition_number, assigned_instance_id, last_activity_at)
-    SELECT DISTINCT c.c_stream_id, c.c_partition_number, p_instance_id, p_now
-    FROM claimed c
+    SELECT DISTINCT ON (sub.stream_id) sub.stream_id, sub.partition_number, p_instance_id, p_now
+    FROM (
+      SELECT c.c_stream_id AS stream_id, c.c_partition_number AS partition_number
+      FROM claimed c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM refreshed r WHERE r.refreshed_stream_id = c.c_stream_id
+      )
+    ) sub
+    ORDER BY sub.stream_id
     ON CONFLICT (stream_id) DO UPDATE
       SET last_activity_at = EXCLUDED.last_activity_at,
           assigned_instance_id = CASE
