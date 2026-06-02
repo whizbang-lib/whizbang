@@ -20,10 +20,10 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_pending_perspective_events(
 ) RETURNS TABLE(
   out_event_work_id UUID,
   out_event_id UUID,
-  -- Slot-3 G6: JOIN wh_event_store and project commit_sequence so the drainer's
-  -- inversion detector and the cooldown gate can compare against the cached cursor's
-  -- commit_sequence directly. NULL when the stamper hasn't caught up to this row yet
-  -- (caller falls back to event_id compare in that case).
+  -- INNER JOIN wh_event_store + commit_sequence IS NOT NULL gate: rows whose post-commit
+  -- stamper hasn't caught up are invisible to the drainer until they're stamped. Closes
+  -- the stamper-lag race at the SQL source — downstream filters can rely on every row
+  -- coming through here having an authoritative commit_sequence.
   out_commit_sequence BIGINT
 ) AS $$
 BEGIN
@@ -33,11 +33,12 @@ BEGIN
     pe.event_id,
     es.commit_sequence
   FROM wh_perspective_events pe
-  LEFT JOIN wh_event_store es ON es.event_id = pe.event_id
+  INNER JOIN wh_event_store es ON es.event_id = pe.event_id
   WHERE pe.stream_id = p_stream_id
     AND pe.perspective_name = p_perspective_name
     AND pe.instance_id = p_instance_id
     AND pe.processed_at IS NULL
+    AND es.commit_sequence IS NOT NULL
   ORDER BY pe.event_id ASC;
 END;
 $$ LANGUAGE plpgsql;
@@ -88,9 +89,11 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_and_fetch_pending_perspective_events
 ) RETURNS TABLE(
   out_event_work_id UUID,
   out_event_id UUID,
-  -- Slot-3 G6: same projection as fetch_pending_perspective_events — JOIN to
-  -- wh_event_store and surface commit_sequence so callers don't need a separate
-  -- GetCommitSequenceAsync round-trip per event.
+  -- INNER JOIN wh_event_store + commit_sequence IS NOT NULL gate on both the claim CTE
+  -- and the return-fetch: rows whose post-commit stamper hasn't caught up are neither
+  -- leased nor returned. Closes the stamper-lag race at the SQL source — downstream
+  -- filters can rely on every row coming through here having an authoritative
+  -- commit_sequence. Unstamped rows stay unowned until a later cycle (post-stamping).
   out_commit_sequence BIGINT
 ) AS $$
 BEGIN
@@ -110,6 +113,7 @@ BEGIN
   WITH eligible AS (
     SELECT pe.event_work_id, pe.instance_id, pe.attempts
     FROM wh_perspective_events pe
+    INNER JOIN wh_event_store es ON es.event_id = pe.event_id
     WHERE pe.stream_id = p_stream_id
       AND pe.perspective_name = p_perspective_name
       AND pe.processed_at IS NULL
@@ -118,6 +122,7 @@ BEGIN
         pe.instance_id IS NULL
         OR pe.lease_expiry < p_now
       )
+      AND es.commit_sequence IS NOT NULL
     ORDER BY pe.event_work_id
     FOR UPDATE OF pe SKIP LOCKED
   )
@@ -130,17 +135,20 @@ BEGIN
 
   -- Step 2: return all rows now claimed by us, in event_id ASC order.
   -- Within the same transaction so we see our own UPDATE writes.
+  -- Same stamper-lag gate as the claim CTE — defense in depth in case a row was
+  -- already leased to us before its commit_sequence got stamped.
   RETURN QUERY
   SELECT
     pe.event_work_id,
     pe.event_id,
     es.commit_sequence
   FROM wh_perspective_events pe
-  LEFT JOIN wh_event_store es ON es.event_id = pe.event_id
+  INNER JOIN wh_event_store es ON es.event_id = pe.event_id
   WHERE pe.stream_id = p_stream_id
     AND pe.perspective_name = p_perspective_name
     AND pe.instance_id = p_instance_id
     AND pe.processed_at IS NULL
+    AND es.commit_sequence IS NOT NULL
   ORDER BY pe.event_id ASC;
 END;
 $$ LANGUAGE plpgsql;
