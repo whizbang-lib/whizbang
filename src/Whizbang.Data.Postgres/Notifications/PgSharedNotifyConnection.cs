@@ -40,7 +40,8 @@ public sealed partial class PgSharedNotifyConnection(
   ILogger<PgSharedNotifyConnection>? logger = null,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   TimeProvider? timeProvider = null,
-  INotificationDataSource? notificationDataSource = null
+  INotificationDataSource? notificationDataSource = null,
+  NotifyMetrics? metrics = null
 ) : BackgroundService, ISharedNotifyConnection, INotifySignalingGate {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -48,6 +49,7 @@ public sealed partial class PgSharedNotifyConnection(
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly ILogger<PgSharedNotifyConnection> _logger = logger ?? NullLogger<PgSharedNotifyConnection>.Instance;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+  private readonly NotifyMetrics? _metrics = metrics;
   // Opt-in via INotificationDataSource (not bare NpgsqlDataSource — that
   // would catch EF Core's own data source and exhaust its small pool).
   // Only path that works under UseNpgsql(NpgsqlDataSource) since Npgsql strips
@@ -270,6 +272,7 @@ public sealed partial class PgSharedNotifyConnection(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (_options.DisableNotifications || _options.SignalingMode == WorkSignalingMode.Polling) {
       LogDisabledByMode(_logger);
+      _emitMode(SignalingModeName.POLLING_ONLY, reason: "SignalingMode=Polling or DisableNotifications=true");
       return;
     }
 
@@ -283,6 +286,7 @@ public sealed partial class PgSharedNotifyConnection(
           "or register an NpgsqlDataSource singleton in DI.");
       }
       LogDisabledNoConnection(_logger);
+      _emitMode(SignalingModeName.POLLING_ONLY, reason: "no direct connection string resolved");
       return;
     }
 
@@ -357,6 +361,7 @@ public sealed partial class PgSharedNotifyConnection(
         _setAvailable(true, failureReason: null);
         var channelCount = _registry.AllChannels().Count;
         LogConnected(_logger, channelCount);
+        _emitMode(SignalingModeName.LISTEN_NOTIFY, reason: $"connected; LISTENing on {channelCount} channel(s)");
 
         // Slice 33.3 — real dispatch loop. WaitAsync blocks on the conn until either a
         // notification arrives (the _dispatchNotification handler runs synchronously and
@@ -437,6 +442,18 @@ public sealed partial class PgSharedNotifyConnection(
     if (subscribers.IsEmpty) {
       return;
     }
+    // Record the signal once, tagged by payload category. The known categories
+    // ("outbox"/"inbox"/"perspective") map to the work-signal taxonomy emitted by
+    // notify_instance_owners; anything else lands in "unknown" so a payload drift
+    // (new SQL signal that the .NET side hasn't taught yet) is observable instead
+    // of silent.
+    var category = e.Payload switch {
+      "outbox" => "outbox",
+      "inbox" => "inbox",
+      "perspective" => "perspective",
+      _ => "unknown",
+    };
+    _metrics?.SignalsReceived.Add(1, new KeyValuePair<string, object?>("category", category));
     foreach (var subscriber in subscribers) {
       try {
         subscriber.OnNotification(e.Payload);
@@ -463,8 +480,31 @@ public sealed partial class PgSharedNotifyConnection(
       }
     }
     if (fire) {
+      // ConnectionState UpDownCounter tracks the LISTEN/NOTIFY connection status — sum across
+      // pods gives "how many pods have a live notify connection right now," which is the gauge
+      // ops want to alert on. Also emit a mode-transition log + counter so the audit trail
+      // captures the runtime fallback / restore.
+      _metrics?.ConnectionState.Add(available ? 1 : -1);
+      var transitionMode = available ? SignalingModeName.LISTEN_NOTIFY : SignalingModeName.POLLING_ONLY;
+      var transitionReason = available
+        ? "self-test probe succeeded (restored)"
+        : failureReason ?? "connection lost";
+      _emitMode(transitionMode, reason: transitionReason);
       OnAvailabilityChanged?.Invoke(available);
     }
+  }
+
+  private void _emitMode(string mode, string reason) {
+    LogSignalingMode(_logger, mode, reason);
+    _metrics?.SignalingMode.Add(1,
+      new KeyValuePair<string, object?>("mode", mode),
+      new KeyValuePair<string, object?>("reason", reason));
+  }
+
+  /// <summary>Canonical short names for the signaling mode log + metric tag.</summary>
+  internal static class SignalingModeName {
+    public const string LISTEN_NOTIFY = "listen_notify";
+    public const string POLLING_ONLY = "polling_only";
   }
 
   private TimeSpan _computeBackoff(int attempt) {
@@ -557,4 +597,12 @@ public sealed partial class PgSharedNotifyConnection(
     string connectionStringKey,
     bool hasUsername,
     bool hasSecret);
+
+  // EventId 14 — single canonical "what mode are we in" log entry. Operators can grep for
+  // "Whizbang signaling mode:" to see the latest mode + reason without having to correlate
+  // four separate decision-point messages. Fires once at startup AND on every runtime
+  // transition (NOTIFY drop → polling fallback, then probe-restored → NOTIFY active).
+  [LoggerMessage(EventId = 14, Level = LogLevel.Information,
+    Message = "Whizbang signaling mode: {Mode} ({Reason})")]
+  static partial void LogSignalingMode(ILogger logger, string mode, string reason);
 }
