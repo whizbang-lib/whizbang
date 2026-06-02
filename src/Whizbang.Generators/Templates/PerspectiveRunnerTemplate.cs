@@ -209,18 +209,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // The events ARE done from the perspective-events table standpoint; the runner just
           // had no model work to do because the row already reflects them.
           //
-          // Logged at Debug as of Phase H step 7 slice 6: with the drainer's cooldown gate
-          // (step 7 slice 5) active, this branch only fires when a duplicate slipped past the
-          // cache (post-restart, TTL expiry, or handler-failure recovery). All steady-state
-          // duplicates are caught one layer up; reaching here is rare and self-heals via the
-          // Status=Completed return below. Promote back to Information ONLY if production
-          // shows a sustained rate, which would indicate a real anomaly worth investigating.
-          _logger.LogDebug(
-              "All {Skipped} events already applied for {PerspectiveName} stream {StreamId} (last applied {LastEventId}) — returning Completed for self-heal",
+          // Diagnostic temporarily at Warning level (with structured dropped-id list) so we can
+          // see exactly which events the filter classified as duplicates and confirm whether
+          // they were truly applied previously or are the silent-drop bug surfacing.
+          // Demote to Debug once we have enough data.
+          var droppedIds = string.Join(",", events.Select(e => e.MessageId.Value.ToString("D")));
+          var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+          _logger.LogWarning(
+              "[diag.filter.all-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] returning Completed (events will be deleted from wh_perspective_events)",
               events.Count - filtered.Count,
               perspectiveName,
               streamId,
-              lastAppliedEventId);
+              lastAppliedEventId,
+              lastAppliedCommitSequence,
+              droppedIds,
+              droppedSeqs);
           var alreadyAppliedAsGuid = Guid.TryParse(lastAppliedEventId, out var parsed) ? parsed : Guid.Empty;
           return new PerspectiveCursorCompletion {
             StreamId = streamId,
@@ -232,17 +235,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
           };
         } else {
-          // Partial skip: cursor-flush race within one instance — perspective row metadata
-          // advanced past some events whose cursor write hasn't landed yet (PerspectiveCompletion
-          // FlushWorker coalesces ~10 ms). Benign and self-heals on the next tick. Logged at
-          // Debug only — at high event rates this fires once per event on busy streams (8.6k/day
-          // observed on a consumer BFF before this drop). See Phase H step 6 slice 6 for context.
-          _logger.LogDebug(
-              "Skipped {Skipped} already-applied events for {PerspectiveName} stream {StreamId} (last applied {LastEventId}) — cursor-flush lag, applying {Remaining} new events",
+          // Partial skip: SOME events filtered, SOME pass through to Apply. Surface the
+          // dropped ids + cs so we can correlate against wh_event_store and confirm whether
+          // they were already in ProcessedLineNumbers / equivalent idempotency state.
+          var droppedIds = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.MessageId.Value.ToString("D")));
+          var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+          _logger.LogWarning(
+              "[diag.filter.partial-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] remaining={Remaining}",
               events.Count - filtered.Count,
               perspectiveName,
               streamId,
               lastAppliedEventId,
+              lastAppliedCommitSequence,
+              droppedIds,
+              droppedSeqs,
               filtered.Count);
         }
       }
