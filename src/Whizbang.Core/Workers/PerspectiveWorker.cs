@@ -1351,11 +1351,18 @@ public partial class PerspectiveWorker(
       // Diagnostic: surface cooled event_ids + work_ids so we can correlate against
       // wh_event_store and confirm whether the cooldown decision was correct
       // (event was truly applied previously) or a silent-drop bug (event never applied).
-      LogDiagnosticCooldown(_logger, streamId, perspectiveName, cooledEvents.Count,
-        string.Join(",", cooledEvents.Select(e => e.MessageId.Value.ToString("D"))),
-        string.Join(",", cooledEvents.SelectMany(e => batchContext.RawByEventId[e.MessageId.Value])
-          .Where(raw => string.Equals(raw.PerspectiveName, perspectiveName, StringComparison.Ordinal))
-          .Select(raw => raw.EventWorkId.ToString("D"))));
+      // Gated on IsEnabled to avoid materializing the id strings when Debug logging is off.
+      // CA1873 fires on the string.Join args even with the IsEnabled guard — the analyzer
+      // doesn't look through the surrounding conditional for source-generated LoggerMessage.
+#pragma warning disable CA1873
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        LogDiagnosticCooldown(_logger, streamId, perspectiveName, cooledEvents.Count,
+          string.Join(",", cooledEvents.Select(e => e.MessageId.Value.ToString("D"))),
+          string.Join(",", cooledEvents.SelectMany(e => batchContext.RawByEventId[e.MessageId.Value])
+            .Where(raw => string.Equals(raw.PerspectiveName, perspectiveName, StringComparison.Ordinal))
+            .Select(raw => raw.EventWorkId.ToString("D"))));
+      }
+#pragma warning restore CA1873
     }
 
     // Everything cooled → previous drain handled it; nothing left to do.
@@ -1645,7 +1652,7 @@ public partial class PerspectiveWorker(
     int cooledCount,
     int freshCount);
 
-  [LoggerMessage(Level = LogLevel.Warning,
+  [LoggerMessage(Level = LogLevel.Debug,
     Message = "[diag.cooldown] {CooledCount} events classified as cooled for stream {StreamId} / perspective {PerspectiveName}: eventIds=[{EventIds}] workIds=[{WorkIds}] — Apply will NOT run; rows will be deleted via PerspectiveCompletionFlushWorker")]
   private static partial void LogDiagnosticCooldown(
     ILogger logger,
