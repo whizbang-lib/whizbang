@@ -162,12 +162,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // get re-claimed and would re-apply to a populated model — duplicating list-style
     // projection rows.
     //
-    // Slot-3 fix (G5): UUIDv7 event_ids can invert under concurrent emission — two events
-    // committed close together may have event_ids that don't reflect actual commit order.
-    // commit_sequence is the monotonic-per-database stamp that DOES reflect actual order.
-    // When both sides carry it (metadata.CommitSequence + envelope.LocalCommitSequence),
-    // compare commit_sequence; otherwise fall back to the canonical "D" event_id lex compare.
-    // Fallback preserves the existing single-source/no-stamper path.
+    // Idempotency filter — 3-way branch on what ordering info is available.
+    //
+    // Background: UUIDv7 event_ids can invert under concurrent emission (two events
+    // committed close together may have event_ids whose lex order doesn't reflect commit
+    // order). commit_sequence is the monotonic-per-database post-commit stamp that DOES
+    // reflect commit order. The filter compares whichever signal is reliable.
+    //
+    // 1) Both metadata.CommitSequence AND envelope.LocalCommitSequence present →
+    //    compare commit_sequence (authoritative).
+    // 2) Metadata has commit_sequence but envelope's is null (stamper hadn't caught up
+    //    when the drainer fetched this event) → DO NOT FILTER. event_id lex compare is
+    //    unreliable in commit_sequence mode (the UUIDv7 inversion this filter exists to
+    //    avoid), and dropping a never-applied event is silently lossy. Let Apply's
+    //    natural idempotency guards handle real duplicates.
+    // 3) Neither side has commit_sequence (single-source / no stamper world) → event_id
+    //    lex compare is sufficient because monotonic ordering holds without concurrent
+    //    emission.
     var existingMetadata = modelLoadedFromDb
         ? await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken)
         : null;
@@ -179,6 +190,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         bool isAlreadyApplied;
         if (lastAppliedCommitSequence.HasValue && e.LocalCommitSequence.HasValue) {
           isAlreadyApplied = e.LocalCommitSequence.Value <= lastAppliedCommitSequence.Value;
+        } else if (lastAppliedCommitSequence.HasValue || e.LocalCommitSequence.HasValue) {
+          // Either side has cs but not both. The mode is "cs-world but stamper lag
+          // somewhere" — event_id lex compare is the UUIDv7 inversion we exist to avoid,
+          // and dropping a never-applied event is silently lossy. Defer to Apply.
+          isAlreadyApplied = false;
         } else {
           isAlreadyApplied = string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) <= 0;
         }
@@ -195,18 +211,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // The events ARE done from the perspective-events table standpoint; the runner just
           // had no model work to do because the row already reflects them.
           //
-          // Logged at Debug as of Phase H step 7 slice 6: with the drainer's cooldown gate
-          // (step 7 slice 5) active, this branch only fires when a duplicate slipped past the
-          // cache (post-restart, TTL expiry, or handler-failure recovery). All steady-state
-          // duplicates are caught one layer up; reaching here is rare and self-heals via the
-          // Status=Completed return below. Promote back to Information ONLY if production
-          // shows a sustained rate, which would indicate a real anomaly worth investigating.
-          _logger.LogDebug(
-              "All {Skipped} events already applied for {PerspectiveName} stream {StreamId} (last applied {LastEventId}) — returning Completed for self-heal",
-              events.Count - filtered.Count,
-              perspectiveName,
-              streamId,
-              lastAppliedEventId);
+          // Structured diagnostic at Debug level — keeps the dropped-id list available for
+          // future investigations without flooding production logs. Re-promote to Warning
+          // (or Information) temporarily when investigating a suspected silent-drop incident.
+          // Gated on IsEnabled to skip the string.Join allocations when Debug logging is off.
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var droppedIds = string.Join(",", events.Select(e => e.MessageId.Value.ToString("D")));
+            var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            _logger.LogDebug(
+                "[diag.filter.all-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] returning Completed (events will be deleted from wh_perspective_events)",
+                events.Count - filtered.Count,
+                perspectiveName,
+                streamId,
+                lastAppliedEventId,
+                lastAppliedCommitSequence,
+                droppedIds,
+                droppedSeqs);
+          }
           var alreadyAppliedAsGuid = Guid.TryParse(lastAppliedEventId, out var parsed) ? parsed : Guid.Empty;
           return new PerspectiveCursorCompletion {
             StreamId = streamId,
@@ -218,18 +239,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
           };
         } else {
-          // Partial skip: cursor-flush race within one instance — perspective row metadata
-          // advanced past some events whose cursor write hasn't landed yet (PerspectiveCompletion
-          // FlushWorker coalesces ~10 ms). Benign and self-heals on the next tick. Logged at
-          // Debug only — at high event rates this fires once per event on busy streams (8.6k/day
-          // observed on JDX BFF before this drop). See Phase H step 6 slice 6 for context.
-          _logger.LogDebug(
-              "Skipped {Skipped} already-applied events for {PerspectiveName} stream {StreamId} (last applied {LastEventId}) — cursor-flush lag, applying {Remaining} new events",
-              events.Count - filtered.Count,
-              perspectiveName,
-              streamId,
-              lastAppliedEventId,
-              filtered.Count);
+          // Partial skip: SOME events filtered, SOME pass through to Apply. Surface the
+          // dropped ids + cs so we can correlate against wh_event_store and confirm whether
+          // they were already in ProcessedLineNumbers / equivalent idempotency state.
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var droppedIds = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.MessageId.Value.ToString("D")));
+            var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            _logger.LogDebug(
+                "[diag.filter.partial-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] remaining={Remaining}",
+                events.Count - filtered.Count,
+                perspectiveName,
+                streamId,
+                lastAppliedEventId,
+                lastAppliedCommitSequence,
+                droppedIds,
+                droppedSeqs,
+                filtered.Count);
+          }
         }
       }
       events = filtered;

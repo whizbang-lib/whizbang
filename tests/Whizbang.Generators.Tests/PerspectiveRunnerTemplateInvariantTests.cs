@@ -32,9 +32,9 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // (step 7 slice 5) active, this branch only fires post-restart / TTL expiry / handler
     // failure recovery — rare. INF firing per cursor-flush race produced ~8.6k/day of noise
     // on JDX BFF; Debug is the right level for the post-step-7 invariant.
-    await Assert.That(template).Contains("returning Completed for self-heal")
+    await Assert.That(template).Contains("[diag.filter.all-dropped]")
       .Because("the all-skipped branch's log message is the anchor we're pinning");
-    var idx = template.IndexOf("returning Completed for self-heal", StringComparison.Ordinal);
+    var idx = template.IndexOf("[diag.filter.all-dropped]", StringComparison.Ordinal);
     await Assert.That(idx).IsGreaterThan(0);
 
     // Walk back to find the LogXxx call that owns this message.
@@ -73,8 +73,8 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // refactor can't quietly bump it back to Information.
     var template = _loadTemplate();
 
-    await Assert.That(template).Contains("cursor-flush lag, applying {Remaining} new events");
-    var idx = template.IndexOf("cursor-flush lag, applying {Remaining} new events", StringComparison.Ordinal);
+    await Assert.That(template).Contains("[diag.filter.partial-dropped]");
+    var idx = template.IndexOf("[diag.filter.partial-dropped]", StringComparison.Ordinal);
     await Assert.That(idx).IsGreaterThan(0);
 
     var prefix = template[..idx];
