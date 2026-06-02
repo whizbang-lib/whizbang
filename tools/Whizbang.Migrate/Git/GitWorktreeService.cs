@@ -161,7 +161,7 @@ public sealed class GitWorktreeService : IGitWorktreeService {
       CancellationToken ct = default) {
     using var process = new Process();
     process.StartInfo = new ProcessStartInfo {
-      FileName = "git",
+      FileName = GitExecutable.PathOrThrow,
       Arguments = arguments,
       WorkingDirectory = workingDirectory,
       RedirectStandardOutput = true,
