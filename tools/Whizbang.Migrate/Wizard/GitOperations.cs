@@ -135,7 +135,7 @@ public sealed class GitOperations {
     try {
       using var process = new Process {
         StartInfo = new ProcessStartInfo {
-          FileName = "git",
+          FileName = Whizbang.Migrate.Git.GitExecutable.PathOrThrow,
           Arguments = arguments,
           WorkingDirectory = workingDirectory,
           RedirectStandardOutput = true,
