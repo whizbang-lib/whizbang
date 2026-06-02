@@ -211,21 +211,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // The events ARE done from the perspective-events table standpoint; the runner just
           // had no model work to do because the row already reflects them.
           //
-          // Diagnostic temporarily at Warning level (with structured dropped-id list) so we can
-          // see exactly which events the filter classified as duplicates and confirm whether
-          // they were truly applied previously or are the silent-drop bug surfacing.
-          // Demote to Debug once we have enough data.
-          var droppedIds = string.Join(",", events.Select(e => e.MessageId.Value.ToString("D")));
-          var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
-          _logger.LogWarning(
-              "[diag.filter.all-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] returning Completed (events will be deleted from wh_perspective_events)",
-              events.Count - filtered.Count,
-              perspectiveName,
-              streamId,
-              lastAppliedEventId,
-              lastAppliedCommitSequence,
-              droppedIds,
-              droppedSeqs);
+          // Structured diagnostic at Debug level — keeps the dropped-id list available for
+          // future investigations without flooding production logs. Re-promote to Warning
+          // (or Information) temporarily when investigating a suspected silent-drop incident.
+          // Gated on IsEnabled to skip the string.Join allocations when Debug logging is off.
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var droppedIds = string.Join(",", events.Select(e => e.MessageId.Value.ToString("D")));
+            var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            _logger.LogDebug(
+                "[diag.filter.all-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] returning Completed (events will be deleted from wh_perspective_events)",
+                events.Count - filtered.Count,
+                perspectiveName,
+                streamId,
+                lastAppliedEventId,
+                lastAppliedCommitSequence,
+                droppedIds,
+                droppedSeqs);
+          }
           var alreadyAppliedAsGuid = Guid.TryParse(lastAppliedEventId, out var parsed) ? parsed : Guid.Empty;
           return new PerspectiveCursorCompletion {
             StreamId = streamId,
@@ -240,18 +242,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // Partial skip: SOME events filtered, SOME pass through to Apply. Surface the
           // dropped ids + cs so we can correlate against wh_event_store and confirm whether
           // they were already in ProcessedLineNumbers / equivalent idempotency state.
-          var droppedIds = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.MessageId.Value.ToString("D")));
-          var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
-          _logger.LogWarning(
-              "[diag.filter.partial-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] remaining={Remaining}",
-              events.Count - filtered.Count,
-              perspectiveName,
-              streamId,
-              lastAppliedEventId,
-              lastAppliedCommitSequence,
-              droppedIds,
-              droppedSeqs,
-              filtered.Count);
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var droppedIds = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.MessageId.Value.ToString("D")));
+            var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            _logger.LogDebug(
+                "[diag.filter.partial-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] remaining={Remaining}",
+                events.Count - filtered.Count,
+                perspectiveName,
+                streamId,
+                lastAppliedEventId,
+                lastAppliedCommitSequence,
+                droppedIds,
+                droppedSeqs,
+                filtered.Count);
+          }
         }
       }
       events = filtered;
