@@ -246,4 +246,88 @@ public class ClaimWorkerGateCadenceTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  [Test]
+  public async Task NotifyHealthyOverride_GateAvailable_UsesRelaxedBaselineAsync() {
+    // PR #227 — when LISTEN/NOTIFY is verified healthy AND an operator has set
+    // NotifyHealthyPollingIntervalMilliseconds to a value larger than the tight base,
+    // that becomes the effective base cadence. Gives multi-pod deployments a way to
+    // relieve wh_active_streams unique-index pressure without disabling polling entirely.
+    var coord = new TickRecordingCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+    var gate = new FakeGate();
+    gate.Set(true);
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      schemaGate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        PollingMaxIntervalMilliseconds = 5_000,
+        NotifyHealthyPollingIntervalMilliseconds = 400,  // 8× the tight base
+      }),
+      NullLogger<ClaimWorker>.Instance,
+      signalingGate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Gap between ticks should be at least the relaxed base (400ms), not the tight 50ms.
+    var gap1to2 = coord.ClaimCallTimes[1] - coord.ClaimCallTimes[0];
+    await Assert.That(gap1to2).IsGreaterThan(TimeSpan.FromMilliseconds(300))
+      .Because("relaxed baseline must replace the tight 50ms when NOTIFY is healthy");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task NotifyHealthyOverride_GateUnavailable_FallsBackToTightBaseAsync() {
+    // The relaxed baseline MUST NOT apply when the gate reports NOTIFY unavailable.
+    // Without NOTIFY waking us, the relaxed cadence would silently slow work pickup to
+    // the relaxed value (could be seconds) on every Azure pod whose listener went down.
+    // The behavior must mirror the no-override case: tight base, no backoff stretch.
+    var coord = new TickRecordingCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+    var gate = new FakeGate();
+    gate.Set(false);
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      schemaGate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 100,
+        PollingMaxIntervalMilliseconds = 5_000,
+        NotifyHealthyPollingIntervalMilliseconds = 1_000,  // would be 10× if respected
+      }),
+      NullLogger<ClaimWorker>.Instance,
+      signalingGate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    var gap1to2 = coord.ClaimCallTimes[1] - coord.ClaimCallTimes[0];
+    var gap2to3 = coord.ClaimCallTimes[2] - coord.ClaimCallTimes[1];
+    await Assert.That(gap1to2).IsLessThan(TimeSpan.FromMilliseconds(300))
+      .Because("relaxed override MUST be ignored when NOTIFY is unhealthy — tight base only");
+    await Assert.That(gap2to3).IsLessThan(TimeSpan.FromMilliseconds(300));
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
 }

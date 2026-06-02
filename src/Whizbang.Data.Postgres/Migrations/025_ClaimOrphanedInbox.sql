@@ -86,17 +86,35 @@ BEGIN
       )
     RETURNING i.message_id AS c_message_id, i.stream_id AS c_stream_id, i.partition_number AS c_partition_number
   ),
-  -- Slice 6 fix: see claim_orphaned_perspective_events (mig 027) for full rationale.
-  -- Any successful claim UPSERTs wh_active_streams so the ownership ledger stays current.
-  -- INSERT creates a row when producer-side pinning never fired (NULL p_instance_id from
-  -- TransportConsumerWorker → StoreInboxMessagesAsync); DO UPDATE refreshes last_activity_at
-  -- always and re-binds assigned_instance_id only when NULL or pointing to a dead instance.
+  -- 2026-06-02: split the wh_active_streams ledger maintenance into REFRESH (row-only
+  -- UPDATE for already-owned-with-live-lease streams) + PIN (INSERT...ON CONFLICT for
+  -- the rare ownership-transition case, with ORDER BY stream_id for consistent lock
+  -- acquisition). Symmetric with the fix in claim_orphaned_outbox (mig 024); see that
+  -- migration for the full rationale. Eliminates the 40P01 deadlock observed on dev
+  -- slot 3 (Whizbang PR #227).
+  refreshed AS (
+    UPDATE __SCHEMA__.wh_active_streams ast
+    SET last_activity_at = p_now
+    FROM claimed c
+    WHERE ast.stream_id = c.c_stream_id
+      AND c.c_stream_id IS NOT NULL
+      AND ast.assigned_instance_id = p_instance_id
+      AND ast.lease_expiry > p_now
+    RETURNING ast.stream_id AS refreshed_stream_id
+  ),
   pinned AS (
     INSERT INTO __SCHEMA__.wh_active_streams AS ast
       (stream_id, partition_number, assigned_instance_id, last_activity_at)
-    SELECT DISTINCT c.c_stream_id, COALESCE(c.c_partition_number, 0), p_instance_id, p_now
-    FROM claimed c
-    WHERE c.c_stream_id IS NOT NULL
+    SELECT DISTINCT ON (sub.stream_id) sub.stream_id, sub.partition_number, p_instance_id, p_now
+    FROM (
+      SELECT c.c_stream_id AS stream_id, COALESCE(c.c_partition_number, 0) AS partition_number
+      FROM claimed c
+      WHERE c.c_stream_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM refreshed r WHERE r.refreshed_stream_id = c.c_stream_id
+        )
+    ) sub
+    ORDER BY sub.stream_id
     ON CONFLICT (stream_id) DO UPDATE
       SET last_activity_at = EXCLUDED.last_activity_at,
           assigned_instance_id = CASE
