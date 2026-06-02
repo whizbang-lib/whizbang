@@ -190,8 +190,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         bool isAlreadyApplied;
         if (lastAppliedCommitSequence.HasValue && e.LocalCommitSequence.HasValue) {
           isAlreadyApplied = e.LocalCommitSequence.Value <= lastAppliedCommitSequence.Value;
-        } else if (lastAppliedCommitSequence.HasValue) {
-          // Stamper-lag mixed mode: defer to Apply.
+        } else if (lastAppliedCommitSequence.HasValue || e.LocalCommitSequence.HasValue) {
+          // Either side has cs but not both. The mode is "cs-world but stamper lag
+          // somewhere" — event_id lex compare is the UUIDv7 inversion we exist to avoid,
+          // and dropping a never-applied event is silently lossy. Defer to Apply.
           isAlreadyApplied = false;
         } else {
           isAlreadyApplied = string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) <= 0;

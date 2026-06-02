@@ -293,6 +293,97 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// Inverse stamper-lag mixed-mode (G5d): metadata's <c>CommitSequence</c> is NULL (the
+  /// stamper hadn't caught up to the checkpoint event when <c>SaveModelAndCheckpointAsync</c>
+  /// called <c>_eventStore.GetCommitSequenceAsync</c>, returning null and persisting null
+  /// to metadata) but the late-arriving envelope's <c>LocalCommitSequence</c> is SET.
+  /// Pre-fix the filter falls back to event_id lex compare — same UUIDv7 inversion the cs
+  /// path was added to avoid. The lex-smaller event_id gets silently dropped.
+  ///
+  /// Concrete observation from the local healthcare-350 run on 2026-06-01: the
+  /// BulkJobImportOrchestration saga projection's metadata never had CommitSequence
+  /// because the SagaItemCompletedEvents were being checkpointed faster than the stamper
+  /// could keep up — every checkpoint write got null cs. Subsequent batches arrived with
+  /// stamped cs but the persisted floor was null, so the filter fell to event_id compare
+  /// and dropped 5 consecutive lines (249–253).
+  ///
+  /// Fix: a single mixed-mode branch — when EITHER side has cs but not both, defer to
+  /// Apply. event_id lex compare only fires when BOTH sides lack cs (legacy
+  /// single-source / pre-stamper world).
+  /// </summary>
+  [Test]
+  public async Task RunWithEvents_MetadataMissingCommitSequence_EnvelopeHasCommitSequence_LexSmallerEventId_IsAppliedAsync() {
+    var streamId = Guid.NewGuid();
+    var innerStore = new InMemoryEventStore();
+
+    // First apply: SET metadata with stamper returning null (default InMemoryEventStore
+    // behaviour: GetCommitSequenceAsync returns null). Persisted metadata's CommitSequence
+    // is null but EventId is set (lex-large).
+    var firstId = MessageId.From(Guid.Parse("00000000-4c17-7000-8000-000000000000"));
+    var firstEnvelope = new MessageEnvelope<ActionTestCreatedEvent> {
+      MessageId = firstId,
+      Payload = new ActionTestCreatedEvent { StreamId = streamId, Name = "First", Value = 1 },
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+    await innerStore.AppendAsync(streamId, firstEnvelope);
+    // NOTE: not stamping firstId in any map — runner's GetCommitSequenceAsync will return null
+    // → persisted metadata.CommitSequence = null.
+    var unstampedStore = innerStore;  // no wrapper — InMemoryEventStore.GetCommitSequenceAsync returns null
+
+    await using (var ctx = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
+      var runner = await CreateRunnerAsync(unstampedStore, ps);
+      var firstResult = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
+      await Assert.That(firstResult.EventsProcessed).IsEqualTo(1);
+    }
+
+    // Confirm metadata.CommitSequence is null (the prerequisite for the bug).
+    await using (var verifyMd = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(verifyMd, "action_test");
+      var meta = await ps.GetMetadataByStreamIdAsync(streamId);
+      await Assert.That(meta!.CommitSequence).IsNull()
+        .Because("setup precondition: the stamper-lag race makes persisted CommitSequence null");
+    }
+
+    // Late-arriving event: lex-smaller event_id AND has LocalCommitSequence set.
+    var lateId = MessageId.From(Guid.Parse("00000000-4a1e-7000-8000-000000000000"));
+    var lateEnvelope = new MessageEnvelope<ActionTestUpdatedEvent> {
+      MessageId = lateId,
+      Payload = new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 },
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+
+    await using (var ctx2 = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "action_test");
+      var runner = await CreateRunnerAsync(unstampedStore, ps);
+
+      var lateEnvelopePoly = new MessageEnvelope<IEvent> {
+        MessageId = lateId,
+        Payload = lateEnvelope.Payload,
+        DispatchContext = lateEnvelope.DispatchContext,
+        Hops = lateEnvelope.Hops,
+        LocalCommitSequence = 234500L  // <-- envelope HAS cs; persisted does NOT
+      };
+      var lateResult = await runner.RunWithEventsAsync(
+        streamId, "action_test", firstId.Value,
+        [lateEnvelopePoly], CancellationToken.None);
+
+      await Assert.That(lateResult.EventsProcessed)
+        .IsEqualTo(1)
+        .Because("persisted-cs null + envelope-cs set is mixed-mode; defer to Apply, don't fall to event_id lex compare");
+    }
+
+    await using (var verifyData = CreateDbContext()) {
+      var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
+          .AsNoTracking()
+          .FirstAsync(r => r.Id == streamId);
+      await Assert.That(row.Data.Value).IsEqualTo(999);
+    }
+  }
+
+  /// <summary>
   /// Stamper-lag mixed-mode regression: metadata has <c>CommitSequence</c> set (the runner is
   /// "in commit_sequence mode") but the late-arriving envelope's <c>LocalCommitSequence</c> is
   /// null because the post-commit stamper hasn't caught up to this event yet. The pre-fix
