@@ -89,7 +89,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   private void _onSignal(WorkSignalCategory category) {
-    if (category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox) {
+    if (category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox or WorkSignalCategory.OrphanRedistribute) {
       RequestImmediatePoll();
     }
   }
