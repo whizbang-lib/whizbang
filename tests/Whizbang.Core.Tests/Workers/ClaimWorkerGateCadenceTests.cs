@@ -109,6 +109,10 @@ public class ClaimWorkerGateCadenceTests {
       Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = pollingIntervalMilliseconds,
         PollingMaxIntervalMilliseconds = pollingMaxIntervalMilliseconds,
+        // v0.502 made this default to 30 s, which would block these tests' 5-second
+        // TaskCompletionSource waits. The legacy adaptive-backoff tests want the tight
+        // baseline; set null explicitly to restore the pre-v0.502 behavior here.
+        NotifyHealthyPollingIntervalMilliseconds = null,
       }),
       NullLogger<ClaimWorker>.Instance,
       signalingGate: gate);
@@ -356,6 +360,28 @@ public class ClaimWorkerGateCadenceTests {
 
     await Assert.That(worker.ReconnectCatchUpCount).IsEqualTo(initialCount + 1)
       .Because("unavailable→available transition must increment the catch-up counter exactly once");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task StartupCatchUp_FiresExactlyOnceOnFirstClaimAsync() {
+    // v0.502 slice B.2: the first iteration of the claim loop IS the startup catch-up.
+    // Locks the once-per-pod-lifetime semantic and the counter increment.
+    var (worker, coord, _) = _newWorker(
+      pollingIntervalMilliseconds: 50,
+      pollingMaxIntervalMilliseconds: 2_000,
+      gateAvailable: true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(worker.StartupCatchUpCount).IsEqualTo(1)
+      .Because("startup catch-up must fire EXACTLY ONCE — not on every subsequent iteration");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

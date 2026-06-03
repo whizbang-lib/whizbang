@@ -135,6 +135,17 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// </summary>
   public long ReconnectCatchUpCount => Interlocked.Read(ref _reconnectCatchUpCount);
 
+  // Whether the worker has logged its startup catch-up. Incremented once per pod lifetime.
+  // Exposed via StartupCatchUpCount for regression testing.
+  private long _startupCatchUpCount;
+
+  /// <summary>
+  /// Whether this worker has run the startup catch-up claim (always exactly <c>1</c> after
+  /// the first <see cref="ExecuteAsync"/> iteration; remains <c>0</c> if the worker is
+  /// disabled, schema-gated, or perspective-only). Exposed for tests.
+  /// </summary>
+  public long StartupCatchUpCount => Interlocked.Read(ref _startupCatchUpCount);
+
   /// <summary>
   /// Observable: the most recent <see cref="WorkBatch"/> distributed by the worker.
   /// Set whenever a tick produces a non-empty batch. Useful for wiring up downstream
@@ -205,6 +216,12 @@ public sealed partial class ClaimWorker : BackgroundService {
       return;
     }
 
+    // v0.502 slice B.2 — the first claim is implicitly a startup catch-up: any work that
+    // was sitting in wh_*box / wh_perspective_events before this pod started (orphaned by
+    // a previously-crashed pod, scheduled retries that elapsed during downtime, etc.) gets
+    // discovered on the first call. Log + counter for observability so operators can verify
+    // the pod actually drained pre-existing state.
+    var startupCatchUpFired = false;
     while (!stoppingToken.IsCancellationRequested) {
       try {
         var batch = await _claimOnceAsync(stoppingToken);
@@ -213,6 +230,14 @@ public sealed partial class ClaimWorker : BackgroundService {
                    || batch.PerspectiveStreamIds.Count > 0
                    || batch.OutboxStreamIds.Count > 0
                    || batch.InboxStreamIds.Count > 0;
+
+        if (!startupCatchUpFired) {
+          startupCatchUpFired = true;
+          var picked = batch.OutboxStreamIds.Count + batch.InboxStreamIds.Count
+                     + batch.PerspectiveStreamIds.Count + batch.OutboxWork.Count + batch.InboxWork.Count;
+          LogStartupCatchUp(_logger, picked);
+          Interlocked.Increment(ref _startupCatchUpCount);
+        }
 
         if (hadWork) {
           _consecutiveEmptyPolls = 0;
@@ -366,6 +391,10 @@ public sealed partial class ClaimWorker : BackgroundService {
   [LoggerMessage(EventId = 6, Level = LogLevel.Information,
     Message = "ClaimWorker NOTIFY gate reconnected after {UnavailableMs}ms — running catch-up claim")]
   static partial void LogReconnectCatchUp(ILogger logger, long unavailableMs);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Information,
+    Message = "ClaimWorker startup catch-up complete: picked up {ItemsPicked} pre-existing work item(s)")]
+  static partial void LogStartupCatchUp(ILogger logger, int itemsPicked);
 }
 
 /// <summary>Configuration for <see cref="ClaimWorker"/>.</summary>
