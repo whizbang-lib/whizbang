@@ -818,6 +818,15 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  public async Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.ExecuteScalarAsync<int>(
+      "SELECT COALESCE(SUM(stream_count), 0)::int FROM notify_scheduled_retry_due()");
+  }
+
+  /// <inheritdoc />
   public async Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {

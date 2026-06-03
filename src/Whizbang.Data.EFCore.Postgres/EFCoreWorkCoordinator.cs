@@ -186,6 +186,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "notify_scheduled_retry_due");
+
+#pragma warning disable S2077
+    var sql = $"SELECT COALESCE(SUM(stream_count), 0)::int FROM {functionName}()";
+#pragma warning restore S2077
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return result is int n ? n : 0;
+  }
+
+  /// <inheritdoc />
   public async Task<int> CompleteOutboxPublishedAsync(
     IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
