@@ -1564,6 +1564,16 @@ public record StreamEventData {
   /// </summary>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long? CommitSequence { get; init; }
+
+  /// <summary>
+  /// v0.502 slice C.4c: <c>wh_perspective_events.attempts</c> for this work row, one-based
+  /// post-claim count. PerspectiveWorker uses this to dead-letter rows that exceed
+  /// <see cref="Whizbang.Core.Workers.PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/>
+  /// before deserialization + apply runs. Default 0 for legacy fakes / in-memory coordinators
+  /// that don't track attempts.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/perspective-events</docs>
+  public int Attempts { get; init; }
 }
 
 /// <summary>
