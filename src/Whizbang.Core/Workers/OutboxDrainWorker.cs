@@ -47,6 +47,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IReceptorRegistryQuery? _receptorRegistry;
   private readonly IReceptorRegistry? _runtimeReceptorRegistry;
+  // v0.502 slice C.4b — optional DLQ persistence + generation tag. When both wired, rows
+  // whose Attempts exceed OutboxDrainWorkerOptions.MaxOutboxAttempts get moved into
+  // wh_dead_letters via IDeadLetterStore.MoveAsync before any publish attempt.
+  private readonly IDeadLetterStore? _deadLetterStore;
+  private readonly IGenerationProvider? _generationProvider;
   // Slice 26.6b: cached local service identity from wh_service_config; resolved once
   // on first drain (after schema-ready gate) and reused for envelope publish-time
   // injection. Guid.Empty until resolved.
@@ -104,7 +109,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IMessagePublishStrategy? publishStrategy = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
     IReceptorRegistryQuery? receptorRegistry = null,
-    IReceptorRegistry? runtimeReceptorRegistry = null) {
+    IReceptorRegistry? runtimeReceptorRegistry = null,
+    IDeadLetterStore? deadLetterStore = null,
+    IGenerationProvider? generationProvider = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
@@ -118,6 +125,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _receptorRegistry = receptorRegistry;
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
+    _deadLetterStore = deadLetterStore;
+    _generationProvider = generationProvider;
   }
 
   /// <inheritdoc />
@@ -265,6 +274,35 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         if (!seen.Add(row.MessageId)) {
           // Already published this session — completion flush lagging. Skip.
           continue;
+        }
+        // v0.502 slice C.4b — per-row dead-letter check BEFORE adding to the publish set.
+        // Uses strict greater-than to match InboxDispatchWorker semantics: value of 10 means
+        // "10 total attempts allowed; the 11th claim drops the row." When the DLQ store +
+        // generation provider are wired, an atomic move into wh_dead_letters happens here
+        // (the SQL function DELETEs from wh_outbox in the same tx so the row never reaches
+        // the publish path). When unwired, this slice is a no-op.
+        if (_options.MaxOutboxAttempts is int maxAttempts
+            && row.Attempts > maxAttempts
+            && _deadLetterStore is not null
+            && _generationProvider is not null) {
+          try {
+            await _deadLetterStore.MoveAsync(
+              deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+              sourceTable: DeadLetterSourceTable.OUTBOX,
+              sourceId: row.MessageId,
+              failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,
+              errorText: $"OutboxDrainWorker dead-lettered: attempts={row.Attempts} > max={maxAttempts}",
+              instanceId: _instanceProvider.InstanceId,
+              generation: _generationProvider.GetGeneration(),
+              ct: ct).ConfigureAwait(false);
+            LogOutboxDeadLettered(_logger, row.MessageId, row.Attempts, maxAttempts);
+            continue;  // skip publishing — row no longer exists
+          } catch (Exception ex) {
+            // Move failed (transient DB issue). Drop through to publish — better to attempt
+            // delivery than to leave the row stuck in claim_orphaned_outbox forever. Next
+            // failure cycle will retry the DLQ move.
+            LogOutboxDlqMoveFailed(_logger, row.MessageId, ex);
+          }
         }
         newRowList.Add(row);
       }
@@ -695,6 +733,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 9, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker: lifecycle stage {Stage} failed for {MessageId}; publish path continues")]
   static partial void LogLifecycleStageError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker dead-lettered message {MessageId}: attempts={Attempts} > max={MaxAttempts}")]
+  static partial void LogOutboxDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+
+  [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling through to publish")]
+  static partial void LogOutboxDlqMoveFailed(ILogger logger, Guid messageId, Exception ex);
 }
 
 /// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>
@@ -712,6 +758,21 @@ public sealed class OutboxDrainWorkerOptions {
 
   /// <summary>Cap on how many leased outbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;
+
+  /// <summary>
+  /// Dead-letter threshold for wh_outbox rows. Total number of publish attempts permitted
+  /// before the row is moved into wh_dead_letters (via IDeadLetterStore.MoveAsync).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Default <c>10</c> (v0.502). Prior versions had no max — failed outbox rows accumulated
+  /// in wh_outbox indefinitely. Set to <c>null</c> explicitly to restore the prior
+  /// no-limit behavior. The check fires per-row before publishing; the same
+  /// strict-greater-than semantics as <see cref="InboxDispatchWorkerOptions.MaxInboxAttempts"/>
+  /// — value of <c>10</c> permits 10 total attempts; the 11th claim's drain dead-letters.
+  /// </para>
+  /// </remarks>
+  public int? MaxOutboxAttempts { get; set; } = 10;
 
   /// <summary>
   /// Cap on how many distinct streams to drain concurrently within a single batch from the
