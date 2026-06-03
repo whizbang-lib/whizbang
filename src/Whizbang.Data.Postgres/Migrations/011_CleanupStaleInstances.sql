@@ -65,6 +65,21 @@ BEGIN
         'deleted_instance_count', array_length(v_deleted_ids, 1),
         'stale_cutoff', p_stale_cutoff
       );
+
+    -- v0.502 slice B.3 — orphan-redistribution NOTIFY.
+    -- After releasing leases owned by the dead instances, wake every LIVE instance so it
+    -- runs a catch-up claim_orphaned_* over the newly-unowned rows. Without this, live
+    -- instances only discover the released work on their next poll tick — which under the
+    -- new v0.502 NotifyHealthyPollingIntervalMilliseconds=30000 default could be up to
+    -- 30 seconds away. Emitting a NOTIFY here turns orphan recovery from polling-bound to
+    -- NOTIFY-bound, the architectural goal of v0.502.
+    --
+    -- Per-instance channel naming matches existing PgWorkNotificationListener.ChannelName:
+    --   wh_work_i_{instance_id}
+    -- Payload "orphan" signals "go run claim_orphaned_*" to ClaimWorker._onSignal.
+    PERFORM pg_notify('wh_work_i_' || si.instance_id::text, 'orphan')
+    FROM wh_service_instances si
+    WHERE si.last_heartbeat_at >= p_stale_cutoff;  -- live instances only
   END IF;
 
   -- Return deleted IDs for orchestrator logging
