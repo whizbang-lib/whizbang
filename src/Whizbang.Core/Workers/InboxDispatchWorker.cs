@@ -543,9 +543,14 @@ public sealed class InboxDispatchWorkerOptions {
   /// (N+1)<sup>th</sup> attempt where N = MaxInboxAttempts) is committed with a terminal status
   /// instead of being re-processed. Attempts are one-based: <c>Attempts == 1</c> on the first
   /// attempt, <c>Attempts == N</c> on the Nth. So <c>MaxInboxAttempts = 3</c> permits 3 attempts
-  /// total; the 4th claim's dispatch dead-letters. Null disables. Default <c>null</c>.
+  /// total; the 4th claim's dispatch dead-letters.
   /// </summary>
-  public int? MaxInboxAttempts { get; set; }
+  /// <remarks>
+  /// Default <c>10</c> (v0.502 change). Prior versions defaulted to <c>null</c> = no limit,
+  /// which let permanently-failing handlers retry forever and accumulated wh_inbox row counts
+  /// indefinitely. Set to <c>null</c> explicitly to restore the prior infinite-retry behavior.
+  /// </remarks>
+  public int? MaxInboxAttempts { get; set; } = 10;
 
   /// <summary>
   /// Modulo partition count carried into <see cref="HandlerCommitRequest"/>. Default 10000.
