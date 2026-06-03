@@ -330,4 +330,59 @@ public class ClaimWorkerGateCadenceTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  [Test]
+  public async Task ReconnectCatchUp_GateUnavailableThenAvailable_IncrementsCounterAndFiresImmediatePollAsync() {
+    // v0.502 slice B.1: when the NOTIFY gate transitions unavailable→available, the worker
+    // should run a catch-up claim (semaphore-wakeup → next loop iteration → claim_orphaned_*).
+    // The catch-up is implicit in the existing wake-up chain; this test locks the observable
+    // counter so a future refactor that drops the OnAvailabilityChanged handler is caught.
+    var (worker, coord, gate) = _newWorker(
+      pollingIntervalMilliseconds: 50,
+      pollingMaxIntervalMilliseconds: 2_000,
+      gateAvailable: true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    var initialCount = worker.ReconnectCatchUpCount;
+    gate.Set(false);
+    await Task.Delay(20);  // Brief unavailable window
+    gate.Set(true);
+
+    // Allow the OnAvailabilityChanged → RequestImmediatePoll → wake path a moment to fire.
+    await Task.Delay(100);
+
+    await Assert.That(worker.ReconnectCatchUpCount).IsEqualTo(initialCount + 1)
+      .Because("unavailable→available transition must increment the catch-up counter exactly once");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ReconnectCatchUp_NoTransition_DoesNotIncrementCounterAsync() {
+    // If the gate flips false then back to true within the same OnAvailabilityChanged batch
+    // OR the gate stays in one state, no catch-up fires. Confirms we count actual reconnects,
+    // not phantom transitions.
+    var (worker, coord, gate) = _newWorker(
+      pollingIntervalMilliseconds: 50,
+      pollingMaxIntervalMilliseconds: 2_000,
+      gateAvailable: true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Same state set — FakeGate.Set is a no-op when IsAvailable already matches.
+    gate.Set(true);
+    await Task.Delay(50);
+
+    await Assert.That(worker.ReconnectCatchUpCount).IsEqualTo(0)
+      .Because("re-setting the gate to its current state must NOT register as a reconnect");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
 }

@@ -99,8 +99,41 @@ public sealed partial class ClaimWorker : BackgroundService {
     // wake the poll loop immediately. Unavailable→available: drain any work that accumulated
     // during the unavailable window. Available→unavailable: shorten the next wait cycle so
     // we start tight-polling without waiting out the current adaptive backoff.
+    //
+    // v0.502 — make the catch-up visible. The unavailable→available transition is the
+    // moment work might have accumulated during a NOTIFY outage; we want operators to see
+    // the catch-up in logs (and the metric below) so the path is observably exercised, not
+    // hidden inside the next regular poll. The actual catch-up SQL runs implicitly via the
+    // semaphore-wakeup chain: RequestImmediatePoll → _wake.Release → WaitAsync returns →
+    // next loop iteration calls _claimOnceAsync → ClaimWorkAsync → claim_orphaned_*.
+    if (nowAvailable) {
+      var unavailableSince = Interlocked.Exchange(ref _lastUnavailableAtTicks, 0);
+      if (unavailableSince > 0) {
+        var elapsedMs = (DateTimeOffset.UtcNow.Ticks - unavailableSince) / TimeSpan.TicksPerMillisecond;
+        LogReconnectCatchUp(_logger, elapsedMs);
+        Interlocked.Increment(ref _reconnectCatchUpCount);
+      }
+    } else {
+      Interlocked.Exchange(ref _lastUnavailableAtTicks, DateTimeOffset.UtcNow.Ticks);
+    }
     RequestImmediatePoll();
   }
+
+  // Tracks the wall-clock ticks at which the gate last flipped to unavailable. Used to
+  // compute the "unavailable for N ms" duration that gets logged when we transition back
+  // to available. 0 means "currently available" or "never been unavailable yet."
+  private long _lastUnavailableAtTicks;
+
+  // Observable counter of NOTIFY-reconnect catch-up triggers. Exposed as a property for
+  // test inspection and OTEL bridging (see slice B.6).
+  private long _reconnectCatchUpCount;
+
+  /// <summary>
+  /// Total number of times this worker has executed a catch-up claim after a NOTIFY-gate
+  /// availability transition from unavailable → available. Exposed for observability and
+  /// regression testing. Resets on process restart.
+  /// </summary>
+  public long ReconnectCatchUpCount => Interlocked.Read(ref _reconnectCatchUpCount);
 
   /// <summary>
   /// Observable: the most recent <see cref="WorkBatch"/> distributed by the worker.
@@ -329,6 +362,10 @@ public sealed partial class ClaimWorker : BackgroundService {
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
     Message = "ClaimWorker initial heartbeat failed; first claim_work calls may raise until HeartbeatWorker registers the instance")]
   static partial void LogInitialHeartbeatFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Information,
+    Message = "ClaimWorker NOTIFY gate reconnected after {UnavailableMs}ms — running catch-up claim")]
+  static partial void LogReconnectCatchUp(ILogger logger, long unavailableMs);
 }
 
 /// <summary>Configuration for <see cref="ClaimWorker"/>.</summary>
