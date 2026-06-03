@@ -125,6 +125,12 @@ public sealed class DeadLetterRecoveryOptions {
   public int ScanIntervalMinutes { get; set; } = 10;
 
   /// <summary>
+  /// Maximum DLQ rows fetched per scan cycle. Bounds how many rows a single cycle
+  /// processes — subsequent scans pick up where prior ones stopped. Default <c>200</c>.
+  /// </summary>
+  public int ScanBatchSize { get; set; } = 200;
+
+  /// <summary>
   /// When <c>true</c> (default), the worker runs one extra scan on startup that auto-
   /// resets <c>next_recovery_at = NOW()</c> for every DLQ row whose current generation
   /// is not in <c>retried_on_generations</c>. Implements the "we shipped a fix" auto-replay.
