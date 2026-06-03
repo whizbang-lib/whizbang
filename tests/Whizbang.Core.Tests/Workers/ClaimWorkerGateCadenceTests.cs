@@ -366,6 +366,98 @@ public class ClaimWorkerGateCadenceTests {
   }
 
   [Test]
+  public async Task EnableSafetyNetPollFalse_GateHealthy_LoopWaitsForSignalsOnlyAsync() {
+    // v0.502 slice B.5: with EnableSafetyNetPoll=false AND gate.IsAvailable=true, the loop
+    // should not poll on a timer — it should only wake on actual signals. We verify by
+    // measuring time between the first (initial startup) claim and the second; without
+    // signals in between, the second should not arrive within the test window.
+    var coord = new TickRecordingCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+    var gate = new FakeGate();
+    gate.Set(true);  // NOTIFY healthy
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      schemaGate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        PollingMaxIntervalMilliseconds = 500,
+        EnableSafetyNetPoll = false,  // pure NOTIFY-only mode
+        NotifyHealthyPollingIntervalMilliseconds = null,
+      }),
+      NullLogger<ClaimWorker>.Instance,
+      signalingGate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Wait 1 second — much longer than PollingIntervalMilliseconds (50ms). With safety-net
+    // poll off and no signals, no second claim should happen.
+    await Task.Delay(1_000);
+
+    await Assert.That(coord.ClaimCallTimes).Count().IsEqualTo(1)
+      .Because("with EnableSafetyNetPoll=false and NOTIFY healthy, the loop must not poll on a timer");
+
+    // Sanity check: a manual signal still wakes the loop (the wake path is intact).
+    worker.RequestImmediatePoll();
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5))
+      .ConfigureAwait(false);
+    await Assert.That(coord.ClaimCallTimes).Count().IsEqualTo(2)
+      .Because("an explicit RequestImmediatePoll must still wake the loop");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task EnableSafetyNetPollFalse_GateUnavailable_ReengagesTightPollingAsync() {
+    // The safety net MUST re-engage at the tight base cadence when NOTIFY drops, regardless
+    // of EnableSafetyNetPoll=false — otherwise a listener outage would silently freeze claim
+    // pickup. Without this, an Azure pod whose direct-connection listener died would never
+    // notice new work until manually restarted.
+    var coord = new TickRecordingCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+    var gate = new FakeGate();
+    gate.Set(false);  // NOTIFY unhealthy from the start
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      schemaGate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 100,
+        PollingMaxIntervalMilliseconds = 5_000,
+        EnableSafetyNetPoll = false,  // disabled — but gate-unavailable should override
+        NotifyHealthyPollingIntervalMilliseconds = null,
+      }),
+      NullLogger<ClaimWorker>.Instance,
+      signalingGate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    var gap = coord.ClaimCallTimes[2] - coord.ClaimCallTimes[1];
+    await Assert.That(gap).IsLessThan(TimeSpan.FromMilliseconds(500))
+      .Because("gate-unavailable must override EnableSafetyNetPoll=false — tight base polling resumes");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
   public async Task StartupCatchUp_FiresExactlyOnceOnFirstClaimAsync() {
     // v0.502 slice B.2: the first iteration of the claim loop IS the startup catch-up.
     // Locks the once-per-pod-lifetime semantic and the counter increment.

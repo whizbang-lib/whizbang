@@ -346,6 +346,16 @@ public sealed partial class ClaimWorker : BackgroundService {
     if (_signalingGate?.IsAvailable == false) {
       return baseMs;
     }
+    // v0.502 slice B.5 — pure NOTIFY-only mode. When the operator has explicitly disabled
+    // the safety-net poll AND the gate reports NOTIFY healthy, the loop only wakes on
+    // actual NOTIFY signals (Outbox/Inbox/Perspective/OrphanRedistribute via _onSignal,
+    // gate transitions via _onGateAvailabilityChanged, drain-channel handoff via
+    // OnNewInbox/OnNewOutboxWorkAvailable). No periodic poll at all. Safety net only kicks
+    // back in the moment the gate flips false. int.MaxValue is ~24.8 days — effectively
+    // infinite for our use; the wake semaphore short-circuits any sooner wake.
+    if (!_options.EnableSafetyNetPoll && _signalingGate?.IsAvailable == true) {
+      return int.MaxValue;
+    }
     // 2026-06-02 (PR #227) — when LISTEN/NOTIFY is healthy AND an operator has opted into
     // a relaxed steady-state cadence, use NotifyHealthyPollingIntervalMilliseconds as the
     // baseline instead of the tight PollingIntervalMilliseconds. Rationale: under load,
@@ -406,6 +416,30 @@ public sealed class ClaimWorkerOptions {
   /// maintenance windows or isolating a misbehaving instance without redeploying. Default <c>true</c>.
   /// </summary>
   public bool Enabled { get; set; } = true;
+
+  /// <summary>
+  /// When <c>true</c> (default), the claim loop runs a safety-net poll on the
+  /// <see cref="NotifyHealthyPollingIntervalMilliseconds"/> cadence (default 30 s) even
+  /// when LISTEN/NOTIFY is healthy, to catch any work the listener might have missed.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Set to <c>false</c> for pure NOTIFY-only operation: when the gate reports NOTIFY
+  /// healthy, the loop sleeps until an actual signal arrives (Outbox/Inbox/Perspective/
+  /// OrphanRedistribute) or a drain channel writes new work. Reduces idle DB load to
+  /// essentially zero, at the cost of giving up the "what if we missed a NOTIFY?" backstop.
+  /// The orphan-detection NOTIFY (slice B.3) + ScheduledRetryWorker (slice B.4) +
+  /// reconnect catch-up (slice B.1) + startup catch-up (slice B.2) together cover every
+  /// case the safety-net poll exists for, so disabling it is safe when those workers are
+  /// running and NOTIFY is verified solid.
+  /// </para>
+  /// <para>
+  /// When the gate flips unavailable, the safety net automatically re-engages at the
+  /// tight <see cref="PollingIntervalMilliseconds"/> cadence regardless of this setting —
+  /// a listener outage never causes silent claim-latency degradation.
+  /// </para>
+  /// </remarks>
+  public bool EnableSafetyNetPoll { get; set; } = true;
 
   /// <summary>Base polling cadence in ms. Default 250.</summary>
   public int PollingIntervalMilliseconds { get; set; } = 250;
