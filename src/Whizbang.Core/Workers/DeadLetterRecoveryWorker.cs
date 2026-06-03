@@ -81,7 +81,14 @@ public partial class DeadLetterRecoveryWorker(
       try {
         var current = _generationProvider.GetGeneration();
         using var scope = _scopeFactory.CreateScope();
-        var svc = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryService>();
+        // GetService (not GetRequiredService) — when no persistence layer is wired
+        // (InMemory samples, unit-test hosts) the worker degrades to a no-op rather
+        // than throwing at startup. Same pattern as IDeadLetterStore wiring elsewhere
+        // in the DLQ surface.
+        var svc = scope.ServiceProvider.GetService<IDeadLetterRecoveryService>();
+        if (svc is null) {
+          return;
+        }
         var scheduled = await svc.ResetForGenerationAsync(current, stoppingToken).ConfigureAwait(false);
         if (scheduled > 0) {
           Interlocked.Add(ref _totalGenerationReplays, scheduled);
@@ -116,7 +123,12 @@ public partial class DeadLetterRecoveryWorker(
 
   private async Task _scanOnceAsync(CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
-    var svc = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryService>();
+    // Optional — no persistence layer wired = no scanning. Same as the startup-replay
+    // branch above; keeps the worker safe to register everywhere.
+    var svc = scope.ServiceProvider.GetService<IDeadLetterRecoveryService>();
+    if (svc is null) {
+      return;
+    }
     var policy = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryPolicy>();
 
     // Fetch in batches — bounded by ScanBatchSize so a single scan doesn't try to drain

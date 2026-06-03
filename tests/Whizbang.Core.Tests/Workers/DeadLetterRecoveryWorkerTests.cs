@@ -108,6 +108,39 @@ public class DeadLetterRecoveryWorkerTests {
     return (worker, svc);
   }
 
+  /// <summary>
+  /// v0.502 hotfix — regression lock for InMemory integration tests. The worker is
+  /// registered by <see cref="WorkerPipelineExtensions.AddWhizbangWorkers"/> in EVERY
+  /// host (including in-memory + unit-test hosts that don't wire a persistence layer),
+  /// so it must tolerate the absence of <see cref="IDeadLetterRecoveryService"/> in DI
+  /// rather than throwing at startup. Without this lock the InMemory sample CI job
+  /// failed with "No service for type 'IDeadLetterRecoveryService' has been registered."
+  /// </summary>
+  [Test]
+  public async Task NoRecoveryServiceRegistered_StartsAndStopsCleanlyAsync() {
+    var services = new ServiceCollection();
+    // Intentionally NOT registering IDeadLetterRecoveryService — only the policy.
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(
+      new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
+    var sp = services.BuildServiceProvider();
+    var worker = new DeadLetterRecoveryWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new ImmediateSchemaGate(),
+      Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
+      new FixedGenerationProvider("test/0.0.1"),
+      NullLogger<DeadLetterRecoveryWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token); // must NOT throw
+    await Task.Yield();
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Worker degraded to a no-op — no scans, no replay scheduled.
+    await Assert.That(worker.TotalScans).IsEqualTo(0);
+    await Assert.That(worker.TotalGenerationReplays).IsEqualTo(0);
+  }
+
   [Test]
   public async Task PendingEntry_RetryableReason_GetsRecoveredAsync() {
     var svc_options = new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 };
