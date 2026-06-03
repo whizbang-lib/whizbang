@@ -358,7 +358,8 @@ public partial class DapperWorkCoordinator(
       EventData = r.out_event_data,
       Metadata = r.out_metadata,
       Scope = r.out_scope,
-      EventWorkId = r.out_event_work_id
+      EventWorkId = r.out_event_work_id,
+      Attempts = r.out_attempts,
     })];
   }
 
@@ -1120,6 +1121,12 @@ internal class StreamEventRow {
   public string? out_metadata { get; set; }
   public string? out_scope { get; set; }
   public Guid out_event_work_id { get; set; }
+  // v0.502 slice C.4c — wh_perspective_events.attempts surfaced by get_stream_events
+  // for the perspective worker's pre-apply DLQ check. Dapper hydrates by column name;
+  // S3459 false positive suppressed (same pattern as out_commit_sequence above).
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
+    Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
+  public int out_attempts { get; set; }
 }
 
 /// <summary>
