@@ -349,26 +349,30 @@ public sealed class ClaimWorkerOptions {
   public int PollingMaxIntervalMilliseconds { get; set; } = 10_000;
 
   /// <summary>
-  /// Optional relaxed baseline polling cadence when LISTEN/NOTIFY is verified healthy.
-  /// When set, replaces <see cref="PollingIntervalMilliseconds"/> as the loop's base wait
-  /// while the gate reports <c>IsAvailable=true</c>. Only takes effect when its value is
-  /// greater than <see cref="PollingIntervalMilliseconds"/>; otherwise ignored.
+  /// Relaxed baseline polling cadence when LISTEN/NOTIFY is verified healthy. Replaces
+  /// <see cref="PollingIntervalMilliseconds"/> as the loop's base wait while the gate
+  /// reports <c>IsAvailable=true</c>. Only takes effect when its value is greater than
+  /// <see cref="PollingIntervalMilliseconds"/>; otherwise ignored.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Default <c>null</c> = no behavior change (matches pre-PR-#227 default).
+  /// Default <c>30_000</c> (30 s) as of v0.502. Prior versions defaulted to <c>null</c>,
+  /// which kept the tight <see cref="PollingIntervalMilliseconds"/> (250 ms) active even
+  /// when NOTIFY was healthy — that produced ~4 claim_work calls/sec/pod constant DB load
+  /// when work-pickup latency was already &lt; 50 ms via NOTIFY. The 30 s default is a true
+  /// safety-net: NOTIFY does the latency-sensitive work; the poll only covers
+  /// corner cases (missed NOTIFYs, in-flight scheduled retries, etc.).
   /// </para>
   /// <para>
-  /// Set this on multi-pod deployments where NOTIFY is reliably delivering signals. With
-  /// LISTEN/NOTIFY healthy, the listener short-circuits the wait the moment new work
-  /// arrives, so tight 250 ms polling is wasted DB pressure that produces
-  /// <c>wh_active_streams</c> unique-index contention. Typical values: <c>1000</c> (1 s)
-  /// or <c>2000</c> (2 s). Falls back to the tight base cadence automatically the moment
-  /// NOTIFY availability flips to false (so a broker outage doesn't silently increase
-  /// claim latency).
+  /// Falls back to the tight <see cref="PollingIntervalMilliseconds"/> automatically the
+  /// moment NOTIFY availability flips to false (so a listener outage doesn't silently
+  /// increase claim latency).
+  /// </para>
+  /// <para>
+  /// Set explicitly to <c>null</c> to restore the pre-v0.502 behavior (tight polling always).
   /// </para>
   /// </remarks>
-  public int? NotifyHealthyPollingIntervalMilliseconds { get; set; }
+  public int? NotifyHealthyPollingIntervalMilliseconds { get; set; } = 30_000;
   /// <summary>Cap on rows returned per claim_work call. Default 1000.</summary>
   public int MaxStreamsPerBatch { get; set; } = 1000;
 
