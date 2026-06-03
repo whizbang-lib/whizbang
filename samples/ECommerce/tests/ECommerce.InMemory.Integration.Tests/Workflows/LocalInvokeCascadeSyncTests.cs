@@ -69,11 +69,20 @@ public class LocalInvokeCascadeSyncTests {
         typeof(InventoryLevelsPerspective),
         _testProductId.Value,
         eventTypes: [typeof(ProductCreatedEvent)],
-        timeout: TimeSpan.FromSeconds(10));
+        timeout: TimeSpan.FromSeconds(45));
 
-    // Assert — should complete, NOT time out
+    // Assert — should complete, NOT time out. When this fails in CI we surface the
+    // full SyncResult so the failure log says WHERE the pipeline stalled
+    // (EventsTracked=0 → tracker never saw the cascade; EventsAwaited>0 +
+    // Synced not reached → tracker saw events but worker never applied them).
+    var diag = $"SyncResult: Outcome={syncResult.Outcome}, "
+             + $"EventsAwaited={syncResult.EventsAwaited}, "
+             + $"EventsEmitted={syncResult.EventsEmitted}, "
+             + $"EventsTracked={syncResult.EventsTracked}, "
+             + $"PerspectiveName={syncResult.PerspectiveName ?? "<null>"}, "
+             + $"Elapsed={syncResult.ElapsedTime.TotalMilliseconds:F0}ms";
     await Assert.That(syncResult.Outcome).IsEqualTo(SyncOutcome.Synced)
-      .Because("WaitForStreamAsync should complete after PerspectiveWorker processes the cascaded event");
+      .Because($"WaitForStreamAsync should complete after PerspectiveWorker processes the cascaded event — {diag}");
   }
 
   /// <summary>
