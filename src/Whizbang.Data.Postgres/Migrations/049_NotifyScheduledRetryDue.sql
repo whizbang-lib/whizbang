@@ -19,8 +19,14 @@ BEGIN
   -- Outbox rows whose scheduled_for time has elapsed and which haven't been processed.
   -- Filter to NOT NULL stream_id because notify_instance_owners can't deliver to a row
   -- with no owning stream. (Stream-less retries are handled by the regular claim poll.)
+  --
+  -- Multi-schema fix: tables MUST be __SCHEMA__-qualified. Unqualified FROM clauses get
+  -- resolved via search_path which defaults to public — when the function is invoked
+  -- from an inventory/bff schema (the InMemory + ECommerce hosts pattern) it tried to
+  -- read public.wh_outbox / public.wh_inbox, which don't exist; every 10 s cycle threw
+  -- 42P01 and the surrounding noise stalled perspective discovery.
   SELECT ARRAY_AGG(DISTINCT stream_id) INTO v_outbox_streams
-  FROM wh_outbox
+  FROM __SCHEMA__.wh_outbox
   WHERE processed_at IS NULL
     AND scheduled_for IS NOT NULL
     AND scheduled_for <= v_now
@@ -28,7 +34,7 @@ BEGIN
 
   -- Inbox rows — same shape.
   SELECT ARRAY_AGG(DISTINCT stream_id) INTO v_inbox_streams
-  FROM wh_inbox
+  FROM __SCHEMA__.wh_inbox
   WHERE processed_at IS NULL
     AND scheduled_for IS NOT NULL
     AND scheduled_for <= v_now

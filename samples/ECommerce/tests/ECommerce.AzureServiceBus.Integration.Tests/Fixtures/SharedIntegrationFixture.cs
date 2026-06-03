@@ -320,6 +320,13 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
+    // override in test fixture so the safety-net poll catches up promptly when NOTIFY
+    // delivery doesn't align with cascade-write timing.
+    builder.Services.Configure<ClaimWorkerOptions>(options => {
+      options.NotifyHealthyPollingIntervalMilliseconds = 500;
+    });
+
     // Register background workers
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
@@ -436,6 +443,13 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
+    });
+
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
+    // override in test fixture so the safety-net poll catches up promptly when NOTIFY
+    // delivery doesn't align with cascade-write timing.
+    builder.Services.Configure<ClaimWorkerOptions>(options => {
+      options.NotifyHealthyPollingIntervalMilliseconds = 500;
     });
 
     // Register background workers
