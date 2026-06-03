@@ -3591,6 +3591,20 @@ public class PerspectiveWorkerOptions {
   public int PollingIntervalMilliseconds { get; set; } = 1000;
 
   /// <summary>
+  /// Dead-letter threshold for wh_perspective_events rows. Total number of apply attempts
+  /// permitted before the row is moved into wh_dead_letters via IDeadLetterStore.MoveAsync.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Default <c>10</c> (v0.502). Prior versions had no max — failed perspective_event rows
+  /// accumulated indefinitely. Set to <c>null</c> explicitly to restore the prior no-limit
+  /// behavior. Wire-up at the apply boundary lands in a follow-up slice; this option is
+  /// surfaced now so configuration is forward-compatible with the imminent DLQ integration.
+  /// </para>
+  /// </remarks>
+  public int? MaxPerspectiveEventAttempts { get; set; } = 10;
+
+  /// <summary>
   /// Lease duration in seconds.
   /// Perspective cursors claimed will be locked for this duration.
   /// Default: 300 (5 minutes)

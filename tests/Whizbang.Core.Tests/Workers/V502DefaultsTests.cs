@@ -55,4 +55,26 @@ public class V502DefaultsTests {
     await Assert.That(claim.NotifyHealthyPollingIntervalMilliseconds).IsNull()
       .Because("operators must be able to explicitly opt back into tight always-polling");
   }
+
+  [Test]
+  public async Task MaxOutboxAttempts_DefaultsToTenAsync() {
+    var options = new OutboxDrainWorkerOptions();
+    await Assert.That(options.MaxOutboxAttempts).IsEqualTo(10)
+      .Because("v0.502 slice C.4b parity with MaxInboxAttempts — outbox rows that keep " +
+               "failing must also dead-letter eventually instead of accumulating forever");
+  }
+
+  [Test]
+  public async Task MaxPerspectiveEventAttempts_DefaultsToTenAsync() {
+    var options = new PerspectiveWorkerOptions();
+    await Assert.That(options.MaxPerspectiveEventAttempts).IsEqualTo(10)
+      .Because("symmetric with inbox/outbox defaults; perspective wire-up follows in a subsequent slice");
+  }
+
+  [Test]
+  public async Task EnableSafetyNetPoll_DefaultsToTrueAsync() {
+    var options = new ClaimWorkerOptions();
+    await Assert.That(options.EnableSafetyNetPoll).IsTrue()
+      .Because("safety-net poll stays on by default; NOTIFY-only mode is opt-in via setting to false");
+  }
 }
