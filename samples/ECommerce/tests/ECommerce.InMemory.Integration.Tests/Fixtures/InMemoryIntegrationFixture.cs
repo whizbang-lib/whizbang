@@ -373,6 +373,16 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 was deliberately tuned
+    // for production multi-pod loads where NOTIFY reliably wakes the work loop within milli-
+    // seconds. In these fixtures the cascade-write → claim-discovery NOTIFY isn't always
+    // delivered before the listener subscribes, so the 30 s safety-net poll becomes the
+    // observed latency floor. Drop it to a test-friendly cadence so the safety net catches
+    // up promptly when NOTIFY misses.
+    builder.Services.Configure<ClaimWorkerOptions>(options => {
+      options.NotifyHealthyPollingIntervalMilliseconds = 500;
+    });
+
     // Register background workers
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
@@ -515,6 +525,16 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
+    });
+
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 was deliberately tuned
+    // for production multi-pod loads where NOTIFY reliably wakes the work loop within milli-
+    // seconds. In these fixtures the cascade-write → claim-discovery NOTIFY isn't always
+    // delivered before the listener subscribes, so the 30 s safety-net poll becomes the
+    // observed latency floor. Drop it to a test-friendly cadence so the safety net catches
+    // up promptly when NOTIFY misses.
+    builder.Services.Configure<ClaimWorkerOptions>(options => {
+      options.NotifyHealthyPollingIntervalMilliseconds = 500;
     });
 
     // Register background workers

@@ -358,7 +358,8 @@ public partial class DapperWorkCoordinator(
       EventData = r.out_event_data,
       Metadata = r.out_metadata,
       Scope = r.out_scope,
-      EventWorkId = r.out_event_work_id
+      EventWorkId = r.out_event_work_id,
+      Attempts = r.out_attempts,
     })];
   }
 
@@ -818,6 +819,15 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  public async Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.ExecuteScalarAsync<int>(
+      "SELECT COALESCE(SUM(stream_count), 0)::int FROM notify_scheduled_retry_due()");
+  }
+
+  /// <inheritdoc />
   public async Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {
@@ -1111,6 +1121,12 @@ internal class StreamEventRow {
   public string? out_metadata { get; set; }
   public string? out_scope { get; set; }
   public Guid out_event_work_id { get; set; }
+  // v0.502 slice C.4c — wh_perspective_events.attempts surfaced by get_stream_events
+  // for the perspective worker's pre-apply DLQ check. Dapper hydrates by column name;
+  // S3459 false positive suppressed (same pattern as out_commit_sequence above).
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
+    Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
+  public int out_attempts { get; set; }
 }
 
 /// <summary>

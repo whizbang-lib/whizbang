@@ -60,6 +60,13 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly IReceptorRegistry? _runtimeReceptorRegistry;
   private readonly InboxDeserializeCache? _deserializeCache;
   private readonly IMessageDiscardPolicy? _discardPolicy;
+  // v0.502 slice C.4 — optional DLQ persistence. When wired, the dead-letter branch
+  // moves the row into wh_dead_letters via the atomic SQL function instead of just
+  // marking it Published. Optional so existing callers (and the legacy fakes used by
+  // many tests) continue to compile + run unchanged.
+  private readonly IDeadLetterStore? _deadLetterStore;
+  private readonly IGenerationProvider? _generationProvider;
+  private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
 
   /// <summary>Constructor.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
@@ -82,7 +89,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IReceptorRegistryQuery? receptorRegistry = null,
     InboxDeserializeCache? deserializeCache = null,
     IMessageDiscardPolicy? discardPolicy = null,
-    IReceptorRegistry? runtimeReceptorRegistry = null) {
+    IReceptorRegistry? runtimeReceptorRegistry = null,
+    IDeadLetterStore? deadLetterStore = null,
+    IGenerationProvider? generationProvider = null,
+    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -101,6 +111,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _deserializeCache = deserializeCache;
     _discardPolicy = discardPolicy;
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
+    _deadLetterStore = deadLetterStore;
+    _generationProvider = generationProvider;
+    _dlqMetrics = dlqMetrics;
   }
 
   /// <inheritdoc />
@@ -212,6 +225,36 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // pre-refactor count (the check used to be >= when attempts was zero-based).
     if (maxAttempts.HasValue && work.Attempts > maxAttempts.Value) {
       LogDeadLettered(_logger, work.MessageId, work.Attempts, maxAttempts.Value);
+
+      // v0.502 slice C.4 — when an IDeadLetterStore is wired, persist the failing row
+      // into wh_dead_letters with a forensic snapshot AND have the SQL function DELETE
+      // it from wh_inbox in the same transaction. The handler-commit path (legacy
+      // mark-Published) is then bypassed since the row no longer exists.
+      //
+      // When the store isn't wired, fall back to the legacy mark-Published path so
+      // existing callers (in-memory tests, etc.) still terminate the row correctly.
+      if (_deadLetterStore is not null && _generationProvider is not null) {
+        try {
+          await _deadLetterStore.MoveAsync(
+            deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+            sourceTable: DeadLetterSourceTable.INBOX,
+            sourceId: work.MessageId,
+            failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,
+            errorText: $"InboxDispatchWorker dead-lettered: attempts={work.Attempts} > max={maxAttempts.Value}",
+            instanceId: _instanceProvider.InstanceId,
+            generation: _generationProvider.GetGeneration(),
+            ct: stoppingToken).ConfigureAwait(false);
+          _dlqMetrics?.Added.Add(1,
+            new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+            new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
+          return;
+        } catch (Exception ex) {
+          // DLQ move is best-effort — if it fails, fall back to the legacy
+          // mark-Published path so the row still gets terminal. The retry budget
+          // is already exhausted; we never want to keep re-claiming it.
+          LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
+        }
+      }
       var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
       await _handlerCommitChannel.EnqueueAsync(terminalRequest, stoppingToken);
       return;
@@ -492,6 +535,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "InboxDispatchWorker dead-lettered message {MessageId}: attempts={Attempts} > max={MaxAttempts}")]
   static partial void LogDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
 
+  [LoggerMessage(EventId = 10, Level = LogLevel.Warning, Message = "InboxDispatchWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling back to legacy mark-Published path")]
+  static partial void LogDeadLetterStoreFailed(ILogger logger, Guid messageId, Exception ex);
+
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
 
@@ -543,9 +589,14 @@ public sealed class InboxDispatchWorkerOptions {
   /// (N+1)<sup>th</sup> attempt where N = MaxInboxAttempts) is committed with a terminal status
   /// instead of being re-processed. Attempts are one-based: <c>Attempts == 1</c> on the first
   /// attempt, <c>Attempts == N</c> on the Nth. So <c>MaxInboxAttempts = 3</c> permits 3 attempts
-  /// total; the 4th claim's dispatch dead-letters. Null disables. Default <c>null</c>.
+  /// total; the 4th claim's dispatch dead-letters.
   /// </summary>
-  public int? MaxInboxAttempts { get; set; }
+  /// <remarks>
+  /// Default <c>10</c> (v0.502 change). Prior versions defaulted to <c>null</c> = no limit,
+  /// which let permanently-failing handlers retry forever and accumulated wh_inbox row counts
+  /// indefinitely. Set to <c>null</c> explicitly to restore the prior infinite-retry behavior.
+  /// </remarks>
+  public int? MaxInboxAttempts { get; set; } = 10;
 
   /// <summary>
   /// Modulo partition count carried into <see cref="HandlerCommitRequest"/>. Default 10000.

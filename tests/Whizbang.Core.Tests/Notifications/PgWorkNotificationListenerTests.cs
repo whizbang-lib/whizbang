@@ -152,6 +152,20 @@ public class PgWorkNotificationListenerTests {
   }
 
   [Test]
+  public async Task OnNotification_OrphanPayload_FiresOnSignalWithOrphanRedistributeAsync() {
+    // v0.502 slice B.3 — cleanup_stale_instances emits 'orphan' on wh_work_i_X for each
+    // live instance when it releases the leases of a dead pod. The listener routes that
+    // through the same shared multiplex path as outbox/inbox/perspective.
+    var (listener, _, _, _) = _build();
+    var received = new List<WorkSignalCategory>();
+    listener.OnSignal += received.Add;
+
+    ((INotifySubscription)listener).OnNotification("orphan");
+
+    await Assert.That(received).IsEquivalentTo([WorkSignalCategory.OrphanRedistribute]);
+  }
+
+  [Test]
   public async Task OnNotification_UnknownPayload_IsIgnoredAsync() {
     var (listener, _, _, _) = _build();
     var received = new List<WorkSignalCategory>();
