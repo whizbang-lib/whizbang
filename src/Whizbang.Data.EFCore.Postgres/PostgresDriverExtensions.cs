@@ -132,6 +132,33 @@ public static class PostgresDriverExtensions {
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
         selector.Services.AddHostedService<TableStatisticsCollector>();
 
+        // v0.502 DLQ — register IDeadLetterStore + IDeadLetterRecoveryService so the
+        // dispatch worker can move failed inbox rows into wh_dead_letters and the
+        // recovery worker can drain them back out. Without these the dispatch path's
+        // _deadLetterStore field is null and the DLQ branch silently falls back to
+        // mark-Published (observed on a consumer production: wh_dead_letters empty even with
+        // WRN dead-letter logs firing).
+        //
+        // IDeadLetterStore is a SINGLETON (dispatch worker is singleton, can't inject
+        // a scoped service). The adapter opens a fresh scope per MoveAsync so the
+        // underlying EF Core path uses a properly-scoped DbContext / connection.
+        //
+        // IDeadLetterRecoveryService is SCOPED — DeadLetterRecoveryWorker explicitly
+        // creates a scope per scan and resolves from it (see DeadLetterRecoveryWorker.cs).
+        selector.Services.TryAddSingleton<IDeadLetterStore>(sp =>
+          new ScopedEFCoreDeadLetterStore(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            dbContextType,
+            sp.GetService<ILogger<EFCoreDeadLetterStore<Microsoft.EntityFrameworkCore.DbContext>>>()
+              ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<EFCoreDeadLetterStore<Microsoft.EntityFrameworkCore.DbContext>>.Instance,
+            sp.GetService<WorkCoordinatorGate>()));
+        selector.Services.TryAddScoped<IDeadLetterRecoveryService>(sp =>
+          new EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>(
+            (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+            sp.GetService<ILogger<EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>>>()
+              ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>>.Instance,
+            sp.GetService<WorkCoordinatorGate>()));
+
         // TURNKEY: DbContext-backed fallback so the LISTEN/NOTIFY listener + commit-order
         // stamper + app-signal channel use the same connection string EF Core already has,
         // when neither Whizbang:Database:DirectConnectionString nor ConnectionStringKey is
