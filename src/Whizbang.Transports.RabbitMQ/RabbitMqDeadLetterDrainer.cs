@@ -116,11 +116,23 @@ public sealed class RabbitMqDeadLetterDrainer : ITransportDeadLetterDrainer {
   /// current routing key when the header is missing or malformed.
   /// </summary>
   private (string Exchange, string RoutingKey) _resolveOriginalDestination(BasicGetResult result) {
-    var fallbackExchange = _fallbackExchange;
-    var fallbackRoutingKey = result.RoutingKey ?? "";
+    return ResolveOriginalDestination(
+      headers: result.BasicProperties.Headers,
+      fallbackRoutingKey: result.RoutingKey ?? "",
+      fallbackExchange: _fallbackExchange);
+  }
 
-    if (result.BasicProperties.Headers is null
-        || !result.BasicProperties.Headers.TryGetValue("x-death", out var xDeathRaw)
+  /// <summary>
+  /// Internal x-death header parser — pure function so it can be unit-tested without a
+  /// real broker / <see cref="BasicGetResult"/>. Public-ish signature takes the raw headers
+  /// dictionary and the fallback values; returns the resolved exchange + routing-key pair.
+  /// </summary>
+  internal static (string Exchange, string RoutingKey) ResolveOriginalDestination(
+      IDictionary<string, object?>? headers,
+      string fallbackRoutingKey,
+      string fallbackExchange) {
+    if (headers is null
+        || !headers.TryGetValue("x-death", out var xDeathRaw)
         || xDeathRaw is not IList<object?> xDeathList
         || xDeathList.Count == 0
         || xDeathList[0] is not IDictionary<string, object?> first) {

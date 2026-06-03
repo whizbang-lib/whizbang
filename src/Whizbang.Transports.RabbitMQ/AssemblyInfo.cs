@@ -5,3 +5,4 @@ using System.Runtime.CompilerServices;
 // RabbitMQTransport.SubscribeAsync flags this as "internal for backward compat during
 // migration"; the migration target is this test assembly. Grant it access.
 [assembly: InternalsVisibleTo("Whizbang.Transports.RabbitMQ.Integration.Tests")]
+[assembly: InternalsVisibleTo("Whizbang.Transports.RabbitMQ.Tests")]

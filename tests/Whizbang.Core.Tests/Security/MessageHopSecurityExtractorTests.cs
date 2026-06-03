@@ -772,6 +772,97 @@ public class MessageHopSecurityExtractorTests {
   }
 
   // ========================================
+  // Logger Coverage Tests
+  // ========================================
+  // The internal Log.* helpers each have a `if (logger != null)` guard. Other tests pass
+  // null logger via the default ctor (private _logger stays null) so the guarded body of
+  // each helper never runs. These tests pass a non-null logger via NullLogger<T>.Instance
+  // (which is itself non-null) so the guarded bodies execute and the helper methods get
+  // their coverage from the dispatch side.
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_HopsNullOrEmptyHelper_DispatchesLogAsync() {
+    var extractor = new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance);
+    var options = new MessageSecurityOptions();
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = null!,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_ProcessingHopsHelper_DispatchesLogAsync() {
+    var extractor = new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance);
+    var envelope = _createEnvelopeWithSecurityContext(new SecurityContext { TenantId = "t", UserId = "u" });
+    var options = new MessageSecurityOptions();
+
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+    // Successful extraction also fires ScopeExtracted helper — covers two helpers in one test.
+    await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_HopScopeNullHelper_DispatchesLogAsync() {
+    var extractor = new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance);
+    var options = new MessageSecurityOptions();
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = null,  // triggers HopScopeNull log
+    };
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_HopScopeNoChangesHelper_DispatchesLogAsync() {
+    var extractor = new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance);
+    var options = new MessageSecurityOptions();
+    // Hop with Scope present but HasChanges=false → triggers HopScopeValuesNull log path.
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = new ScopeDelta(),  // empty Values + Collections → HasChanges=false
+    };
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_NoScopeFoundHelper_DispatchesLogAsync() {
+    // Triggers the NoScopeFound log path: _mergeScopeDeltas returns null because all hops
+    // have null Scope, so the public ExtractAsync hits the `scopeContext is null` branch and
+    // logs NoScopeFound before returning null.
+    var extractor = new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance);
+    var options = new MessageSecurityOptions();
+    var envelope = _createEnvelopeWithoutSecurityContext();
+
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+    await Assert.That(result).IsNull();
+  }
+
+  // ========================================
   // Helper Methods
   // ========================================
 
