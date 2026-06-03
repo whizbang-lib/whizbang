@@ -53,6 +53,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<DeadLetterRecoveryWorker>();
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
     services.TryAddSingleton<IDeadLetterRecoveryPolicy, DefaultDeadLetterRecoveryPolicy>();
+    services.TryAddSingleton<Whizbang.Core.Observability.DeadLetterMetrics>();
 
     // Phase H step 7 slice 7: cooldown cache for the perspective drainer's short-circuit gate.
     // Singleton — PerspectiveWorker reads/writes it; the sweep worker periodically evicts.
