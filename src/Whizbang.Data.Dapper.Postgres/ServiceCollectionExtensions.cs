@@ -159,6 +159,11 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPostgresPerspectiveCheckpointCompleter>>()));
 
+    // v0.502 DLQ — register IDeadLetterStore so InboxDispatchWorker can move failed
+    // rows into wh_dead_letters. The store is singleton-safe (only stashes the
+    // connection string at construction; opens connections on demand).
+    _addDeadLetterStore(services, connectionString);
+
     // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
     // Runs only when the schema was just initialized here (we know the table exists) and
     // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
@@ -290,6 +295,11 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPostgresPerspectiveCheckpointCompleter>>()));
 
+    // v0.502 DLQ — register IDeadLetterStore so InboxDispatchWorker can move failed
+    // rows into wh_dead_letters. The store is singleton-safe (only stashes the
+    // connection string at construction; opens connections on demand).
+    _addDeadLetterStore(services, connectionString);
+
     // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
     // Runs only when the schema was just initialized here (we know the table exists) and
     // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
@@ -319,5 +329,23 @@ public static class ServiceCollectionExtensions {
       .AddCheck<PostgresHealthCheck>("whizbang_postgres");
 
     return services;
+  }
+
+  /// <summary>
+  /// Registers <see cref="IDeadLetterStore"/> with the Dapper implementation. Called
+  /// from each <c>AddWhizbangPostgres</c> overload so the dispatch worker (a singleton
+  /// consumer of <see cref="IDeadLetterStore"/>) can move failed inbox rows into
+  /// <c>wh_dead_letters</c>. <see cref="DapperDeadLetterStore"/> is singleton-safe:
+  /// it only stashes the connection string at construction and opens a fresh
+  /// <see cref="Npgsql.NpgsqlConnection"/> per <c>MoveAsync</c> call.
+  /// </summary>
+  /// <tests>Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_DeadLetterRegistrationTests.cs:AddDeadLetterStore_RegistersDeadLetterStoreAsSingletonAsync</tests>
+  internal static void _addDeadLetterStore(IServiceCollection services, string connectionString) {
+    services.TryAddSingleton<IDeadLetterStore>(sp =>
+      new DapperDeadLetterStore(
+        connectionString,
+        sp.GetService<ILogger<DapperDeadLetterStore>>()
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DapperDeadLetterStore>.Instance,
+        sp.GetService<WorkCoordinatorGate>()));
   }
 }
