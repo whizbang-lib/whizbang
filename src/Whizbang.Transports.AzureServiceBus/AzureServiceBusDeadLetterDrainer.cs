@@ -87,7 +87,7 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
       foreach (var msg in batch) {
         ct.ThrowIfCancellationRequested();
         try {
-          var resend = _cloneForResend(msg);
+          var resend = CloneForResend(msg);
           await sender.SendMessageAsync(resend, ct).ConfigureAwait(false);
           await receiver.CompleteMessageAsync(msg, ct).ConfigureAwait(false);
           drained++;
@@ -114,7 +114,12 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
     return drained;
   }
 
-  private static ServiceBusMessage _cloneForResend(ServiceBusReceivedMessage msg) {
+  /// <summary>
+  /// Builds the outbound message that re-enters the topic. Internal for direct
+  /// regression testing — ServiceBusReceivedMessage is opaque enough that asserting
+  /// the clone shape on the public DrainDeadLetterQueueAsync flow would need a real broker.
+  /// </summary>
+  internal static ServiceBusMessage CloneForResend(ServiceBusReceivedMessage msg) {
     var resend = new ServiceBusMessage(msg.Body) {
       MessageId = msg.MessageId,
       ContentType = msg.ContentType,
