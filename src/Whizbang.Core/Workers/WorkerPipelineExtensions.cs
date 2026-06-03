@@ -50,6 +50,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<OutboxDrainWorker>();
     services.TryAddSingleton<InboxDrainWorker>();
     services.TryAddSingleton<ScheduledRetryWorker>();
+    services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
 
     // Phase H step 7 slice 7: cooldown cache for the perspective drainer's short-circuit gate.
     // Singleton — PerspectiveWorker reads/writes it; the sweep worker periodically evicts.
