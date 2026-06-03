@@ -414,6 +414,13 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
+    // override in test fixture so the safety-net poll catches up promptly when NOTIFY
+    // delivery doesn't align with cascade-write timing.
+    builder.Services.Configure<ClaimWorkerOptions>(options => {
+      options.NotifyHealthyPollingIntervalMilliseconds = 500;
+    });
+
     // Register OrderedStreamProcessor for message ordering
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 

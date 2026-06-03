@@ -433,6 +433,14 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       options.IdleThresholdPolls = 2;
     });
 
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
+    // in tests the cascade-write → NOTIFY delivery isn't always tight enough to avoid the
+    // safety-net poll, and a 30 s floor would dominate test runtime. Drop to 500 ms so the
+    // safety net catches up promptly without burning CI on idle waits.
+    builder.Services.Configure<ClaimWorkerOptions>(options => {
+      options.NotifyHealthyPollingIntervalMilliseconds = 500;
+    });
+
     // Register background workers
     builder.Services.AddHostedService<PerspectiveWorker>();
 
@@ -581,6 +589,14 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       options.DebugMode = true;
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;
+    });
+
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
+    // in tests the cascade-write → NOTIFY delivery isn't always tight enough to avoid the
+    // safety-net poll, and a 30 s floor would dominate test runtime. Drop to 500 ms so the
+    // safety net catches up promptly without burning CI on idle waits.
+    builder.Services.Configure<ClaimWorkerOptions>(options => {
+      options.NotifyHealthyPollingIntervalMilliseconds = 500;
     });
 
     // Register background workers
