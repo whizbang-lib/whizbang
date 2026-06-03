@@ -144,6 +144,44 @@ public partial class JsonLifecycleMessageDeserializerTests {
       .WithMessageMatching("*Invalid envelope type name format*");
   }
 
+  [Test]
+  public async Task DeserializeFromEnvelope_WithEmptyMessageTypeBetweenBrackets_ThrowsInvalidOperationExceptionAsync() {
+    // Covers the "extracted message type name is whitespace" path in
+    // _extractMessageTypeFromEnvelopeType: brackets are present and well-formed but the
+    // captured substring is empty/whitespace.
+    var options = _createTestJsonOptions();
+    var deserializer = new JsonLifecycleMessageDeserializer(options);
+    var envelope = new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.New(),
+      Payload = JsonDocument.Parse("{}").RootElement,
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    await Assert.That(() => deserializer.DeserializeFromEnvelope(envelope, "MessageEnvelope`1[[]], Assembly"))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*Failed to extract message type name*");
+  }
+
+  [Test]
+  public async Task DeserializeFromEnvelope_WithClosingBracketsBeforeOpening_ThrowsInvalidOperationExceptionAsync() {
+    // Edge case in _extractMessageTypeFromEnvelopeType: startIndex >= endIndex check —
+    // the input contains ]] BEFORE [[ in scan order, so endIndex < startIndex and the
+    // guard fires (invalid format) rather than producing a negative-length substring.
+    var options = _createTestJsonOptions();
+    var deserializer = new JsonLifecycleMessageDeserializer(options);
+    var envelope = new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.New(),
+      Payload = JsonDocument.Parse("{}").RootElement,
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    await Assert.That(() => deserializer.DeserializeFromEnvelope(envelope, "]]Assembly, [[MyMessage, MyApp"))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*Invalid envelope type name format*");
+  }
+
   // ========================================
   // DeserializeFromEnvelope(envelope) Tests
   // ========================================
