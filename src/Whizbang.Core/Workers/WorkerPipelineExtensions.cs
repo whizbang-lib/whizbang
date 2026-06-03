@@ -51,6 +51,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<InboxDrainWorker>();
     services.TryAddSingleton<ScheduledRetryWorker>();
     services.TryAddSingleton<DeadLetterRecoveryWorker>();
+    services.TryAddSingleton<TransportDeadLetterDrainWorker>();
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
     services.TryAddSingleton<IDeadLetterRecoveryPolicy, DefaultDeadLetterRecoveryPolicy>();
     services.TryAddSingleton<Whizbang.Core.Observability.DeadLetterMetrics>();
@@ -121,6 +122,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<InboxDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<ScheduledRetryWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
 
     // Channel interfaces — singletons that delegate to the singleton worker.
@@ -164,6 +166,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxDispatchWorkerOptions>();
     services.AddOptions<ScheduledRetryWorkerOptions>();
     services.AddOptions<DeadLetterRecoveryOptions>();
+    services.AddOptions<TransportDeadLetterDrainWorkerOptions>();
     services.AddOptions<MaintenanceWorkerOptions>();
     services.AddOptions<OutboxDrainWorkerOptions>();
     services.AddOptions<InboxDrainWorkerOptions>();
