@@ -1426,6 +1426,160 @@ public class SecurityContextHelperTests {
     await Assert.That(capturingAccessor.CapturedContext!.Scope.TenantId).IsEqualTo("tenant-456");
   }
 
+  // ========================================
+  // Cascade Logger Coverage Tests
+  // ========================================
+  // EstablishMessageContextForCascade has many `if (logger is not null)` branches inside
+  // _extractSecurityValuesForCascade / _establishScopeContextForCascade /
+  // _establishMessageContextForCascade. Other tests call the API without a service provider
+  // (the public overload defaults serviceProvider to null), so the logger is never resolved
+  // and those branches stay uncovered. These tests pass a serviceProvider with a real
+  // ILoggerFactory so the dispatch hits all logger-conditional code paths.
+
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithLogger_ExplicitContextPath_DispatchesLogsAsync() {
+    // Priority 1: explicit ImmutableScopeContext (AsSystem/RunAs)
+    var services = new ServiceCollection();
+    services.AddLogging();
+    var sp = services.BuildServiceProvider();
+
+    var extraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { TenantId = "explicit-t", UserId = "explicit-u" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test:Explicit"
+    };
+    var scopeAccessor = new ScopeContextAccessor { Current = new ImmutableScopeContext(extraction, shouldPropagate: true) };
+    var spWithAccessor = _buildSpWithAccessor(scopeAccessor);
+
+    try {
+      SecurityContextHelper.EstablishMessageContextForCascade(spWithAccessor);
+      // Asserts: scope path was the "explicit" branch. ReadFromExplicitContext log was hit.
+      await Assert.That(MessageContextAccessor.CurrentContext).IsNotNull();
+      await Assert.That(MessageContextAccessor.CurrentContext!.UserId).IsEqualTo("explicit-u");
+      await Assert.That(MessageContextAccessor.CurrentContext.TenantId).IsEqualTo("explicit-t");
+    } finally {
+      MessageContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithLogger_ParentMessageContextPath_DispatchesLogsAsync() {
+    // Priority 2: no explicit context, parent MessageContextAccessor has values
+    var services = new ServiceCollection();
+    services.AddLogging();
+    var sp = services.BuildServiceProvider();
+
+    MessageContextAccessor.CurrentContext = new MessageContext {
+      MessageId = MessageId.New(),
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New(),
+      Timestamp = DateTimeOffset.UtcNow,
+      UserId = "parent-u",
+      TenantId = "parent-t"
+    };
+
+    try {
+      SecurityContextHelper.EstablishMessageContextForCascade(sp);
+      // ReadFromMessageContextAccessor + ParentMessageContextChecked + CreatingScopeContext logs fired.
+      await Assert.That(ScopeContextAccessor.CurrentContext).IsNotNull();
+      await Assert.That(ScopeContextAccessor.CurrentContext!.Scope.UserId).IsEqualTo("parent-u");
+    } finally {
+      MessageContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithLogger_ScopeAccessorFallbackPath_DispatchesLogsAsync() {
+    // Priority 3 (fallback): no explicit context + no parent message context + ScopeContextAccessor has ImmutableScopeContext
+    var services = new ServiceCollection();
+    services.AddLogging();
+    var sp = services.BuildServiceProvider();
+
+    var extraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { TenantId = "fallback-t", UserId = "fallback-u" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test:Fallback"
+    };
+    ScopeContextAccessor.CurrentContext = new ImmutableScopeContext(extraction, shouldPropagate: true);
+    MessageContextAccessor.CurrentContext = null;
+
+    try {
+      // Pass sp WITHOUT IScopeContextAccessor service so the priority-1 explicit-context branch
+      // doesn't fire (it depends on resolving IScopeContextAccessor from sp). Then the parent
+      // MessageContext is null, so the fallback (static ScopeContextAccessor.CurrentContext) path runs.
+      SecurityContextHelper.EstablishMessageContextForCascade(sp);
+      // ReadFromScopeContextAccessorFallback fired; CreatingScopeContext + ScopeContextEstablished too.
+      await Assert.That(MessageContextAccessor.CurrentContext).IsNotNull();
+      await Assert.That(MessageContextAccessor.CurrentContext!.UserId).IsEqualTo("fallback-u");
+    } finally {
+      MessageContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithLogger_NoSecurityValues_HitsSkipBranchAsync() {
+    // No explicit context, no parent message context, no ScopeContextAccessor — all extraction returns null.
+    // Triggers SkippingScopeContextSetup log path.
+    var services = new ServiceCollection();
+    services.AddLogging();
+    var sp = services.BuildServiceProvider();
+
+    MessageContextAccessor.CurrentContext = null;
+    ScopeContextAccessor.CurrentContext = null;
+
+    try {
+      SecurityContextHelper.EstablishMessageContextForCascade(sp);
+      // MessageContext still gets set with null UserId/TenantId; ScopeContextAccessor is NOT set.
+      await Assert.That(MessageContextAccessor.CurrentContext).IsNotNull();
+      await Assert.That(MessageContextAccessor.CurrentContext!.UserId).IsNull();
+    } finally {
+      MessageContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithLogger_HasExplicitContext_SkipsScopeSetupAsync() {
+    // hasExplicitContext = true → SkippingScopeContextDueToExplicit log path fires.
+    // Pass a sp that resolves IScopeContextAccessor with a current value, so hasExplicitContext is true.
+    var extraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { TenantId = "exp-t", UserId = "exp-u" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test:Explicit2"
+    };
+    var scopeAccessor = new ScopeContextAccessor { Current = new ImmutableScopeContext(extraction, shouldPropagate: true) };
+    var sp = _buildSpWithAccessor(scopeAccessor);
+
+    try {
+      SecurityContextHelper.EstablishMessageContextForCascade(sp);
+      // The hasExplicitContext branch skips re-establishing scope.
+      await Assert.That(MessageContextAccessor.CurrentContext).IsNotNull();
+      await Assert.That(MessageContextAccessor.CurrentContext!.UserId).IsEqualTo("exp-u");
+    } finally {
+      MessageContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  private static ServiceProvider _buildSpWithAccessor(ScopeContextAccessor scopeAccessor) {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IScopeContextAccessor>(scopeAccessor);
+    return services.BuildServiceProvider();
+  }
+
   /// <summary>
   /// A strongly-typed message simulating LoginAttemptEvent — inherently has no
   /// security context because the user hasn't authenticated yet.
