@@ -186,6 +186,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "notify_scheduled_retry_due");
+
+#pragma warning disable S2077
+    var sql = $"SELECT COALESCE(SUM(stream_count), 0)::int FROM {functionName}()";
+#pragma warning restore S2077
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return result is int n ? n : 0;
+  }
+
+  /// <inheritdoc />
   public async Task<int> CompleteOutboxPublishedAsync(
     IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
@@ -1403,6 +1427,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Older SQL function without out_commit_sequence column (pre-slice-26.7).
       // Field stays null; consumers fall back to event_id-based cursor ordering.
     }
+    var hasAttemptsColumn = false;
+    var attemptsOrdinal = -1;
+    try {
+      attemptsOrdinal = reader.GetOrdinal("out_attempts");
+      hasAttemptsColumn = true;
+    } catch (IndexOutOfRangeException) {
+      // v0.502 slice C.4c forward-compatibility — older SQL function (pre-C.4c) doesn't
+      // surface attempts. Field stays 0; PerspectiveWorker's DLQ check is a no-op for
+      // these rows (their attempts count is still tracked in wh_perspective_events; the
+      // claim_orphaned_perspective_events path will eventually dead-letter them via
+      // FailureFlushWorker once that path also lands).
+    }
     while (await reader.ReadAsync(cancellationToken)) {
       // AOT-safe: read columns by ordinal, parse event_data as string
       var metadataOrdinal = reader.GetOrdinal("out_metadata");
@@ -1421,6 +1457,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         CommitSequence = hasCommitSequenceColumn && !await reader.IsDBNullAsync(commitSequenceOrdinal, cancellationToken).ConfigureAwait(false)
           ? reader.GetInt64(commitSequenceOrdinal)
           : null,
+        Attempts = hasAttemptsColumn && !await reader.IsDBNullAsync(attemptsOrdinal, cancellationToken).ConfigureAwait(false)
+          ? reader.GetInt32(attemptsOrdinal)
+          : 0,
       });
     }
 

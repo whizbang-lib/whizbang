@@ -252,6 +252,21 @@ public interface IWorkCoordinator {
       $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
 
   /// <summary>
+  /// Wakes the appropriate per-instance NOTIFY channels for any wh_outbox or wh_inbox rows
+  /// whose <c>scheduled_for</c> retry timestamp has elapsed. Called periodically by
+  /// <c>ScheduledRetryWorker</c> on a low-cadence (default 10 s) cycle so retry latency stays
+  /// bounded without the 250 ms ClaimWorker baseline tax. Default impl throws — Postgres
+  /// implementations override; in-memory fakes opt in when ready.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Total number of distinct streams woken across outbox + inbox. Zero when no
+  /// scheduled retries are due.</returns>
+  /// <docs>fundamentals/work-coordinator/scheduled-retries</docs>
+  Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement NotifyScheduledRetryDueAsync. Override in your IWorkCoordinator implementation.");
+
+  /// <summary>
   /// Marks the supplied outbox messages as processed (transport publish succeeded).
   /// Coalesced flush from the C# OutboxCompletionFlushWorker. Idempotent: unknown ids ignored.
   /// Phase B of work-pump decomposition.
@@ -1549,6 +1564,16 @@ public record StreamEventData {
   /// </summary>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long? CommitSequence { get; init; }
+
+  /// <summary>
+  /// v0.502 slice C.4c: <c>wh_perspective_events.attempts</c> for this work row, one-based
+  /// post-claim count. PerspectiveWorker uses this to dead-letter rows that exceed
+  /// <see cref="Whizbang.Core.Workers.PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/>
+  /// before deserialization + apply runs. Default 0 for legacy fakes / in-memory coordinators
+  /// that don't track attempts.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/perspective-events</docs>
+  public int Attempts { get; init; }
 }
 
 /// <summary>

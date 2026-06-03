@@ -77,6 +77,9 @@ public sealed partial class PgWorkNotificationListener : IWorkNotificationListen
       "outbox" => (WorkSignalCategory?)WorkSignalCategory.Outbox,
       "inbox" => WorkSignalCategory.Inbox,
       "perspective" => WorkSignalCategory.Perspective,
+      // v0.502 slice B.3 — emitted by cleanup_stale_instances after releasing leases
+      // owned by a dead pod. Live pods react by running claim_orphaned_*.
+      "orphan" => WorkSignalCategory.OrphanRedistribute,
       _ => null,
     };
     if (category is { } cat) {

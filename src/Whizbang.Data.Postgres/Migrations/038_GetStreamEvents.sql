@@ -23,7 +23,12 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   out_scope TEXT,
   out_event_work_id UUID,
   out_perspective_name VARCHAR(200),
-  out_commit_sequence BIGINT
+  out_commit_sequence BIGINT,
+  -- v0.502 slice C.4c: surface wh_perspective_events.attempts so the perspective
+  -- drainer can dead-letter rows that exceed PerspectiveWorkerOptions.MaxPerspectiveEventAttempts
+  -- BEFORE deserialization + apply runs. attempts is bumped above in the claim CTE
+  -- and reflects the post-claim count (one-based, like wh_inbox / wh_outbox).
+  out_attempts INTEGER
 ) AS $$
 DECLARE
   v_lease_expiry TIMESTAMPTZ;
@@ -101,7 +106,8 @@ BEGIN
     es.scope::TEXT,
     pe.event_work_id,
     pe.perspective_name,
-    es.commit_sequence
+    es.commit_sequence,
+    pe.attempts
   FROM wh_perspective_events pe
   INNER JOIN wh_event_store es
     ON pe.stream_id = es.stream_id

@@ -12,7 +12,13 @@ public enum WorkSignalCategory {
   /// <summary>New inbox messages were stored.</summary>
   Inbox,
   /// <summary>New perspective_event work items were created.</summary>
-  Perspective
+  Perspective,
+  /// <summary>
+  /// Orphan redistribution — a previously-leased work item became unowned (typically
+  /// because <c>cleanup_stale_instances</c> released the leases of a dead pod). The live
+  /// claim worker should run a catch-up <c>claim_orphaned_*</c> across all work tables.
+  /// </summary>
+  OrphanRedistribute
 }
 
 /// <summary>

@@ -89,7 +89,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   private void _onSignal(WorkSignalCategory category) {
-    if (category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox) {
+    if (category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox or WorkSignalCategory.OrphanRedistribute) {
       RequestImmediatePoll();
     }
   }
@@ -99,8 +99,52 @@ public sealed partial class ClaimWorker : BackgroundService {
     // wake the poll loop immediately. Unavailable→available: drain any work that accumulated
     // during the unavailable window. Available→unavailable: shorten the next wait cycle so
     // we start tight-polling without waiting out the current adaptive backoff.
+    //
+    // v0.502 — make the catch-up visible. The unavailable→available transition is the
+    // moment work might have accumulated during a NOTIFY outage; we want operators to see
+    // the catch-up in logs (and the metric below) so the path is observably exercised, not
+    // hidden inside the next regular poll. The actual catch-up SQL runs implicitly via the
+    // semaphore-wakeup chain: RequestImmediatePoll → _wake.Release → WaitAsync returns →
+    // next loop iteration calls _claimOnceAsync → ClaimWorkAsync → claim_orphaned_*.
+    if (nowAvailable) {
+      var unavailableSince = Interlocked.Exchange(ref _lastUnavailableAtTicks, 0);
+      if (unavailableSince > 0) {
+        var elapsedMs = (DateTimeOffset.UtcNow.Ticks - unavailableSince) / TimeSpan.TicksPerMillisecond;
+        LogReconnectCatchUp(_logger, elapsedMs);
+        Interlocked.Increment(ref _reconnectCatchUpCount);
+      }
+    } else {
+      Interlocked.Exchange(ref _lastUnavailableAtTicks, DateTimeOffset.UtcNow.Ticks);
+    }
     RequestImmediatePoll();
   }
+
+  // Tracks the wall-clock ticks at which the gate last flipped to unavailable. Used to
+  // compute the "unavailable for N ms" duration that gets logged when we transition back
+  // to available. 0 means "currently available" or "never been unavailable yet."
+  private long _lastUnavailableAtTicks;
+
+  // Observable counter of NOTIFY-reconnect catch-up triggers. Exposed as a property for
+  // test inspection and OTEL bridging (see slice B.6).
+  private long _reconnectCatchUpCount;
+
+  /// <summary>
+  /// Total number of times this worker has executed a catch-up claim after a NOTIFY-gate
+  /// availability transition from unavailable → available. Exposed for observability and
+  /// regression testing. Resets on process restart.
+  /// </summary>
+  public long ReconnectCatchUpCount => Interlocked.Read(ref _reconnectCatchUpCount);
+
+  // Whether the worker has logged its startup catch-up. Incremented once per pod lifetime.
+  // Exposed via StartupCatchUpCount for regression testing.
+  private long _startupCatchUpCount;
+
+  /// <summary>
+  /// Whether this worker has run the startup catch-up claim (always exactly <c>1</c> after
+  /// the first <see cref="ExecuteAsync"/> iteration; remains <c>0</c> if the worker is
+  /// disabled, schema-gated, or perspective-only). Exposed for tests.
+  /// </summary>
+  public long StartupCatchUpCount => Interlocked.Read(ref _startupCatchUpCount);
 
   /// <summary>
   /// Observable: the most recent <see cref="WorkBatch"/> distributed by the worker.
@@ -172,6 +216,12 @@ public sealed partial class ClaimWorker : BackgroundService {
       return;
     }
 
+    // v0.502 slice B.2 — the first claim is implicitly a startup catch-up: any work that
+    // was sitting in wh_*box / wh_perspective_events before this pod started (orphaned by
+    // a previously-crashed pod, scheduled retries that elapsed during downtime, etc.) gets
+    // discovered on the first call. Log + counter for observability so operators can verify
+    // the pod actually drained pre-existing state.
+    var startupCatchUpFired = false;
     while (!stoppingToken.IsCancellationRequested) {
       try {
         var batch = await _claimOnceAsync(stoppingToken);
@@ -180,6 +230,14 @@ public sealed partial class ClaimWorker : BackgroundService {
                    || batch.PerspectiveStreamIds.Count > 0
                    || batch.OutboxStreamIds.Count > 0
                    || batch.InboxStreamIds.Count > 0;
+
+        if (!startupCatchUpFired) {
+          startupCatchUpFired = true;
+          var picked = batch.OutboxStreamIds.Count + batch.InboxStreamIds.Count
+                     + batch.PerspectiveStreamIds.Count + batch.OutboxWork.Count + batch.InboxWork.Count;
+          LogStartupCatchUp(_logger, picked);
+          Interlocked.Increment(ref _startupCatchUpCount);
+        }
 
         if (hadWork) {
           _consecutiveEmptyPolls = 0;
@@ -288,6 +346,16 @@ public sealed partial class ClaimWorker : BackgroundService {
     if (_signalingGate?.IsAvailable == false) {
       return baseMs;
     }
+    // v0.502 slice B.5 — pure NOTIFY-only mode. When the operator has explicitly disabled
+    // the safety-net poll AND the gate reports NOTIFY healthy, the loop only wakes on
+    // actual NOTIFY signals (Outbox/Inbox/Perspective/OrphanRedistribute via _onSignal,
+    // gate transitions via _onGateAvailabilityChanged, drain-channel handoff via
+    // OnNewInbox/OnNewOutboxWorkAvailable). No periodic poll at all. Safety net only kicks
+    // back in the moment the gate flips false. int.MaxValue is ~24.8 days — effectively
+    // infinite for our use; the wake semaphore short-circuits any sooner wake.
+    if (!_options.EnableSafetyNetPoll && _signalingGate?.IsAvailable == true) {
+      return int.MaxValue;
+    }
     // 2026-06-02 (PR #227) — when LISTEN/NOTIFY is healthy AND an operator has opted into
     // a relaxed steady-state cadence, use NotifyHealthyPollingIntervalMilliseconds as the
     // baseline instead of the tight PollingIntervalMilliseconds. Rationale: under load,
@@ -329,6 +397,14 @@ public sealed partial class ClaimWorker : BackgroundService {
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
     Message = "ClaimWorker initial heartbeat failed; first claim_work calls may raise until HeartbeatWorker registers the instance")]
   static partial void LogInitialHeartbeatFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Information,
+    Message = "ClaimWorker NOTIFY gate reconnected after {UnavailableMs}ms — running catch-up claim")]
+  static partial void LogReconnectCatchUp(ILogger logger, long unavailableMs);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Information,
+    Message = "ClaimWorker startup catch-up complete: picked up {ItemsPicked} pre-existing work item(s)")]
+  static partial void LogStartupCatchUp(ILogger logger, int itemsPicked);
 }
 
 /// <summary>Configuration for <see cref="ClaimWorker"/>.</summary>
@@ -341,6 +417,30 @@ public sealed class ClaimWorkerOptions {
   /// </summary>
   public bool Enabled { get; set; } = true;
 
+  /// <summary>
+  /// When <c>true</c> (default), the claim loop runs a safety-net poll on the
+  /// <see cref="NotifyHealthyPollingIntervalMilliseconds"/> cadence (default 30 s) even
+  /// when LISTEN/NOTIFY is healthy, to catch any work the listener might have missed.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Set to <c>false</c> for pure NOTIFY-only operation: when the gate reports NOTIFY
+  /// healthy, the loop sleeps until an actual signal arrives (Outbox/Inbox/Perspective/
+  /// OrphanRedistribute) or a drain channel writes new work. Reduces idle DB load to
+  /// essentially zero, at the cost of giving up the "what if we missed a NOTIFY?" backstop.
+  /// The orphan-detection NOTIFY (slice B.3) + ScheduledRetryWorker (slice B.4) +
+  /// reconnect catch-up (slice B.1) + startup catch-up (slice B.2) together cover every
+  /// case the safety-net poll exists for, so disabling it is safe when those workers are
+  /// running and NOTIFY is verified solid.
+  /// </para>
+  /// <para>
+  /// When the gate flips unavailable, the safety net automatically re-engages at the
+  /// tight <see cref="PollingIntervalMilliseconds"/> cadence regardless of this setting —
+  /// a listener outage never causes silent claim-latency degradation.
+  /// </para>
+  /// </remarks>
+  public bool EnableSafetyNetPoll { get; set; } = true;
+
   /// <summary>Base polling cadence in ms. Default 250.</summary>
   public int PollingIntervalMilliseconds { get; set; } = 250;
   /// <summary>Adaptive backoff cap in ms. Default 10 000 (10 s).
@@ -349,26 +449,30 @@ public sealed class ClaimWorkerOptions {
   public int PollingMaxIntervalMilliseconds { get; set; } = 10_000;
 
   /// <summary>
-  /// Optional relaxed baseline polling cadence when LISTEN/NOTIFY is verified healthy.
-  /// When set, replaces <see cref="PollingIntervalMilliseconds"/> as the loop's base wait
-  /// while the gate reports <c>IsAvailable=true</c>. Only takes effect when its value is
-  /// greater than <see cref="PollingIntervalMilliseconds"/>; otherwise ignored.
+  /// Relaxed baseline polling cadence when LISTEN/NOTIFY is verified healthy. Replaces
+  /// <see cref="PollingIntervalMilliseconds"/> as the loop's base wait while the gate
+  /// reports <c>IsAvailable=true</c>. Only takes effect when its value is greater than
+  /// <see cref="PollingIntervalMilliseconds"/>; otherwise ignored.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Default <c>null</c> = no behavior change (matches pre-PR-#227 default).
+  /// Default <c>30_000</c> (30 s) as of v0.502. Prior versions defaulted to <c>null</c>,
+  /// which kept the tight <see cref="PollingIntervalMilliseconds"/> (250 ms) active even
+  /// when NOTIFY was healthy — that produced ~4 claim_work calls/sec/pod constant DB load
+  /// when work-pickup latency was already &lt; 50 ms via NOTIFY. The 30 s default is a true
+  /// safety-net: NOTIFY does the latency-sensitive work; the poll only covers
+  /// corner cases (missed NOTIFYs, in-flight scheduled retries, etc.).
   /// </para>
   /// <para>
-  /// Set this on multi-pod deployments where NOTIFY is reliably delivering signals. With
-  /// LISTEN/NOTIFY healthy, the listener short-circuits the wait the moment new work
-  /// arrives, so tight 250 ms polling is wasted DB pressure that produces
-  /// <c>wh_active_streams</c> unique-index contention. Typical values: <c>1000</c> (1 s)
-  /// or <c>2000</c> (2 s). Falls back to the tight base cadence automatically the moment
-  /// NOTIFY availability flips to false (so a broker outage doesn't silently increase
-  /// claim latency).
+  /// Falls back to the tight <see cref="PollingIntervalMilliseconds"/> automatically the
+  /// moment NOTIFY availability flips to false (so a listener outage doesn't silently
+  /// increase claim latency).
+  /// </para>
+  /// <para>
+  /// Set explicitly to <c>null</c> to restore the pre-v0.502 behavior (tight polling always).
   /// </para>
   /// </remarks>
-  public int? NotifyHealthyPollingIntervalMilliseconds { get; set; }
+  public int? NotifyHealthyPollingIntervalMilliseconds { get; set; } = 30_000;
   /// <summary>Cap on rows returned per claim_work call. Default 1000.</summary>
   public int MaxStreamsPerBatch { get; set; } = 1000;
 
