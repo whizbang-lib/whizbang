@@ -33,11 +33,18 @@ namespace Whizbang.Core.Workers;
 /// being re-tried.
 /// </para>
 /// <para>
-/// PostInboxDetached uses <see cref="BackgroundStageDispatch.StartLongRunning"/> instead of
-/// <c>Task.Run</c> to avoid ThreadPool starvation under load. This mirrors the legacy publisher's
-/// guard at line 1311-1313 — when PerspectiveWorker drains its channel concurrently with
-/// our PostInbox dispatch, the ThreadPool can be saturated, and pooled <c>Task.Run</c>
-/// continuations get queued past the test deadline.
+/// Detached lifecycle bodies (Pre/Post/PostAllPerspectives/PostLifecycle Detached) are
+/// scheduled on the ThreadPool via <c>Task.Run</c>. An earlier version routed PostInbox
+/// detached through <see cref="BackgroundStageDispatch.StartLongRunning"/> to avoid pool
+/// starvation during CI runs, but that path spawned a dedicated OS thread per inbox
+/// message and dominated dispatch cost on busy production services. Fix pool contention
+/// at the host via <see cref="System.Threading.ThreadPool.SetMinThreads"/> when it
+/// recurs, not by trading pool work for unbounded thread creation.
+/// </para>
+/// <para>
+/// Detached bodies do NOT re-establish security context. The outer dispatch scope's
+/// <see cref="SecurityContextHelper.EstablishFullContextAsync"/> call sets static
+/// AsyncLocal accessors that flow into Task.Run continuations via ExecutionContext.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/inbox-dispatch</docs>
@@ -303,28 +310,27 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
       await _invokeInboxLifecycleStageAsync(
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
-        "PreInbox", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
+        "PreInbox", ct, detachedCancellationToken: stoppingToken);
 
       // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
       // calls commit_handler_batch.
       var commitRequest = _buildCommitRequest(work, status: (int)MessageProcessingStatus.EventStored);
       await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
 
-      // PostInbox lands AFTER event storage. Use LongRunning for the Detached stage so it can't be
-      // starved by PerspectiveWorker drain churn.
+      // PostInbox lands AFTER event storage.
       await _invokeInboxLifecycleStageAsync(
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
-        "PostInbox", useLongRunningForDetached: true, ct, detachedCancellationToken: stoppingToken);
+        "PostInbox", ct, detachedCancellationToken: stoppingToken);
 
       // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
       if (_hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
         await _invokeInboxLifecycleStageAsync(
           work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
-          "PostAllPerspectives", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
+          "PostAllPerspectives", ct, detachedCancellationToken: stoppingToken);
         await _invokeInboxLifecycleStageAsync(
           work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
-          "PostLifecycle", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
+          "PostLifecycle", ct, detachedCancellationToken: stoppingToken);
       }
     });
   }
@@ -381,7 +387,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LifecycleStage detachedStage,
       LifecycleStage inlineStage,
       string stageName,
-      bool useLongRunningForDetached,
       CancellationToken cancellationToken,
       CancellationToken detachedCancellationToken = default) {
     // Phase H step 9: detached lifecycle stages run fire-and-forget on a separate scheduler
@@ -442,16 +447,23 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
       // Slice 16: only spawn the detached fire-and-forget when a receptor is actually registered
       // for the detached stage. Without this guard, every message creates an extra DI scope +
-      // security context + Task.Run for a stage where nothing will fire — pure overhead.
+      // Task.Run for a stage where nothing will fire — pure overhead.
       if (hasDetached) {
-        Func<Func<Task>, CancellationToken, Task> scheduler = useLongRunningForDetached
-          ? (body, ct) => BackgroundStageDispatch.StartLongRunning(body, ct)
-          : (body, ct) => Task.Run(body, ct);
-
-        _ = scheduler(async () => {
+        // 2026-06: use Task.Run (pooled). TaskCreationOptions.LongRunning was originally
+        // added to avoid CI ThreadPool starvation during PerspectiveWorker drain churn,
+        // but in production it spawns a dedicated OS thread per inbox message — observed
+        // throughput collapse on a consumer BFF (10 msg/min vs target 1000s/min) traced here.
+        // If pool starvation comes back, fix it at the host via ThreadPool.SetMinThreads.
+        _ = Task.Run(async () => {
           try {
+            // Fresh DI scope is required (detached body outlives the dispatch scope; needs
+            // its own DbContext etc.). But we do NOT re-establish security context: the
+            // outer dispatch scope's EstablishFullContextAsync call set the static
+            // AsyncLocal accessors (ScopeContextAccessor + MessageContextAccessor),
+            // which flow into Task.Run continuations via ExecutionContext by default.
+            // Re-establishing wastes a security-extractor round-trip and (with DB-backed
+            // extractors) competes for connections with the actual dispatch path.
             await using var detachedScope = _scopeFactory.CreateAsyncScope();
-            await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, detachedCt);
             var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
             if (detachedInvoker is null) {
               return;
