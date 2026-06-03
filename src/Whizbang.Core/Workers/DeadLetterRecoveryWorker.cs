@@ -1,8 +1,10 @@
+using System.Collections.Generic;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Workers;
 
@@ -30,13 +32,15 @@ public partial class DeadLetterRecoveryWorker(
   ISchemaReadyGate schemaReadyGate,
   IOptions<DeadLetterRecoveryOptions> options,
   IGenerationProvider generationProvider,
-  ILogger<DeadLetterRecoveryWorker> logger
+  ILogger<DeadLetterRecoveryWorker> logger,
+  DeadLetterMetrics? metrics = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly DeadLetterRecoveryOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IGenerationProvider _generationProvider = generationProvider ?? throw new ArgumentNullException(nameof(generationProvider));
   private readonly ILogger<DeadLetterRecoveryWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly DeadLetterMetrics? _metrics = metrics;
 
   private long _totalScans;
   private long _totalRecovered;
@@ -82,6 +86,8 @@ public partial class DeadLetterRecoveryWorker(
         if (scheduled > 0) {
           Interlocked.Add(ref _totalGenerationReplays, scheduled);
           LogGenerationReplay(_logger, scheduled, current);
+          _metrics?.GenerationReplayScheduled.Add(scheduled,
+            new KeyValuePair<string, object?>("generation", current));
         }
       } catch (Exception ex) {
         LogError(_logger, ex);
@@ -134,10 +140,16 @@ public partial class DeadLetterRecoveryWorker(
             await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
             Interlocked.Increment(ref _totalHeld);
             LogHeld(_logger, entry.DeadLetterId, rule.Name);
+            _metrics?.Held.Add(1,
+              new KeyValuePair<string, object?>("policy_name", rule.Name),
+              new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
           } else {
             await svc.MarkPermanentlyFailedAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
             Interlocked.Increment(ref _totalPermanentlyFailed);
             LogPermanentlyFailed(_logger, entry.DeadLetterId, rule.Name);
+            _metrics?.PermanentlyFailed.Add(1,
+              new KeyValuePair<string, object?>("policy_name", rule.Name),
+              new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
           }
         } catch (Exception ex) {
           LogTerminalSetFailed(_logger, entry.DeadLetterId, ex);
@@ -146,11 +158,15 @@ public partial class DeadLetterRecoveryWorker(
       }
 
       // Try the recovery.
+      _metrics?.RecoveryAttempts.Add(1,
+        new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
       try {
         var recovered = await svc.RecoverAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
         if (recovered) {
           Interlocked.Increment(ref _totalRecovered);
           LogRecovered(_logger, entry.DeadLetterId, entry.SourceTable);
+          _metrics?.Recovered.Add(1,
+            new KeyValuePair<string, object?>("source_table", entry.SourceTable));
         } else {
           // recover_dead_letter returned false — row was already terminal or claimed by
           // another worker. No action needed; the other worker's path handles state.

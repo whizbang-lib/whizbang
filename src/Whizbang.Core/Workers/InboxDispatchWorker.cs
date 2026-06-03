@@ -66,6 +66,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   // many tests) continue to compile + run unchanged.
   private readonly IDeadLetterStore? _deadLetterStore;
   private readonly IGenerationProvider? _generationProvider;
+  private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
 
   /// <summary>Constructor.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
@@ -90,7 +91,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IMessageDiscardPolicy? discardPolicy = null,
     IReceptorRegistry? runtimeReceptorRegistry = null,
     IDeadLetterStore? deadLetterStore = null,
-    IGenerationProvider? generationProvider = null) {
+    IGenerationProvider? generationProvider = null,
+    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -111,6 +113,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _deadLetterStore = deadLetterStore;
     _generationProvider = generationProvider;
+    _dlqMetrics = dlqMetrics;
   }
 
   /// <inheritdoc />
@@ -241,6 +244,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             instanceId: _instanceProvider.InstanceId,
             generation: _generationProvider.GetGeneration(),
             ct: stoppingToken).ConfigureAwait(false);
+          _dlqMetrics?.Added.Add(1,
+            new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+            new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
           return;
         } catch (Exception ex) {
           // DLQ move is best-effort — if it fails, fall back to the legacy

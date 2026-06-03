@@ -52,6 +52,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   // wh_dead_letters via IDeadLetterStore.MoveAsync before any publish attempt.
   private readonly IDeadLetterStore? _deadLetterStore;
   private readonly IGenerationProvider? _generationProvider;
+  private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // Slice 26.6b: cached local service identity from wh_service_config; resolved once
   // on first drain (after schema-ready gate) and reused for envelope publish-time
   // injection. Guid.Empty until resolved.
@@ -111,7 +112,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IReceptorRegistryQuery? receptorRegistry = null,
     IReceptorRegistry? runtimeReceptorRegistry = null,
     IDeadLetterStore? deadLetterStore = null,
-    IGenerationProvider? generationProvider = null) {
+    IGenerationProvider? generationProvider = null,
+    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
@@ -127,6 +129,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _deadLetterStore = deadLetterStore;
     _generationProvider = generationProvider;
+    _dlqMetrics = dlqMetrics;
   }
 
   /// <inheritdoc />
@@ -296,6 +299,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               generation: _generationProvider.GetGeneration(),
               ct: ct).ConfigureAwait(false);
             LogOutboxDeadLettered(_logger, row.MessageId, row.Attempts, maxAttempts);
+            _dlqMetrics?.Added.Add(1,
+              new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.OUTBOX),
+              new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
             continue;  // skip publishing — row no longer exists
           } catch (Exception ex) {
             // Move failed (transient DB issue). Drop through to publish — better to attempt
