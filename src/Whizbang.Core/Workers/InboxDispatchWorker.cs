@@ -225,6 +225,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   private async Task _processOneInnerAsync(InboxWork work, CancellationToken stoppingToken) {
+    LogDiagProcessOneEntered(_logger, work.MessageId, work.MessageType, work.Attempts);
     var maxAttempts = _options.MaxInboxAttempts;
     // Phase H step 8 slice D: attempts is one-based after the slice D refactor — the row
     // arrives here with attempts=1 on the first attempt, attempts=N on the Nth. Use strict
@@ -273,6 +274,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // for messages that wouldn't invoke any receptor anyway — covers the
     // RegistryChanged case where a row was written before a receptor was removed.
     if (ShouldSkipInbox(_discardPolicy, work.MessageType, work.MessageId)) {
+      LogDiagSkipBranch(_logger, work.MessageId, work.MessageType);
       var skipRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
       await _handlerCommitChannel.EnqueueAsync(skipRequest, stoppingToken);
       return;
@@ -567,6 +569,14 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   // without having to redeploy with debug logging. Volume is bounded by inbox
   // throughput × 5 logs/dispatch; remove once the root cause class is fixed.
   // ============================================================
+  [LoggerMessage(EventId = 19, Level = LogLevel.Information,
+    Message = "DIAG[0] _processOneInnerAsync entered: message={MessageId} type={MessageType} attempts={Attempts}")]
+  static partial void LogDiagProcessOneEntered(ILogger logger, Guid messageId, string messageType, int attempts);
+
+  [LoggerMessage(EventId = 25, Level = LogLevel.Information,
+    Message = "DIAG[SKIP] discard policy short-circuited: message={MessageId} type={MessageType}")]
+  static partial void LogDiagSkipBranch(ILogger logger, Guid messageId, string messageType);
+
   [LoggerMessage(EventId = 20, Level = LogLevel.Information,
     Message = "DIAG[1] dispatch lambda entered: message={MessageId}")]
   static partial void LogDiagLambdaEntered(ILogger logger, Guid messageId);
