@@ -293,6 +293,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _leaseRegistry?.Register(lease);
 
     await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async ct => {
+      LogDiagLambdaEntered(_logger, work.MessageId);
       // Lifecycle stages: scope-once, fire Pre + Post + (optional) PostAllPerspectives/PostLifecycle.
       // The lifecycle invocation no-ops cleanly when ILifecycleMessageDeserializer or IReceptorInvoker
       // is absent — same as the legacy publisher's _invokeInboxLifecycleStagesAsync.
@@ -300,6 +301,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // stages so the latter aren't cancelled when the lease disposes on dispatch return.
       await using var scope = _scopeFactory.CreateAsyncScope();
       await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+      LogDiagSecurityEstablished(_logger, work.MessageId);
       var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
 
       // Slice 15: deserialize the envelope payload ONCE per message — all four lifecycle stages
@@ -311,16 +313,19 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       await _invokeInboxLifecycleStageAsync(
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
         "PreInbox", ct, detachedCancellationToken: stoppingToken);
+      LogDiagPreInboxReturned(_logger, work.MessageId);
 
       // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
       // calls commit_handler_batch.
       var commitRequest = _buildCommitRequest(work, status: (int)MessageProcessingStatus.EventStored);
       await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
+      LogDiagCommitEnqueued(_logger, work.MessageId, commitRequest.InboxCompletion.Status);
 
       // PostInbox lands AFTER event storage.
       await _invokeInboxLifecycleStageAsync(
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
         "PostInbox", ct, detachedCancellationToken: stoppingToken);
+      LogDiagPostInboxReturned(_logger, work.MessageId);
 
       // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
@@ -552,6 +557,35 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  // ============================================================
+  // Dispatch-checkpoint diagnostic. Production scenarios surfaced an "inbox rows
+  // never advance past status=Stored with zero exception logs" failure mode —
+  // the normal-dispatch path either silently hangs or short-circuits between
+  // LeaseDispatchExecutor entry and the commit EnqueueAsync. These INFO-level
+  // checkpoints let an operator observe which boundary the path stops crossing
+  // without having to redeploy with debug logging. Volume is bounded by inbox
+  // throughput × 5 logs/dispatch; remove once the root cause class is fixed.
+  // ============================================================
+  [LoggerMessage(EventId = 20, Level = LogLevel.Information,
+    Message = "DIAG[1] dispatch lambda entered: message={MessageId}")]
+  static partial void LogDiagLambdaEntered(ILogger logger, Guid messageId);
+
+  [LoggerMessage(EventId = 21, Level = LogLevel.Information,
+    Message = "DIAG[2] security context established: message={MessageId}")]
+  static partial void LogDiagSecurityEstablished(ILogger logger, Guid messageId);
+
+  [LoggerMessage(EventId = 22, Level = LogLevel.Information,
+    Message = "DIAG[3] PreInbox lifecycle returned: message={MessageId}")]
+  static partial void LogDiagPreInboxReturned(ILogger logger, Guid messageId);
+
+  [LoggerMessage(EventId = 23, Level = LogLevel.Information,
+    Message = "DIAG[4] commit enqueued: message={MessageId} status={Status}")]
+  static partial void LogDiagCommitEnqueued(ILogger logger, Guid messageId, int status);
+
+  [LoggerMessage(EventId = 24, Level = LogLevel.Information,
+    Message = "DIAG[5] PostInbox lifecycle returned: message={MessageId}")]
+  static partial void LogDiagPostInboxReturned(ILogger logger, Guid messageId);
 
   /// <summary>
   /// Asks the discard policy whether an inbox row should be short-circuited because
