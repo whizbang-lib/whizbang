@@ -108,24 +108,18 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "InboxHandlerWorker disabled via options — handler-batch commits skipped")]
   static partial void LogDisabled(ILogger logger);
 
-  // ============================================================
   // Flush-checkpoint diagnostic, paired with InboxDispatchWorker's DIAG[1..5].
-  // Surfaces whether the BatchFlusher loop is actually draining the commit
-  // channel: DIAG[F1] proves the flush callback fires (channel had items),
-  // DIAG[F2] proves the schema gate doesn't park, DIAG[F3] proves
-  // CommitHandlerBatchAsync returned and at what success/failure split.
-  // Remove once the root cause class for "channel quietly drained zero items"
-  // is fixed.
-  // ============================================================
-  [LoggerMessage(EventId = 20, Level = LogLevel.Information,
+  // At Debug so operators can opt in via Serilog override when chasing
+  // "channel quietly drained zero items" failure modes; quiet by default.
+  [LoggerMessage(EventId = 20, Level = LogLevel.Debug,
     Message = "DIAG[F1] flush callback entered: batch={Count}")]
   static partial void LogDiagFlushEntered(ILogger logger, int count);
 
-  [LoggerMessage(EventId = 21, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 21, Level = LogLevel.Debug,
     Message = "DIAG[F2] schema gate ready, opening scope: batch={Count}")]
   static partial void LogDiagFlushSchemaReady(ILogger logger, int count);
 
-  [LoggerMessage(EventId = 22, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 22, Level = LogLevel.Debug,
     Message = "DIAG[F3] CommitHandlerBatchAsync returned: batch={Count} successes={Successes} failures={Failures}")]
   static partial void LogDiagFlushCommitted(ILogger logger, int count, int successes, int failures);
 }

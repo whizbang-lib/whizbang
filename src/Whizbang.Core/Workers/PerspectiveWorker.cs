@@ -1534,6 +1534,16 @@ public partial class PerspectiveWorker(
           _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
         }
 
+        // Belt-and-suspenders sweep — when the runner short-circuits its batch
+        // (already-applied / cooldown / dedup filtered all events) filteredEvents
+        // is empty and the per-event MarkProcessedByPerspective above doesn't fire,
+        // leaving any waiter that registered against those tracked events stuck
+        // on its TCS for the full sync-wait timeout. The stream-level sweep wakes
+        // them as soon as the perspective reports Completed for the stream.
+        if (result.Status == PerspectiveProcessingStatus.Completed && _syncEventTracker is not null) {
+          _syncEventTracker.MarkPerspectiveStreamProcessed(perspectiveName, streamId);
+        }
+
         if (result.PerspectiveType is not null) {
           _syncSignaler?.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
         }
@@ -2570,6 +2580,16 @@ public partial class PerspectiveWorker(
       _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessed SKIPPED: ProcessedCount={Count}, HasTracker={HasTracker}",
         processedEvents.Count, _syncEventTracker is not null);
 #pragma warning restore CA1848
+    }
+
+    // Belt-and-suspenders sweep — see drain-mode site for full rationale. The
+    // per-event MarkProcessedByPerspective above is gated on processedEvents.Count
+    // (which is zero whenever shouldLoadEvents above evaluated false — no receptor
+    // invoker / no event store / non-Completed status), leaving waiters on tracked
+    // events stuck until their 30s timeout. The stream-level sweep here ensures
+    // every completion that reaches this seam wakes those waiters.
+    if (_syncEventTracker is not null) {
+      _syncEventTracker.MarkPerspectiveStreamProcessed(perspectiveName, streamId);
     }
 
     // Phase 3c.1: Signal checkpoint updated for perspective sync
