@@ -1153,4 +1153,86 @@ public class SyncEventTrackerTests {
     var result = await waitTask;
     await Assert.That(result).IsTrue();
   }
+
+  // ==========================================================================
+  // MarkPerspectiveStreamProcessed tests — belt-and-suspenders signal for
+  // perspective runs that complete without enumerating their processed events
+  // (e.g., already-applied / dedup / cooldown short-circuits). Production
+  // ChatService observed 30s sync-wait timeouts when subsequent waits on the
+  // same stream landed against events the runner had cleared the cursor past
+  // but never called MarkProcessedByPerspective for.
+  // ==========================================================================
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_RemovesAllTrackedEventsForPerspectiveStreamAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var e1 = Guid.NewGuid();
+    var e2 = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), e1, streamId, "P");
+    tracker.TrackEvent(typeof(TestEventB), e2, streamId, "P");
+
+    tracker.MarkPerspectiveStreamProcessed("P", streamId);
+
+    await Assert.That(tracker.GetPendingEvents(streamId, "P").Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_WakesPendingWaiterAsync() {
+    // Reproduces the chat bug: the runner advances the cursor without invoking
+    // MarkProcessedByPerspective (because it short-circuited / had no receptor
+    // invoker / filtered all events as already-applied), and a separate
+    // request-scope WaitForPerspectiveEventsAsync caller would otherwise wait
+    // 30s for nothing. With MarkPerspectiveStreamProcessed called at completion,
+    // the waiter resolves immediately.
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P");
+
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "P", TimeSpan.FromSeconds(5));
+
+    tracker.MarkPerspectiveStreamProcessed("P", streamId);
+
+    var result = await waitTask;
+    await Assert.That(result).IsTrue()
+      .Because("the stream-level sweep MUST wake any waiter registered against events the runner short-circuited past");
+  }
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_DoesNotAffectOtherPerspectivesAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P2");
+
+    tracker.MarkPerspectiveStreamProcessed("P1", streamId);
+
+    await Assert.That(tracker.GetPendingEvents(streamId, "P1").Count).IsEqualTo(0);
+    await Assert.That(tracker.GetPendingEvents(streamId, "P2").Count).IsEqualTo(1)
+      .Because("the sweep is scoped to a single perspective — events tracked for sibling perspectives must remain pending");
+  }
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_DoesNotAffectOtherStreamsAsync() {
+    var tracker = new SyncEventTracker();
+    var streamA = Guid.NewGuid();
+    var streamB = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamA, "P");
+    tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamB, "P");
+
+    tracker.MarkPerspectiveStreamProcessed("P", streamA);
+
+    await Assert.That(tracker.GetPendingEvents(streamA, "P").Count).IsEqualTo(0);
+    await Assert.That(tracker.GetPendingEvents(streamB, "P").Count).IsEqualTo(1)
+      .Because("the sweep is scoped to a single stream — events for other streams under the same perspective must remain pending");
+  }
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_NoTrackedEvents_NoOpAsync() {
+    var tracker = new SyncEventTracker();
+    tracker.MarkPerspectiveStreamProcessed("P", Guid.NewGuid());
+    await Assert.That(tracker.GetAllTrackedEventIds().Count).IsEqualTo(0);
+  }
 }

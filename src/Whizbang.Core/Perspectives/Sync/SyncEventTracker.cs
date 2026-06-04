@@ -254,6 +254,26 @@ public sealed class SyncEventTracker : ISyncEventTracker {
   }
 
   /// <inheritdoc />
+  public void MarkPerspectiveStreamProcessed(string perspectiveName, Guid streamId) {
+    ArgumentNullException.ThrowIfNull(perspectiveName);
+
+    // Snapshot the matching event IDs and delegate to MarkProcessedByPerspective so the
+    // single signaling path handles tracker removal + per-perspective TCS resolution +
+    // all-perspectives bookkeeping consistently. Cheap iteration: _trackedEvents is keyed
+    // by (eventId, perspectiveName), so the dictionary scan is bounded by total pending
+    // events for this perspective, not the cross-perspective universe.
+    var eventIds = new List<Guid>();
+    foreach (var kvp in _trackedEvents) {
+      if (kvp.Key.PerspectiveName == perspectiveName && kvp.Value.StreamId == streamId) {
+        eventIds.Add(kvp.Key.EventId);
+      }
+    }
+    if (eventIds.Count > 0) {
+      MarkProcessedByPerspective(eventIds, perspectiveName);
+    }
+  }
+
+  /// <inheritdoc />
   public int CleanupStaleEntries(TimeSpan maxAge) {
     var cutoff = DateTime.UtcNow - maxAge;
     var removedCount = 0;
