@@ -967,4 +967,54 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
     await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_order_perspective_tenant")
       .Because("Retrofit must drop the historical broken index by name");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultiplePerspectives_EmitsScopeIndexesPerTableAsync() {
+    // The snippet is invoked once per perspective with __TABLE_NAME__ substituted
+    // (see PerspectiveSchemaGenerator's per-perspective loop). Lock the invariant
+    // that EVERY perspective gets its own four scope-filter indexes + retrofit DROP,
+    // not just the first one.
+    const string source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace MyApp.Perspectives;
+
+            public record OrderModel { public Guid Id { get; set; } }
+            public record CustomerModel { public Guid Id { get; set; } }
+
+            public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreated> {
+              public OrderModel Apply(OrderModel current, OrderCreated @event) => current;
+            }
+
+            public class CustomerPerspective : IPerspectiveFor<CustomerModel, CustomerCreated> {
+              public CustomerModel Apply(CustomerModel current, CustomerCreated @event) => current;
+            }
+
+            public record OrderCreated : IEvent;
+            public record CustomerCreated : IEvent;
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // OrderPerspective table: all four scope indexes + retrofit DROP
+    await Assert.That(generatedSource).Contains("ix_wh_per_order_perspective_tenant ON wh_per_order_perspective((scope->>'t'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_order_perspective_user ON wh_per_order_perspective((scope->>'u'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_order_perspective_organization ON wh_per_order_perspective((scope->>'o'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_order_perspective_customer ON wh_per_order_perspective((scope->>'c'))");
+    await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_order_perspective_tenant");
+
+    // CustomerPerspective table: same four scope indexes + retrofit DROP
+    await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_tenant ON wh_per_customer_perspective((scope->>'t'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_user ON wh_per_customer_perspective((scope->>'u'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_organization ON wh_per_customer_perspective((scope->>'o'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_customer ON wh_per_customer_perspective((scope->>'c'))");
+    await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_customer_perspective_tenant");
+  }
 }
