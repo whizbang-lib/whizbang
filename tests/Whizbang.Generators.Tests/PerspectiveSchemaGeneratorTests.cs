@@ -924,7 +924,47 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
     await Assert.That(generatedSource).Contains("(scope->>'c')")
       .Because("Customer filter uses JSON key 'c' per PerspectiveScope.CustomerId — index must match");
 
-    await Assert.That(generatedSource).DoesNotContain("(scope->>'tenant_id')")
-      .Because("'tenant_id' is not a key in the stored scope JSON — the historical snippet used this and produced a dead index");
+    await Assert.That(generatedSource).DoesNotContain("CREATE INDEX IF NOT EXISTS ix_wh_per_order_perspective_tenant ON wh_per_order_perspective((scope->>'tenant_id'))")
+      .Because("The historical broken tenant index expression must not be present in newly-generated schemas");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPerspective_EmitsRetrofitDropForBrokenTenantIndexAsync() {
+    // Existing perspective tables in deployed services were created with the
+    // historical broken `(scope->>'tenant_id')` index. The schema generator
+    // runs on every service startup (CREATE TABLE/INDEX IF NOT EXISTS), so we
+    // emit a conditional DROP that fires only when the broken indexdef is
+    // present — self-healing migration without a separate script.
+    const string source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace MyApp.Perspectives;
+
+            public record OrderModel {
+              public Guid Id { get; set; }
+            }
+
+            public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreated> {
+              public OrderModel Apply(OrderModel currentData, OrderCreated @event) {
+                return currentData;
+              }
+            }
+
+            public record OrderCreated : IEvent;
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    await Assert.That(generatedSource).Contains("indexdef LIKE '%scope->>''tenant_id''%'")
+      .Because("Retrofit must only drop when the indexdef shows the broken expression — not unconditionally");
+    await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_order_perspective_tenant")
+      .Because("Retrofit must drop the historical broken index by name");
   }
 }
