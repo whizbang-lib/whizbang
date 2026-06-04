@@ -19,5 +19,12 @@ CREATE TABLE IF NOT EXISTS __TABLE_NAME__ (
 -- Indexes for __TABLE_NAME__
 CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___updated_at ON __TABLE_NAME__(updated_at);
 CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___metadata_gin ON __TABLE_NAME__ USING GIN (metadata jsonb_path_ops);
-CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___tenant ON __TABLE_NAME__((scope->>'tenant_id')) WHERE scope IS NOT NULL;
+-- Scope filter indexes: keys match PerspectiveScope's [JsonPropertyName] short
+-- form (t/u/o/c). EFCoreFilterableLensQuery emits WHERE scope->>'t' = ? etc.,
+-- and these btree functional indexes are what makes the planner pick index
+-- scan instead of seq_scan on large perspective tables.
+CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___tenant ON __TABLE_NAME__((scope->>'t')) WHERE scope IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___user ON __TABLE_NAME__((scope->>'u')) WHERE scope IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___organization ON __TABLE_NAME__((scope->>'o')) WHERE scope IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___customer ON __TABLE_NAME__((scope->>'c')) WHERE scope IS NOT NULL;
 #endregion

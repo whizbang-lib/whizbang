@@ -877,4 +877,54 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
     await Assert.That(generatedSource).Contains("order_purge")
       .Because("Table name should derive from perspective class name");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPerspective_EmitsBtreeIndexesForScopeFilterKeysAsync() {
+    // Locks the alignment between PerspectiveScope JSON keys (t/u/o/c, defined
+    // by [JsonPropertyName] on PerspectiveScope) and the btree functional
+    // indexes the schema generator emits. If these drift, every scope-filtered
+    // perspective lens query falls back to seq_scan — the symptom we caught
+    // while investigating "wh_per_active_job_template_section 36 ms/SELECT" in
+    // production. The old snippet used '(scope->>'tenant_id')' which never
+    // matched any stored row (TenantId serializes as 't'), so the index was
+    // dead code and the planner picked seq_scan.
+    const string source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace MyApp.Perspectives;
+
+            public record OrderModel {
+              public Guid Id { get; set; }
+            }
+
+            public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreated> {
+              public OrderModel Apply(OrderModel currentData, OrderCreated @event) {
+                return currentData;
+              }
+            }
+
+            public record OrderCreated : IEvent;
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    await Assert.That(generatedSource).Contains("(scope->>'t')")
+      .Because("Tenant filter uses JSON key 't' per PerspectiveScope.TenantId — index must match");
+    await Assert.That(generatedSource).Contains("(scope->>'u')")
+      .Because("User filter uses JSON key 'u' per PerspectiveScope.UserId — index must match");
+    await Assert.That(generatedSource).Contains("(scope->>'o')")
+      .Because("Organization filter uses JSON key 'o' per PerspectiveScope.OrganizationId — index must match");
+    await Assert.That(generatedSource).Contains("(scope->>'c')")
+      .Because("Customer filter uses JSON key 'c' per PerspectiveScope.CustomerId — index must match");
+
+    await Assert.That(generatedSource).DoesNotContain("(scope->>'tenant_id')")
+      .Because("'tenant_id' is not a key in the stored scope JSON — the historical snippet used this and produced a dead index");
+  }
 }
