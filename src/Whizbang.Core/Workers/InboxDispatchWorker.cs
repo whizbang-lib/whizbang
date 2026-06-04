@@ -560,40 +560,35 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
 
-  // ============================================================
-  // Dispatch-checkpoint diagnostic. Production scenarios surfaced an "inbox rows
-  // never advance past status=Stored with zero exception logs" failure mode —
-  // the normal-dispatch path either silently hangs or short-circuits between
-  // LeaseDispatchExecutor entry and the commit EnqueueAsync. These INFO-level
-  // checkpoints let an operator observe which boundary the path stops crossing
-  // without having to redeploy with debug logging. Volume is bounded by inbox
-  // throughput × 5 logs/dispatch; remove once the root cause class is fixed.
-  // ============================================================
-  [LoggerMessage(EventId = 19, Level = LogLevel.Information,
+  // Dispatch-checkpoint diagnostics for the "inbox rows never advance past
+  // status=Stored with zero exception logs" failure class. At Debug so
+  // operators can opt in via Serilog override; quiet by default to keep the
+  // per-event log volume bounded under load.
+  [LoggerMessage(EventId = 19, Level = LogLevel.Debug,
     Message = "DIAG[0] _processOneInnerAsync entered: message={MessageId} type={MessageType} attempts={Attempts}")]
   static partial void LogDiagProcessOneEntered(ILogger logger, Guid messageId, string messageType, int attempts);
 
-  [LoggerMessage(EventId = 25, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 25, Level = LogLevel.Debug,
     Message = "DIAG[SKIP] discard policy short-circuited: message={MessageId} type={MessageType}")]
   static partial void LogDiagSkipBranch(ILogger logger, Guid messageId, string messageType);
 
-  [LoggerMessage(EventId = 20, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 20, Level = LogLevel.Debug,
     Message = "DIAG[1] dispatch lambda entered: message={MessageId}")]
   static partial void LogDiagLambdaEntered(ILogger logger, Guid messageId);
 
-  [LoggerMessage(EventId = 21, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 21, Level = LogLevel.Debug,
     Message = "DIAG[2] security context established: message={MessageId}")]
   static partial void LogDiagSecurityEstablished(ILogger logger, Guid messageId);
 
-  [LoggerMessage(EventId = 22, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 22, Level = LogLevel.Debug,
     Message = "DIAG[3] PreInbox lifecycle returned: message={MessageId}")]
   static partial void LogDiagPreInboxReturned(ILogger logger, Guid messageId);
 
-  [LoggerMessage(EventId = 23, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 23, Level = LogLevel.Debug,
     Message = "DIAG[4] commit enqueued: message={MessageId} status={Status}")]
   static partial void LogDiagCommitEnqueued(ILogger logger, Guid messageId, int status);
 
-  [LoggerMessage(EventId = 24, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
     Message = "DIAG[5] PostInbox lifecycle returned: message={MessageId}")]
   static partial void LogDiagPostInboxReturned(ILogger logger, Guid messageId);
 
