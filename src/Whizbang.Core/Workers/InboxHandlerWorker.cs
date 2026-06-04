@@ -57,11 +57,23 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     if (!_options.Enabled) {
       return;
     }
+    LogDiagFlushEntered(_logger, batch.Count);
     await _schemaReadyGate.WaitForReadyAsync(ct);
+    LogDiagFlushSchemaReady(_logger, batch.Count);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
     var results = await coordinator.CommitHandlerBatchAsync(batch, ct);
+    var successes = 0;
+    var failures = 0;
+    foreach (var r in results) {
+      if (r.Success) {
+        successes++;
+      } else {
+        failures++;
+      }
+    }
+    LogDiagFlushCommitted(_logger, batch.Count, successes, failures);
 
     // Route per-handler failures to the failure flush worker for retry tracking.
     foreach (var result in results) {
@@ -95,6 +107,27 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "InboxHandlerWorker disabled via options — handler-batch commits skipped")]
   static partial void LogDisabled(ILogger logger);
+
+  // ============================================================
+  // Flush-checkpoint diagnostic, paired with InboxDispatchWorker's DIAG[1..5].
+  // Surfaces whether the BatchFlusher loop is actually draining the commit
+  // channel: DIAG[F1] proves the flush callback fires (channel had items),
+  // DIAG[F2] proves the schema gate doesn't park, DIAG[F3] proves
+  // CommitHandlerBatchAsync returned and at what success/failure split.
+  // Remove once the root cause class for "channel quietly drained zero items"
+  // is fixed.
+  // ============================================================
+  [LoggerMessage(EventId = 20, Level = LogLevel.Information,
+    Message = "DIAG[F1] flush callback entered: batch={Count}")]
+  static partial void LogDiagFlushEntered(ILogger logger, int count);
+
+  [LoggerMessage(EventId = 21, Level = LogLevel.Information,
+    Message = "DIAG[F2] schema gate ready, opening scope: batch={Count}")]
+  static partial void LogDiagFlushSchemaReady(ILogger logger, int count);
+
+  [LoggerMessage(EventId = 22, Level = LogLevel.Information,
+    Message = "DIAG[F3] CommitHandlerBatchAsync returned: batch={Count} successes={Successes} failures={Failures}")]
+  static partial void LogDiagFlushCommitted(ILogger logger, int count, int successes, int failures);
 }
 
 /// <summary>Channel surface for handler-result producers (the inbox dispatch path).</summary>
