@@ -1635,6 +1635,7 @@ public class PerspectiveWorkerCoverageTests {
 
   private sealed class FakeSyncEventTracker : ISyncEventTracker {
     public int MarkProcessedByPerspectiveCallCount { get; private set; }
+    public int MarkPerspectiveStreamProcessedCallCount { get; private set; }
 
     public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) { }
 
@@ -1666,6 +1667,10 @@ public class PerspectiveWorkerCoverageTests {
     public void UnregisterAwaiter(Guid awaiterId) { }
 
     public int CleanupStaleEntries(TimeSpan maxAge) => 0;
+
+    public void MarkPerspectiveStreamProcessed(string perspectiveName, Guid streamId) {
+      MarkPerspectiveStreamProcessedCallCount++;
+    }
   }
 
   private sealed class FakeEventStore : IEventStore {
