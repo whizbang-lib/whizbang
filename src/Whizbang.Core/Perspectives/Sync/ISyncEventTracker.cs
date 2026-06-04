@@ -146,4 +146,26 @@ public interface ISyncEventTracker {
   /// <param name="maxAge">Maximum age for tracked events. Entries older than this are removed.</param>
   /// <returns>The number of entries removed.</returns>
   int CleanupStaleEntries(TimeSpan maxAge);
+
+  /// <summary>
+  /// Belt-and-suspenders sweep for perspective runs that completed without enumerating every
+  /// event they processed. Marks ALL events currently tracked for
+  /// (<paramref name="perspectiveName"/>, <paramref name="streamId"/>) as processed and signals
+  /// any pending waiters. Called from <c>PerspectiveWorker</c> at the completion seam in
+  /// addition to the per-event <see cref="MarkProcessedByPerspective"/> path so short-circuit
+  /// flows (already-applied / dedup / cooldown / no-receptor-invoker) still wake waiters.
+  /// </summary>
+  /// <param name="perspectiveName">The perspective whose tracked entries should be swept.</param>
+  /// <param name="streamId">The stream whose tracked entries should be swept.</param>
+  /// <remarks>
+  /// Production motivation: ChatService observed 30s sync-wait timeouts when a
+  /// perspective drained a stream whose runner short-circuited every event (eg the
+  /// recently-processed-event cooldown filtered the whole batch). The per-event
+  /// <see cref="MarkProcessedByPerspective"/> call was gated on a non-empty
+  /// "processedEvents" list and therefore never fired, leaving prior-emit
+  /// <see cref="WaitForPerspectiveEventsAsync"/> callers stuck on their TCS until the
+  /// 30s timeout. This stream-level sweep closes that gap without changing the per-event
+  /// happy path.
+  /// </remarks>
+  void MarkPerspectiveStreamProcessed(string perspectiveName, Guid streamId);
 }
