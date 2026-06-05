@@ -161,3 +161,89 @@ $$;
 
 COMMENT ON FUNCTION __SCHEMA__.compute_dead_letter_fingerprint IS
 'Algorithm v1 (Slice 2 of release/v0.645.0-alpha.1). Hashes "type:frame1:frame2:frame3" (excluding framework + Whizbang catch-site frames) and returns the first 16 hex chars of SHA256. Called by Slice 3''s move_to_dead_letters extension (live capture) and Slice 6''s aggregate_dead_letters (version-aware backfill). NULL input → NULL output. See operations/dead-letter-queue/error-fingerprinting docs page for the algorithm rationale, exclusions, and version bump procedure.';
+
+-- ============================================================================
+-- 4. wh_dead_letter_summary table (Slice 6)
+-- ============================================================================
+-- Operator-facing rollup of raw wh_dead_letters by (fingerprint, source, message_type).
+-- Collapses the 38k+ row JDX BFF DLQ into ~dozens of distinct clusters with counts,
+-- first/last seen timestamps, and a representative sample error_text per cluster.
+-- Refreshed by aggregate_dead_letters() called from migration 032's
+-- perform_maintenance() (every 10 min default).
+
+CREATE TABLE IF NOT EXISTS wh_dead_letter_summary (
+  error_fingerprint  VARCHAR(16) NOT NULL,
+  source_table       TEXT NOT NULL,
+  message_type       TEXT NOT NULL,
+  occurrence_count   BIGINT NOT NULL,
+  first_seen_at      TIMESTAMPTZ NOT NULL,
+  last_seen_at       TIMESTAMPTZ NOT NULL,
+  sample_error_text  TEXT NOT NULL,
+  PRIMARY KEY (error_fingerprint, source_table, message_type)
+);
+
+COMMENT ON TABLE wh_dead_letter_summary IS
+'Slice 6 of release/v0.645.0-alpha.1 — operator/AI-friendly rollup of wh_dead_letters by (error_fingerprint, source_table, message_type). Refreshed by aggregate_dead_letters() inside perform_maintenance. sample_error_text is the most-recent row''s text for each cluster so the dashboard view tracks current behavior.';
+
+-- ============================================================================
+-- 5. aggregate_dead_letters() (Slice 6)
+-- ============================================================================
+-- Two-step pipeline:
+--   (a) Version-aware backfill of error_fingerprint on raw wh_dead_letters rows
+--       whose error_fingerprint_version is stale (NULL or below the current
+--       algorithm version). Only stale rows are touched — current-version rows
+--       are skipped so each maintenance tick is O(new+stale), not O(all).
+--   (b) GROUP BY upsert into wh_dead_letter_summary. occurrence_count is the
+--       current row count for that cluster; sample_error_text takes the most
+--       recent row's error_text per cluster.
+--
+-- Called from perform_maintenance (migration 032). Idempotent.
+
+SELECT __SCHEMA__.drop_all_overloads('aggregate_dead_letters');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.aggregate_dead_letters()
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  -- Step (a): version-aware backfill. The WHERE clause selects rows that need
+  -- (re-)hashing: NULL version (never tagged) OR a version below the current
+  -- algorithm. Rows at the current version are deliberately left alone — they're
+  -- already fingerprinted under the current algorithm. Without this skip, every
+  -- maintenance tick burns IO re-hashing every row.
+  UPDATE wh_dead_letters
+  SET error_fingerprint = __SCHEMA__.compute_dead_letter_fingerprint(error_text),
+      error_fingerprint_version = __SCHEMA__.current_dead_letter_fingerprint_version()
+  WHERE error_text IS NOT NULL
+    AND (error_fingerprint_version IS NULL
+         OR error_fingerprint_version < __SCHEMA__.current_dead_letter_fingerprint_version());
+
+  -- Step (b): aggregate. INSERT ... ON CONFLICT DO UPDATE so a fresh maintenance
+  -- tick refreshes occurrence_count and last_seen_at without orphaning the
+  -- first_seen_at value from the very first cluster appearance.
+  INSERT INTO wh_dead_letter_summary (
+    error_fingerprint, source_table, message_type,
+    occurrence_count, first_seen_at, last_seen_at, sample_error_text
+  )
+  SELECT
+    error_fingerprint,
+    source_table,
+    message_type,
+    COUNT(*),
+    MIN(dead_lettered_at),
+    MAX(dead_lettered_at),
+    (array_agg(error_text ORDER BY dead_lettered_at DESC))[1]
+  FROM wh_dead_letters
+  WHERE error_fingerprint IS NOT NULL
+    AND error_text IS NOT NULL
+  GROUP BY error_fingerprint, source_table, message_type
+  ON CONFLICT (error_fingerprint, source_table, message_type) DO UPDATE
+  SET occurrence_count = EXCLUDED.occurrence_count,
+      first_seen_at = LEAST(wh_dead_letter_summary.first_seen_at, EXCLUDED.first_seen_at),
+      last_seen_at = GREATEST(wh_dead_letter_summary.last_seen_at, EXCLUDED.last_seen_at),
+      sample_error_text = EXCLUDED.sample_error_text;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.aggregate_dead_letters IS
+'Slice 6 of release/v0.645.0-alpha.1 — refreshes wh_dead_letter_summary. (1) Version-aware backfill: re-hashes raw rows with stale fingerprint_version, leaves current-version rows alone (O(new+stale), not O(all)). (2) GROUP BY upsert into the summary table. Called from perform_maintenance every 10 min default.';
