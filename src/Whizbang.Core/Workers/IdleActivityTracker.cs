@@ -32,7 +32,10 @@ public sealed class IdleActivityTracker : IIdleActivityTracker {
   /// <inheritdoc />
   public void Touch(string source) {
     ArgumentNullException.ThrowIfNull(source);
-    // RED stub — Slice 4a GREEN replaces this with the real assignment.
+    lock (_lock) {
+      _lastActivityAt = _timeProvider.GetUtcNow();
+      _lastActivitySource = source;
+    }
   }
 
   /// <inheritdoc />
