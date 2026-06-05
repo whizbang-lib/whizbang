@@ -18,8 +18,8 @@ namespace Whizbang.Core.Workers;
 /// <see cref="IWorkCoordinator.NotifyScheduledRetryDueAsync(CancellationToken)"/>
 /// to wake the per-instance NOTIFY channels for any rows whose
 /// <c>scheduled_for</c> has elapsed. Replaces the standalone
-/// <see cref="ScheduledRetryWorker"/>'s 10 s tick — the coordinator now owns
-/// the cadence.</description></item>
+/// the (now-deleted) <c>ScheduledRetryWorker</c>'s 10 s tick — the
+/// coordinator now owns the cadence.</description></item>
 /// </list>
 /// <para>
 /// Additional ticks (e.g. <c>stamper-backstop</c>,

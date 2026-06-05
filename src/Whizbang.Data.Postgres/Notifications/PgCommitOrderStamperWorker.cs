@@ -240,7 +240,9 @@ public sealed partial class PgCommitOrderStamperWorker(
     // The "strictly greater" guard handles operator misconfiguration where
     // NotifyHealthyPollingInterval is set below the floor — the knob only relaxes,
     // never tightens.
+#pragma warning disable CS0618 // Honoring the Slice 1 knob for backward compat until the stamper backstop loop retires in a follow-up slice.
     var relaxed = options.NotifyHealthyPollingInterval;
+#pragma warning restore CS0618
     if (relaxed.HasValue && relaxed.Value > options.PollingInterval) {
       return relaxed.Value;
     }

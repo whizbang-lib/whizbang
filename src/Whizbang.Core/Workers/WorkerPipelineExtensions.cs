@@ -49,7 +49,6 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<InboxDispatchWorker>();
     services.TryAddSingleton<OutboxDrainWorker>();
     services.TryAddSingleton<InboxDrainWorker>();
-    services.TryAddSingleton<ScheduledRetryWorker>();
     services.TryAddSingleton<DeadLetterRecoveryWorker>();
     services.TryAddSingleton<TransportDeadLetterDrainWorker>();
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
@@ -130,7 +129,6 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxDrainWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<ScheduledRetryWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
@@ -182,7 +180,6 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxHandlerWorkerOptions>();
     services.AddOptions<OutboxPublishWorkerOptions>();
     services.AddOptions<InboxDispatchWorkerOptions>();
-    services.AddOptions<ScheduledRetryWorkerOptions>();
     services.AddOptions<DeadLetterRecoveryOptions>();
     services.AddOptions<TransportDeadLetterDrainWorkerOptions>();
     services.AddOptions<MaintenanceWorkerOptions>();
