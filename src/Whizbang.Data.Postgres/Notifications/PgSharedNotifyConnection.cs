@@ -71,6 +71,27 @@ public sealed partial class PgSharedNotifyConnection(
   private DateTimeOffset? _lastFailureAt;
   private string? _lastFailureReason;
 
+  /// <summary>
+  /// Computes the <c>application_name</c> the per-pod LISTEN connection sets on its
+  /// Npgsql connection string. Format: <c>whizbang-&lt;instance_id&gt;</c>. The format is
+  /// stable across pod restarts (instance_id is regenerated on restart, so the
+  /// resulting application_name changes — that's intentional: pg_stat_activity's row
+  /// for the old pod's connection vanishes when the connection closes, and the new
+  /// pod registers under its own name).
+  /// </summary>
+  /// <remarks>
+  /// Slice 2 of zero-idle-polling — the <c>wh_live_instances</c> view (migration 052)
+  /// joins <c>wh_service_instances</c> against <c>pg_stat_activity</c> on exactly this
+  /// format, so the helper is the single source of truth for the format on both sides.
+  /// Tested directly in <c>PgSharedNotifyConnectionApplicationNameTests</c>.
+  /// </remarks>
+  internal static string ComputeApplicationName(Guid instanceId) {
+    // 'whizbang-' (9 chars) + 36-char dash-separated lowercase GUID = 45 chars,
+    // well within Postgres NAMEDATALEN-1 = 63 limit. The 'D' format specifier
+    // matches the lowercased dash-separated form pg_stat_activity reports back.
+    return $"whizbang-{instanceId:D}";
+  }
+
   /// <inheritdoc />
   public bool IsAvailable => _isAvailable;
   /// <inheritdoc />
@@ -309,6 +330,17 @@ public sealed partial class PgSharedNotifyConnection(
     }
 
     var connectionString = resolution.ConnectionString;
+    // Slice 2 of zero-idle-polling — when we're going to open via the bare
+    // connection-string path (no NpgsqlDataSource registered), inject
+    // application_name so pg_stat_activity rows are pod-identifiable. The
+    // data-source path already gets this stamped at builder time inside
+    // PostgresNotificationsServiceCollectionExtensions, so no change needed
+    // for that branch.
+    var connectionStringWithAppName = string.IsNullOrEmpty(connectionString)
+      ? connectionString
+      : new NpgsqlConnectionStringBuilder(connectionString) {
+        ApplicationName = ComputeApplicationName(_instanceProvider.InstanceId),
+      }.ConnectionString;
     var attempt = 0;
 
     while (!stoppingToken.IsCancellationRequested) {
@@ -318,7 +350,7 @@ public sealed partial class PgSharedNotifyConnection(
         // from every public ConnectionString surface in that configuration.
         await using var conn = _dataSource is not null
           ? await _dataSource.OpenConnectionAsync(stoppingToken).ConfigureAwait(false)
-          : new NpgsqlConnection(connectionString);
+          : new NpgsqlConnection(connectionStringWithAppName);
         // Slice 33.3 — attach the persistent dispatch handler BEFORE opening so any
         // notifications that arrive immediately after LISTEN issue are observed. The
         // handler routes by channel name into the subscription registry; the probe's

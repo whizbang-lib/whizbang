@@ -53,9 +53,24 @@ BEGIN
             SELECT 1 FROM __SCHEMA__.wh_active_streams ast
             WHERE ast.stream_id = pe.stream_id
               AND ast.assigned_instance_id != p_instance_id
-              AND EXISTS (
-                SELECT 1 FROM __SCHEMA__.wh_service_instances si
-                WHERE si.instance_id = ast.assigned_instance_id
+              AND (
+                -- Existing check: a row in wh_service_instances counts as alive.
+                -- This is removed by cleanup_stale_instances at the stale threshold.
+                EXISTS (
+                  SELECT 1 FROM __SCHEMA__.wh_service_instances si
+                  WHERE si.instance_id = ast.assigned_instance_id
+                )
+                -- Slice 2b of zero-idle-polling — additive defensive predicate:
+                -- a pod with a live Whizbang LISTEN connection in pg_stat_activity
+                -- counts as alive even if its wh_service_instances row has been
+                -- cleaned up (transient state during pod restart, race between
+                -- cleanup_stale_instances and the pod opening its LISTEN
+                -- connection on next boot). Strictly additive — only adds
+                -- protection against premature orphan-claim, never loosens.
+                OR EXISTS (
+                  SELECT 1 FROM pg_stat_activity sa
+                  WHERE sa.application_name = 'whizbang-' || ast.assigned_instance_id::text
+                )
               )
           )
         )

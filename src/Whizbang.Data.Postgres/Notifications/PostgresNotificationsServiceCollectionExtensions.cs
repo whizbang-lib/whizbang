@@ -139,6 +139,16 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       // contention. A smaller pool (we tried 4) starved test runs that drove
       // multiple parallel hosts.
       builder.ConnectionStringBuilder.MaxPoolSize = 8;
+      // Slice 2 of zero-idle-polling — stamp application_name with the per-pod
+      // identity so pg_stat_activity rows are distinguishable per-pod. The
+      // wh_live_instances view (migration 052) joins on this exact format.
+      var instanceProvider = sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>();
+      builder.ConnectionStringBuilder.ApplicationName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
+      // Slice 3 of zero-idle-polling — TCP keepalive params so the kernel detects
+      // silent NAT/firewall connection death within ~150 s instead of the OS
+      // default (~2 hours on Linux). The gate's reprobe loop then flips
+      // IsAvailable to false and dependent workers engage their backstop poll.
+      ApplyTcpKeepAlive(builder.ConnectionStringBuilder, options);
       // ownsDataSource: true means the wrapper's DI-driven disposal will dispose
       // the data source. Critical for tests that spin many hosts in sequence —
       // without this, every host leaks an Npgsql connection pool.
@@ -146,6 +156,30 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     });
 
     return services;
+  }
+
+  /// <summary>
+  /// Applies the per-options TCP keepalive settings to an
+  /// <see cref="NpgsqlConnectionStringBuilder"/>. Pure mutation — no DI, no side effects
+  /// beyond the builder. Slice 3 of zero-idle-polling.
+  /// </summary>
+  /// <remarks>
+  /// Called from both the auto-discovery data-source factory and the explicit
+  /// <see cref="AddWhizbangNotificationDataSource"/> path so notification connections
+  /// detect silent NAT-style death within
+  /// <c>TcpKeepAliveTime + N × TcpKeepAliveInterval</c> seconds instead of the OS default
+  /// (typically ~2 hours). The gate's reprobe loop then notices the failure and flips
+  /// <c>IsAvailable</c> to false, which in turn triggers the backstop poll path on
+  /// dependent workers.
+  /// </remarks>
+  internal static void ApplyTcpKeepAlive(
+      NpgsqlConnectionStringBuilder builder,
+      WhizbangNotificationOptions options) {
+    ArgumentNullException.ThrowIfNull(builder);
+    ArgumentNullException.ThrowIfNull(options);
+    builder.TcpKeepAlive = true;
+    builder.TcpKeepAliveTime = options.TcpKeepAliveTime;
+    builder.TcpKeepAliveInterval = options.TcpKeepAliveInterval;
   }
 
   /// <summary>
@@ -207,7 +241,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       throw new ArgumentException("connectionString must be non-empty", nameof(connectionString));
     }
 
-    services.AddSingleton<INotificationDataSource>(_ => {
+    services.AddSingleton<INotificationDataSource>(sp => {
       // Independent data source — its pool is NOT shared with EF Core.
       // 4 connections is plenty: one for the LISTEN/NOTIFY shared connection,
       // one for the commit-order stamper's advisory-lock holder, plus headroom
@@ -221,6 +255,16 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       // contention. A smaller pool (we tried 4) starved test runs that drove
       // multiple parallel hosts.
       builder.ConnectionStringBuilder.MaxPoolSize = 8;
+      // Slice 2 of zero-idle-polling — stamp application_name with the per-pod
+      // identity so pg_stat_activity rows are distinguishable per-pod. The
+      // wh_live_instances view (migration 052) joins on this exact format.
+      var instanceProvider = sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>();
+      builder.ConnectionStringBuilder.ApplicationName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
+      // Slice 3 of zero-idle-polling — TCP keepalive params (same defaults as
+      // the auto-discovery path).
+      var options = sp.GetService<IOptions<WhizbangNotificationOptions>>()?.Value
+        ?? new WhizbangNotificationOptions();
+      ApplyTcpKeepAlive(builder.ConnectionStringBuilder, options);
       return new NotificationDataSource(builder.Build());
     });
 
@@ -327,6 +371,16 @@ internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(ICon
         System.Globalization.CultureInfo.InvariantCulture,
         out var multiplier)) {
       options.ListenReconnectBackoffMultiplier = multiplier;
+    }
+
+    if (int.TryParse(section["TcpKeepAliveTime"], System.Globalization.NumberStyles.Integer,
+        System.Globalization.CultureInfo.InvariantCulture, out var kaTime)) {
+      options.TcpKeepAliveTime = kaTime;
+    }
+
+    if (int.TryParse(section["TcpKeepAliveInterval"], System.Globalization.NumberStyles.Integer,
+        System.Globalization.CultureInfo.InvariantCulture, out var kaInterval)) {
+      options.TcpKeepAliveInterval = kaInterval;
     }
   }
 }

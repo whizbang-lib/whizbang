@@ -47,7 +47,8 @@ public sealed partial class PgCommitOrderStamperWorker(
   ISharedNotifyConnection sharedConnection,
   ILogger<PgCommitOrderStamperWorker> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
-  INotificationDataSource? notificationDataSource = null
+  INotificationDataSource? notificationDataSource = null,
+  INotifySignalingGate? notifySignalingGate = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _notificationOptions = notificationOptions?.Value ?? throw new ArgumentNullException(nameof(notificationOptions));
   private readonly CommitOrderStamperOptions _stamperOptions = stamperOptions?.Value ?? throw new ArgumentNullException(nameof(stamperOptions));
@@ -55,6 +56,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   private readonly ISharedNotifyConnection _sharedConnection = sharedConnection ?? throw new ArgumentNullException(nameof(sharedConnection));
   private readonly ILogger<PgCommitOrderStamperWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly INotifySignalingGate? _notifySignalingGate = notifySignalingGate;
   // Opt-in: register an INotificationDataSource via DI when the DbContext is
   // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
   // works because Npgsql strips credentials from both NpgsqlConnection.
@@ -134,63 +136,117 @@ public sealed partial class PgCommitOrderStamperWorker(
     var subscription = new CommitNotificationSubscription(this);
     using var subscriptionHandle = _sharedConnection.Subscribe(subscription);
 
-    while (!stoppingToken.IsCancellationRequested) {
-      NpgsqlConnection? lockConn = null;
-      try {
-        // Prefer NpgsqlDataSource.OpenConnectionAsync — it carries the
-        // credentials internally and is the only path that works with the
-        // UseNpgsql(NpgsqlDataSource) DbContext configuration. Falls back to
-        // the resolved connection string when no data source is registered.
-        lockConn = _dataSource is not null
-          ? await _dataSource.OpenConnectionAsync(stoppingToken)
-          : new NpgsqlConnection(resolution.ConnectionString);
-        if (_dataSource is null) {
-          await lockConn.OpenAsync(stoppingToken);
-        }
+    // Snap-to-floor on gate-flip: when the gate transitions to false, the relaxed
+    // cadence is no longer safe (NOTIFY may not arrive), so wake immediately and
+    // let the next loop iteration recompute the effective interval. When the gate
+    // flips back to true, wake too — if we were mid-sleep in floor cadence, the
+    // next iteration picks up the relaxed cadence right away.
+    Action<bool> handleGateChange = _ => Wake();
+    if (_notifySignalingGate is not null) {
+      _notifySignalingGate.OnAvailabilityChanged += handleGateChange;
+    }
 
-        var gotLock = await _tryAcquireLeaderLockAsync(lockConn, stoppingToken);
-        if (!gotLock) {
-          await lockConn.DisposeAsync();
-          lockConn = null;
-          try { await Task.Delay(_stamperOptions.LeaderElectionRetry, stoppingToken); } catch (OperationCanceledException) { break; }
-          continue;
-        }
-
-        _setLeader(true);
-
+    try {
+      while (!stoppingToken.IsCancellationRequested) {
+        NpgsqlConnection? lockConn = null;
         try {
-          while (!stoppingToken.IsCancellationRequested) {
-            // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
-            // the same stamp.
-            try {
-              _ = await _wake.WaitAsync(_stamperOptions.PollingInterval, stoppingToken);
-            } catch (OperationCanceledException) { break; }
+          // Prefer NpgsqlDataSource.OpenConnectionAsync — it carries the
+          // credentials internally and is the only path that works with the
+          // UseNpgsql(NpgsqlDataSource) DbContext configuration. Falls back to
+          // the resolved connection string when no data source is registered.
+          lockConn = _dataSource is not null
+            ? await _dataSource.OpenConnectionAsync(stoppingToken)
+            : new NpgsqlConnection(resolution.ConnectionString);
+          if (_dataSource is null) {
+            await lockConn.OpenAsync(stoppingToken);
+          }
 
-            var stamped = await _stampOnceAsync(lockConn, stoppingToken);
-            _ = Interlocked.Add(ref _totalStamped, stamped);
-            OnStampCompleted?.Invoke(stamped);
+          var gotLock = await _tryAcquireLeaderLockAsync(lockConn, stoppingToken);
+          if (!gotLock) {
+            await lockConn.DisposeAsync();
+            lockConn = null;
+            try { await Task.Delay(_stamperOptions.LeaderElectionRetry, stoppingToken); } catch (OperationCanceledException) { break; }
+            continue;
+          }
+
+          _setLeader(true);
+
+          try {
+            while (!stoppingToken.IsCancellationRequested) {
+              // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
+              // the same stamp.
+              try {
+                var effectiveInterval = ComputeEffectivePollingInterval(
+                  _stamperOptions,
+                  _notifySignalingGate?.IsAvailable);
+                _ = await _wake.WaitAsync(effectiveInterval, stoppingToken);
+              } catch (OperationCanceledException) { break; }
+
+              var stamped = await _stampOnceAsync(lockConn, stoppingToken);
+              _ = Interlocked.Add(ref _totalStamped, stamped);
+              OnStampCompleted?.Invoke(stamped);
+            }
+          } catch (OperationCanceledException) {
+            // shutdown — fall through to finally
           }
         } catch (OperationCanceledException) {
-          // shutdown — fall through to finally
+          break;
+        } catch (Exception ex) {
+          LogIterationError(_logger, ex.Message, resolution.Source, _notificationOptions.ConnectionStringKey ?? "(unset)");
+          // Fall through to retry loop; lockConn finally below will release.
+        } finally {
+          _setLeader(false);
+          if (lockConn is not null) {
+            try { await _releaseLeaderLockAsync(lockConn); } catch { /* best effort */ }
+            await lockConn.DisposeAsync();
+          }
         }
-      } catch (OperationCanceledException) {
-        break;
-      } catch (Exception ex) {
-        LogIterationError(_logger, ex.Message, resolution.Source, _notificationOptions.ConnectionStringKey ?? "(unset)");
-        // Fall through to retry loop; lockConn finally below will release.
-      } finally {
-        _setLeader(false);
-        if (lockConn is not null) {
-          try { await _releaseLeaderLockAsync(lockConn); } catch { /* best effort */ }
-          await lockConn.DisposeAsync();
-        }
-      }
 
-      // Brief pause before re-attempting lock acquisition on next iteration.
-      try { await Task.Delay(_stamperOptions.LeaderElectionRetry, stoppingToken); } catch (OperationCanceledException) { break; }
+        // Brief pause before re-attempting lock acquisition on next iteration.
+        try { await Task.Delay(_stamperOptions.LeaderElectionRetry, stoppingToken); } catch (OperationCanceledException) { break; }
+      }
+    } finally {
+      if (_notifySignalingGate is not null) {
+        _notifySignalingGate.OnAvailabilityChanged -= handleGateChange;
+      }
     }
 
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Computes the effective polling interval the wait-loop should use on the next tick.
+  /// Returns <see cref="CommitOrderStamperOptions.PollingInterval"/> when the NOTIFY gate
+  /// is unavailable (or not wired) — that's the "correctness floor" cadence. Returns
+  /// <see cref="CommitOrderStamperOptions.NotifyHealthyPollingInterval"/> when the gate
+  /// reports healthy AND the relaxed value is strictly greater than the floor; otherwise
+  /// falls back to the floor.
+  /// </summary>
+  /// <remarks>
+  /// Pure function so it's trivially unit-testable without spinning up the worker.
+  /// Extracted as <c>internal static</c> so test assemblies can call it directly via
+  /// <c>InternalsVisibleTo</c>.
+  /// </remarks>
+  internal static TimeSpan ComputeEffectivePollingInterval(
+      CommitOrderStamperOptions options,
+      bool? gateIsAvailable) {
+    ArgumentNullException.ThrowIfNull(options);
+    // Gate broken (false) or not wired (null) → floor cadence. Missed NOTIFY recovery
+    // is the dominant failure mode; the poll must stay tight.
+    if (gateIsAvailable != true) {
+      return options.PollingInterval;
+    }
+    // Gate healthy AND relaxed value strictly greater than floor → use relaxed.
+    // The "strictly greater" guard handles operator misconfiguration where
+    // NotifyHealthyPollingInterval is set below the floor — the knob only relaxes,
+    // never tightens.
+#pragma warning disable CS0618 // Honoring the Slice 1 knob for backward compat until the stamper backstop loop retires in a follow-up slice.
+    var relaxed = options.NotifyHealthyPollingInterval;
+#pragma warning restore CS0618
+    if (relaxed.HasValue && relaxed.Value > options.PollingInterval) {
+      return relaxed.Value;
+    }
+    return options.PollingInterval;
   }
 
   /// <summary>
