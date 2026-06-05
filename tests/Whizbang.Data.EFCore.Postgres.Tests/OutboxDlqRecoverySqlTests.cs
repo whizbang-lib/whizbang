@@ -8,8 +8,7 @@ using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Slice 4 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis) —
@@ -169,7 +168,7 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
 
     await Assert.That(eventData).IsNotNull()
       .Because("Recovered wh_outbox row MUST have event_data — recovery without payload would silently lose the original message.");
-    await Assert.That(eventData!).Contains("hello")
+    await Assert.That(eventData).Contains("hello")
       .Because("The original event_data ({\"hello\":\"world\"}) survives the move→recover roundtrip via the envelope JSONB snapshot in wh_dead_letters.");
   }
 
