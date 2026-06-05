@@ -483,6 +483,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             // graceful shutdown
           } catch (Exception ex) {
             LogLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
+            // Slice 7 of release/v0.645.0-alpha.1 — mirrors Slice 1's outbox fix:
+            // route the lifecycle exception through IFailureChannel so
+            // process_inbox_failures populates wh_inbox.error with the full
+            // ex.ToString(). Without this, inbox lifecycle faults retried forever
+            // silently — identical to the production outbox bug, different worker.
+            await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+              MessageId = work.MessageId,
+              CompletedStatus = work.Status,
+              Error = $"Lifecycle stage {stageName}Detached failed: {ex}",
+              Reason = MessageFailureReason.Unknown,
+            }, detachedCt);
           }
         }, detachedCt);
       }
@@ -496,6 +507,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       }
     } catch (Exception ex) {
       LogLifecycleError(_logger, work.MessageId, stageName, ex);
+      // Slice 7 of release/v0.645.0-alpha.1 — mirrors Slice 1's outbox fix:
+      // route the lifecycle exception through IFailureChannel so
+      // process_inbox_failures populates wh_inbox.error with the full
+      // ex.ToString(). Without this, inbox lifecycle faults retried forever
+      // silently — identical to the production outbox bug, different worker.
+      await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+        MessageId = work.MessageId,
+        CompletedStatus = work.Status,
+        Error = $"Lifecycle stage {stageName} failed: {ex}",
+        Reason = MessageFailureReason.Unknown,
+      }, cancellationToken);
     }
   }
 
