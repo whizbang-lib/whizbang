@@ -47,18 +47,27 @@ public class EFCoreWorkCoordinator<TDbContext>(
   JsonSerializerOptions jsonOptions,
   ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null,
   WorkCoordinatorMetrics? metrics = null,
-  WorkCoordinatorGate? gate = null
+  WorkCoordinatorGate? gate = null,
+  IServiceInstanceProvider? instanceProvider = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
   private const string PERSPECTIVE_CURSORS_TABLE = "wh_perspective_cursors";
   private const string PARAM_INSTANCE_ID = "p_instance_id";
 
+  // Slice 5 of zero-idle-polling — opportunistic heartbeat update inside
+  // CompleteOutboxPublishedAsync skips when the freshness guard says the row
+  // was UPDATEd within this many seconds. Same value as the SQL-side guard
+  // in migration 010 (register_instance_heartbeat) so the two paths agree
+  // on what "fresh" means.
+  private const int OPPORTUNISTIC_HEARTBEAT_FRESHNESS_SECONDS = 10;
+
   private readonly TDbContext _dbContext = _initDbContext(dbContext);
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly WorkCoordinatorGate? _gate = gate;
+  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
 
   private static TDbContext _initDbContext(TDbContext ctx) {
     ArgumentNullException.ThrowIfNull(ctx);
@@ -234,7 +243,34 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
     cmd.Parameters.Add(new NpgsqlParameter("p_debug_mode", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = debugMode });
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    // Slice 5 of zero-idle-polling — piggyback an opportunistic heartbeat row
+    // UPDATE so that during continuous work-completion activity the pod's
+    // last_heartbeat_at stays fresh without waiting for the 30 s timer-driven
+    // HeartbeatWorker tick. The SQL-side freshness guard makes repeated
+    // calls within 10 s no-op (0 rows updated, no WAL pressure).
+    await _opportunisticHeartbeatAsync(conn, cancellationToken).ConfigureAwait(false);
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  // Issues a guarded UPDATE on wh_service_instances. No-op when the
+  // instance provider isn't wired (the EFCoreWorkCoordinator can be
+  // constructed without one — historical contract) or when the heartbeat
+  // row was UPDATEd within the freshness window.
+  private async Task _opportunisticHeartbeatAsync(
+      System.Data.Common.DbConnection conn, CancellationToken cancellationToken) {
+    if (_instanceProvider is null) {
+      return;
+    }
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var tableName = BuildSchemaQualifiedName(schema, "wh_service_instances");
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"UPDATE {tableName} SET last_heartbeat_at = NOW() WHERE instance_id = @p_id AND last_heartbeat_at < NOW() - make_interval(secs => @p_freshness)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
+    cmd.Parameters.Add(new NpgsqlParameter("p_freshness", NpgsqlTypes.NpgsqlDbType.Integer) { Value = OPPORTUNISTIC_HEARTBEAT_FRESHNESS_SECONDS });
+    _ = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
