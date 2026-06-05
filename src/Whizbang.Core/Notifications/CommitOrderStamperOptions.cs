@@ -15,6 +15,29 @@ public sealed class CommitOrderStamperOptions {
   public TimeSpan PollingInterval { get; set; } = TimeSpan.FromMilliseconds(250);
 
   /// <summary>
+  /// Relaxed polling interval used when <see cref="INotifySignalingGate.IsAvailable"/> is
+  /// <c>true</c> — that is, when LISTEN/NOTIFY is verified working end-to-end so missed
+  /// NOTIFYs are not the dominant failure mode. Default 30 seconds.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Only takes effect when its value is greater than <see cref="PollingInterval"/>; otherwise
+  /// ignored. Set explicitly to <c>null</c> to restore pre-Slice-1 behavior (tight polling
+  /// always). Falls back to <see cref="PollingInterval"/> immediately the moment the gate
+  /// reports <c>IsAvailable = false</c>, so a listener outage never silently increases
+  /// commit-stamping latency.
+  /// </para>
+  /// <para>
+  /// Mirrors the same pattern <see cref="ClaimWorker"/> uses for its
+  /// <c>NotifyHealthyPollingIntervalMilliseconds</c> — when the gate is healthy, NOTIFY-on-
+  /// <c>wh_committed</c> drives sub-ms wake; the periodic poll is only a backstop and can
+  /// run at relaxed cadence without risking stamping latency in practice.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/commit-sequence#polling-cadence</docs>
+  public TimeSpan? NotifyHealthyPollingInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+  /// <summary>
   /// How long a non-holder waits before retrying the advisory-lock acquisition. Default 1.5s.
   /// On the holder's clean shutdown the lock auto-releases; the next contender's retry picks it up.
   /// </summary>
