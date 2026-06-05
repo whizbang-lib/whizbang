@@ -154,6 +154,28 @@ public static class PostgresNotificationsServiceCollectionExtensions {
   }
 
   /// <summary>
+  /// Applies the per-options TCP keepalive settings to an
+  /// <see cref="NpgsqlConnectionStringBuilder"/>. Pure mutation — no DI, no side effects
+  /// beyond the builder. Slice 3 of zero-idle-polling.
+  /// </summary>
+  /// <remarks>
+  /// Called from both the auto-discovery data-source factory and the explicit
+  /// <see cref="AddWhizbangNotificationDataSource"/> path so notification connections
+  /// detect silent NAT-style death within
+  /// <c>TcpKeepAliveTime + N × TcpKeepAliveInterval</c> seconds instead of the OS default
+  /// (typically ~2 hours). The gate's reprobe loop then notices the failure and flips
+  /// <c>IsAvailable</c> to false, which in turn triggers the backstop poll path on
+  /// dependent workers.
+  /// </remarks>
+  internal static void ApplyTcpKeepAlive(
+      NpgsqlConnectionStringBuilder builder,
+      WhizbangNotificationOptions options) {
+    ArgumentNullException.ThrowIfNull(builder);
+    ArgumentNullException.ThrowIfNull(options);
+    // RED stub — Slice 3 GREEN replaces this with the actual builder mutations.
+  }
+
+  /// <summary>
   /// Walks <see cref="IConfiguration"/>'s <c>ConnectionStrings</c> section for
   /// the first entry whose string carries a Postgres credential marker.
   /// Returns null when none qualify.
@@ -337,6 +359,16 @@ internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(ICon
         System.Globalization.CultureInfo.InvariantCulture,
         out var multiplier)) {
       options.ListenReconnectBackoffMultiplier = multiplier;
+    }
+
+    if (int.TryParse(section["TcpKeepAliveTime"], System.Globalization.NumberStyles.Integer,
+        System.Globalization.CultureInfo.InvariantCulture, out var kaTime)) {
+      options.TcpKeepAliveTime = kaTime;
+    }
+
+    if (int.TryParse(section["TcpKeepAliveInterval"], System.Globalization.NumberStyles.Integer,
+        System.Globalization.CultureInfo.InvariantCulture, out var kaInterval)) {
+      options.TcpKeepAliveInterval = kaInterval;
     }
   }
 }
