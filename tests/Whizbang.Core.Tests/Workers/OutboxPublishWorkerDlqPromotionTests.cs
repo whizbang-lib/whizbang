@@ -122,6 +122,19 @@ public class OutboxPublishWorkerDlqPromotionTests {
     public string GetGeneration() => value;
   }
 
+  private sealed class _FakeServiceInstanceProvider : IServiceInstanceProvider {
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public string ServiceName => "test-svc";
+    public string HostName => "test-host";
+    public int ProcessId => 1;
+    public ServiceInstanceInfo ToInfo() => new() {
+      InstanceId = InstanceId,
+      ServiceName = ServiceName,
+      HostName = HostName,
+      ProcessId = ProcessId,
+    };
+  }
+
   // --- helpers ---
 
   private static OutboxWork _work(int attempts) {
@@ -167,6 +180,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
       }),
       NullLogger<OutboxPublishWorker>.Instance,
       publishStrategy: strategy,
+      instanceProvider: wireDeadLetterStore ? new _FakeServiceInstanceProvider() : null,
       deadLetterStore: wireDeadLetterStore ? dlq : null,
       generationProvider: wireDeadLetterStore ? new _FakeGenerationProvider("test-gen") : null);
     return (worker, channel, failure, dlq);
