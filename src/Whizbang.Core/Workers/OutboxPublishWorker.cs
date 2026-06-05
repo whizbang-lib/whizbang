@@ -48,7 +48,11 @@ public sealed partial class OutboxPublishWorker(
   IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
   IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
   LeaseRegistry? leaseRegistry = null,
-  TimeProvider? timeProvider = null) : BackgroundService {
+  TimeProvider? timeProvider = null,
+  IServiceInstanceProvider? instanceProvider = null,
+  IDeadLetterStore? deadLetterStore = null,
+  IGenerationProvider? generationProvider = null,
+  Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) : BackgroundService {
   private const string LIFECYCLE_PRE_OUTBOX_ASYNC = "Lifecycle PreOutboxDetached";
   private const string LIFECYCLE_PRE_OUTBOX_INLINE = "Lifecycle PreOutboxInline";
   private const string LIFECYCLE_POST_OUTBOX_ASYNC = "Lifecycle PostOutboxDetached";
@@ -69,6 +73,15 @@ public sealed partial class OutboxPublishWorker(
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions();
   private readonly LeaseRegistry? _leaseRegistry = leaseRegistry;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+  // Slice 3b of release/v0.645.0-alpha.1 — when all three are wired AND
+  // MaxOutboxAttempts is set, rows at/over the cap promote to wh_dead_letters
+  // before falling through to the failure-channel path. Mirrors the
+  // OutboxDrainWorker.cs:287-312 design but in the post-failure catch sites
+  // since this worker has no pre-publish gate.
+  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly IDeadLetterStore? _deadLetterStore = deadLetterStore;
+  private readonly IGenerationProvider? _generationProvider = generationProvider;
+  private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics = dlqMetrics;
 
   /// <summary>
   /// Event raised after a message is successfully published to transport. Mirrors the legacy
@@ -179,12 +192,16 @@ public sealed partial class OutboxPublishWorker(
       } catch (Exception ex) {
         LogPublishFailed(_logger, work.MessageId, ex);
         _workChannelWriter.RemoveInFlight(work.MessageId);
-        await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-          MessageId = work.MessageId,
-          CompletedStatus = work.Status,
-          Error = ex.Message,
-          Reason = MessageFailureReason.Unknown
-        }, stoppingToken);
+        // Slice 3b: prefer DLQ promotion on cap-reached; ex.ToString() preserves
+        // the full stack so Slice 2's SQL fingerprint sees the type token + frames.
+        if (!await _tryPromoteToDlqAsync(work, ex.ToString(), stoppingToken)) {
+          await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+            MessageId = work.MessageId,
+            CompletedStatus = work.Status,
+            Error = ex.Message,
+            Reason = MessageFailureReason.Unknown
+          }, stoppingToken);
+        }
       }
       _maybeFireIdle();
     }
@@ -265,8 +282,14 @@ public sealed partial class OutboxPublishWorker(
         throw;
       } catch (Exception ex) {
         LogPublishFailed(_logger, batch[0].MessageId, ex);
+        var bulkErrorText = ex.ToString();
         foreach (var w in batch) {
           _workChannelWriter.RemoveInFlight(w.MessageId);
+          // Slice 3b: bulk catches affect every row in the batch — promote each one
+          // independently against its own attempts count.
+          if (await _tryPromoteToDlqAsync(w, bulkErrorText, stoppingToken)) {
+            continue;
+          }
           await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
             MessageId = w.MessageId,
             CompletedStatus = w.Status,
@@ -306,12 +329,62 @@ public sealed partial class OutboxPublishWorker(
       });
     } else {
       _workChannelWriter.RemoveInFlight(work.MessageId);
+      // Slice 3b: promote to DLQ first when attempts reached the cap; fall back to
+      // failure-channel routing otherwise.
+      if (await _tryPromoteToDlqAsync(work, result.Error ?? "publish failed", ct)) {
+        return;
+      }
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
         MessageId = work.MessageId,
         CompletedStatus = result.CompletedStatus,
         Error = result.Error ?? "publish failed",
         Reason = result.Reason
       }, ct);
+    }
+  }
+
+  /// <summary>
+  /// Slice 3b of release/v0.645.0-alpha.1 — atomically promotes a failed outbox row
+  /// into wh_dead_letters when <see cref="OutboxPublishWorkerOptions.MaxOutboxAttempts"/>
+  /// is configured AND the row's attempts reached the cap AND the DLQ surface
+  /// (<see cref="IDeadLetterStore"/>, <see cref="IGenerationProvider"/>,
+  /// <see cref="IServiceInstanceProvider"/>) is fully wired. Returns true on a
+  /// successful promotion; the caller MUST skip the normal failure-channel enqueue
+  /// because move_to_dead_letters has DELETEd the source row.
+  ///
+  /// <para>Returns false when the gate doesn't fire (cap not configured, below cap,
+  /// missing wiring) OR when MoveAsync throws (transient DB issue). On throw, the
+  /// caller falls through to the failure-channel path; the next claim will retry
+  /// the move via OutboxDrainWorker's pre-publish gate.</para>
+  /// </summary>
+  private async Task<bool> _tryPromoteToDlqAsync(OutboxWork work, string errorText, CancellationToken ct) {
+    if (_deadLetterStore is null
+        || _generationProvider is null
+        || _instanceProvider is null
+        || _options.MaxOutboxAttempts is not int maxAttempts
+        || work.Attempts < maxAttempts) {
+      return false;
+    }
+    try {
+      await _deadLetterStore.MoveAsync(
+        deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+        sourceTable: DeadLetterSourceTable.OUTBOX,
+        sourceId: work.MessageId,
+        failureReason: MessageFailureReason.MaxAttemptsExceeded,
+        errorText: errorText,
+        instanceId: _instanceProvider.InstanceId,
+        generation: _generationProvider.GetGeneration(),
+        ct: ct).ConfigureAwait(false);
+      LogOutboxDlqPromoted(_logger, work.MessageId, work.Attempts, maxAttempts);
+      _dlqMetrics?.Added.Add(1,
+        new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.OUTBOX),
+        new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
+      return true;
+    } catch (Exception ex) {
+      // Transient DB failure during MoveAsync — fall through to failure channel so
+      // the row's attempts column bumps and the next claim cycle retries the move.
+      LogOutboxDlqMoveFailed(_logger, work.MessageId, ex);
+      return false;
     }
   }
 
@@ -465,6 +538,14 @@ public sealed partial class OutboxPublishWorker(
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "OutboxPublishWorker has no IMessagePublishStrategy registered — publish loop skipped (host did not register a transport)")]
   static partial void LogNoTransportRegistered(ILogger logger);
 
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
+    Message = "OutboxPublishWorker dead-lettered {MessageId} at attempts={Attempts} (cap={MaxAttempts}) — moved to wh_dead_letters")]
+  static partial void LogOutboxDlqPromoted(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
+    Message = "OutboxPublishWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling through to failure channel")]
+  static partial void LogOutboxDlqMoveFailed(ILogger logger, Guid messageId, Exception ex);
+
   /// <summary>
   /// Asks the discard policy whether an outbox row should be short-circuited before
   /// publish — defends-in-depth against publishing events with no known consumer
@@ -524,4 +605,16 @@ public sealed class OutboxPublishWorkerOptions {
   /// this long before retrying so it doesn't busy-loop. Default 100 ms; 0 disables (busy-loop).
   /// </summary>
   public int TransportNotReadyRetryDelayMilliseconds { get; set; } = 100;
+
+  /// <summary>
+  /// Dead-letter threshold for wh_outbox rows on the OutboxPublishWorker path. Slice 3b
+  /// of release/v0.645.0-alpha.1 — mirrors
+  /// <see cref="OutboxDrainWorkerOptions.MaxOutboxAttempts"/> so ops who haven't migrated
+  /// off the legacy publisher (or who flip both for a rollback window) still get DLQ
+  /// promotion. Without this knob, failed outbox rows retried forever — the production
+  /// stuck-row pattern. Set to <c>null</c> explicitly to restore the pre-Slice-3b
+  /// "retry forever" behavior.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/outbox-dlq-promotion</docs>
+  public int? MaxOutboxAttempts { get; set; } = 10;
 }

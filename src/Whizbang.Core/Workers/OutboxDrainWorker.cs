@@ -412,7 +412,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
         }
 
-        await _invokeOutboxLifecycleStageAsync(
+        await InvokeOutboxLifecycleStageAsync(
           work, typedEnvelope, receptorInvoker,
           LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
           "PreOutbox", ct);
@@ -451,7 +451,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       foreach (var result in results) {
         var row = rowsByMessageId[result.MessageId];
         if (result.Success) {
-          await _invokeOutboxLifecycleStageAsync(
+          await InvokeOutboxLifecycleStageAsync(
             works.First(w => w.MessageId == result.MessageId),
             typedEnvelopes[result.MessageId],
             receptorInvokers[result.MessageId],
@@ -506,7 +506,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
     }
 
-    await _invokeOutboxLifecycleStageAsync(
+    await InvokeOutboxLifecycleStageAsync(
       work, typedEnvelope, receptorInvoker,
       LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
       "PreOutbox", ct);
@@ -531,7 +531,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // Fire PostOutbox lifecycle BEFORE the publish hook + completion enqueue so
       // receptors registered at PostOutbox* observe the published message before any
       // test-side completion signal advances.
-      await _invokeOutboxLifecycleStageAsync(
+      await InvokeOutboxLifecycleStageAsync(
         work, typedEnvelope, receptorInvoker,
         LifecycleStage.PostOutboxDetached, LifecycleStage.PostOutboxInline,
         "PostOutbox", ct);
@@ -574,11 +574,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
 
   /// <summary>
   /// Fire a Pre/PostOutbox lifecycle stage pair (Detached fire-and-forget + Inline awaited).
-  /// Mirrors <see cref="InboxDispatchWorker._invokeInboxLifecycleStageAsync"/>. Wrapped in
+  /// Mirrors <see cref="InboxDispatchWorker.InvokeInboxLifecycleStageAsync"/>. Wrapped in
   /// try/catch so a misbehaving receptor cannot block publish or completion.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Lifecycle invocation handles the detached-vs-inline branch matrix + receptor resolution + envelope reuse fallback inline so the receptor-isolation try/catch stays at one site.")]
-  private async Task _invokeOutboxLifecycleStageAsync(
+  internal async Task InvokeOutboxLifecycleStageAsync(
       OutboxWork work,
       IMessageEnvelope? typedEnvelope,
       IReceptorInvoker? receptorInvoker,
@@ -630,6 +630,17 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             // graceful shutdown
           } catch (Exception ex) {
             LogLifecycleStageError(_logger, work.MessageId, stageName + "Detached", ex);
+            // Slice 1 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis):
+            // route the lifecycle exception through IFailureChannel so
+            // process_outbox_failures populates wh_outbox.error with the full
+            // ex.ToString(). Without this, production-class faults retried forever with
+            // an empty error column and operators had no triage signal.
+            await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+              MessageId = work.MessageId,
+              CompletedStatus = work.Status,
+              Error = $"Lifecycle stage {stageName}Detached failed: {ex}",
+              Reason = MessageFailureReason.Unknown,
+            }, ct);
           }
         }, ct);
       }
@@ -640,6 +651,17 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }
     } catch (Exception ex) {
       LogLifecycleStageError(_logger, work.MessageId, stageName, ex);
+      // Slice 1 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis):
+      // route the lifecycle exception through IFailureChannel so
+      // process_outbox_failures populates wh_outbox.error with the full
+      // ex.ToString(). Without this, production-class faults retried forever with
+      // an empty error column and operators had no triage signal.
+      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+        MessageId = work.MessageId,
+        CompletedStatus = work.Status,
+        Error = $"Lifecycle stage {stageName} failed: {ex}",
+        Reason = MessageFailureReason.Unknown,
+      }, ct);
     }
   }
 
