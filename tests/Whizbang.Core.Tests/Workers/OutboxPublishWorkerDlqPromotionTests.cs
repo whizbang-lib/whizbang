@@ -15,8 +15,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Slice 3b of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis) — locks the
@@ -286,5 +285,155 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+  }
+
+  // --- additional fakes for the catch/throw branches ---
+
+  private sealed class _FakeThrowingPublishStrategy(string exceptionMessage) : IMessagePublishStrategy {
+    public TaskCompletionSource<OutboxWork> Attempted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+      Attempted.TrySetResult(work);
+      throw new InvalidOperationException(exceptionMessage);
+    }
+  }
+
+  private sealed class _FakeBulkThrowingPublishStrategy(string exceptionMessage) : IMessagePublishStrategy {
+    public TaskCompletionSource<IReadOnlyList<OutboxWork>> AttemptedBatch { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public bool SupportsBulkPublish => true;
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+      => throw new InvalidOperationException("FakeBulkThrowingPublishStrategy: only PublishBatchAsync is exercised by this test");
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
+      AttemptedBatch.TrySetResult(works);
+      throw new InvalidOperationException(exceptionMessage);
+    }
+  }
+
+  private sealed class _ThrowingDeadLetterStore : IDeadLetterStore {
+    public TaskCompletionSource<Guid> Attempted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
+        MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation,
+        CancellationToken ct = default) {
+      Attempted.TrySetResult(deadLetterId);
+      throw new InvalidOperationException("simulated MoveAsync transient DB failure");
+    }
+  }
+
+  // --- additional tests for catch/throw paths (coverage) ---
+
+  [Test]
+  public async Task SingularPublish_AtCap_PublishAsyncThrows_PromotesToDlqWithFullExceptionTextAsync() {
+    var strategy = new _FakeThrowingPublishStrategy("simulated transport publish-thrown");
+    var (worker, channel, failure, dlq) = _build(maxOutboxAttempts: 2, strategy);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _work(attempts: 2);
+    await channel.WriteAsync(work, cts.Token);
+
+    var move = await dlq.FirstMove.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(move.ErrorText).Contains("simulated transport publish-thrown")
+      .Because("The thrown exception's full text MUST reach MoveAsync's errorText so Slice 2's SQL fingerprint sees the type token + frames. Plain ex.Message would drop the stack.");
+    await Assert.That(move.ErrorText).Contains("InvalidOperationException")
+      .Because("Type token in error_text is what Slice 2's fingerprint reads from the first line — preserving it ensures the row clusters correctly with other InvalidOperation faults.");
+    await Assert.That(failure.All).IsEmpty()
+      .Because("Singular catch promotes-then-skips the failure-channel; the row is already gone from wh_outbox via move_to_dead_letters.");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task BulkPublish_AtCap_PublishBatchAsyncThrows_PromotesEachRowIndependentlyAsync() {
+    var strategy = new _FakeBulkThrowingPublishStrategy("simulated bulk transport thrown");
+    var channel = new _FakeWorkChannelWriter();
+    var completion = new _NoOpCompletionChannel();
+    var failure = new _FakeFailureChannel();
+    var renewal = new _NoOpLeaseRenewalChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var dlq = new _FakeDeadLetterStore();
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new OutboxPublishWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      channel, completion, failure, renewal, gate,
+      Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
+      NullLogger<OutboxPublishWorker>.Instance,
+      publishStrategy: strategy,
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      deadLetterStore: dlq,
+      generationProvider: new _FakeGenerationProvider("test-gen"));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    // Two rows, both at cap — bulk catch should promote each independently.
+    await channel.WriteAsync(_work(attempts: 2), cts.Token);
+    await channel.WriteAsync(_work(attempts: 2), cts.Token);
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (dlq.Moves.Count < 2 && sw.Elapsed < TimeSpan.FromSeconds(5)) {
+      await Task.Yield();
+    }
+    await Assert.That(dlq.Moves.Count).IsEqualTo(2)
+      .Because("Bulk catch must promote EVERY row in the failing batch — a single bulk transport throw affects all in-flight rows, so each gets its own MoveAsync call.");
+    await Assert.That(failure.All).IsEmpty()
+      .Because("Bulk catch promotes-then-continues, skipping the per-row failure-channel enqueue for each promoted row.");
+    foreach (var m in dlq.Moves) {
+      await Assert.That(m.ErrorText).Contains("simulated bulk transport thrown")
+        .Because("Each promoted row carries the full bulk exception text so all rows in the batch get the same fingerprint cluster (operators see one root cause, not N false-distinct entries).");
+    }
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task SingularPublish_AtCap_MoveAsyncThrows_FallsBackToFailureChannelAsync() {
+    var strategy = new _FakeFailingStrategy();
+    var throwingDlq = new _ThrowingDeadLetterStore();
+
+    var channel = new _FakeWorkChannelWriter();
+    var completion = new _NoOpCompletionChannel();
+    var failure = new _FakeFailureChannel();
+    var renewal = new _NoOpLeaseRenewalChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new OutboxPublishWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      channel, completion, failure, renewal, gate,
+      Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
+      NullLogger<OutboxPublishWorker>.Instance,
+      publishStrategy: strategy,
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      deadLetterStore: throwingDlq,
+      generationProvider: new _FakeGenerationProvider("test-gen"));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await channel.WriteAsync(_work(attempts: 2), cts.Token);
+
+    await throwingDlq.Attempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (failure.All.IsEmpty && sw.Elapsed < TimeSpan.FromSeconds(2)) {
+      await Task.Yield();
+    }
+
+    await Assert.That(failure.All.Count).IsEqualTo(1)
+      .Because("When MoveAsync throws (transient DB issue), the worker MUST fall through to the failure channel so process_outbox_failures bumps attempts and the next claim retries the move via OutboxDrainWorker's pre-publish gate. Without the fallback, the row would be silently lost from the worker's perspective.");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  // --- shared no-op channels for the catch/throw tests above ---
+  private sealed class _NoOpCompletionChannel : IOutboxCompletionChannel {
+    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  }
+
+  private sealed class _NoOpLeaseRenewalChannel : ILeaseRenewalChannel {
+    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
   }
 }

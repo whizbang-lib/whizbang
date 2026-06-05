@@ -8,8 +8,7 @@ using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Slice 8 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis) — locks
@@ -165,7 +164,7 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
       await Assert.That(storedText).IsNotNull();
       await Assert.That(storedText).IsEqualTo(expectedFullText)
         .Because("error_text MUST be preserved verbatim — TEXT column has no cap; any truncation here would lose the stack trace operators need for triage AND would invalidate the round-trip fingerprint check below.");
-      await Assert.That(storedText!).Contains(signatureFrame)
+      await Assert.That(storedText).Contains(signatureFrame)
         .Because("Distinctive frame from the throw site must survive — locks against any future SQL function that strips/normalizes the input text before storage.");
     }
   }
