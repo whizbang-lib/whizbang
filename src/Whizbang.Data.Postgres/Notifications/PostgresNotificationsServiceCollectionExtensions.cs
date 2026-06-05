@@ -139,6 +139,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       // contention. A smaller pool (we tried 4) starved test runs that drove
       // multiple parallel hosts.
       builder.ConnectionStringBuilder.MaxPoolSize = 8;
+      // Slice 2 of zero-idle-polling — stamp application_name with the per-pod
+      // identity so pg_stat_activity rows are distinguishable per-pod. The
+      // wh_live_instances view (migration 052) joins on this exact format.
+      var instanceProvider = sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>();
+      builder.ConnectionStringBuilder.ApplicationName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
       // ownsDataSource: true means the wrapper's DI-driven disposal will dispose
       // the data source. Critical for tests that spin many hosts in sequence —
       // without this, every host leaks an Npgsql connection pool.
@@ -207,7 +212,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       throw new ArgumentException("connectionString must be non-empty", nameof(connectionString));
     }
 
-    services.AddSingleton<INotificationDataSource>(_ => {
+    services.AddSingleton<INotificationDataSource>(sp => {
       // Independent data source — its pool is NOT shared with EF Core.
       // 4 connections is plenty: one for the LISTEN/NOTIFY shared connection,
       // one for the commit-order stamper's advisory-lock holder, plus headroom
@@ -221,6 +226,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       // contention. A smaller pool (we tried 4) starved test runs that drove
       // multiple parallel hosts.
       builder.ConnectionStringBuilder.MaxPoolSize = 8;
+      // Slice 2 of zero-idle-polling — stamp application_name with the per-pod
+      // identity so pg_stat_activity rows are distinguishable per-pod. The
+      // wh_live_instances view (migration 052) joins on this exact format.
+      var instanceProvider = sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>();
+      builder.ConnectionStringBuilder.ApplicationName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
       return new NotificationDataSource(builder.Build());
     });
 
