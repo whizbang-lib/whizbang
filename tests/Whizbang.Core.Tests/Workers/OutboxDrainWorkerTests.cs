@@ -885,9 +885,17 @@ public class OutboxDrainWorkerTests {
   [Test]
   public async Task OutboxDrainWorker_LifecycleReceptorThrows_PublishAndCompletionStillHappenAsync() {
     // A misbehaving lifecycle receptor must NOT block the publish or completion path —
-    // the OutboxDrainWorker wraps lifecycle invocation in try/catch, logs at Warning, and
-    // proceeds. Production invariant: an Outbox row that's about to be published or has
-    // just been published MUST always reach completion-flush regardless of receptor faults.
+    // the OutboxDrainWorker wraps lifecycle invocation in try/catch and proceeds.
+    // Production invariant: an Outbox row that's about to be published or has just
+    // been published MUST always reach completion-flush regardless of receptor faults.
+    //
+    // Slice 1 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis) updates
+    // the failure-channel assertion: the lifecycle exception now also routes through
+    // IFailureChannel so process_outbox_failures populates wh_outbox.error with the
+    // full ex.ToString(). The pre-slice "no failure record on lifecycle fault" was
+    // the actual production BUG (a stuck RemoveShellUserCommand ran 295 retries over
+    // 24 h with empty wh_outbox.error). Locking the new "lifecycle exception →
+    // failure record" invariant per feedback_lock_invariants_in_tests.
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
 
@@ -938,8 +946,19 @@ public class OutboxDrainWorkerTests {
       .Because("Receptor throwing at PreOutboxInline must not stop the transport publish.");
     await Assert.That(completion.AllIds).Contains(msgId)
       .Because("Completion must still be enqueued — the row is safely durable in the outbox table and reaching the transport.");
-    await Assert.That(failure.All).IsEmpty()
-      .Because("A lifecycle-receptor failure is not a publish failure.");
+    // Slice 1: lifecycle exception must surface through IFailureChannel so
+    // process_outbox_failures populates wh_outbox.error. The test-induced fault
+    // throws at PreOutboxInline and surfaces as a WorkCategory.Outbox failure
+    // record whose Error contains the full ex.ToString().
+    await Assert.That(failure.All.Count).IsEqualTo(1)
+      .Because("production fix: lifecycle exceptions MUST enqueue a failure so wh_outbox.error captures the cause — production ran 295 silent retries before this routing existed.");
+    var captured = failure.All.Single();
+    await Assert.That(captured.MessageId).IsEqualTo(msgId)
+      .Because("Failure record must target the offending row.");
+    await Assert.That(captured.Error).Contains("test-induced receptor failure")
+      .Because("The exception message must reach the failure record so it lands in wh_outbox.error.");
+    await Assert.That(captured.Error).Contains("InvalidOperationException")
+      .Because("Slice 2's SQL fingerprint algorithm reads exception type from the first line of error_text; preserving it here keeps live fingerprinting working.");
   }
 
   private sealed class NeverHasReceptorsRegistry : IReceptorRegistryQuery {
