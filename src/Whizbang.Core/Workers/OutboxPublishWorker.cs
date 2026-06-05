@@ -48,7 +48,11 @@ public sealed partial class OutboxPublishWorker(
   IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
   IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
   LeaseRegistry? leaseRegistry = null,
-  TimeProvider? timeProvider = null) : BackgroundService {
+  TimeProvider? timeProvider = null,
+  IServiceInstanceProvider? instanceProvider = null,
+  IDeadLetterStore? deadLetterStore = null,
+  IGenerationProvider? generationProvider = null,
+  Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) : BackgroundService {
   private const string LIFECYCLE_PRE_OUTBOX_ASYNC = "Lifecycle PreOutboxDetached";
   private const string LIFECYCLE_PRE_OUTBOX_INLINE = "Lifecycle PreOutboxInline";
   private const string LIFECYCLE_POST_OUTBOX_ASYNC = "Lifecycle PostOutboxDetached";
@@ -69,6 +73,15 @@ public sealed partial class OutboxPublishWorker(
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions();
   private readonly LeaseRegistry? _leaseRegistry = leaseRegistry;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+  // Slice 3b of release/v0.645.0-alpha.1 — when all three are wired AND
+  // MaxOutboxAttempts is set, rows at/over the cap promote to wh_dead_letters
+  // before falling through to the failure-channel path. Mirrors the
+  // OutboxDrainWorker.cs:287-312 design but in the post-failure catch sites
+  // since this worker has no pre-publish gate.
+  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly IDeadLetterStore? _deadLetterStore = deadLetterStore;
+  private readonly IGenerationProvider? _generationProvider = generationProvider;
+  private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics = dlqMetrics;
 
   /// <summary>
   /// Event raised after a message is successfully published to transport. Mirrors the legacy
@@ -524,4 +537,16 @@ public sealed class OutboxPublishWorkerOptions {
   /// this long before retrying so it doesn't busy-loop. Default 100 ms; 0 disables (busy-loop).
   /// </summary>
   public int TransportNotReadyRetryDelayMilliseconds { get; set; } = 100;
+
+  /// <summary>
+  /// Dead-letter threshold for wh_outbox rows on the OutboxPublishWorker path. Slice 3b
+  /// of release/v0.645.0-alpha.1 — mirrors
+  /// <see cref="OutboxDrainWorkerOptions.MaxOutboxAttempts"/> so ops who haven't migrated
+  /// off the legacy publisher (or who flip both for a rollback window) still get DLQ
+  /// promotion. Without this knob, failed outbox rows retried forever — the slot-3
+  /// stuck-row pattern. Set to <c>null</c> explicitly to restore the pre-Slice-3b
+  /// "retry forever" behavior.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/outbox-dlq-promotion</docs>
+  public int? MaxOutboxAttempts { get; set; } = 10;
 }
