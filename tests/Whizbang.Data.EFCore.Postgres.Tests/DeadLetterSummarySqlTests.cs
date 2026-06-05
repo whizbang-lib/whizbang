@@ -8,7 +8,7 @@ using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707, IDE1006
+#pragma warning disable CA1707, IDE1006, IDE0042
 
 /// <summary>
 /// Slice 6 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis) — locks
@@ -189,7 +189,7 @@ public class DeadLetterSummarySqlTests : EFCoreTestBase {
     // Now insert a row tagged with the current version (1). Run aggregate again.
     // Assert: the current-version row's fingerprint is NOT recomputed (no spurious
     // UPDATE — would burn IO on no-op work each maintenance tick).
-    var msgRow3Text = _stackInvalidOp;
+    const string msgRow3Text = _stackInvalidOp;
     await using (var cmd = conn.CreateCommand()) {
       cmd.CommandText = """
         UPDATE wh_dead_letters
@@ -231,7 +231,7 @@ public class DeadLetterSummarySqlTests : EFCoreTestBase {
 
     var summary = await _summaryForFingerprintAsync(conn, _stackInvalidOp);
     await Assert.That(summary.Sample).IsNotNull();
-    await Assert.That(summary.Sample!).Contains("(newer instance)")
+    await Assert.That(summary.Sample).Contains("(newer instance)")
       .Because("sample_error_text MUST be the most-recently-failed row's text so operators looking at the summary table see the freshest example — older samples are useful for first-occurrence forensics but the dashboard view should track current state.");
   }
 }
