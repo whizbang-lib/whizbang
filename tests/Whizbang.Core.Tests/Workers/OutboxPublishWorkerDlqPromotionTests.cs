@@ -15,8 +15,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Slice 3b of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis) — locks the
