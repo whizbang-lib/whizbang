@@ -66,12 +66,14 @@ CREATE INDEX IF NOT EXISTS wh_dead_letters_reason_status_idx
   ON wh_dead_letters (failure_reason, recovery_status)
   WHERE recovered_at IS NULL;
 
--- Slice 2 of release/v0.645.0-alpha.1 — supports the canonical operator/AI triage
--- query `GROUP BY error_fingerprint`. Partial (WHERE NOT NULL) keeps the index
--- skinny on NULL-fingerprint rows (those with NULL error_text).
-CREATE INDEX IF NOT EXISTS wh_dead_letters_fingerprint_idx
-  ON wh_dead_letters (error_fingerprint)
-  WHERE error_fingerprint IS NOT NULL;
+-- Note: wh_dead_letters_fingerprint_idx (partial index on error_fingerprint) is
+-- created in migration 053 AFTER the ALTER TABLE that adds the column. Creating
+-- it here would break existing databases where 050 already ran without the
+-- fingerprint columns — the migration runner re-applies 050 on hash change, and
+-- a CREATE INDEX referencing a column that 053 hasn't added yet would crash
+-- (slot-3 CrashLoopBackOff Jun-2026). Keep the column DEFINITIONS in 050's
+-- CREATE TABLE for fresh DBs (no-op on existing), but the index belongs after
+-- the column-add for re-run safety.
 
 COMMENT ON TABLE wh_dead_letters IS
 'Forensic record + recovery state for permanently-failed work items (Whizbang internal DLQ). Rows enter via move_to_dead_letters() when attempts exceed the worker''s configured Max*Attempts. The DeadLetterRecoveryWorker scans this table on an idle-cadence trigger and re-emits to the source table when policy allows; generation-tagged auto-replay catches "we shipped a fix" cases on new deploys. See plans/dlq-recovery.md for the full design.';

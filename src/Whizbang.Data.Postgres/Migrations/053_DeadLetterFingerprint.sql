@@ -30,11 +30,40 @@
 -- Dependencies: 001-052 (wh_dead_letters table from 050; pgcrypto NOT required —
 --               uses Postgres core sha256() introduced in PG 11)
 
--- Note: wh_dead_letters' fingerprint columns + partial index live natively in
--- migration 050 (edited in place per project_pre_v1_migrations).
+-- ============================================================================
+-- 1. wh_dead_letters fingerprint columns + partial index (DDL on existing tables)
+-- ============================================================================
+-- Migration 050 was edited in place per project_pre_v1_migrations to add
+-- error_fingerprint and error_fingerprint_version to wh_dead_letters' CREATE
+-- TABLE — fine for FRESH databases. But existing databases (e.g. JDX BFF
+-- slot 3) already ran the old 050 and have a wh_dead_letters table WITHOUT
+-- those columns; CREATE TABLE IF NOT EXISTS is a no-op on re-run.
+--
+-- The columns MUST be added via ALTER TABLE here so the DDL flows in the
+-- correct order: 050 re-runs (no-op on table, can't create the partial index
+-- because the column doesn't exist yet), 053 runs (ALTER TABLE adds the
+-- columns, then the partial index can be created safely).
+--
+-- IF NOT EXISTS makes both statements idempotent — no-op on fresh DBs where
+-- 050's CREATE TABLE already provided the columns and 053 hasn't run before.
+-- Slot-3 root cause: slot-3 CrashLoopBackOff on Jun-2026 when 050's hash
+-- changed and the migration runner re-applied it, hitting a CREATE INDEX on
+-- a column 053 hadn't added yet. Lesson: when editing existing migrations in
+-- place, dependent DDL belongs in the new migration, not the edited one.
+ALTER TABLE wh_dead_letters
+  ADD COLUMN IF NOT EXISTS error_fingerprint VARCHAR(16) NULL,
+  ADD COLUMN IF NOT EXISTS error_fingerprint_version SMALLINT NULL;
+
+-- Partial index supports the canonical operator/AI triage query
+-- `SELECT error_fingerprint, COUNT(*) FROM wh_dead_letters
+--  WHERE error_fingerprint IS NOT NULL GROUP BY 1`.
+-- WHERE NOT NULL keeps the index skinny on NULL-fingerprint rows.
+CREATE INDEX IF NOT EXISTS wh_dead_letters_fingerprint_idx
+  ON wh_dead_letters (error_fingerprint)
+  WHERE error_fingerprint IS NOT NULL;
 
 -- ============================================================================
--- 1. current_dead_letter_fingerprint_version()
+-- 2. current_dead_letter_fingerprint_version()
 -- ============================================================================
 -- Returns the current fingerprint algorithm version. Slice 6's aggregator uses
 -- this inside its WHERE clause to identify rows that need re-hashing after a
@@ -54,7 +83,7 @@ COMMENT ON FUNCTION __SCHEMA__.current_dead_letter_fingerprint_version IS
 'Returns the current dead-letter fingerprint algorithm version (Slice 2 of release/v0.645.0-alpha.1). Bumping = one-line edit here + algorithm body edit in compute_dead_letter_fingerprint + the version-aware backfill in aggregate_dead_letters re-hashes every stale row on the next maintenance tick.';
 
 -- ============================================================================
--- 2. compute_dead_letter_fingerprint(p_error_text TEXT) RETURNS TEXT
+-- 3. compute_dead_letter_fingerprint(p_error_text TEXT) RETURNS TEXT
 -- ============================================================================
 -- Pure function. Same input → same output. IMMUTABLE so the optimizer can fold
 -- it and Slice 8's round-trip lock can use it inside a WHERE predicate without
@@ -146,7 +175,7 @@ COMMENT ON FUNCTION __SCHEMA__.compute_dead_letter_fingerprint IS
 'Algorithm v1 (Slice 2 of release/v0.645.0-alpha.1). Hashes "type:frame1:frame2:frame3" (excluding framework + Whizbang catch-site frames) and returns the first 16 hex chars of SHA256. Called by Slice 3''s move_to_dead_letters extension (live capture) and Slice 6''s aggregate_dead_letters (version-aware backfill). NULL input → NULL output. See operations/dead-letter-queue/error-fingerprinting docs page for the algorithm rationale, exclusions, and version bump procedure.';
 
 -- ============================================================================
--- 3. wh_dead_letter_summary table (Slice 6)
+-- 4. wh_dead_letter_summary table (Slice 6)
 -- ============================================================================
 -- Operator-facing rollup of raw wh_dead_letters by (fingerprint, source, message_type).
 -- Collapses the 38k+ row JDX BFF DLQ into ~dozens of distinct clusters with counts,
@@ -169,7 +198,7 @@ COMMENT ON TABLE wh_dead_letter_summary IS
 'Slice 6 of release/v0.645.0-alpha.1 — operator/AI-friendly rollup of wh_dead_letters by (error_fingerprint, source_table, message_type). Refreshed by aggregate_dead_letters() inside perform_maintenance. sample_error_text is the most-recent row''s text for each cluster so the dashboard view tracks current behavior.';
 
 -- ============================================================================
--- 4. aggregate_dead_letters() (Slice 6)
+-- 5. aggregate_dead_letters() (Slice 6)
 -- ============================================================================
 -- Two-step pipeline:
 --   (a) Version-aware backfill of error_fingerprint on raw wh_dead_letters rows
