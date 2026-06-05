@@ -25,7 +25,7 @@ SELECT
   si.host_name,
   si.process_id,
   si.last_heartbeat_at,
-  si.registered_at,
+  si.started_at,
   -- pg_stat_activity columns are nullable in the view because the LEFT JOIN
   -- may produce rows for service-instance records whose pod has no active
   -- LISTEN connection (e.g., the pod crashed, or it has never opened one yet).
