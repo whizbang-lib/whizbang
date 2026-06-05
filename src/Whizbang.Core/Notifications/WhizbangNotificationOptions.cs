@@ -118,4 +118,33 @@ public sealed class WhizbangNotificationOptions {
   /// process.
   /// </summary>
   public int FailuresBeforeFallback { get; set; } = 5;
+
+  /// <summary>
+  /// TCP keepalive idle time in seconds. After this many seconds without traffic, the
+  /// OS begins probing the connection's liveness. Default 60 s.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Slice 3 of zero-idle-polling — together with <see cref="TcpKeepAliveInterval"/>, this
+  /// is what lets the gate notice silent connection death (NAT/firewall idle eviction)
+  /// in roughly <c>TcpKeepAliveTime + 9 × TcpKeepAliveInterval</c> seconds. Defaults
+  /// (60 + 9 × 10 = 150 s) sit well inside the 5-minute reprobe interval and far below
+  /// the typical 2-hour Linux default that would otherwise leave the gate falsely reporting
+  /// <c>IsAvailable=true</c> for hours after the underlying TCP connection died.
+  /// </para>
+  /// <para>
+  /// Npgsql exposes the time/interval pair but not the probe count (Linux default 9).
+  /// Tighten the count via OS-level sysctl when you need sub-150 s detection — most
+  /// deployments don't.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer#tcp-keepalive</docs>
+  public int TcpKeepAliveTime { get; set; } = 60;
+
+  /// <summary>
+  /// TCP keepalive probe interval in seconds. Sent every N seconds once the connection
+  /// has been idle for <see cref="TcpKeepAliveTime"/>. Default 10 s.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer#tcp-keepalive</docs>
+  public int TcpKeepAliveInterval { get; set; } = 10;
 }
