@@ -574,7 +574,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
 
   /// <summary>
   /// Fire a Pre/PostOutbox lifecycle stage pair (Detached fire-and-forget + Inline awaited).
-  /// Mirrors <see cref="InboxDispatchWorker._invokeInboxLifecycleStageAsync"/>. Wrapped in
+  /// Mirrors <see cref="InboxDispatchWorker.InvokeInboxLifecycleStageAsync"/>. Wrapped in
   /// try/catch so a misbehaving receptor cannot block publish or completion.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Lifecycle invocation handles the detached-vs-inline branch matrix + receptor resolution + envelope reuse fallback inline so the receptor-isolation try/catch stays at one site.")]
