@@ -140,6 +140,26 @@ BEGIN
     v_rows,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     'ok'::TEXT;
+
+  -- ========================================
+  -- Task 7: Refresh wh_dead_letter_summary
+  -- ========================================
+  -- Slice 6 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis).
+  -- Two-step pipeline inside aggregate_dead_letters:
+  --   (1) Version-aware backfill — re-hashes raw wh_dead_letters rows with
+  --       stale error_fingerprint_version; current-version rows are skipped.
+  --   (2) GROUP BY upsert into wh_dead_letter_summary.
+  -- The summary table is the operator/AI-facing rollup view: ~dozens of
+  -- distinct fingerprint clusters instead of tens of thousands of raw rows.
+  -- Cluster-count metric is the rows_affected for this task (post-aggregation).
+  v_start := clock_timestamp();
+  PERFORM __SCHEMA__.aggregate_dead_letters();
+  SELECT COUNT(*) FROM __SCHEMA__.wh_dead_letter_summary INTO v_rows;
+  RETURN QUERY SELECT
+    'aggregate_dead_letters'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
 END;
 $$ LANGUAGE plpgsql;
 
