@@ -27,6 +27,15 @@ public partial class HeartbeatWorker(
   private readonly HeartbeatWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<HeartbeatWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
+  /// <summary>
+  /// Fires after every successful <c>RecordHeartbeatAsync</c> call. Slice 4 of
+  /// zero-idle-polling subscribes <see cref="IIdleActivityTracker.Touch"/> to
+  /// this so the <see cref="BackupTickCoordinator"/> never engages POLLING
+  /// during a brand-new pod's startup window before any real work has
+  /// arrived.
+  /// </summary>
+  public event Action? OnHeartbeatRecorded;
+
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.IntervalSeconds, _instanceProvider.InstanceId);
@@ -80,6 +89,7 @@ public partial class HeartbeatWorker(
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
       ProcessId: _instanceProvider.ProcessId), ct);
+    OnHeartbeatRecorded?.Invoke();
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
