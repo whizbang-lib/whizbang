@@ -30,28 +30,11 @@
 -- Dependencies: 001-052 (wh_dead_letters table from 050; pgcrypto NOT required —
 --               uses Postgres core sha256() introduced in PG 11)
 
--- ============================================================================
--- 1. wh_dead_letters fingerprint columns (slice 2 edit in place per project_pre_v1_migrations)
--- ============================================================================
--- Pre-v1.0 schema convention: net-new columns go onto existing tables here rather
--- than via a separate migration. Per project_pre_v1_migrations, migration 050 is
--- the canonical wh_dead_letters definition; the columns below are added as ALTER
--- TABLE so production databases that already ran 050 pick them up too.
-
-ALTER TABLE wh_dead_letters
-  ADD COLUMN IF NOT EXISTS error_fingerprint VARCHAR(16) NULL,
-  ADD COLUMN IF NOT EXISTS error_fingerprint_version SMALLINT NULL;
-
--- Partial index supports the canonical triage query
--- `SELECT error_fingerprint, COUNT(*) FROM wh_dead_letters WHERE error_fingerprint IS NOT NULL GROUP BY 1`.
--- Per feedback_unused_indexes, this is on the hot path — operators/AI run this
--- query at triage time; the index keeps it sub-second on the 38k+-row a consumer BFF DLQ.
-CREATE INDEX IF NOT EXISTS wh_dead_letters_fingerprint_idx
-  ON wh_dead_letters (error_fingerprint)
-  WHERE error_fingerprint IS NOT NULL;
+-- Note: wh_dead_letters' fingerprint columns + partial index live natively in
+-- migration 050 (edited in place per project_pre_v1_migrations).
 
 -- ============================================================================
--- 2. current_dead_letter_fingerprint_version()
+-- 1. current_dead_letter_fingerprint_version()
 -- ============================================================================
 -- Returns the current fingerprint algorithm version. Slice 6's aggregator uses
 -- this inside its WHERE clause to identify rows that need re-hashing after a
@@ -71,7 +54,7 @@ COMMENT ON FUNCTION __SCHEMA__.current_dead_letter_fingerprint_version IS
 'Returns the current dead-letter fingerprint algorithm version (Slice 2 of release/v0.645.0-alpha.1). Bumping = one-line edit here + algorithm body edit in compute_dead_letter_fingerprint + the version-aware backfill in aggregate_dead_letters re-hashes every stale row on the next maintenance tick.';
 
 -- ============================================================================
--- 3. compute_dead_letter_fingerprint(p_error_text TEXT) RETURNS TEXT
+-- 2. compute_dead_letter_fingerprint(p_error_text TEXT) RETURNS TEXT
 -- ============================================================================
 -- Pure function. Same input → same output. IMMUTABLE so the optimizer can fold
 -- it and Slice 8's round-trip lock can use it inside a WHERE predicate without
@@ -163,7 +146,7 @@ COMMENT ON FUNCTION __SCHEMA__.compute_dead_letter_fingerprint IS
 'Algorithm v1 (Slice 2 of release/v0.645.0-alpha.1). Hashes "type:frame1:frame2:frame3" (excluding framework + Whizbang catch-site frames) and returns the first 16 hex chars of SHA256. Called by Slice 3''s move_to_dead_letters extension (live capture) and Slice 6''s aggregate_dead_letters (version-aware backfill). NULL input → NULL output. See operations/dead-letter-queue/error-fingerprinting docs page for the algorithm rationale, exclusions, and version bump procedure.';
 
 -- ============================================================================
--- 4. wh_dead_letter_summary table (Slice 6)
+-- 3. wh_dead_letter_summary table (Slice 6)
 -- ============================================================================
 -- Operator-facing rollup of raw wh_dead_letters by (fingerprint, source, message_type).
 -- Collapses the 38k+ row a consumer BFF DLQ into ~dozens of distinct clusters with counts,
@@ -186,7 +169,7 @@ COMMENT ON TABLE wh_dead_letter_summary IS
 'Slice 6 of release/v0.645.0-alpha.1 — operator/AI-friendly rollup of wh_dead_letters by (error_fingerprint, source_table, message_type). Refreshed by aggregate_dead_letters() inside perform_maintenance. sample_error_text is the most-recent row''s text for each cluster so the dashboard view tracks current behavior.';
 
 -- ============================================================================
--- 5. aggregate_dead_letters() (Slice 6)
+-- 4. aggregate_dead_letters() (Slice 6)
 -- ============================================================================
 -- Two-step pipeline:
 --   (a) Version-aware backfill of error_fingerprint on raw wh_dead_letters rows

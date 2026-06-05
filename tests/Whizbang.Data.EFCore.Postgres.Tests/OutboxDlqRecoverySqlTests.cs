@@ -168,7 +168,7 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
 
     await Assert.That(eventData).IsNotNull()
       .Because("Recovered wh_outbox row MUST have event_data — recovery without payload would silently lose the original message.");
-    await Assert.That(eventData!).Contains("hello")
+    await Assert.That(eventData).Contains("hello")
       .Because("The original event_data ({\"hello\":\"world\"}) survives the move→recover roundtrip via the envelope JSONB snapshot in wh_dead_letters.");
   }
 
