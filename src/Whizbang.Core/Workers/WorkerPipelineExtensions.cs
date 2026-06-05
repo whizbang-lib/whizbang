@@ -141,6 +141,7 @@ public static class WorkerPipelineExtensions {
     // HeartbeatWorker / IWorkNotificationListener — no per-request work.
     services.AddHostedService(sp => sp.GetRequiredService<BackupTickCoordinator>());
     services.AddHostedService<IdleActivityTouchHookBinder>();
+    services.AddHostedService<DefaultBackupTickRegistrar>();
 
     // Channel interfaces — singletons that delegate to the singleton worker.
     services.TryAddSingleton<IOutboxCompletionChannel>(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
