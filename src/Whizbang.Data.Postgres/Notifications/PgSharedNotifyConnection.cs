@@ -71,6 +71,25 @@ public sealed partial class PgSharedNotifyConnection(
   private DateTimeOffset? _lastFailureAt;
   private string? _lastFailureReason;
 
+  /// <summary>
+  /// Computes the <c>application_name</c> the per-pod LISTEN connection sets on its
+  /// Npgsql connection string. Format: <c>whizbang-&lt;instance_id&gt;</c>. The format is
+  /// stable across pod restarts (instance_id is regenerated on restart, so the
+  /// resulting application_name changes — that's intentional: pg_stat_activity's row
+  /// for the old pod's connection vanishes when the connection closes, and the new
+  /// pod registers under its own name).
+  /// </summary>
+  /// <remarks>
+  /// Slice 2 of zero-idle-polling — the <c>wh_live_instances</c> view (migration 052)
+  /// joins <c>wh_service_instances</c> against <c>pg_stat_activity</c> on exactly this
+  /// format, so the helper is the single source of truth for the format on both sides.
+  /// Tested directly in <c>PgSharedNotifyConnectionApplicationNameTests</c>.
+  /// </remarks>
+  internal static string ComputeApplicationName(Guid instanceId) {
+    // RED stub — Slice 2 GREEN replaces this with the wh_live_instances-compatible format.
+    return instanceId.ToString();
+  }
+
   /// <inheritdoc />
   public bool IsAvailable => _isAvailable;
   /// <inheritdoc />
