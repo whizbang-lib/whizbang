@@ -88,6 +88,16 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<LeaseRegistry>();
     services.TryAddSingleton(TimeProvider.System);
 
+    // Slice 4 of zero-idle-polling: single in-process idle-activity tracker +
+    // registry-driven backup-tick coordinator. The tracker is shared across
+    // every event source that proves the pod is doing real work; the
+    // coordinator reads it on each loop iteration to decide between ASLEEP
+    // (no DB calls) and POLLING (registered backstop ticks).
+    services.AddOptions<BackupTickCoordinatorOptions>();
+    services.TryAddSingleton<IIdleActivityTracker, IdleActivityTracker>();
+    services.TryAddSingleton<IBackupTickRegistry, BackupTickRegistry>();
+    services.TryAddSingleton<BackupTickCoordinator>();
+
     // Slice 4 of pump-then-process.md: source-generated receptor registry adapter. The
     // InboxDispatchWorker uses this to skip lifecycle deserialize for cross-service events
     // that the local service has no receptor for. Registered as a singleton — adapter is
@@ -124,6 +134,13 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
+
+    // Slice 4 of zero-idle-polling: register the coordinator as a hosted service
+    // AND its touch-hook binder so the subscriptions wire up at startup. The
+    // binder runs StartAsync once to subscribe Touch on ClaimWorker /
+    // HeartbeatWorker / IWorkNotificationListener — no per-request work.
+    services.AddHostedService(sp => sp.GetRequiredService<BackupTickCoordinator>());
+    services.AddHostedService<IdleActivityTouchHookBinder>();
 
     // Channel interfaces — singletons that delegate to the singleton worker.
     services.TryAddSingleton<IOutboxCompletionChannel>(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
