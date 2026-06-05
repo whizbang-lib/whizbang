@@ -47,7 +47,8 @@ public sealed partial class PgCommitOrderStamperWorker(
   ISharedNotifyConnection sharedConnection,
   ILogger<PgCommitOrderStamperWorker> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
-  INotificationDataSource? notificationDataSource = null
+  INotificationDataSource? notificationDataSource = null,
+  INotifySignalingGate? notifySignalingGate = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _notificationOptions = notificationOptions?.Value ?? throw new ArgumentNullException(nameof(notificationOptions));
   private readonly CommitOrderStamperOptions _stamperOptions = stamperOptions?.Value ?? throw new ArgumentNullException(nameof(stamperOptions));
@@ -55,6 +56,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   private readonly ISharedNotifyConnection _sharedConnection = sharedConnection ?? throw new ArgumentNullException(nameof(sharedConnection));
   private readonly ILogger<PgCommitOrderStamperWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly INotifySignalingGate? _notifySignalingGate = notifySignalingGate;
   // Opt-in: register an INotificationDataSource via DI when the DbContext is
   // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
   // works because Npgsql strips credentials from both NpgsqlConnection.
@@ -191,6 +193,27 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
 
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Computes the effective polling interval the wait-loop should use on the next tick.
+  /// Returns <see cref="CommitOrderStamperOptions.PollingInterval"/> when the NOTIFY gate
+  /// is unavailable (or not wired) — that's the "correctness floor" cadence. Returns
+  /// <see cref="CommitOrderStamperOptions.NotifyHealthyPollingInterval"/> when the gate
+  /// reports healthy AND the relaxed value is strictly greater than the floor; otherwise
+  /// falls back to the floor.
+  /// </summary>
+  /// <remarks>
+  /// Pure function so it's trivially unit-testable without spinning up the worker.
+  /// Extracted as <c>internal static</c> so test assemblies can call it directly via
+  /// <c>InternalsVisibleTo</c>.
+  /// </remarks>
+  internal static TimeSpan ComputeEffectivePollingInterval(
+      CommitOrderStamperOptions options,
+      bool? gateIsAvailable) {
+    ArgumentNullException.ThrowIfNull(options);
+    // RED stub — Slice 1 GREEN replaces this with the gate-aware branch.
+    return options.PollingInterval;
   }
 
   /// <summary>
