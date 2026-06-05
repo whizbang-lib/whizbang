@@ -144,6 +144,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       // wh_live_instances view (migration 052) joins on this exact format.
       var instanceProvider = sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>();
       builder.ConnectionStringBuilder.ApplicationName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
+      // Slice 3 of zero-idle-polling — TCP keepalive params so the kernel detects
+      // silent NAT/firewall connection death within ~150 s instead of the OS
+      // default (~2 hours on Linux). The gate's reprobe loop then flips
+      // IsAvailable to false and dependent workers engage their backstop poll.
+      ApplyTcpKeepAlive(builder.ConnectionStringBuilder, options);
       // ownsDataSource: true means the wrapper's DI-driven disposal will dispose
       // the data source. Critical for tests that spin many hosts in sequence —
       // without this, every host leaks an Npgsql connection pool.
@@ -172,7 +177,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       WhizbangNotificationOptions options) {
     ArgumentNullException.ThrowIfNull(builder);
     ArgumentNullException.ThrowIfNull(options);
-    // RED stub — Slice 3 GREEN replaces this with the actual builder mutations.
+    builder.TcpKeepAlive = true;
+    builder.TcpKeepAliveTime = options.TcpKeepAliveTime;
+    builder.TcpKeepAliveInterval = options.TcpKeepAliveInterval;
   }
 
   /// <summary>
@@ -253,6 +260,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       // wh_live_instances view (migration 052) joins on this exact format.
       var instanceProvider = sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>();
       builder.ConnectionStringBuilder.ApplicationName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
+      // Slice 3 of zero-idle-polling — TCP keepalive params (same defaults as
+      // the auto-discovery path).
+      var options = sp.GetService<IOptions<WhizbangNotificationOptions>>()?.Value
+        ?? new WhizbangNotificationOptions();
+      ApplyTcpKeepAlive(builder.ConnectionStringBuilder, options);
       return new NotificationDataSource(builder.Build());
     });
 
