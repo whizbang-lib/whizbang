@@ -40,7 +40,16 @@ CREATE TABLE IF NOT EXISTS wh_dead_letters (
   -- operator disposition
   operator_disposition INTEGER NOT NULL DEFAULT 0,           -- DeadLetterDisposition enum
   operator_notes       TEXT,
-  operator_actor       TEXT
+  operator_actor       TEXT,
+
+  -- error fingerprint (Slice 2 of release/v0.645.0-alpha.1)
+  -- Populated inline by move_to_dead_letters via compute_dead_letter_fingerprint
+  -- (defined in migration 053). VARCHAR(16) holds the first 16 hex chars of
+  -- SHA256(type:frame1:frame2:frame3). Lets operators triage 38k+ rows via
+  -- GROUP BY error_fingerprint without waiting for Slice 6's aggregation job.
+  -- NULL when error_text is NULL — no spurious 'all-NULL' cluster.
+  error_fingerprint         VARCHAR(16),
+  error_fingerprint_version SMALLINT
 );
 
 CREATE INDEX IF NOT EXISTS wh_dead_letters_next_recovery_idx
@@ -56,6 +65,13 @@ CREATE INDEX IF NOT EXISTS wh_dead_letters_generation_idx
 CREATE INDEX IF NOT EXISTS wh_dead_letters_reason_status_idx
   ON wh_dead_letters (failure_reason, recovery_status)
   WHERE recovered_at IS NULL;
+
+-- Slice 2 of release/v0.645.0-alpha.1 — supports the canonical operator/AI triage
+-- query `GROUP BY error_fingerprint`. Partial (WHERE NOT NULL) keeps the index
+-- skinny on NULL-fingerprint rows (those with NULL error_text).
+CREATE INDEX IF NOT EXISTS wh_dead_letters_fingerprint_idx
+  ON wh_dead_letters (error_fingerprint)
+  WHERE error_fingerprint IS NOT NULL;
 
 COMMENT ON TABLE wh_dead_letters IS
 'Forensic record + recovery state for permanently-failed work items (Whizbang internal DLQ). Rows enter via move_to_dead_letters() when attempts exceed the worker''s configured Max*Attempts. The DeadLetterRecoveryWorker scans this table on an idle-cadence trigger and re-emits to the source table when policy allows; generation-tagged auto-replay catches "we shipped a fix" cases on new deploys. See plans/dlq-recovery.md for the full design.';
@@ -154,6 +170,11 @@ BEGIN
     RETURN NULL;
   END IF;
 
+  -- Slice 3a of release/v0.645.0-alpha.1 — auto-fingerprint every row at INSERT
+  -- time via Slice 2's compute_dead_letter_fingerprint. One source of truth
+  -- (the SQL function), three call sites (this INSERT, plus Slice 6's
+  -- aggregate_dead_letters version-aware backfill). NULL p_error_text →
+  -- NULL fingerprint + NULL version so the column NULLability flows through.
   INSERT INTO wh_dead_letters (
     dead_letter_id,
     source_table,
@@ -166,6 +187,8 @@ BEGIN
     metadata,
     failure_reason,
     error_text,
+    error_fingerprint,
+    error_fingerprint_version,
     attempts_when_dlq,
     dead_lettered_by,
     generation
@@ -181,6 +204,11 @@ BEGIN
     v_metadata,
     p_failure_reason,
     p_error_text,
+    __SCHEMA__.compute_dead_letter_fingerprint(p_error_text),
+    CASE WHEN p_error_text IS NOT NULL
+         THEN __SCHEMA__.current_dead_letter_fingerprint_version()
+         ELSE NULL
+    END,
     v_attempts,
     p_instance_id,
     p_generation
