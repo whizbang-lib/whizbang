@@ -412,7 +412,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
         }
 
-        await _invokeOutboxLifecycleStageAsync(
+        await InvokeOutboxLifecycleStageAsync(
           work, typedEnvelope, receptorInvoker,
           LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
           "PreOutbox", ct);
@@ -451,7 +451,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       foreach (var result in results) {
         var row = rowsByMessageId[result.MessageId];
         if (result.Success) {
-          await _invokeOutboxLifecycleStageAsync(
+          await InvokeOutboxLifecycleStageAsync(
             works.First(w => w.MessageId == result.MessageId),
             typedEnvelopes[result.MessageId],
             receptorInvokers[result.MessageId],
@@ -506,7 +506,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
     }
 
-    await _invokeOutboxLifecycleStageAsync(
+    await InvokeOutboxLifecycleStageAsync(
       work, typedEnvelope, receptorInvoker,
       LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
       "PreOutbox", ct);
@@ -531,7 +531,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // Fire PostOutbox lifecycle BEFORE the publish hook + completion enqueue so
       // receptors registered at PostOutbox* observe the published message before any
       // test-side completion signal advances.
-      await _invokeOutboxLifecycleStageAsync(
+      await InvokeOutboxLifecycleStageAsync(
         work, typedEnvelope, receptorInvoker,
         LifecycleStage.PostOutboxDetached, LifecycleStage.PostOutboxInline,
         "PostOutbox", ct);
@@ -578,7 +578,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// try/catch so a misbehaving receptor cannot block publish or completion.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Lifecycle invocation handles the detached-vs-inline branch matrix + receptor resolution + envelope reuse fallback inline so the receptor-isolation try/catch stays at one site.")]
-  private async Task _invokeOutboxLifecycleStageAsync(
+  internal async Task InvokeOutboxLifecycleStageAsync(
       OutboxWork work,
       IMessageEnvelope? typedEnvelope,
       IReceptorInvoker? receptorInvoker,
