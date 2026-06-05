@@ -312,7 +312,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // payload — lifecycle invocation then no-ops as before.
       var typedEnvelope = _resolveTypedEnvelope(work);
 
-      await _invokeInboxLifecycleStageAsync(
+      await InvokeInboxLifecycleStageAsync(
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
         "PreInbox", ct, detachedCancellationToken: stoppingToken);
       LogDiagPreInboxReturned(_logger, work.MessageId);
@@ -324,7 +324,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogDiagCommitEnqueued(_logger, work.MessageId, commitRequest.InboxCompletion.Status);
 
       // PostInbox lands AFTER event storage.
-      await _invokeInboxLifecycleStageAsync(
+      await InvokeInboxLifecycleStageAsync(
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
         "PostInbox", ct, detachedCancellationToken: stoppingToken);
       LogDiagPostInboxReturned(_logger, work.MessageId);
@@ -332,10 +332,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
       if (_hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
-        await _invokeInboxLifecycleStageAsync(
+        await InvokeInboxLifecycleStageAsync(
           work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
           "PostAllPerspectives", ct, detachedCancellationToken: stoppingToken);
-        await _invokeInboxLifecycleStageAsync(
+        await InvokeInboxLifecycleStageAsync(
           work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
           "PostLifecycle", ct, detachedCancellationToken: stoppingToken);
       }
@@ -386,7 +386,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Lifecycle stage invocation requires the full set of stage descriptors + ambient context; bundling would obscure call-site intent.")]
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Lifecycle invocation handles the full detached-vs-inline branch matrix + receptor resolution + envelope reuse fallback; the branches are interrelated and splitting would force passing the typed envelope through helper boundaries.")]
-  private async Task _invokeInboxLifecycleStageAsync(
+  internal async Task InvokeInboxLifecycleStageAsync(
       InboxWork work,
       IMessageEnvelope? typedEnvelope,
       AsyncServiceScope scope,
@@ -503,7 +503,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// True when the lifecycle stage is one the source-generated WhizbangReceptorRegistryQuery
   /// actually emits entries for. Stages outside this set return false unconditionally from
   /// HasReceptors, so the gate must NOT consult the registry for them — see the gate site
-  /// in <see cref="_invokeInboxLifecycleStageAsync"/> for the failure mode.
+  /// in <see cref="InvokeInboxLifecycleStageAsync"/> for the failure mode.
   /// </summary>
   private static bool _isGatedStage(LifecycleStage stage) =>
     stage is LifecycleStage.PreInboxDetached
