@@ -35,6 +35,7 @@ public sealed class CommitOrderStamperOptions {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/commit-sequence#polling-cadence</docs>
+  [Obsolete("Slice 4 of zero-idle-polling moves backup polling into BackupTickCoordinator, which owns the cadence across all backstop concerns. This knob continues to honor its semantic for backward compatibility but will be removed when the stamper's standalone backstop loop is retired in a follow-up slice. Tune BackupTickCoordinatorOptions.PollingInterval instead.")]
   public TimeSpan? NotifyHealthyPollingInterval { get; set; } = TimeSpan.FromSeconds(30);
 
   /// <summary>
