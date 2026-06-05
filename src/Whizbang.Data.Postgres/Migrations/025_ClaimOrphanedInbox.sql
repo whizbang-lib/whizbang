@@ -79,7 +79,18 @@ BEGIN
                 -- recover at the threshold boundary rather than at the lease-expiry boundary.
                 SELECT 1 FROM __SCHEMA__.wh_service_instances si
                 WHERE si.instance_id = ast.assigned_instance_id
-                  AND si.last_heartbeat_at >= p_stale_cutoff
+                  -- Slice 2b of zero-idle-polling — owner counts as alive if
+                  -- EITHER its heartbeat is fresh OR a Whizbang LISTEN
+                  -- connection is currently registered in pg_stat_activity
+                  -- (the latter is TCP-fresh regardless of heartbeat cadence).
+                  -- Additive — existing heartbeat-only semantics preserved.
+                  AND (
+                    si.last_heartbeat_at >= p_stale_cutoff
+                    OR EXISTS (
+                      SELECT 1 FROM pg_stat_activity sa
+                      WHERE sa.application_name = 'whizbang-' || si.instance_id::text
+                    )
+                  )
               )
           )
         )
