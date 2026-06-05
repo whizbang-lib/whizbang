@@ -125,9 +125,27 @@ public class HeartbeatWorkerOptions {
   public bool Enabled { get; set; } = true;
 
   /// <summary>
-  /// Heartbeat cadence in seconds. Must be less than
-  /// <c>WorkCoordinatorPublisherOptions.AbandonStaleInstanceThresholdSeconds / 3</c>
-  /// so peers don't false-flag this instance stale (default 30 / 3 = 10 s). Default: 5.
+  /// Heartbeat cadence in seconds. Default 30.
   /// </summary>
-  public int IntervalSeconds { get; set; } = 5;
+  /// <remarks>
+  /// <para>
+  /// Slice 5 of zero-idle-polling raised this from 5 s to 30 s. Safe because
+  /// orphan detection now has two independent freshness signals: the
+  /// timer-driven <c>wh_service_instances.last_heartbeat_at</c> column AND
+  /// the TCP-fresh LISTEN connection in <c>pg_stat_activity</c> joined
+  /// via the <c>wh_live_instances</c> view (migration 052). The
+  /// <c>claim_orphaned_*</c> functions (migrations 024/025/027 after
+  /// Slice 2b) consult both, so a 30 s gap between heartbeat row UPDATEs
+  /// doesn't weaken orphan detection while the pod's LISTEN connection
+  /// stays alive.
+  /// </para>
+  /// <para>
+  /// Must remain less than
+  /// <c>WorkCoordinatorPublisherOptions.AbandonStaleInstanceThresholdSeconds / 3</c>
+  /// so peers don't false-flag this instance stale during a transient
+  /// gap. With the threshold's default of 600 s and three-renewal margin,
+  /// 30 s sits comfortably below.
+  /// </para>
+  /// </remarks>
+  public int IntervalSeconds { get; set; } = 30;
 }
