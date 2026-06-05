@@ -630,6 +630,17 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             // graceful shutdown
           } catch (Exception ex) {
             LogLifecycleStageError(_logger, work.MessageId, stageName + "Detached", ex);
+            // Slice 1 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis):
+            // route the lifecycle exception through IFailureChannel so
+            // process_outbox_failures populates wh_outbox.error with the full
+            // ex.ToString(). Without this, slot-3-class faults retried forever with
+            // an empty error column and operators had no triage signal.
+            await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+              MessageId = work.MessageId,
+              CompletedStatus = work.Status,
+              Error = $"Lifecycle stage {stageName}Detached failed: {ex}",
+              Reason = MessageFailureReason.Unknown,
+            }, ct);
           }
         }, ct);
       }
@@ -640,6 +651,17 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }
     } catch (Exception ex) {
       LogLifecycleStageError(_logger, work.MessageId, stageName, ex);
+      // Slice 1 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis):
+      // route the lifecycle exception through IFailureChannel so
+      // process_outbox_failures populates wh_outbox.error with the full
+      // ex.ToString(). Without this, slot-3-class faults retried forever with
+      // an empty error column and operators had no triage signal.
+      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+        MessageId = work.MessageId,
+        CompletedStatus = work.Status,
+        Error = $"Lifecycle stage {stageName} failed: {ex}",
+        Reason = MessageFailureReason.Unknown,
+      }, ct);
     }
   }
 
