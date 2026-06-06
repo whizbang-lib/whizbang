@@ -68,5 +68,21 @@ public enum MessageFailureReason {
   /// <summary>
   /// Unclassified error - reason not determined.
   /// </summary>
-  Unknown = 99
+  Unknown = 99,
+
+  /// <summary>
+  /// Establishing the message security context (via
+  /// <see cref="Whizbang.Core.Security.IMessageSecurityContextProvider"/>.EstablishContextAsync)
+  /// hung past the worker's configured timeout. Distinguishes upstream
+  /// extractor hangs (tenant lookup, role-resolution service timeout, etc.)
+  /// from actual transport / serialization / business-logic failures.
+  /// </summary>
+  /// <remarks>
+  /// Introduced in Slice 5a of release/v0.647.0-alpha.1 after the slot-3
+  /// JDX BFF stuck-row pattern was traced to JDX's
+  /// <c>IMessageSecurityContextProvider</c> implementation hanging
+  /// indefinitely on a test-pattern tenant id. See
+  /// operations/dead-letter-queue/internal-dlq doc page.
+  /// </remarks>
+  SecurityContextEstablishmentFailure = 10
 }

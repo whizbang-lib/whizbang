@@ -323,7 +323,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // the bulk helper around the batched publish call.
       if (_publishStrategy!.SupportsBulkPublish && newRowList.Count > 0) {
         var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        await _publishBulkAsync(newRowList, ct);
+        await PublishBulkAsync(newRowList, ct);
         totalPublishMs += (System.Diagnostics.Stopwatch.GetTimestamp() - publishStart)
           * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         publishedCount += newRowList.Count;
@@ -381,7 +381,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// <see cref="IMessagePublishStrategy.PublishBatchAsync"/> call, then fans the per-row
   /// results out to Post-Outbox lifecycle + the completion / failure channels.
   /// </summary>
-  private async Task _publishBulkAsync(List<OutboxBatchRow> rows, CancellationToken ct) {
+  internal async Task PublishBulkAsync(List<OutboxBatchRow> rows, CancellationToken ct) {
     var works = new List<OutboxWork>(rows.Count);
     var rowsByMessageId = new Dictionary<Guid, OutboxBatchRow>(rows.Count);
     var typedEnvelopes = new Dictionary<Guid, IMessageEnvelope?>(rows.Count);
@@ -821,4 +821,25 @@ public sealed class OutboxDrainWorkerOptions {
   /// </summary>
   /// <docs>fundamentals/work-coordinator/per-stream-drain#sliding-window</docs>
   public SlidingWindowBatcherOptions Batcher { get; set; } = new();
+
+  /// <summary>
+  /// Timeout for the per-message <c>SecurityContextHelper.EstablishFullContextAsync</c>
+  /// call. When the consumer-side <see cref="Whizbang.Core.Security.IMessageSecurityContextProvider"/>
+  /// hangs longer than this, the worker cancels the call, enqueues a
+  /// <see cref="MessageFailure"/> with
+  /// <see cref="MessageFailureReason.SecurityContextEstablishmentFailure"/>, and
+  /// proceeds to the next row. Default 10 s.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Introduced in Slice 5a of release/v0.647.0-alpha.1 after the slot-3 BFF
+  /// stuck-row pattern was traced to JDX's IMessageSecurityContextProvider
+  /// hanging on a test-pattern tenant id (<c>c0ffee00-cafe-f00d-face-feed12345678</c>).
+  /// Without this timeout, the publish path waits on the security context
+  /// establishment indefinitely; <c>claim_orphaned_outbox</c> keeps re-leasing
+  /// the row, attempts increments forever, and no forensic signal surfaces.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public int SecurityContextTimeoutSeconds { get; set; } = 10;
 }
