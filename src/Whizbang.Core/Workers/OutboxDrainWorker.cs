@@ -430,10 +430,40 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }
 
       IReadOnlyList<MessagePublishResult> results;
+      // Slice 4 of release/v0.648.0-alpha.1 — wrap PublishBatchAsync in a per-call
+      // timeout. JDX BFF slot-3 stuck row continued to spin even after v0.647
+      // (SecurityContext timeout) shipped: the SDK call hangs indefinitely
+      // without throwing AND without returning. The ct here is the worker's
+      // stoppingToken — only fires at pod shutdown. With the timeout, each row
+      // in the batch routes to the failure channel via a TransportException
+      // reason so wh_outbox.error captures the timeout, and DLQ promotion fires
+      // with a meaningful fingerprint on the next cycle.
+      var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
+      using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+      if (publishTimeoutSeconds > 0) {
+        publishCts.CancelAfter(TimeSpan.FromSeconds(publishTimeoutSeconds));
+      }
       try {
-        results = await _publishStrategy!.PublishBatchAsync(works, ct);
+        results = await _publishStrategy!.PublishBatchAsync(works, publishCts.Token);
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         throw;
+      } catch (OperationCanceledException) when (publishCts.IsCancellationRequested) {
+        // Publish-specific timeout (not shutdown). Route every row in the batch
+        // through the failure channel as TransportException so process_outbox_failures
+        // populates wh_outbox.error with the timeout description and Slice 2's
+        // fingerprint clusters on "SDK call did not return" instead of the
+        // pre-publish-gate meta-message.
+        LogPublishTimedOut(_logger, works.Count, publishTimeoutSeconds);
+        foreach (var work in works) {
+          var row = rowsByMessageId[work.MessageId];
+          await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+            MessageId = work.MessageId,
+            CompletedStatus = (MessageProcessingStatus)row.Status,
+            Error = $"Publish timed out after {publishTimeoutSeconds}s — SDK call did not return for destination={work.Destination}",
+            Reason = MessageFailureReason.TransportException,
+          }, ct);
+        }
+        return;
       } catch (Exception ex) {
         // Whole-batch failure: route every row to the failure channel so the next
         // claim_orphaned_* cycle re-leases them. Lifecycle scopes are disposed in finally.
@@ -516,10 +546,25 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       "PreOutbox", ct);
 
     MessagePublishResult result;
+    var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
+    using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    if (publishTimeoutSeconds > 0) {
+      publishCts.CancelAfter(TimeSpan.FromSeconds(publishTimeoutSeconds));
+    }
     try {
-      result = await _publishStrategy!.PublishAsync(work, ct);
+      result = await _publishStrategy!.PublishAsync(work, publishCts.Token);
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       throw;
+    } catch (OperationCanceledException) when (publishCts.IsCancellationRequested) {
+      // Slice 4 — singular-path publish timeout. Mirror of the bulk-path wrap above.
+      LogPublishTimedOut(_logger, 1, publishTimeoutSeconds);
+      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+        MessageId = row.MessageId,
+        CompletedStatus = (MessageProcessingStatus)row.Status,
+        Error = $"Publish timed out after {publishTimeoutSeconds}s — SDK call did not return for destination={work.Destination}",
+        Reason = MessageFailureReason.TransportException,
+      }, ct);
+      return;
     } catch (Exception ex) {
       LogPublishFailed(_logger, row.MessageId, ex);
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
@@ -800,6 +845,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker EstablishFullContextAsync timed out for {MessageId} after {TimeoutSeconds}s — IMessageSecurityContextProvider implementation hung; routing to failure channel with Reason=SecurityContextEstablishmentFailure")]
   static partial void LogSecurityContextTimedOut(ILogger logger, Guid messageId, int timeoutSeconds);
+
+  [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker transport publish timed out for batch of {RowCount} row(s) after {TimeoutSeconds}s — SDK call did not return; routing each row to failure channel with Reason=TransportException")]
+  static partial void LogPublishTimedOut(ILogger logger, int rowCount, int timeoutSeconds);
 }
 
 /// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>
