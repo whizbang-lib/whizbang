@@ -302,17 +302,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // Pass `ct` (lease token) for inline awaits + `stoppingToken` for fire-and-forget detached
       // stages so the latter aren't cancelled when the lease disposes on dispatch return.
       await using var scope = _scopeFactory.CreateAsyncScope();
-      {
-        var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
-        var outcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
-          work.Envelope, scope.ServiceProvider, timeoutSeconds, ct);
-        if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
-          LogInboxSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
-          await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
-            _failureChannel, WorkCategory.Inbox, work.MessageId,
-            work.Status, timeoutSeconds, ct);
-          return;
-        }
+      var secTimeoutSeconds = _options.SecurityContextTimeoutSeconds;
+      var secOutcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
+        work.Envelope, scope.ServiceProvider, secTimeoutSeconds, ct);
+      if (secOutcome == SecurityContextEstablishmentOutcome.TimedOut) {
+        LogInboxSecurityContextTimedOut(_logger, work.MessageId, secTimeoutSeconds);
+        await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
+          _failureChannel, WorkCategory.Inbox, work.MessageId,
+          work.Status, secTimeoutSeconds, ct);
+        return;
       }
       LogDiagSecurityEstablished(_logger, work.MessageId);
       var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();

@@ -408,14 +408,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         var typedEnvelope = _tryResolveTypedEnvelope(work);
         IReceptorInvoker? receptorInvoker = null;
         if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
-          var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
-          var outcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
-            work.Envelope, scope.ServiceProvider, timeoutSeconds, ct);
-          if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
-            LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
-            await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
-              _failureChannel, WorkCategory.Outbox, work.MessageId,
-              (MessageProcessingStatus)row.Status, timeoutSeconds, ct);
+          if (!await _trySecurityContextOrEnqueueTimeoutAsync(work, row, scope.ServiceProvider, ct)) {
             continue;  // skip this row; lifecycle scope is disposed in finally
           }
           receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
@@ -511,14 +504,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var typedEnvelope = _tryResolveTypedEnvelope(work);
     IReceptorInvoker? receptorInvoker = null;
     if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
-      var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
-      var outcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
-        work.Envelope, scope.ServiceProvider, timeoutSeconds, ct);
-      if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
-        LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
-        await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
-          _failureChannel, WorkCategory.Outbox, work.MessageId,
-          (MessageProcessingStatus)row.Status, timeoutSeconds, ct);
+      if (!await _trySecurityContextOrEnqueueTimeoutAsync(work, row, scope.ServiceProvider, ct)) {
         return;
       }
       receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
@@ -699,6 +685,29 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       return false;
     }
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
+  }
+
+  /// <summary>
+  /// Slice 5a (release/v0.647.0-alpha.1) — single point of truth for the
+  /// SecurityContext-establishment-with-timeout pattern across both publish paths
+  /// (bulk + singular). Returns true on success (caller continues to lifecycle hooks
+  /// and publish), false on timeout (caller's row has already been routed through
+  /// the failure channel as SecurityContextEstablishmentFailure; caller should skip
+  /// this row via continue/return).
+  /// </summary>
+  private async ValueTask<bool> _trySecurityContextOrEnqueueTimeoutAsync(
+      OutboxWork work, OutboxBatchRow row, IServiceProvider scopedProvider, CancellationToken ct) {
+    var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
+    var outcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
+      work.Envelope, scopedProvider, timeoutSeconds, ct);
+    if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
+      LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
+      await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
+        _failureChannel, WorkCategory.Outbox, work.MessageId,
+        (MessageProcessingStatus)row.Status, timeoutSeconds, ct);
+      return false;
+    }
+    return true;
   }
 
   private OutboxWork _toOutboxWork(OutboxBatchRow row) {
