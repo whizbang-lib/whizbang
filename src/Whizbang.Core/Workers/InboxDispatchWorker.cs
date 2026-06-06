@@ -302,7 +302,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // Pass `ct` (lease token) for inline awaits + `stoppingToken` for fire-and-forget detached
       // stages so the latter aren't cancelled when the lease disposes on dispatch return.
       await using var scope = _scopeFactory.CreateAsyncScope();
-      await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+      var secTimeoutSeconds = _options.SecurityContextTimeoutSeconds;
+      var secOutcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
+        work.Envelope, scope.ServiceProvider, secTimeoutSeconds, ct);
+      if (secOutcome == SecurityContextEstablishmentOutcome.TimedOut) {
+        LogInboxSecurityContextTimedOut(_logger, work.MessageId, secTimeoutSeconds);
+        await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
+          _failureChannel, WorkCategory.Inbox, work.MessageId,
+          work.Status, secTimeoutSeconds, ct);
+        return;
+      }
       LogDiagSecurityEstablished(_logger, work.MessageId);
       var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
 
@@ -602,6 +611,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Message = "DIAG[2] security context established: message={MessageId}")]
   static partial void LogDiagSecurityEstablished(ILogger logger, Guid messageId);
 
+  [LoggerMessage(EventId = 22000, Level = LogLevel.Warning,
+    Message = "InboxDispatchWorker EstablishFullContextAsync timed out for {MessageId} after {TimeoutSeconds}s — IMessageSecurityContextProvider implementation hung; routing to failure channel with Reason=SecurityContextEstablishmentFailure")]
+  static partial void LogInboxSecurityContextTimedOut(ILogger logger, Guid messageId, int timeoutSeconds);
+
   [LoggerMessage(EventId = 22, Level = LogLevel.Debug,
     Message = "DIAG[3] PreInbox lifecycle returned: message={MessageId}")]
   static partial void LogDiagPreInboxReturned(ILogger logger, Guid messageId);
@@ -687,4 +700,20 @@ public sealed class InboxDispatchWorkerOptions {
   /// </para>
   /// </summary>
   public int MaxConcurrentDispatch { get; set; } = 8;
+
+  /// <summary>
+  /// Timeout for the per-message <c>SecurityContextHelper.EstablishFullContextAsync</c>
+  /// call. When the consumer-side <see cref="Whizbang.Core.Security.IMessageSecurityContextProvider"/>
+  /// hangs longer than this, the worker cancels the call, enqueues a
+  /// <see cref="MessageFailure"/> with
+  /// <see cref="MessageFailureReason.SecurityContextEstablishmentFailure"/>, and
+  /// proceeds to the next message. Default 10 s. Set to 0 to disable.
+  /// </summary>
+  /// <remarks>
+  /// Mirror of <see cref="OutboxDrainWorkerOptions"/>.SecurityContextTimeoutSeconds.
+  /// See operations/dead-letter-queue/internal-dlq for the Slot-3 incident that
+  /// motivated this safeguard.
+  /// </remarks>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public int SecurityContextTimeoutSeconds { get; set; } = 10;
 }

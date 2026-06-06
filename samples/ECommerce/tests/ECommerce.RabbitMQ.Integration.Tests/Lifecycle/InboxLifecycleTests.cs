@@ -332,8 +332,12 @@ public class InboxLifecycleTests {
     // test could satisfy this wait (the assertion is "≥ 1" so it would pass spuriously, but the
     // receptor's LastMessage would be wrong).
     var commandIds = commands.Select(c => c.ProductId.Value).ToHashSet();
+    // Pass the per-test CT so the helper's internal 45s timer is bypassed and the [Timeout(180_000)]
+    // test-framework deadline is the single source of truth. The receptor still uses TCS for the
+    // completion signal — pure deterministic, no overlapping timers, no race.
     var receptorTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>(
-      messageFilter: e => commandIds.Contains(e.ProductId));
+      messageFilter: e => commandIds.Contains(e.ProductId),
+      cancellationToken: cancellationToken);
 
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
