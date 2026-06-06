@@ -873,4 +873,28 @@ public sealed class OutboxDrainWorkerOptions {
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
   public int SecurityContextTimeoutSeconds { get; set; } = 10;
+
+  /// <summary>
+  /// Timeout for the per-batch (or per-row) transport publish call
+  /// (<see cref="IMessagePublishStrategy.PublishBatchAsync"/> or
+  /// <see cref="IMessagePublishStrategy.PublishAsync"/>). When the transport SDK
+  /// hangs longer than this — i.e. doesn't return AND doesn't throw — the worker
+  /// cancels the call, enqueues a <see cref="MessageFailure"/> per row with
+  /// <see cref="MessageFailureReason.TransportException"/>, and proceeds. Default
+  /// 30 s. Set to 0 to disable (legacy hang-until-shutdown behavior).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Introduced in Slice 4 of release/v0.648.0-alpha.1. Slice 5a (v0.647) wrapped
+  /// the SecurityContext establishment in a timeout; the a consumer BFF production stuck row
+  /// still spun after v0.647 because the hang was one stack frame later — the
+  /// Azure SDK <c>PublishBatchAsync</c> call never returns AND never throws.
+  /// Without this timeout, the worker waits for the SDK indefinitely;
+  /// <c>claim_orphaned_outbox</c> re-leases the row, attempts increments
+  /// forever, the topic's last-access timestamp stays stale, and no forensic
+  /// signal surfaces.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public int PublishTimeoutSeconds { get; set; } = 30;
 }
