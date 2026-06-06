@@ -221,6 +221,60 @@ public class PublishTimeoutTests {
   }
 
   /// <summary>
+  /// Slice 4 singular-path lock: when the worker takes the per-row
+  /// <see cref="IMessagePublishStrategy.PublishAsync"/> path (transports
+  /// without bulk support) and the SDK hangs, the same timeout-and-route
+  /// semantics apply as the bulk path. Without this lock, a future refactor
+  /// could regress the bulk path's timeout handling and leave the singular
+  /// path silently hung — the exact slot-3 pattern, just on transports that
+  /// don't batch.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_PublishSingularHangs_TimesOutAndEnqueuesFailureAsync() {
+    var failure = new _FakeFailureChannel();
+    var hangingStrategy = new _HangingPublishStrategy();
+
+    var services = new ServiceCollection();
+    var sp = services.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new _FakeServiceInstanceProvider(),
+      new _FakeOutboxDrainChannel(),
+      new _FakeOutboxCompletionChannel(),
+      failure,
+      gate,
+      Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        PublishTimeoutSeconds = 1,
+      }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      hangingStrategy);
+
+    var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+
+    var singularTask = worker.PublishOneAsync(row, CancellationToken.None);
+
+    var captured = await failure.FirstFailure.Task.WaitAsync(TimeSpan.FromSeconds(3));
+    await singularTask;
+
+    await Assert.That(failure.All.Count).IsEqualTo(1)
+      .Because("Singular path publishes one row — exactly one MessageFailure should land in the failure channel.");
+    await Assert.That(captured.MessageId).IsEqualTo(row.MessageId)
+      .Because("The failure must identify the row whose publish hung so process_outbox_failures targets the correct wh_outbox row.");
+    await Assert.That(captured.Reason).IsEqualTo(MessageFailureReason.TransportException)
+      .Because("Singular-path hang has the same operational meaning as bulk-path hang — the SDK call did not return; transport-layer failure reason applies uniformly.");
+    await Assert.That(captured.Error).Contains("Publish timed out after")
+      .Because("Error text describes the timeout site so wh_outbox.error captures useful triage information for operators inspecting the singular-path flow.");
+    await Assert.That(captured.Error).Contains("SDK call did not return")
+      .Because("The diagnostic phrase explicitly distinguishes this case from a transport that returned with an error — same wording as the bulk path so dashboard regex matchers can use a single pattern.");
+  }
+
+  /// <summary>
   /// v0.651 hardening RED→GREEN: the slot-3 worst case is a transport that ignores the
   /// cancellation token entirely. v0.648's <c>CancelAfter</c>+cooperative-catch pattern
   /// would hang here forever because the await never completes. v0.651's <c>WaitAsync</c>
