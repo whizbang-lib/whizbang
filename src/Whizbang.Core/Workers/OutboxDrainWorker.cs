@@ -941,7 +941,7 @@ public sealed class OutboxDrainWorkerOptions {
   /// hangs longer than this — i.e. doesn't return AND doesn't throw — the worker
   /// cancels the call, enqueues a <see cref="MessageFailure"/> per row with
   /// <see cref="MessageFailureReason.TransportException"/>, and proceeds. Default
-  /// 30 s. Set to 0 to disable (legacy hang-until-shutdown behavior).
+  /// 120 s. Set to 0 to disable (legacy hang-until-shutdown behavior).
   /// </summary>
   /// <remarks>
   /// <para>
@@ -954,7 +954,16 @@ public sealed class OutboxDrainWorkerOptions {
   /// forever, the topic's last-access timestamp stays stale, and no forensic
   /// signal surfaces.
   /// </para>
+  /// <para>
+  /// 120 s default is conservative: still catches the slot-3 infinite-hang
+  /// (where the SDK call never returns at all), but tolerates 4× slowdowns on
+  /// legit publish paths under heavy CI load or noisy-neighbor pressure. The
+  /// initial 30 s default in the RED commit was too aggressive for
+  /// resource-constrained RabbitMQ integration tests where legit publishes
+  /// occasionally take longer than 30 s — bumped to avoid false-positive
+  /// cancellation of healthy publishes.
+  /// </para>
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
-  public int PublishTimeoutSeconds { get; set; } = 30;
+  public int PublishTimeoutSeconds { get; set; } = 120;
 }
