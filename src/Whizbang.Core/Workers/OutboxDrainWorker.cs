@@ -289,12 +289,23 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             && _deadLetterStore is not null
             && _generationProvider is not null) {
           try {
+            // Slice 1 of release/v0.648.0-alpha.1 — prefer the row's existing
+            // wh_outbox.error column (the real exception text from the last
+            // process_outbox_failures cycle) over the synthetic meta-message.
+            // The meta-message collapses every DLQ row to one fingerprint cluster
+            // regardless of root cause (production Jun-2026: 38k+ rows in a single
+            // cluster). Using row.Error restores forensic diversity — Slice 2's
+            // fingerprint algorithm extracts the real exception type + frames,
+            // operators see distinct clusters per failure mode.
+            var promotionErrorText = !string.IsNullOrWhiteSpace(row.Error)
+              ? row.Error
+              : $"OutboxDrainWorker dead-lettered: attempts={row.Attempts} > max={maxAttempts}";
             await _deadLetterStore.MoveAsync(
               deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
               sourceTable: DeadLetterSourceTable.OUTBOX,
               sourceId: row.MessageId,
               failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,
-              errorText: $"OutboxDrainWorker dead-lettered: attempts={row.Attempts} > max={maxAttempts}",
+              errorText: promotionErrorText,
               instanceId: _instanceProvider.InstanceId,
               generation: _generationProvider.GetGeneration(),
               ct: ct).ConfigureAwait(false);

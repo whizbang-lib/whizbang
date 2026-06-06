@@ -32,7 +32,13 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_outbox_batch(
   -- non-event outbox rows; commit_sequence may be NULL if stamper hasn't caught up.
   commit_sequence BIGINT,
   origin_service_id UUID,
-  origin_commit_sequence BIGINT
+  origin_commit_sequence BIGINT,
+  -- Slice 1 of release/v0.648.0-alpha.1: the row's existing error column (real
+  -- exception text from the last process_outbox_failures cycle). The pre-publish
+  -- DLQ gate uses this as errorText when promoting via move_to_dead_letters so
+  -- the DLQ row's fingerprint reflects the real root cause instead of a
+  -- meta-message that collapses every failure mode to one fingerprint.
+  error TEXT
 ) AS $$
 BEGIN
   IF p_stream_ids IS NULL OR array_length(p_stream_ids, 1) IS NULL THEN
@@ -79,7 +85,8 @@ BEGIN
     r.is_event,
     r.es_commit_sequence,
     r.es_origin_service_id,
-    r.es_origin_commit_sequence
+    r.es_origin_commit_sequence,
+    r.error
   FROM ranked r
   WHERE r.rank_in_stream <= p_max_per_stream
   ORDER BY r.stream_id, r.es_commit_sequence ASC NULLS LAST, r.message_id;

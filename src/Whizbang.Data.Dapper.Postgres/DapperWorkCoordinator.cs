@@ -394,7 +394,8 @@ public partial class DapperWorkCoordinator(
       Status = r.status,
       Attempts = r.attempts,
       PartitionNumber = r.partition_number,
-      IsEvent = r.is_event
+      IsEvent = r.is_event,
+      Error = r.error,
     })];
   }
 
@@ -520,6 +521,8 @@ public partial class DapperWorkCoordinator(
     public int attempts { get; set; }
     public int? partition_number { get; set; }
     public bool is_event { get; set; }
+    // Slice 1 of release/v0.648.0-alpha.1 — see OutboxBatchRow.Error.
+    public string? error { get; set; }
   }
 
   private sealed class InboxBatchRowDto {
