@@ -1565,6 +1565,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } catch (IndexOutOfRangeException) {
       // Older fetch_outbox_batch without slice 26.6b columns — leave as null.
     }
+    // Slice 1 of release/v0.648.0-alpha.1 — same defensive ordinal-lookup pattern
+    // for the new error column. Older fetch_outbox_batch revisions (pre-Slice 1)
+    // don't return it; leave Error as null in that case.
+    var hasErrorCol = false;
+    var errorOrdinal = -1;
+    try {
+      errorOrdinal = reader.GetOrdinal("error");
+      hasErrorCol = true;
+    } catch (IndexOutOfRangeException) {
+      // Older fetch_outbox_batch without Slice 1's error column — leave Error null.
+    }
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new OutboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -1587,6 +1598,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
           : null,
         OriginCommitSequence = hasCommitSequenceCol && !await reader.IsDBNullAsync(originSeqOrdinal, cancellationToken).ConfigureAwait(false)
           ? reader.GetInt64(originSeqOrdinal)
+          : null,
+        Error = hasErrorCol && !await reader.IsDBNullAsync(errorOrdinal, cancellationToken).ConfigureAwait(false)
+          ? reader.GetString(errorOrdinal)
           : null,
       });
     }
