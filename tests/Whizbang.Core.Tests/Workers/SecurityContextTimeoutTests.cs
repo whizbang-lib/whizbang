@@ -156,6 +156,92 @@ public class SecurityContextTimeoutTests {
   /// test cancellation kicks in, the failure channel never sees an entry, and
   /// the test times out.
   /// </summary>
+  // --- InboxDispatchWorker fakes ---
+
+  private sealed class _FakeInboxChannelWriter : IInboxChannelWriter {
+    private readonly System.Threading.Channels.Channel<InboxWork> _channel = System.Threading.Channels.Channel.CreateUnbounded<InboxWork>();
+    public System.Threading.Channels.ChannelReader<InboxWork> Reader => _channel.Reader;
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
+    public bool TryWrite(InboxWork work) => _channel.Writer.TryWrite(work);
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public void Complete() => _channel.Writer.Complete();
+    public event Action? OnNewInboxWorkAvailable;
+    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
+  }
+
+  private sealed class _FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) => ValueTask.CompletedTask;
+  }
+
+  private sealed class _AllStagesReceptorRegistry : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => true;
+    public bool HasInboxHandler(string messageType) => true;
+    public bool HasAnyConsumer(string messageType) => true;
+  }
+
+  private static InboxWork _inboxWork(Guid msgId) =>
+    new() {
+      MessageId = msgId,
+      Envelope = new MessageEnvelope<JsonElement> {
+        MessageId = MessageId.From(msgId),
+        Payload = JsonDocument.Parse("{}").RootElement,
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
+      },
+      MessageType = "Whizbang.Core.Tests.TestFixture.TestMessage, TestAsm",
+      StreamId = (Guid)TrackedGuid.NewMedo(),
+      PartitionNumber = 1,
+      Attempts = 1,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None,
+    };
+
+  // --- tests ---
+
+  [Test]
+  public async Task InboxDispatchWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync() {
+    var hangingProvider = new _HangingSecurityContextProvider();
+    var services = new ServiceCollection();
+    services.AddSingleton<IMessageSecurityContextProvider>(hangingProvider);
+    var sp = services.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var channel = new _FakeInboxChannelWriter();
+    var failure = new _FakeFailureChannel();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new _FakeServiceInstanceProvider(),
+      channel,
+      new _FakeHandlerCommitChannel(),
+      failure,
+      gate,
+      Options.Create(new InboxDispatchWorkerOptions {
+        Enabled = true,
+        SecurityContextTimeoutSeconds = 1,
+      }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: new _PassthroughDeserializer(),
+      receptorRegistry: new _AllStagesReceptorRegistry());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await channel.WriteAsync(_inboxWork((Guid)TrackedGuid.NewMedo()), cts.Token);
+
+    var captured = await failure.FirstFailure.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(captured.Reason).IsEqualTo(MessageFailureReason.SecurityContextEstablishmentFailure)
+      .Because("Mirror of OutboxDrainWorker: inbox-side SecurityContext hang must route through the same dedicated reason so dashboards bucket the failure correctly.");
+    await Assert.That(captured.Error).Contains("EstablishFullContextAsync timed out")
+      .Because("The error text must describe the hang site for operator triage and Slice 2's SQL fingerprint clustering.");
+  }
+
   [Test]
   public async Task OutboxDrainWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync() {
     var failure = new _FakeFailureChannel();
