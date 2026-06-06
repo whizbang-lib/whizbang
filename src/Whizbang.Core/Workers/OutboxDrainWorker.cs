@@ -341,7 +341,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       } else {
         foreach (var row in newRowList) {
           var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
-          await _publishOneAsync(row, ct);
+          await PublishOneAsync(row, ct);
           totalPublishMs += (System.Diagnostics.Stopwatch.GetTimestamp() - publishStart)
             * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
           publishedCount++;
@@ -526,7 +526,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
   }
 
-  private async Task _publishOneAsync(OutboxBatchRow row, CancellationToken ct) {
+  internal async Task PublishOneAsync(OutboxBatchRow row, CancellationToken ct) {
     OutboxWork work;
     try {
       work = _toOutboxWork(row);
