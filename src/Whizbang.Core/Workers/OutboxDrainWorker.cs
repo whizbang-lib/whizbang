@@ -323,7 +323,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // the bulk helper around the batched publish call.
       if (_publishStrategy!.SupportsBulkPublish && newRowList.Count > 0) {
         var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        await _publishBulkAsync(newRowList, ct);
+        await PublishBulkAsync(newRowList, ct);
         totalPublishMs += (System.Diagnostics.Stopwatch.GetTimestamp() - publishStart)
           * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         publishedCount += newRowList.Count;
@@ -381,7 +381,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// <see cref="IMessagePublishStrategy.PublishBatchAsync"/> call, then fans the per-row
   /// results out to Post-Outbox lifecycle + the completion / failure channels.
   /// </summary>
-  private async Task _publishBulkAsync(List<OutboxBatchRow> rows, CancellationToken ct) {
+  internal async Task PublishBulkAsync(List<OutboxBatchRow> rows, CancellationToken ct) {
     var works = new List<OutboxWork>(rows.Count);
     var rowsByMessageId = new Dictionary<Guid, OutboxBatchRow>(rows.Count);
     var typedEnvelopes = new Dictionary<Guid, IMessageEnvelope?>(rows.Count);
@@ -408,7 +408,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         var typedEnvelope = _tryResolveTypedEnvelope(work);
         IReceptorInvoker? receptorInvoker = null;
         if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
-          await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+          if (!await _trySecurityContextOrEnqueueTimeoutAsync(work, row, scope.ServiceProvider, ct)) {
+            continue;  // skip this row; lifecycle scope is disposed in finally
+          }
           receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
         }
 
@@ -502,7 +504,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var typedEnvelope = _tryResolveTypedEnvelope(work);
     IReceptorInvoker? receptorInvoker = null;
     if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
-      await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+      if (!await _trySecurityContextOrEnqueueTimeoutAsync(work, row, scope.ServiceProvider, ct)) {
+        return;
+      }
       receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
     }
 
@@ -683,6 +687,29 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
   }
 
+  /// <summary>
+  /// Slice 5a (release/v0.647.0-alpha.1) — single point of truth for the
+  /// SecurityContext-establishment-with-timeout pattern across both publish paths
+  /// (bulk + singular). Returns true on success (caller continues to lifecycle hooks
+  /// and publish), false on timeout (caller's row has already been routed through
+  /// the failure channel as SecurityContextEstablishmentFailure; caller should skip
+  /// this row via continue/return).
+  /// </summary>
+  private async ValueTask<bool> _trySecurityContextOrEnqueueTimeoutAsync(
+      OutboxWork work, OutboxBatchRow row, IServiceProvider scopedProvider, CancellationToken ct) {
+    var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
+    var outcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
+      work.Envelope, scopedProvider, timeoutSeconds, ct);
+    if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
+      LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
+      await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
+        _failureChannel, WorkCategory.Outbox, work.MessageId,
+        (MessageProcessingStatus)row.Status, timeoutSeconds, ct);
+      return false;
+    }
+    return true;
+  }
+
   private OutboxWork _toOutboxWork(OutboxBatchRow row) {
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
       ?? throw new InvalidOperationException("No JsonTypeInfo for MessageEnvelope<JsonElement>.");
@@ -769,6 +796,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling through to publish")]
   static partial void LogOutboxDlqMoveFailed(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker EstablishFullContextAsync timed out for {MessageId} after {TimeoutSeconds}s — IMessageSecurityContextProvider implementation hung; routing to failure channel with Reason=SecurityContextEstablishmentFailure")]
+  static partial void LogSecurityContextTimedOut(ILogger logger, Guid messageId, int timeoutSeconds);
 }
 
 /// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>
@@ -821,4 +852,25 @@ public sealed class OutboxDrainWorkerOptions {
   /// </summary>
   /// <docs>fundamentals/work-coordinator/per-stream-drain#sliding-window</docs>
   public SlidingWindowBatcherOptions Batcher { get; set; } = new();
+
+  /// <summary>
+  /// Timeout for the per-message <c>SecurityContextHelper.EstablishFullContextAsync</c>
+  /// call. When the consumer-side <see cref="Whizbang.Core.Security.IMessageSecurityContextProvider"/>
+  /// hangs longer than this, the worker cancels the call, enqueues a
+  /// <see cref="MessageFailure"/> with
+  /// <see cref="MessageFailureReason.SecurityContextEstablishmentFailure"/>, and
+  /// proceeds to the next row. Default 10 s.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Introduced in Slice 5a of release/v0.647.0-alpha.1 after the production BFF
+  /// stuck-row pattern was traced to a consumer's IMessageSecurityContextProvider
+  /// hanging on a test-pattern tenant id (<c>c0ffee00-cafe-f00d-face-feed12345678</c>).
+  /// Without this timeout, the publish path waits on the security context
+  /// establishment indefinitely; <c>claim_orphaned_outbox</c> keeps re-leasing
+  /// the row, attempts increments forever, and no forensic signal surfaces.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public int SecurityContextTimeoutSeconds { get; set; } = 10;
 }

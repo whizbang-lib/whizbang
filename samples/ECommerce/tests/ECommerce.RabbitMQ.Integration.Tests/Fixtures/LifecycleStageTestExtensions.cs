@@ -224,14 +224,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostInboxInlineAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostInboxInline,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -335,12 +337,19 @@ public static class LifecycleStageTestExtensions {
   /// the receptor still records LastMessage / InvocationCount, but only signals completion when the
   /// filter returns true. Use this to ignore stale messages that survive shared-fixture cleanup
   /// (in-flight events from a prior test arriving after queue purge but before the consumer flushes).</param>
+  /// <param name="cancellationToken">When supplied (i.e., a CT that <c>CanBeCanceled</c>), the
+  /// helper waits ONLY on that CT — the per-helper <paramref name="timeoutMilliseconds"/> is
+  /// ignored. This is the deterministic-test path: tests inject the per-method CancellationToken
+  /// from <c>[Timeout(N)]</c> so the test-framework deadline is the single source of truth.
+  /// When omitted (default CT), the helper falls back to the internal scaled timer for backward
+  /// compatibility with callers that don't plumb the CT through.</param>
   private static async Task<GenericLifecycleCompletionReceptor<TMessage>> _waitForLifecycleStageAsync<TMessage>(
     IHost host,
     LifecycleStage stage,
     int timeoutMilliseconds,
     string? perspectiveName = null,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     ArgumentNullException.ThrowIfNull(host);
@@ -363,11 +372,20 @@ public static class LifecycleStageTestExtensions {
     registry.Register<TMessage>(receptor, stage);
 
     try {
-      // Wait for completion with scaled timeout (respects WHIZBANG_TEST_TIMEOUT_MULTIPLIER)
-      var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
-      await completionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+      if (cancellationToken.CanBeCanceled) {
+        // Deterministic path: only the caller's CT bounds the wait. The
+        // test-framework deadline (e.g. [Timeout(180_000)]) cancels the CT;
+        // no separate internal timer that could fire first and produce
+        // spurious flakes when CI is slow under load.
+        await completionSource.Task.WaitAsync(cancellationToken);
+      } else {
+        // Legacy/back-compat path for callers that don't plumb their CT
+        // through — fall back to the scaled internal timer.
+        var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+        await completionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+      }
     } finally {
-      // Always unregister, even if timeout occurs
+      // Always unregister, even if timeout / cancellation occurs
       registry.Unregister<TMessage>(receptor, stage);
     }
 

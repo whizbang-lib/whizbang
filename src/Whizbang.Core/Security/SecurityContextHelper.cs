@@ -488,4 +488,100 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void SkippingScopeContextDueToExplicit(ILogger logger);
   }
+
+  /// <summary>
+  /// Slice 5a of release/v0.647.0-alpha.1 — wraps <see cref="EstablishFullContextAsync"/>
+  /// in a per-call timeout so a hung <see cref="IMessageSecurityContextProvider"/>
+  /// implementation (e.g. a consumer BFF's production Jun-2026 incident — provider blocked
+  /// indefinitely on an unknown tenant id) surfaces as a clean failure instead
+  /// of blocking the worker until pod shutdown.
+  /// </summary>
+  /// <param name="envelope">Message envelope to establish context from.</param>
+  /// <param name="scopedProvider">Scoped service provider.</param>
+  /// <param name="timeoutSeconds">Per-call timeout in seconds. Values ≤ 0
+  /// disable the timeout (restores legacy behavior).</param>
+  /// <param name="ct">Caller's cancellation token. Worker shutdown still
+  /// flows through this CT normally — the helper only intercepts the
+  /// timeout-specific OCE.</param>
+  /// <returns>
+  /// <see cref="SecurityContextEstablishmentOutcome.Success"/> when the
+  /// provider returned within the timeout (legacy fast path).
+  /// <see cref="SecurityContextEstablishmentOutcome.TimedOut"/> when the
+  /// timeout fired before the provider returned. Callers should log,
+  /// enqueue a <see cref="MessageFailureReason.SecurityContextEstablishmentFailure"/>
+  /// failure to the appropriate channel, and skip the row/message.
+  /// </returns>
+  /// <remarks>
+  /// The timeout-vs-shutdown discrimination uses the linked CT pattern with a
+  /// <c>when</c> filter on the catch — if the parent <paramref name="ct"/> is
+  /// the one that fired (worker shutdown), the OCE re-throws naturally so the
+  /// dispatch loop unwinds. Only timeout-specific OCEs return <c>TimedOut</c>.
+  /// </remarks>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public static async ValueTask<SecurityContextEstablishmentOutcome> TryEstablishFullContextWithTimeoutAsync(
+      IMessageEnvelope envelope,
+      IServiceProvider scopedProvider,
+      int timeoutSeconds,
+      CancellationToken ct) {
+    using var secCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    if (timeoutSeconds > 0) {
+      secCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+    }
+    try {
+      await EstablishFullContextAsync(envelope, scopedProvider, secCts.Token);
+      return SecurityContextEstablishmentOutcome.Success;
+    } catch (OperationCanceledException) when (secCts.IsCancellationRequested && !ct.IsCancellationRequested) {
+      return SecurityContextEstablishmentOutcome.TimedOut;
+    }
+  }
+
+  /// <summary>
+  /// Slice 5a — companion to <see cref="TryEstablishFullContextWithTimeoutAsync"/>.
+  /// Builds the standard <see cref="MessageFailure"/> shape for a
+  /// SecurityContext timeout and enqueues it to the supplied
+  /// <see cref="IFailureChannel"/>. Centralises the Error message text so any
+  /// future format change happens in one place (and so SonarCloud doesn't
+  /// flag near-identical blocks across each worker call site).
+  /// </summary>
+  /// <param name="failureChannel">Failure channel to enqueue to.</param>
+  /// <param name="category">Source <see cref="WorkCategory"/> — Outbox or
+  /// Inbox depending on the caller.</param>
+  /// <param name="messageId">Source message id.</param>
+  /// <param name="completedStatus">Status flags the row had at promotion
+  /// time (caller's responsibility — the helper just forwards them).</param>
+  /// <param name="timeoutSeconds">Configured timeout that fired; embedded in
+  /// the Error text for operator triage.</param>
+  /// <param name="ct">Worker cancellation token. The enqueue is a quick
+  /// in-memory operation; the CT only matters if the failure channel itself
+  /// blocks.</param>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public static ValueTask EnqueueSecurityContextTimeoutFailureAsync(
+      Whizbang.Core.Workers.IFailureChannel failureChannel,
+      Whizbang.Core.Messaging.WorkCategory category,
+      Guid messageId,
+      Whizbang.Core.Messaging.MessageProcessingStatus completedStatus,
+      int timeoutSeconds,
+      CancellationToken ct) {
+    return failureChannel.EnqueueAsync(category, new Whizbang.Core.Messaging.MessageFailure {
+      MessageId = messageId,
+      CompletedStatus = completedStatus,
+      Error = $"EstablishFullContextAsync timed out after {timeoutSeconds}s — IMessageSecurityContextProvider implementation hung on envelope scope (message_id={messageId})",
+      Reason = Whizbang.Core.Messaging.MessageFailureReason.SecurityContextEstablishmentFailure,
+    }, ct);
+  }
+}
+
+/// <summary>
+/// Outcome of <see cref="SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync"/>.
+/// </summary>
+/// <docs>operations/dead-letter-queue/internal-dlq</docs>
+public enum SecurityContextEstablishmentOutcome {
+  /// <summary>Provider returned within the timeout. Caller proceeds normally.</summary>
+  Success,
+
+  /// <summary>The per-call timeout fired before the provider returned. Caller
+  /// should log a warning, enqueue a failure with
+  /// <see cref="Whizbang.Core.Messaging.MessageFailureReason.SecurityContextEstablishmentFailure"/>,
+  /// and skip the row/message.</summary>
+  TimedOut,
 }
