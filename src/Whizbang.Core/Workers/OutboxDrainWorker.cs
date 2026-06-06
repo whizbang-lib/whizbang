@@ -526,7 +526,25 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var typedEnvelope = _tryResolveTypedEnvelope(work);
     IReceptorInvoker? receptorInvoker = null;
     if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
-      await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+      // Slice 5a of release/v0.647.0-alpha.1 — mirror of the bulk-path timeout wrap.
+      // Same Slot-3 root-cause class; same fix at the singular-path call site.
+      var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
+      using var secCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+      if (timeoutSeconds > 0) {
+        secCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+      }
+      try {
+        await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, secCts.Token);
+      } catch (OperationCanceledException) when (secCts.IsCancellationRequested && !ct.IsCancellationRequested) {
+        LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
+        await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+          MessageId = work.MessageId,
+          CompletedStatus = (MessageProcessingStatus)row.Status,
+          Error = $"EstablishFullContextAsync timed out after {timeoutSeconds}s — IMessageSecurityContextProvider implementation hung on envelope scope (message_id={work.MessageId})",
+          Reason = MessageFailureReason.SecurityContextEstablishmentFailure,
+        }, ct);
+        return;
+      }
       receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
     }
 
