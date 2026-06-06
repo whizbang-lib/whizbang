@@ -955,15 +955,16 @@ public sealed class OutboxDrainWorkerOptions {
   /// signal surfaces.
   /// </para>
   /// <para>
-  /// 120 s default is conservative: still catches the production infinite-hang
-  /// (where the SDK call never returns at all), but tolerates 4× slowdowns on
-  /// legit publish paths under heavy CI load or noisy-neighbor pressure. The
-  /// initial 30 s default in the RED commit was too aggressive for
-  /// resource-constrained RabbitMQ integration tests where legit publishes
-  /// occasionally take longer than 30 s — bumped to avoid false-positive
-  /// cancellation of healthy publishes.
+  /// Default 0 (disabled). Production deployments hit by the production pattern
+  /// must opt in by setting a value via configuration — e.g. a consumer BFF sets
+  /// 60 s. Disabled by default because the heuristic threshold for "SDK
+  /// hung" cannot be picked generically: too low fires on legitimate
+  /// slowdowns under CI load and starts a fail-cascade that eats the test
+  /// budget; too high doesn't catch the hang any sooner than the next
+  /// operator-driven restart would. The conservative default lets per-env
+  /// owners pick the right value.
   /// </para>
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
-  public int PublishTimeoutSeconds { get; set; } = 120;
+  public int PublishTimeoutSeconds { get; set; }
 }
