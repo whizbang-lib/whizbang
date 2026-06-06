@@ -408,7 +408,31 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         var typedEnvelope = _tryResolveTypedEnvelope(work);
         IReceptorInvoker? receptorInvoker = null;
         if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
-          await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+          // Slice 5a of release/v0.647.0-alpha.1 — wrap EstablishFullContextAsync
+          // in a per-call timeout. a consumer BFF's IMessageSecurityContextProvider was
+          // hanging indefinitely on a test-pattern tenant id; the worker's ct
+          // here is the stoppingToken, so the hang persisted until pod shutdown.
+          // With the timeout, the row routes to the failure channel via a
+          // dedicated SecurityContextEstablishmentFailure reason so operators see
+          // exactly where the hang is, wh_outbox.error captures the timeout
+          // message, and DLQ promotion eventually fires with a real fingerprint.
+          var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
+          using var secCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+          if (timeoutSeconds > 0) {
+            secCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+          }
+          try {
+            await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, secCts.Token);
+          } catch (OperationCanceledException) when (secCts.IsCancellationRequested && !ct.IsCancellationRequested) {
+            LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
+            await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+              MessageId = work.MessageId,
+              CompletedStatus = (MessageProcessingStatus)row.Status,
+              Error = $"EstablishFullContextAsync timed out after {timeoutSeconds}s — IMessageSecurityContextProvider implementation hung on envelope scope (message_id={work.MessageId})",
+              Reason = MessageFailureReason.SecurityContextEstablishmentFailure,
+            }, ct);
+            continue;  // skip this row; lifecycle scope is disposed in finally
+          }
           receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
         }
 
@@ -769,6 +793,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling through to publish")]
   static partial void LogOutboxDlqMoveFailed(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker EstablishFullContextAsync timed out for {MessageId} after {TimeoutSeconds}s — IMessageSecurityContextProvider implementation hung; routing to failure channel with Reason=SecurityContextEstablishmentFailure")]
+  static partial void LogSecurityContextTimedOut(ILogger logger, Guid messageId, int timeoutSeconds);
 }
 
 /// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>
