@@ -534,6 +534,41 @@ public static partial class SecurityContextHelper {
       return SecurityContextEstablishmentOutcome.TimedOut;
     }
   }
+
+  /// <summary>
+  /// Slice 5a — companion to <see cref="TryEstablishFullContextWithTimeoutAsync"/>.
+  /// Builds the standard <see cref="MessageFailure"/> shape for a
+  /// SecurityContext timeout and enqueues it to the supplied
+  /// <see cref="IFailureChannel"/>. Centralises the Error message text so any
+  /// future format change happens in one place (and so SonarCloud doesn't
+  /// flag near-identical blocks across each worker call site).
+  /// </summary>
+  /// <param name="failureChannel">Failure channel to enqueue to.</param>
+  /// <param name="category">Source <see cref="WorkCategory"/> — Outbox or
+  /// Inbox depending on the caller.</param>
+  /// <param name="messageId">Source message id.</param>
+  /// <param name="completedStatus">Status flags the row had at promotion
+  /// time (caller's responsibility — the helper just forwards them).</param>
+  /// <param name="timeoutSeconds">Configured timeout that fired; embedded in
+  /// the Error text for operator triage.</param>
+  /// <param name="ct">Worker cancellation token. The enqueue is a quick
+  /// in-memory operation; the CT only matters if the failure channel itself
+  /// blocks.</param>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public static ValueTask EnqueueSecurityContextTimeoutFailureAsync(
+      Whizbang.Core.Workers.IFailureChannel failureChannel,
+      Whizbang.Core.Messaging.WorkCategory category,
+      Guid messageId,
+      Whizbang.Core.Messaging.MessageProcessingStatus completedStatus,
+      int timeoutSeconds,
+      CancellationToken ct) {
+    return failureChannel.EnqueueAsync(category, new Whizbang.Core.Messaging.MessageFailure {
+      MessageId = messageId,
+      CompletedStatus = completedStatus,
+      Error = $"EstablishFullContextAsync timed out after {timeoutSeconds}s — IMessageSecurityContextProvider implementation hung on envelope scope (message_id={messageId})",
+      Reason = Whizbang.Core.Messaging.MessageFailureReason.SecurityContextEstablishmentFailure,
+    }, ct);
+  }
 }
 
 /// <summary>
