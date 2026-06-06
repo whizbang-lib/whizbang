@@ -1662,6 +1662,20 @@ public sealed record OutboxBatchRow {
   /// </summary>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long? OriginCommitSequence { get; init; }
+
+  /// <summary>
+  /// Slice 1 of release/v0.648.0-alpha.1 — the row's existing <c>wh_outbox.error</c>
+  /// column value from the last <c>process_outbox_failures</c> cycle. Used by the
+  /// pre-publish DLQ gate so the DLQ row's <c>error_text</c> + fingerprint reflect
+  /// the actual root cause (a real exception stack from a prior failure) instead
+  /// of a meta-message like <c>"OutboxDrainWorker dead-lettered: attempts=N > max=10"</c>
+  /// — the meta-message collapses every DLQ row to a single fingerprint, wiping
+  /// out triage value (production Jun-2026: 38k+ rows collapsed to one fingerprint
+  /// cluster). NULL when no failure has been recorded against the row yet (the
+  /// gate falls back to the meta-message in that case).
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public string? Error { get; init; }
 }
 
 /// <summary>

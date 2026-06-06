@@ -289,12 +289,23 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             && _deadLetterStore is not null
             && _generationProvider is not null) {
           try {
+            // Slice 1 of release/v0.648.0-alpha.1 — prefer the row's existing
+            // wh_outbox.error column (the real exception text from the last
+            // process_outbox_failures cycle) over the synthetic meta-message.
+            // The meta-message collapses every DLQ row to one fingerprint cluster
+            // regardless of root cause (production Jun-2026: 38k+ rows in a single
+            // cluster). Using row.Error restores forensic diversity — Slice 2's
+            // fingerprint algorithm extracts the real exception type + frames,
+            // operators see distinct clusters per failure mode.
+            var promotionErrorText = !string.IsNullOrWhiteSpace(row.Error)
+              ? row.Error
+              : $"OutboxDrainWorker dead-lettered: attempts={row.Attempts} > max={maxAttempts}";
             await _deadLetterStore.MoveAsync(
               deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
               sourceTable: DeadLetterSourceTable.OUTBOX,
               sourceId: row.MessageId,
               failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,
-              errorText: $"OutboxDrainWorker dead-lettered: attempts={row.Attempts} > max={maxAttempts}",
+              errorText: promotionErrorText,
               instanceId: _instanceProvider.InstanceId,
               generation: _generationProvider.GetGeneration(),
               ct: ct).ConfigureAwait(false);
@@ -430,10 +441,40 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }
 
       IReadOnlyList<MessagePublishResult> results;
+      // Slice 4 of release/v0.648.0-alpha.1 — wrap PublishBatchAsync in a per-call
+      // timeout. a consumer BFF production stuck row continued to spin even after v0.647
+      // (SecurityContext timeout) shipped: the SDK call hangs indefinitely
+      // without throwing AND without returning. The ct here is the worker's
+      // stoppingToken — only fires at pod shutdown. With the timeout, each row
+      // in the batch routes to the failure channel via a TransportException
+      // reason so wh_outbox.error captures the timeout, and DLQ promotion fires
+      // with a meaningful fingerprint on the next cycle.
+      var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
+      using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+      if (publishTimeoutSeconds > 0) {
+        publishCts.CancelAfter(TimeSpan.FromSeconds(publishTimeoutSeconds));
+      }
       try {
-        results = await _publishStrategy!.PublishBatchAsync(works, ct);
+        results = await _publishStrategy!.PublishBatchAsync(works, publishCts.Token);
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         throw;
+      } catch (OperationCanceledException) when (publishCts.IsCancellationRequested) {
+        // Publish-specific timeout (not shutdown). Route every row in the batch
+        // through the failure channel as TransportException so process_outbox_failures
+        // populates wh_outbox.error with the timeout description and Slice 2's
+        // fingerprint clusters on "SDK call did not return" instead of the
+        // pre-publish-gate meta-message.
+        LogPublishTimedOut(_logger, works.Count, publishTimeoutSeconds);
+        foreach (var work in works) {
+          var row = rowsByMessageId[work.MessageId];
+          await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+            MessageId = work.MessageId,
+            CompletedStatus = (MessageProcessingStatus)row.Status,
+            Error = $"Publish timed out after {publishTimeoutSeconds}s — SDK call did not return for destination={work.Destination}",
+            Reason = MessageFailureReason.TransportException,
+          }, ct);
+        }
+        return;
       } catch (Exception ex) {
         // Whole-batch failure: route every row to the failure channel so the next
         // claim_orphaned_* cycle re-leases them. Lifecycle scopes are disposed in finally.
@@ -516,10 +557,25 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       "PreOutbox", ct);
 
     MessagePublishResult result;
+    var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
+    using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    if (publishTimeoutSeconds > 0) {
+      publishCts.CancelAfter(TimeSpan.FromSeconds(publishTimeoutSeconds));
+    }
     try {
-      result = await _publishStrategy!.PublishAsync(work, ct);
+      result = await _publishStrategy!.PublishAsync(work, publishCts.Token);
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       throw;
+    } catch (OperationCanceledException) when (publishCts.IsCancellationRequested) {
+      // Slice 4 — singular-path publish timeout. Mirror of the bulk-path wrap above.
+      LogPublishTimedOut(_logger, 1, publishTimeoutSeconds);
+      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+        MessageId = row.MessageId,
+        CompletedStatus = (MessageProcessingStatus)row.Status,
+        Error = $"Publish timed out after {publishTimeoutSeconds}s — SDK call did not return for destination={work.Destination}",
+        Reason = MessageFailureReason.TransportException,
+      }, ct);
+      return;
     } catch (Exception ex) {
       LogPublishFailed(_logger, row.MessageId, ex);
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
@@ -800,6 +856,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker EstablishFullContextAsync timed out for {MessageId} after {TimeoutSeconds}s — IMessageSecurityContextProvider implementation hung; routing to failure channel with Reason=SecurityContextEstablishmentFailure")]
   static partial void LogSecurityContextTimedOut(ILogger logger, Guid messageId, int timeoutSeconds);
+
+  [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker transport publish timed out for batch of {RowCount} row(s) after {TimeoutSeconds}s — SDK call did not return; routing each row to failure channel with Reason=TransportException")]
+  static partial void LogPublishTimedOut(ILogger logger, int rowCount, int timeoutSeconds);
 }
 
 /// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>
@@ -873,4 +933,38 @@ public sealed class OutboxDrainWorkerOptions {
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
   public int SecurityContextTimeoutSeconds { get; set; } = 10;
+
+  /// <summary>
+  /// Timeout for the per-batch (or per-row) transport publish call
+  /// (<see cref="IMessagePublishStrategy.PublishBatchAsync"/> or
+  /// <see cref="IMessagePublishStrategy.PublishAsync"/>). When the transport SDK
+  /// hangs longer than this — i.e. doesn't return AND doesn't throw — the worker
+  /// cancels the call, enqueues a <see cref="MessageFailure"/> per row with
+  /// <see cref="MessageFailureReason.TransportException"/>, and proceeds. Default
+  /// 120 s. Set to 0 to disable (legacy hang-until-shutdown behavior).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Introduced in Slice 4 of release/v0.648.0-alpha.1. Slice 5a (v0.647) wrapped
+  /// the SecurityContext establishment in a timeout; the a consumer BFF production stuck row
+  /// still spun after v0.647 because the hang was one stack frame later — the
+  /// Azure SDK <c>PublishBatchAsync</c> call never returns AND never throws.
+  /// Without this timeout, the worker waits for the SDK indefinitely;
+  /// <c>claim_orphaned_outbox</c> re-leases the row, attempts increments
+  /// forever, the topic's last-access timestamp stays stale, and no forensic
+  /// signal surfaces.
+  /// </para>
+  /// <para>
+  /// Default 0 (disabled). Production deployments hit by the production pattern
+  /// must opt in by setting a value via configuration — e.g. a consumer BFF sets
+  /// 60 s. Disabled by default because the heuristic threshold for "SDK
+  /// hung" cannot be picked generically: too low fires on legitimate
+  /// slowdowns under CI load and starts a fail-cascade that eats the test
+  /// budget; too high doesn't catch the hang any sooner than the next
+  /// operator-driven restart would. The conservative default lets per-env
+  /// owners pick the right value.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public int PublishTimeoutSeconds { get; set; }
 }

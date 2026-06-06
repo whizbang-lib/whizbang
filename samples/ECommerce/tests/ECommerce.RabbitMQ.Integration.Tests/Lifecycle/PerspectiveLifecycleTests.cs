@@ -233,11 +233,12 @@ public class PerspectiveLifecycleTests {
     };
 
     // Register the lifecycle wait BEFORE dispatching so the receptor is in place when the event arrives.
-    // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing
-    // flakes under heavy parallel load.
+    // Pass the per-test CT so the helper's internal 60s timer is bypassed and the [Timeout(180_000)]
+    // test-framework deadline is the single source of truth — pure deterministic TCS completion,
+    // no overlapping timers, no race.
     var receptorTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
