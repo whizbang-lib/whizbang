@@ -941,30 +941,31 @@ public sealed class OutboxDrainWorkerOptions {
   /// hangs longer than this — i.e. doesn't return AND doesn't throw — the worker
   /// cancels the call, enqueues a <see cref="MessageFailure"/> per row with
   /// <see cref="MessageFailureReason.TransportException"/>, and proceeds. Default
-  /// 120 s. Set to 0 to disable (legacy hang-until-shutdown behavior).
+  /// 60 s — matches the Azure Service Bus client's request-timeout convention.
+  /// Set to 0 to disable (legacy hang-until-shutdown behavior).
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Introduced in Slice 4 of release/v0.648.0-alpha.1. Slice 5a (v0.647) wrapped
-  /// the SecurityContext establishment in a timeout; the JDX BFF slot-3 stuck row
-  /// still spun after v0.647 because the hang was one stack frame later — the
-  /// Azure SDK <c>PublishBatchAsync</c> call never returns AND never throws.
-  /// Without this timeout, the worker waits for the SDK indefinitely;
+  /// Introduced in Slice 4 of release/v0.648.0-alpha.1 (initially default 120 s,
+  /// then briefly default 0 / opt-in). Slice 5a (v0.647) wrapped the
+  /// SecurityContext establishment in a timeout; the slot-3-pattern stuck row
+  /// still spun because the hang was one stack frame later — the transport
+  /// SDK <c>PublishBatchAsync</c> call never returns AND never throws. Without
+  /// this timeout, the worker waits for the SDK indefinitely;
   /// <c>claim_orphaned_outbox</c> re-leases the row, attempts increments
   /// forever, the topic's last-access timestamp stays stale, and no forensic
   /// signal surfaces.
   /// </para>
   /// <para>
-  /// Default 0 (disabled). Production deployments hit by the slot-3 pattern
-  /// must opt in by setting a value via configuration — e.g. JDX BFF sets
-  /// 60 s. Disabled by default because the heuristic threshold for "SDK
-  /// hung" cannot be picked generically: too low fires on legitimate
-  /// slowdowns under CI load and starts a fail-cascade that eats the test
-  /// budget; too high doesn't catch the hang any sooner than the next
-  /// operator-driven restart would. The conservative default lets per-env
-  /// owners pick the right value.
+  /// Default 60 s is on out-of-box because every consumer needs the protection,
+  /// not just the one that hit the issue first. The threshold matches the
+  /// Azure SDK request-timeout convention — long enough to absorb a normal
+  /// publish + worst-case slowdowns under load, short enough to break the
+  /// claim-orphan retry cycle within a single operator pager-window. If a
+  /// deployment legitimately needs longer publishes, set this option higher
+  /// per environment rather than disabling it.
   /// </para>
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
-  public int PublishTimeoutSeconds { get; set; }
+  public int PublishTimeoutSeconds { get; set; } = 60;
 }
