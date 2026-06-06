@@ -20,14 +20,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForImmediateDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.ImmediateDetached,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -37,14 +39,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeInlineAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreDistributeInline,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -54,14 +58,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreDistributeDetached,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -71,14 +77,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForDistributeDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.DistributeDetached,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -88,14 +96,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeInlineAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostDistributeInline,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -105,14 +115,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostDistributeDetached,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -122,14 +134,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreOutboxInlineAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreOutboxInline,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -139,14 +153,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreOutboxDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreOutboxDetached,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -156,14 +172,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostOutboxInlineAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostOutboxInline,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -173,14 +191,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostOutboxDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostOutboxDetached,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -190,14 +210,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreInboxInlineAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreInboxInline,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -207,14 +229,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreInboxDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreInboxDetached,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -243,14 +267,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostInboxDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 45000,
-    Func<TMessage, bool>? messageFilter = null)
+    Func<TMessage, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostInboxDetached,
       timeoutMilliseconds,
-      messageFilter: messageFilter);
+      messageFilter: messageFilter,
+      cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -261,7 +287,8 @@ public static class LifecycleStageTestExtensions {
     this IHost host,
     string? perspectiveName = null,
     int timeoutMilliseconds = 45000,
-    Func<TEvent, bool>? messageFilter = null)
+    Func<TEvent, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
@@ -269,7 +296,8 @@ public static class LifecycleStageTestExtensions {
       LifecycleStage.PrePerspectiveInline,
       timeoutMilliseconds,
       perspectiveName,
-      messageFilter);
+      messageFilter,
+      cancellationToken);
   }
 
   /// <summary>
@@ -280,7 +308,8 @@ public static class LifecycleStageTestExtensions {
     this IHost host,
     string? perspectiveName = null,
     int timeoutMilliseconds = 45000,
-    Func<TEvent, bool>? messageFilter = null)
+    Func<TEvent, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
@@ -288,7 +317,8 @@ public static class LifecycleStageTestExtensions {
       LifecycleStage.PrePerspectiveDetached,
       timeoutMilliseconds,
       perspectiveName,
-      messageFilter);
+      messageFilter,
+      cancellationToken);
   }
 
   /// <summary>
@@ -299,7 +329,8 @@ public static class LifecycleStageTestExtensions {
     this IHost host,
     string? perspectiveName = null,
     int timeoutMilliseconds = 45000,
-    Func<TEvent, bool>? messageFilter = null)
+    Func<TEvent, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
@@ -307,7 +338,8 @@ public static class LifecycleStageTestExtensions {
       LifecycleStage.PostPerspectiveDetached,
       timeoutMilliseconds,
       perspectiveName,
-      messageFilter);
+      messageFilter,
+      cancellationToken);
   }
 
   /// <summary>
@@ -318,7 +350,8 @@ public static class LifecycleStageTestExtensions {
     this IHost host,
     string? perspectiveName = null,
     int timeoutMilliseconds = 45000,
-    Func<TEvent, bool>? messageFilter = null)
+    Func<TEvent, bool>? messageFilter = null,
+    CancellationToken cancellationToken = default)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
@@ -326,7 +359,8 @@ public static class LifecycleStageTestExtensions {
       LifecycleStage.PostPerspectiveInline,
       timeoutMilliseconds,
       perspectiveName,
-      messageFilter);
+      messageFilter,
+      cancellationToken);
   }
 
   /// <summary>
