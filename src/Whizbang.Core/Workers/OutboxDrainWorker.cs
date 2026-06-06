@@ -413,12 +413,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             work.Envelope, scope.ServiceProvider, timeoutSeconds, ct);
           if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
             LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
-            await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-              MessageId = work.MessageId,
-              CompletedStatus = (MessageProcessingStatus)row.Status,
-              Error = $"EstablishFullContextAsync timed out after {timeoutSeconds}s — IMessageSecurityContextProvider implementation hung on envelope scope (message_id={work.MessageId})",
-              Reason = MessageFailureReason.SecurityContextEstablishmentFailure,
-            }, ct);
+            await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
+              _failureChannel, WorkCategory.Outbox, work.MessageId,
+              (MessageProcessingStatus)row.Status, timeoutSeconds, ct);
             continue;  // skip this row; lifecycle scope is disposed in finally
           }
           receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
@@ -519,12 +516,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         work.Envelope, scope.ServiceProvider, timeoutSeconds, ct);
       if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
         LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
-        await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-          MessageId = work.MessageId,
-          CompletedStatus = (MessageProcessingStatus)row.Status,
-          Error = $"EstablishFullContextAsync timed out after {timeoutSeconds}s — IMessageSecurityContextProvider implementation hung on envelope scope (message_id={work.MessageId})",
-          Reason = MessageFailureReason.SecurityContextEstablishmentFailure,
-        }, ct);
+        await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
+          _failureChannel, WorkCategory.Outbox, work.MessageId,
+          (MessageProcessingStatus)row.Status, timeoutSeconds, ct);
         return;
       }
       receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();

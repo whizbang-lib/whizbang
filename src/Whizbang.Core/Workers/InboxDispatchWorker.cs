@@ -308,12 +308,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           work.Envelope, scope.ServiceProvider, timeoutSeconds, ct);
         if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
           LogInboxSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
-          await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
-            MessageId = work.MessageId,
-            CompletedStatus = work.Status,
-            Error = $"EstablishFullContextAsync timed out after {timeoutSeconds}s — IMessageSecurityContextProvider implementation hung on envelope scope (message_id={work.MessageId})",
-            Reason = MessageFailureReason.SecurityContextEstablishmentFailure,
-          }, ct);
+          await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
+            _failureChannel, WorkCategory.Inbox, work.MessageId,
+            work.Status, timeoutSeconds, ct);
           return;
         }
       }
