@@ -302,20 +302,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // Pass `ct` (lease token) for inline awaits + `stoppingToken` for fire-and-forget detached
       // stages so the latter aren't cancelled when the lease disposes on dispatch return.
       await using var scope = _scopeFactory.CreateAsyncScope();
-      // Slice 5a of release/v0.647.0-alpha.1 — mirror of the OutboxDrainWorker
-      // bulk-path wrap. Same production root-cause class: a consumer's
-      // IMessageSecurityContextProvider hangs indefinitely on test-pattern tenant
-      // ids. The ct here is the lease token; without this wrap the dispatch
-      // worker would block until the lease expires (no failure surfaces).
       {
         var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
-        using var secCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        if (timeoutSeconds > 0) {
-          secCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-        }
-        try {
-          await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, secCts.Token);
-        } catch (OperationCanceledException) when (secCts.IsCancellationRequested && !ct.IsCancellationRequested) {
+        var outcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
+          work.Envelope, scope.ServiceProvider, timeoutSeconds, ct);
+        if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
           LogInboxSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
           await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
             MessageId = work.MessageId,

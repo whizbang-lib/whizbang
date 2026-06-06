@@ -408,22 +408,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         var typedEnvelope = _tryResolveTypedEnvelope(work);
         IReceptorInvoker? receptorInvoker = null;
         if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
-          // Slice 5a of release/v0.647.0-alpha.1 — wrap EstablishFullContextAsync
-          // in a per-call timeout. a consumer BFF's IMessageSecurityContextProvider was
-          // hanging indefinitely on a test-pattern tenant id; the worker's ct
-          // here is the stoppingToken, so the hang persisted until pod shutdown.
-          // With the timeout, the row routes to the failure channel via a
-          // dedicated SecurityContextEstablishmentFailure reason so operators see
-          // exactly where the hang is, wh_outbox.error captures the timeout
-          // message, and DLQ promotion eventually fires with a real fingerprint.
           var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
-          using var secCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-          if (timeoutSeconds > 0) {
-            secCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-          }
-          try {
-            await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, secCts.Token);
-          } catch (OperationCanceledException) when (secCts.IsCancellationRequested && !ct.IsCancellationRequested) {
+          var outcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
+            work.Envelope, scope.ServiceProvider, timeoutSeconds, ct);
+          if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
             LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
             await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
               MessageId = work.MessageId,
@@ -526,16 +514,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var typedEnvelope = _tryResolveTypedEnvelope(work);
     IReceptorInvoker? receptorInvoker = null;
     if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
-      // Slice 5a of release/v0.647.0-alpha.1 — mirror of the bulk-path timeout wrap.
-      // Same production root-cause class; same fix at the singular-path call site.
       var timeoutSeconds = _options.SecurityContextTimeoutSeconds;
-      using var secCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-      if (timeoutSeconds > 0) {
-        secCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-      }
-      try {
-        await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, secCts.Token);
-      } catch (OperationCanceledException) when (secCts.IsCancellationRequested && !ct.IsCancellationRequested) {
+      var outcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
+        work.Envelope, scope.ServiceProvider, timeoutSeconds, ct);
+      if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
         LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
         await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
           MessageId = work.MessageId,
