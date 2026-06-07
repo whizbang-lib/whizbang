@@ -214,7 +214,60 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     _bffScope = _bffHost.Services.CreateScope();
     Console.WriteLine("[RabbitMqFixture] Scopes created");
 
+    // Warm-up dispatch — drive the full pipeline (Inventory dispatch → ASB publish →
+    // BFF consume → BFF perspective → PostPerspectiveDetached lifecycle) once before
+    // any test runs. This forces lazy initialization (RabbitMQ channels, ASB sender
+    // setup, perspective JIT, serialization codegen, etc.) to complete here, where
+    // the wait is bounded by a deliberately generous 60 s budget. Without this, the
+    // first test that exercises the pipeline pays the warm-up tax inside its own
+    // assertion deadline and frequently times out — exactly the
+    // PostPerspectiveDetached_* / PrePerspectiveInline_* flakes seen on the v0.647
+    // → v0.654 PR train, where retries always passed because the second run was
+    // warm.
+    Console.WriteLine("[RabbitMqFixture] Warming up dispatch pipeline...");
+    await _warmUpDispatchPipelineAsync(ct);
+    Console.WriteLine("[RabbitMqFixture] Warm-up complete");
+
     Console.WriteLine("[RabbitMqFixture] InitializeAsync COMPLETE - Ready for test execution!");
+  }
+
+  /// <summary>
+  /// One-time dispatch through the full Inventory → ASB → BFF → perspective →
+  /// lifecycle path, used by <see cref="InitializeAsync"/> to absorb cold-start latency
+  /// before any test runs. The warm-up command is a real
+  /// <c>CreateProductCommand</c>; the row it leaves behind is wiped by the per-test
+  /// <see cref="CleanupDatabaseAsync"/> hook so test bodies start against a clean
+  /// database.
+  /// </summary>
+  private async Task _warmUpDispatchPipelineAsync(CancellationToken ct) {
+    var warmupProductId = ECommerce.Contracts.Commands.ProductId.New();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var receptor = new ECommerce.Integration.Tests.Fixtures.GenericLifecycleCompletionReceptor<ECommerce.Contracts.Events.ProductCreatedEvent>(
+      completionSource,
+      expectedStage: LifecycleStage.PostPerspectiveDetached,
+      perspectiveName: null,
+      messageFilter: e => e.ProductId == warmupProductId.Value);
+
+    var registry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
+    registry.Register<ECommerce.Contracts.Events.ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveDetached);
+    try {
+      var dispatcher = _inventoryHost!.Services.GetRequiredService<IDispatcher>();
+      await dispatcher.SendAsync(new ECommerce.Contracts.Commands.CreateProductCommand {
+        ProductId = warmupProductId,
+        Name = "Warm-up product",
+        Description = "Discarded by per-test cleanup; exists only to absorb cold-start latency.",
+        Price = 0.01m,
+        InitialStock = 0,
+      });
+
+      // 60 s budget — comfortably larger than observed cold-start latency
+      // (typically 5-20 s in CI) but small enough that a genuine pipeline-stuck
+      // failure surfaces here with a clear "warm-up timed out" diagnostic
+      // instead of cascading into every per-test assertion.
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60), ct);
+    } finally {
+      registry.Unregister<ECommerce.Contracts.Events.ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveDetached);
+    }
   }
 
   /// <summary>
@@ -237,13 +290,17 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
     // 1. Wait for workers to drain any in-flight messages from the previous test FIRST.
     // This prevents truncating data that workers are still processing.
-    // If idle wait times out (e.g., BFF PerspectiveWorker startup work), proceed —
-    // the database truncation below resets all state.
-    try {
-      await _waitForWorkersReadyAsync(cancellationToken);
-    } catch (TimeoutException) {
-      Console.WriteLine("[RabbitMqFixture] Workers not idle before cleanup — proceeding with truncation");
-    }
+    // v0.654 late-suite-flake investigation: previously this swallowed
+    // TimeoutException and proceeded to truncate the DB while workers might still
+    // be mid-flight. That silently corrupted state and surfaced as random tests
+    // ~95 deep into the suite timing out at their own assertion deadline — different
+    // test each run, always exactly when load reached the point where the
+    // PerspectiveWorker / drain workers couldn't catch up between tests. Now we let
+    // the exception propagate: _waitForWorkersReadyAsync logs WHICH workers failed
+    // to idle, the test fails fast with that diagnostic, and the next failing CI
+    // run tells us exactly where to look instead of asking us to play detective on
+    // a different cascading symptom each time.
+    await _waitForWorkersReadyAsync(cancellationToken);
 
     // 2. Purge RabbitMQ queues to prevent stale messages from previous tests
     await _purgeQueueAsync($"bff-products-queue-{_testId}");
@@ -743,6 +800,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await Task.WhenAll(consumers.Select(c => c.WaitForSubscriptionsReadyAsync(ct))).ConfigureAwait(false);
   }
 
+  // Diagnostic record so the per-worker idle-status snapshot is structured and easy to
+  // log — used by _waitForWorkersReadyAsync to surface WHICH workers are still active
+  // when the safety-net timeout fires.
+  private readonly record struct _WorkerIdleSnapshot(string Host, string Worker, Task Wait, Func<bool> IsIdleNow);
+
   private async Task _waitForWorkersReadyAsync(CancellationToken ct) {
     // Phase H step 4b made the drain workers the active path; the legacy publisher
     // defaults to disabled and reports IsIdle=true instantly. Polling only it (and
@@ -753,13 +815,13 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     //   - PerspectiveWorker  → perspective projection
     // Legacy OutboxPublishWorker is still polled for backwards-compat with hosts
     // that have the rollback flag enabled; it instantly succeeds when disabled.
-    var waits = new List<Task>();
+    var snapshots = new List<_WorkerIdleSnapshot>();
 
-    void WireOnce<TWorker>(TWorker? w, Func<TWorker, bool> idleGetter, Action<TWorker, WorkProcessingIdleHandler> subscribe, Action<TWorker, WorkProcessingIdleHandler> unsubscribe)
+    void WireOnce<TWorker>(string host, string workerName, TWorker? w, Func<TWorker, bool> idleGetter, Action<TWorker, WorkProcessingIdleHandler> subscribe, Action<TWorker, WorkProcessingIdleHandler> unsubscribe)
       where TWorker : class {
       if (w is null) { return; }
       var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-      waits.Add(tcs.Task);
+      snapshots.Add(new _WorkerIdleSnapshot(host, workerName, tcs.Task, () => idleGetter(w)));
       if (idleGetter(w)) { tcs.TrySetResult(true); return; }
       void Handler() { tcs.TrySetResult(true); unsubscribe(w, Handler); }
       subscribe(w, Handler);
@@ -767,33 +829,49 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       if (idleGetter(w)) { tcs.TrySetResult(true); }
     }
 
-    void WireOutboxPublish(OutboxPublishWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
-    void WireOutboxDrain(OutboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
-    void WireInboxDrain(InboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
-    void WirePerspective(PerspectiveWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WireOutboxPublish(string host, OutboxPublishWorker? w) => WireOnce(host, "OutboxPublishWorker", w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WireOutboxDrain(string host, OutboxDrainWorker? w) => WireOnce(host, "OutboxDrainWorker", w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WireInboxDrain(string host, InboxDrainWorker? w) => WireOnce(host, "InboxDrainWorker", w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WirePerspective(string host, PerspectiveWorker? w) => WireOnce(host, "PerspectiveWorker", w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
 
     var inventoryHostedServices = _inventoryHost!.Services.GetServices<IHostedService>().ToList();
     var bffHostedServices = _bffHost!.Services.GetServices<IHostedService>().ToList();
 
-    WireOutboxPublish(inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
-    WireOutboxPublish(bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
-    WireOutboxDrain(inventoryHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
-    WireOutboxDrain(bffHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
-    WireInboxDrain(inventoryHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
-    WireInboxDrain(bffHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
-    WirePerspective(inventoryHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
-    WirePerspective(bffHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+    WireOutboxPublish("Inventory", inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
+    WireOutboxPublish("BFF", bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
+    WireOutboxDrain("Inventory", inventoryHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireOutboxDrain("BFF", bffHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain("Inventory", inventoryHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain("BFF", bffHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WirePerspective("Inventory", inventoryHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+    WirePerspective("BFF", bffHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
 
-    if (waits.Count == 0) {
+    if (snapshots.Count == 0) {
       Console.WriteLine("[RabbitMqFixture] No idle-capable workers found — proceeding");
       return;
     }
 
-    // Safety-net timeout prevents hang if a worker never drains.
-    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(30000);
-    await Task.WhenAll(waits).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout), ct);
+    // Safety-net timeout. Bumped 30s → 90s after the late-suite flake investigation
+    // (Jun 2026): under heavy CI load the perspective worker occasionally takes
+    // longer than 30s to fully drain. 90s gives genuinely-busy workers room to
+    // finish without masking a true stuck-worker bug.
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(90000);
+    try {
+      await Task.WhenAll(snapshots.Select(s => s.Wait)).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout), ct);
+    } catch (TimeoutException) {
+      // Diagnostic surfacing: identify exactly WHICH workers failed to idle so the
+      // caller's "swallow and proceed" path can produce a structured signal instead
+      // of a generic "Workers not idle before cleanup" message. Re-throw so the
+      // caller's TimeoutException catch handles the swallow-vs-rethrow policy.
+      var stillActive = snapshots.Where(s => !s.IsIdleNow()).ToList();
+      var summary = stillActive.Count == 0
+        ? "all workers reported idle after timeout (likely race vs. event subscription)"
+        : string.Join(", ", stillActive.Select(s => $"{s.Host}/{s.Worker}"));
+      Console.WriteLine($"[RabbitMqFixture] _waitForWorkersReadyAsync TIMEOUT after {effectiveTimeout}ms — still active: {summary}");
+      throw;
+    }
 
-    Console.WriteLine($"[RabbitMqFixture] All workers idle ({waits.Count} signals)");
+    Console.WriteLine($"[RabbitMqFixture] All workers idle ({snapshots.Count} signals)");
   }
 
   /// <summary>
