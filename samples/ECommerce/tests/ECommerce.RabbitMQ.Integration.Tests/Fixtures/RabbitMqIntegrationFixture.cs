@@ -214,7 +214,60 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     _bffScope = _bffHost.Services.CreateScope();
     Console.WriteLine("[RabbitMqFixture] Scopes created");
 
+    // Warm-up dispatch — drive the full pipeline (Inventory dispatch → ASB publish →
+    // BFF consume → BFF perspective → PostPerspectiveDetached lifecycle) once before
+    // any test runs. This forces lazy initialization (RabbitMQ channels, ASB sender
+    // setup, perspective JIT, serialization codegen, etc.) to complete here, where
+    // the wait is bounded by a deliberately generous 60 s budget. Without this, the
+    // first test that exercises the pipeline pays the warm-up tax inside its own
+    // assertion deadline and frequently times out — exactly the
+    // PostPerspectiveDetached_* / PrePerspectiveInline_* flakes seen on the v0.647
+    // → v0.654 PR train, where retries always passed because the second run was
+    // warm.
+    Console.WriteLine("[RabbitMqFixture] Warming up dispatch pipeline...");
+    await _warmUpDispatchPipelineAsync(ct);
+    Console.WriteLine("[RabbitMqFixture] Warm-up complete");
+
     Console.WriteLine("[RabbitMqFixture] InitializeAsync COMPLETE - Ready for test execution!");
+  }
+
+  /// <summary>
+  /// One-time dispatch through the full Inventory → ASB → BFF → perspective →
+  /// lifecycle path, used by <see cref="InitializeAsync"/> to absorb cold-start latency
+  /// before any test runs. The warm-up command is a real
+  /// <c>CreateProductCommand</c>; the row it leaves behind is wiped by the per-test
+  /// <see cref="CleanupDatabaseAsync"/> hook so test bodies start against a clean
+  /// database.
+  /// </summary>
+  private async Task _warmUpDispatchPipelineAsync(CancellationToken ct) {
+    var warmupProductId = ECommerce.Contracts.Commands.ProductId.New();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var receptor = new ECommerce.Integration.Tests.Fixtures.GenericLifecycleCompletionReceptor<ECommerce.Contracts.Events.ProductCreatedEvent>(
+      completionSource,
+      expectedStage: LifecycleStage.PostPerspectiveDetached,
+      perspectiveName: null,
+      messageFilter: e => e.ProductId == warmupProductId.Value);
+
+    var registry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
+    registry.Register<ECommerce.Contracts.Events.ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveDetached);
+    try {
+      var dispatcher = _inventoryHost!.Services.GetRequiredService<IDispatcher>();
+      await dispatcher.SendAsync(new ECommerce.Contracts.Commands.CreateProductCommand {
+        ProductId = warmupProductId,
+        Name = "Warm-up product",
+        Description = "Discarded by per-test cleanup; exists only to absorb cold-start latency.",
+        Price = 0.01m,
+        InitialStock = 0,
+      });
+
+      // 60 s budget — comfortably larger than observed cold-start latency
+      // (typically 5-20 s in CI) but small enough that a genuine pipeline-stuck
+      // failure surfaces here with a clear "warm-up timed out" diagnostic
+      // instead of cascading into every per-test assertion.
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60), ct);
+    } finally {
+      registry.Unregister<ECommerce.Contracts.Events.ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveDetached);
+    }
   }
 
   /// <summary>
