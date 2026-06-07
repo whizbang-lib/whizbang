@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
@@ -7,25 +9,94 @@ namespace Whizbang.Core.Messaging;
 /// invocation; when the cap is hit, callers wait on the semaphore rather than erroring.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Singleton. Disabled if <see cref="MaxConcurrent"/> is &lt;= 0.
+/// </para>
+/// <para>
+/// v0.654 (Jun 2026) hardening: <see cref="AcquireAsync(CancellationToken)"/> now applies a
+/// deadline to its internal <see cref="SemaphoreSlim.WaitAsync(int, CancellationToken)"/>
+/// call. production forensic confirmed the cooperative-CT-only pattern (the v0.648 version
+/// used <c>WaitAsync(ct)</c> with the worker's stoppingToken, which only fires at pod
+/// shutdown) lets a saturated gate hang every caller silently — no exception, no log,
+/// no timeout. With <see cref="AcquireTimeoutMilliseconds"/> set, the gate logs a Warning
+/// and proceeds without holding a slot when the deadline elapses; saturation becomes
+/// observable instead of silently fatal.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
-/// <remarks>Creates a gate with the given concurrency limit. 0 means unbounded (disabled).</remarks>
-public sealed class WorkCoordinatorGate(int maxConcurrent) : IDisposable {
-  private readonly SemaphoreSlim? _semaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent, maxConcurrent) : null;
+public sealed partial class WorkCoordinatorGate : IDisposable {
+  private readonly SemaphoreSlim? _semaphore;
+  private readonly ILogger<WorkCoordinatorGate>? _logger;
 
   /// <summary>Maximum concurrent calls. 0 disables the cap.</summary>
-  public int MaxConcurrent { get; } = maxConcurrent;
+  public int MaxConcurrent { get; }
+
+  /// <summary>
+  /// Deadline in milliseconds for an individual <see cref="AcquireAsync"/> call to acquire
+  /// a slot. When the deadline elapses, the call logs a Warning and returns a degraded
+  /// <see cref="Releaser"/> that holds no slot — the caller proceeds without gate
+  /// protection rather than waiting forever. <c>0</c> or a negative value disables the
+  /// deadline (the pre-v0.654 behavior — wait indefinitely).
+  /// </summary>
+  /// <remarks>
+  /// Default 30000 ms (30 s). Tuning guidance: the gate exists to protect the connection
+  /// pool, so the deadline should be longer than a normal acquire-wait under healthy load
+  /// (sub-second) but short enough that saturation surfaces within a single operator
+  /// pager-window. Half a minute is the floor; higher values trade observability for
+  /// pool protection.
+  /// </remarks>
+  public int AcquireTimeoutMilliseconds { get; }
+
+  /// <summary>
+  /// Creates a gate with the given concurrency limit and acquire deadline.
+  /// <paramref name="maxConcurrent"/> &lt;= 0 disables the cap entirely;
+  /// <paramref name="acquireTimeoutMilliseconds"/> &lt;= 0 disables the deadline
+  /// (the gate waits indefinitely — same as the pre-v0.654 behavior).
+  /// </summary>
+  public WorkCoordinatorGate(
+      int maxConcurrent,
+      int acquireTimeoutMilliseconds = 30000,
+      ILogger<WorkCoordinatorGate>? logger = null) {
+    MaxConcurrent = maxConcurrent;
+    AcquireTimeoutMilliseconds = acquireTimeoutMilliseconds;
+    _semaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent, maxConcurrent) : null;
+    _logger = logger;
+  }
 
   /// <summary>
   /// Acquire a slot. Returns a disposable that releases on dispose.
   /// </summary>
+  /// <remarks>
+  /// When the gate has a configured deadline and the semaphore is saturated for longer
+  /// than that deadline, the call returns a degraded <see cref="Releaser"/> that holds no
+  /// slot — the caller proceeds, the saturation is logged at Warning, and the gate
+  /// becomes advisory for that call rather than blocking. The alternative (the
+  /// pre-v0.654 behavior) was to wait forever silently, which surfaced as the production
+  /// "stuck row that never DLQ-promotes" pattern.
+  /// </remarks>
   public async ValueTask<Releaser> AcquireAsync(CancellationToken cancellationToken = default) {
     if (_semaphore is null) {
       return default;
     }
-    await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-    return new Releaser(_semaphore);
+    if (AcquireTimeoutMilliseconds <= 0) {
+      // Caller opted out of the deadline — preserve the pre-v0.654 behavior verbatim.
+      await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+      return new Releaser(_semaphore);
+    }
+    var acquired = await _semaphore
+      .WaitAsync(AcquireTimeoutMilliseconds, cancellationToken)
+      .ConfigureAwait(false);
+    if (acquired) {
+      return new Releaser(_semaphore);
+    }
+    if (_logger is not null) {
+      LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent);
+    }
+    // Degrade gracefully: return a no-op Releaser so the caller proceeds without
+    // holding a slot. The cap becomes advisory for this single call; pool exhaustion
+    // (if it materialises) surfaces at the Npgsql layer with a real exception instead
+    // of a silent indefinite hang in our own code.
+    return default;
   }
 
   /// <summary>Disposable returned by <see cref="AcquireAsync"/> — releases the slot on dispose.</summary>
@@ -44,4 +115,8 @@ public sealed class WorkCoordinatorGate(int maxConcurrent) : IDisposable {
   public void Dispose() {
     _semaphore?.Dispose();
   }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
+    Message = "WorkCoordinatorGate.AcquireAsync timed out after {TimeoutMilliseconds} ms (MaxConcurrent={MaxConcurrent}) — gate is saturated; this call proceeds WITHOUT holding a slot. Persistent saturation indicates pool pressure or callers leaking slots; investigate the gated call site.")]
+  static partial void LogAcquireTimedOut(ILogger logger, int timeoutMilliseconds, int maxConcurrent);
 }
