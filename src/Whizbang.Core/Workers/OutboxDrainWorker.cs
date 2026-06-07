@@ -441,29 +441,33 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }
 
       IReadOnlyList<MessagePublishResult> results;
-      // Slice 4 of release/v0.648.0-alpha.1 — wrap PublishBatchAsync in a per-call
-      // timeout. JDX BFF slot-3 stuck row continued to spin even after v0.647
-      // (SecurityContext timeout) shipped: the SDK call hangs indefinitely
-      // without throwing AND without returning. The ct here is the worker's
-      // stoppingToken — only fires at pod shutdown. With the timeout, each row
-      // in the batch routes to the failure channel via a TransportException
-      // reason so wh_outbox.error captures the timeout, and DLQ promotion fires
-      // with a meaningful fingerprint on the next cycle.
+      // Slice 4 of release/v0.648.0-alpha.1, hardened in v0.651: wrap PublishBatchAsync
+      // in a per-call timeout that fires GUARANTEED — not cooperatively. The v0.648
+      // version used CancellationTokenSource.CancelAfter + cooperative catch, which only
+      // worked if the transport SDK observed the token. JDX slot-3 forensic (Jun 2026)
+      // confirmed the SDK can hang without observing cancellation: the timer fired but
+      // the await sat there forever, no OCE thrown, no failure captured, attempts only
+      // ticked up via claim_orphaned_outbox at the DB level. WaitAsync(TimeSpan, ct)
+      // throws TimeoutException after the deadline regardless of inner cooperation; the
+      // still-running publish task is abandoned with an observe-only continuation so any
+      // late exception doesn't escape as UnobservedTaskException.
       var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
-      using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-      if (publishTimeoutSeconds > 0) {
-        publishCts.CancelAfter(TimeSpan.FromSeconds(publishTimeoutSeconds));
-      }
+      var publishTask = _publishStrategy!.PublishBatchAsync(works, ct);
       try {
-        results = await _publishStrategy!.PublishBatchAsync(works, publishCts.Token);
+        results = publishTimeoutSeconds > 0
+          ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
+          : await publishTask;
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         throw;
-      } catch (OperationCanceledException) when (publishCts.IsCancellationRequested) {
-        // Publish-specific timeout (not shutdown). Route every row in the batch
-        // through the failure channel as TransportException so process_outbox_failures
-        // populates wh_outbox.error with the timeout description and Slice 2's
-        // fingerprint clusters on "SDK call did not return" instead of the
-        // pre-publish-gate meta-message.
+      } catch (TimeoutException) {
+        // Publish-specific timeout (not shutdown). Observe the abandoned publish task so
+        // a later exception on it surfaces to UnobservedExceptionDiagnostics rather than
+        // disappearing at GC time.
+        _ = publishTask.ContinueWith(
+          static t => { _ = t.Exception; },
+          CancellationToken.None,
+          TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+          TaskScheduler.Default);
         LogPublishTimedOut(_logger, works.Count, publishTimeoutSeconds);
         foreach (var work in works) {
           var row = rowsByMessageId[work.MessageId];
@@ -557,17 +561,23 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       "PreOutbox", ct);
 
     MessagePublishResult result;
+    // Singular-path Slice 4: same hardening pattern as the bulk path. WaitAsync(TimeSpan, ct)
+    // guarantees the timeout fires regardless of whether the transport observes ct, and the
+    // abandoned publish task gets an observe-only continuation.
     var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
-    using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-    if (publishTimeoutSeconds > 0) {
-      publishCts.CancelAfter(TimeSpan.FromSeconds(publishTimeoutSeconds));
-    }
+    var publishTask = _publishStrategy!.PublishAsync(work, ct);
     try {
-      result = await _publishStrategy!.PublishAsync(work, publishCts.Token);
+      result = publishTimeoutSeconds > 0
+        ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
+        : await publishTask;
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       throw;
-    } catch (OperationCanceledException) when (publishCts.IsCancellationRequested) {
-      // Slice 4 — singular-path publish timeout. Mirror of the bulk-path wrap above.
+    } catch (TimeoutException) {
+      _ = publishTask.ContinueWith(
+        static t => { _ = t.Exception; },
+        CancellationToken.None,
+        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+        TaskScheduler.Default);
       LogPublishTimedOut(_logger, 1, publishTimeoutSeconds);
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
         MessageId = row.MessageId,
