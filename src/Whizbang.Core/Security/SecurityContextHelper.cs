@@ -533,8 +533,12 @@ public static partial class SecurityContextHelper {
     // lease duration without timing out. The still-running establishment task is
     // abandoned with an observe-only continuation so any late exception lands in
     // UnobservedExceptionDiagnostics rather than disappearing at GC.
-    var establishTask = EstablishFullContextAsync(envelope, scopedProvider, ct).AsTask();
+    // Capture the Task inside the try so a synchronous throw from EstablishFullContextAsync
+    // (e.g., DI validation) propagates normally instead of escaping through a half-initialized
+    // local.
+    Task? establishTask = null;
     try {
+      establishTask = EstablishFullContextAsync(envelope, scopedProvider, ct).AsTask();
       if (timeoutSeconds > 0) {
         await establishTask.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), ct);
       } else {
@@ -542,11 +546,13 @@ public static partial class SecurityContextHelper {
       }
       return SecurityContextEstablishmentOutcome.Success;
     } catch (TimeoutException) {
-      _ = establishTask.ContinueWith(
-        static t => { _ = t.Exception; },
-        CancellationToken.None,
-        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-        TaskScheduler.Default);
+      if (establishTask is not null) {
+        _ = establishTask.ContinueWith(
+          static t => { _ = t.Exception; },
+          CancellationToken.None,
+          TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+          TaskScheduler.Default);
+      }
       return SecurityContextEstablishmentOutcome.TimedOut;
     }
   }

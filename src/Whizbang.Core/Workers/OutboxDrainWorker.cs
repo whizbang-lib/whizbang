@@ -452,8 +452,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // still-running publish task is abandoned with an observe-only continuation so any
       // late exception doesn't escape as UnobservedTaskException.
       var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
-      var publishTask = _publishStrategy!.PublishBatchAsync(works, ct);
+      Task<IReadOnlyList<MessagePublishResult>>? publishTask = null;
       try {
+        // Capture the Task inside the try so a SYNCHRONOUS throw from PublishBatchAsync —
+        // e.g., a strategy that validates inputs and throws before returning — flows into
+        // the existing catch (Exception ex) failure path instead of escaping uncaught.
+        publishTask = _publishStrategy!.PublishBatchAsync(works, ct);
         results = publishTimeoutSeconds > 0
           ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
           : await publishTask;
@@ -463,11 +467,13 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         // Publish-specific timeout (not shutdown). Observe the abandoned publish task so
         // a later exception on it surfaces to UnobservedExceptionDiagnostics rather than
         // disappearing at GC time.
-        _ = publishTask.ContinueWith(
-          static t => { _ = t.Exception; },
-          CancellationToken.None,
-          TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-          TaskScheduler.Default);
+        if (publishTask is not null) {
+          _ = publishTask.ContinueWith(
+            static t => { _ = t.Exception; },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        }
         LogPublishTimedOut(_logger, works.Count, publishTimeoutSeconds);
         foreach (var work in works) {
           var row = rowsByMessageId[work.MessageId];
@@ -563,21 +569,25 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     MessagePublishResult result;
     // Singular-path Slice 4: same hardening pattern as the bulk path. WaitAsync(TimeSpan, ct)
     // guarantees the timeout fires regardless of whether the transport observes ct, and the
-    // abandoned publish task gets an observe-only continuation.
+    // abandoned publish task gets an observe-only continuation. Capture the Task inside the
+    // try so a synchronous throw from PublishAsync flows into the existing catch path.
     var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
-    var publishTask = _publishStrategy!.PublishAsync(work, ct);
+    Task<MessagePublishResult>? publishTask = null;
     try {
+      publishTask = _publishStrategy!.PublishAsync(work, ct);
       result = publishTimeoutSeconds > 0
         ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
         : await publishTask;
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       throw;
     } catch (TimeoutException) {
-      _ = publishTask.ContinueWith(
-        static t => { _ = t.Exception; },
-        CancellationToken.None,
-        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-        TaskScheduler.Default);
+      if (publishTask is not null) {
+        _ = publishTask.ContinueWith(
+          static t => { _ = t.Exception; },
+          CancellationToken.None,
+          TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+          TaskScheduler.Default);
+      }
       LogPublishTimedOut(_logger, 1, publishTimeoutSeconds);
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
         MessageId = row.MessageId,
