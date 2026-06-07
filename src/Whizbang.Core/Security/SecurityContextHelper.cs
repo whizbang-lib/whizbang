@@ -523,14 +523,36 @@ public static partial class SecurityContextHelper {
       IServiceProvider scopedProvider,
       int timeoutSeconds,
       CancellationToken ct) {
-    using var secCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-    if (timeoutSeconds > 0) {
-      secCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-    }
+    // v0.651 hardening: use WaitAsync(TimeSpan, ct) so the timeout fires GUARANTEED even
+    // when the IMessageSecurityContextProvider implementation doesn't observe the
+    // cancellation token. The earlier (v0.647) form used CreateLinkedTokenSource +
+    // CancelAfter, which only signalled cooperatively — if the provider hung on a
+    // non-cancellable I/O (sync-over-async, blocked DB call, etc.), the await sat
+    // forever and the catch never fired. a consumer BFF production forensic (Jun 2026) confirmed
+    // that exact pattern: a stuck outbox row's SecurityContext call hung for the full
+    // lease duration without timing out. The still-running establishment task is
+    // abandoned with an observe-only continuation so any late exception lands in
+    // UnobservedExceptionDiagnostics rather than disappearing at GC.
+    // Capture the Task inside the try so a synchronous throw from EstablishFullContextAsync
+    // (e.g., DI validation) propagates normally instead of escaping through a half-initialized
+    // local.
+    Task? establishTask = null;
     try {
-      await EstablishFullContextAsync(envelope, scopedProvider, secCts.Token);
+      establishTask = EstablishFullContextAsync(envelope, scopedProvider, ct).AsTask();
+      if (timeoutSeconds > 0) {
+        await establishTask.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), ct);
+      } else {
+        await establishTask;
+      }
       return SecurityContextEstablishmentOutcome.Success;
-    } catch (OperationCanceledException) when (secCts.IsCancellationRequested && !ct.IsCancellationRequested) {
+    } catch (TimeoutException) {
+      if (establishTask is not null) {
+        _ = establishTask.ContinueWith(
+          static t => { _ = t.Exception; },
+          CancellationToken.None,
+          TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+          TaskScheduler.Default);
+      }
       return SecurityContextEstablishmentOutcome.TimedOut;
     }
   }

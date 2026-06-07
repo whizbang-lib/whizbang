@@ -270,6 +270,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       Attempts = row.Attempts,
       Status = (MessageProcessingStatus)row.Status,
       Flags = WorkBatchOptions.None,
+      Error = row.Error,
     };
   }
 
