@@ -224,6 +224,21 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
   }
 
+  /// <summary>
+  /// v0.651 inbox forensic-preservation slice — mirror of v0.648's outbox Slice 1.
+  /// Prefer the inbox row's existing <c>wh_inbox.error</c> column (the real exception text
+  /// from the most recent <c>process_inbox_failures</c> cycle) over the synthetic
+  /// <c>"InboxDispatchWorker dead-lettered"</c> meta-message. The meta-message collapses
+  /// every DLQ row to a single fingerprint cluster (production Jun 2026: 38k+ rows under one
+  /// cluster regardless of root cause). Using <c>work.Error</c> restores forensic diversity
+  /// so Slice 2's fingerprint algorithm extracts the real exception type + frames and
+  /// operators see distinct clusters per failure mode.
+  /// </summary>
+  private static string _buildPromotionErrorText(InboxWork work, int maxAttempts) =>
+    !string.IsNullOrWhiteSpace(work.Error)
+      ? work.Error
+      : $"InboxDispatchWorker dead-lettered: attempts={work.Attempts} > max={maxAttempts}";
+
   internal async Task ProcessOneInnerAsync(InboxWork work, CancellationToken stoppingToken) {
     LogDiagProcessOneEntered(_logger, work.MessageId, work.MessageType, work.Attempts);
     var maxAttempts = _options.MaxInboxAttempts;
@@ -243,17 +258,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // existing callers (in-memory tests, etc.) still terminate the row correctly.
       if (_deadLetterStore is not null && _generationProvider is not null) {
         try {
-          // v0.651 inbox forensic-preservation slice — mirror of v0.648's outbox Slice 1.
-          // Prefer the inbox row's existing wh_inbox.error column (the real exception text
-          // from the most recent process_inbox_failures cycle) over the synthetic
-          // "InboxDispatchWorker dead-lettered" meta-message. The meta-message collapses
-          // every DLQ row to a single fingerprint cluster (production Jun 2026: 38k+ rows under
-          // one cluster regardless of root cause). Using work.Error restores forensic
-          // diversity so Slice 2's fingerprint algorithm extracts the real exception type +
-          // frames and operators see distinct clusters per failure mode.
-          var promotionErrorText = !string.IsNullOrWhiteSpace(work.Error)
-            ? work.Error
-            : $"InboxDispatchWorker dead-lettered: attempts={work.Attempts} > max={maxAttempts.Value}";
+          var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
           await _deadLetterStore.MoveAsync(
             deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
             sourceTable: DeadLetterSourceTable.INBOX,
