@@ -257,10 +257,13 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var totalPublishMs = 0.0;
     var publishedCount = 0;
     var fetchCount = 0;
+    LogDrainStreamEntered(_logger, streamId);
     while (!ct.IsCancellationRequested) {
       fetchCount++;
+      LogFetchBatchStart(_logger, streamId, fetchCount);
       var rowsRaw = await coordinator.FetchOutboxBatchAsync(
         [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+      LogFetchBatchReturned(_logger, streamId, fetchCount, rowsRaw.Count);
 
       if (rowsRaw.Count == 0) {
         _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
@@ -284,11 +287,19 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         // generation provider are wired, an atomic move into wh_dead_letters happens here
         // (the SQL function DELETEs from wh_outbox in the same tx so the row never reaches
         // the publish path). When unwired, this slice is a no-op.
+        LogPrePublishGateEval(
+          _logger,
+          row.MessageId,
+          row.Attempts,
+          _options.MaxOutboxAttempts ?? -1,
+          _deadLetterStore is not null,
+          _generationProvider is not null);
         if (_options.MaxOutboxAttempts is int maxAttempts
             && row.Attempts > maxAttempts
             && _deadLetterStore is not null
             && _generationProvider is not null) {
           try {
+            LogPrePublishGateFiring(_logger, row.MessageId, row.Attempts, maxAttempts);
             // Slice 1 of release/v0.648.0-alpha.1 — prefer the row's existing
             // wh_outbox.error column (the real exception text from the last
             // process_outbox_failures cycle) over the synthetic meta-message.
@@ -398,6 +409,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var typedEnvelopes = new Dictionary<Guid, IMessageEnvelope?>(rows.Count);
     var receptorInvokers = new Dictionary<Guid, IReceptorInvoker?>(rows.Count);
     var lifecycleScopes = new List<IAsyncDisposable>(rows.Count);
+    LogPublishBulkEntered(_logger, rows.Count);
     try {
       foreach (var row in rows) {
         OutboxWork work;
@@ -417,18 +429,24 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         var scope = _scopeFactory.CreateAsyncScope();
         lifecycleScopes.Add(scope);
         var typedEnvelope = _tryResolveTypedEnvelope(work);
+        LogTypedEnvelopeResolved(_logger, row.MessageId, typedEnvelope is not null, work.Destination ?? "<null>");
         IReceptorInvoker? receptorInvoker = null;
         if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
+          LogSecurityContextStart(_logger, row.MessageId);
           if (!await _trySecurityContextOrEnqueueTimeoutAsync(work, row, scope.ServiceProvider, ct)) {
+            LogSecurityContextTimedOutSkipRow(_logger, row.MessageId);
             continue;  // skip this row; lifecycle scope is disposed in finally
           }
+          LogSecurityContextOk(_logger, row.MessageId);
           receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
         }
 
+        LogPreOutboxLifecycleStart(_logger, row.MessageId);
         await InvokeOutboxLifecycleStageAsync(
           work, typedEnvelope, receptorInvoker,
           LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
           "PreOutbox", ct);
+        LogPreOutboxLifecycleEnd(_logger, row.MessageId);
 
         works.Add(work);
         rowsByMessageId[work.MessageId] = row;
@@ -437,6 +455,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }
 
       if (works.Count == 0) {
+        LogPublishBulkNoWork(_logger);
         return;
       }
 
@@ -453,6 +472,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // late exception doesn't escape as UnobservedTaskException.
       var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
       Task<IReadOnlyList<MessagePublishResult>>? publishTask = null;
+      LogPublishBatchStart(_logger, works.Count, publishTimeoutSeconds);
       try {
         // Capture the Task inside the try so a SYNCHRONOUS throw from PublishBatchAsync —
         // e.g., a strategy that validates inputs and throws before returning — flows into
@@ -461,6 +481,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         results = publishTimeoutSeconds > 0
           ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
           : await publishTask;
+        LogPublishBatchReturned(_logger, results.Count);
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         throw;
       } catch (TimeoutException) {
@@ -546,6 +567,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }, ct);
       return;
     }
+    LogPublishOneEntered(_logger, row.MessageId, work.Destination ?? "<null>");
 
     // Lifecycle scope: shared across PreOutbox + PostOutbox so the security context is
     // established once and the typed envelope (payload-deserialized) is reused. Skipped
@@ -573,11 +595,13 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     // try so a synchronous throw from PublishAsync flows into the existing catch path.
     var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
     Task<MessagePublishResult>? publishTask = null;
+    LogPublishOneStart(_logger, row.MessageId, publishTimeoutSeconds);
     try {
       publishTask = _publishStrategy!.PublishAsync(work, ct);
       result = publishTimeoutSeconds > 0
         ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
         : await publishTask;
+      LogPublishOneReturned(_logger, row.MessageId, result.Success);
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       throw;
     } catch (TimeoutException) {
@@ -880,6 +904,83 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker transport publish timed out for batch of {RowCount} row(s) after {TimeoutSeconds}s — SDK call did not return; routing each row to failure channel with Reason=TransportException")]
   static partial void LogPublishTimedOut(ILogger logger, int rowCount, int timeoutSeconds);
+
+  // v0.656 forensic Debug instrumentation: slot-3 stuck-row diagnosis.
+  // Operator runs slot 3 with `Whizbang.Core.Workers.OutboxDrainWorker` overridden to Debug
+  // to surface which silent path is consumed between two-minute claim cycles. Keep at Debug
+  // level so production logs aren't flooded; the Whizbang.Core.Workers default stays Information.
+
+  [LoggerMessage(EventId = 30, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker: drain stream {StreamId} entered")]
+  static partial void LogDrainStreamEntered(ILogger logger, Guid streamId);
+
+  [LoggerMessage(EventId = 31, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker: stream {StreamId} fetch batch #{FetchCount} starting")]
+  static partial void LogFetchBatchStart(ILogger logger, Guid streamId, int fetchCount);
+
+  [LoggerMessage(EventId = 32, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker: stream {StreamId} fetch batch #{FetchCount} returned {RowCount} row(s)")]
+  static partial void LogFetchBatchReturned(ILogger logger, Guid streamId, int fetchCount, int rowCount);
+
+  [LoggerMessage(EventId = 33, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker: pre-publish DLQ gate eval msg={MessageId} attempts={Attempts} max={MaxAttempts} dlqStore={HasDlqStore} genProvider={HasGenerationProvider}")]
+  static partial void LogPrePublishGateEval(ILogger logger, Guid messageId, int attempts, int maxAttempts, bool hasDlqStore, bool hasGenerationProvider);
+
+  [LoggerMessage(EventId = 34, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker: pre-publish DLQ gate FIRING for {MessageId} (attempts={Attempts} > max={MaxAttempts}) — moving to wh_dead_letters")]
+  static partial void LogPrePublishGateFiring(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+
+  [LoggerMessage(EventId = 35, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync entered with {RowCount} row(s)")]
+  static partial void LogPublishBulkEntered(ILogger logger, int rowCount);
+
+  [LoggerMessage(EventId = 36, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync: msg={MessageId} typedEnvelope={HasEnvelope} destination={Destination}")]
+  static partial void LogTypedEnvelopeResolved(ILogger logger, Guid messageId, bool hasEnvelope, string destination);
+
+  [LoggerMessage(EventId = 37, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync: SecurityContext START msg={MessageId}")]
+  static partial void LogSecurityContextStart(ILogger logger, Guid messageId);
+
+  [LoggerMessage(EventId = 38, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync: SecurityContext OK msg={MessageId}")]
+  static partial void LogSecurityContextOk(ILogger logger, Guid messageId);
+
+  [LoggerMessage(EventId = 39, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync: SecurityContext TIMED OUT msg={MessageId} — skipping row this iteration")]
+  static partial void LogSecurityContextTimedOutSkipRow(ILogger logger, Guid messageId);
+
+  [LoggerMessage(EventId = 40, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync: PreOutbox lifecycle START msg={MessageId}")]
+  static partial void LogPreOutboxLifecycleStart(ILogger logger, Guid messageId);
+
+  [LoggerMessage(EventId = 41, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync: PreOutbox lifecycle END msg={MessageId}")]
+  static partial void LogPreOutboxLifecycleEnd(ILogger logger, Guid messageId);
+
+  [LoggerMessage(EventId = 42, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync: no eligible works after deserialize/lifecycle — returning")]
+  static partial void LogPublishBulkNoWork(ILogger logger);
+
+  [LoggerMessage(EventId = 43, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync: PublishBatchAsync STARTING with {WorkCount} work(s), timeoutSec={TimeoutSeconds}")]
+  static partial void LogPublishBatchStart(ILogger logger, int workCount, int timeoutSeconds);
+
+  [LoggerMessage(EventId = 44, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker.PublishBulkAsync: PublishBatchAsync RETURNED with {ResultCount} result(s)")]
+  static partial void LogPublishBatchReturned(ILogger logger, int resultCount);
+
+  [LoggerMessage(EventId = 45, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker._publishOneAsync entered msg={MessageId} dest={Destination}")]
+  static partial void LogPublishOneEntered(ILogger logger, Guid messageId, string destination);
+
+  [LoggerMessage(EventId = 46, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker._publishOneAsync: PublishOneAsync STARTING msg={MessageId} timeoutSec={TimeoutSeconds}")]
+  static partial void LogPublishOneStart(ILogger logger, Guid messageId, int timeoutSeconds);
+
+  [LoggerMessage(EventId = 47, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker._publishOneAsync: PublishOneAsync RETURNED msg={MessageId} success={Success}")]
+  static partial void LogPublishOneReturned(ILogger logger, Guid messageId, bool success);
 }
 
 /// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>

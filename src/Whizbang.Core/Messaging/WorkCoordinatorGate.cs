@@ -78,15 +78,25 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     if (_semaphore is null) {
       return default;
     }
+    var currentCount = _semaphore.CurrentCount;
+    if (_logger is not null) {
+      LogAcquireEntry(_logger, currentCount, MaxConcurrent, AcquireTimeoutMilliseconds);
+    }
     if (AcquireTimeoutMilliseconds <= 0) {
       // Caller opted out of the deadline — preserve the pre-v0.654 behavior verbatim.
       await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+      if (_logger is not null) {
+        LogAcquireGrantedNoDeadline(_logger);
+      }
       return new Releaser(_semaphore);
     }
     var acquired = await _semaphore
       .WaitAsync(AcquireTimeoutMilliseconds, cancellationToken)
       .ConfigureAwait(false);
     if (acquired) {
+      if (_logger is not null) {
+        LogAcquireGranted(_logger, _semaphore.CurrentCount, MaxConcurrent);
+      }
       return new Releaser(_semaphore);
     }
     if (_logger is not null) {
@@ -119,4 +129,21 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
     Message = "WorkCoordinatorGate.AcquireAsync timed out after {TimeoutMilliseconds} ms (MaxConcurrent={MaxConcurrent}) — gate is saturated; this call proceeds WITHOUT holding a slot. Persistent saturation indicates pool pressure or callers leaking slots; investigate the gated call site.")]
   static partial void LogAcquireTimedOut(ILogger logger, int timeoutMilliseconds, int maxConcurrent);
+
+  // v0.656 forensic Debug instrumentation: surface per-call gate decisions so slot-3
+  // operators can see whether the silent two-minute spin is being absorbed by the gate's
+  // WaitAsync (saturation) vs by something downstream of acquire.
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Debug,
+    Message = "WorkCoordinatorGate.AcquireAsync entered — currentCount={CurrentCount}/{MaxConcurrent} timeoutMs={TimeoutMilliseconds}")]
+  static partial void LogAcquireEntry(ILogger logger, int currentCount, int maxConcurrent, int timeoutMilliseconds);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Debug,
+    Message = "WorkCoordinatorGate.AcquireAsync GRANTED — remaining={CurrentCount}/{MaxConcurrent}")]
+  static partial void LogAcquireGranted(ILogger logger, int currentCount, int maxConcurrent);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Debug,
+    Message = "WorkCoordinatorGate.AcquireAsync GRANTED (no deadline — opted out)")]
+  static partial void LogAcquireGrantedNoDeadline(ILogger logger);
+
 }
