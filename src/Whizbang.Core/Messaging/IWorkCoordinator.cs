@@ -1328,6 +1328,22 @@ public record InboxWork : IHasMessageIdAndStatus {
   /// Contains keys like inbox_completions_processed, inbox_failures_processed, etc.
   /// </summary>
   public Dictionary<string, JsonElement>? Metadata { get; init; }
+
+  /// <summary>
+  /// Previous error text persisted on the inbox row (<c>wh_inbox.error</c>), populated
+  /// by the most recent <c>process_inbox_failures</c> cycle. NULL when no prior failure
+  /// has been recorded for this row.
+  /// </summary>
+  /// <remarks>
+  /// Mirrors <see cref="OutboxBatchRow.Error"/>. Used by InboxDispatchWorker's
+  /// pre-publish DLQ gate (release/v0.651.0-alpha.1, the inbox-side equivalent of the
+  /// v0.648 outbox forensic-preservation slice): when attempts exceed
+  /// <c>MaxInboxAttempts</c>, the worker prefers the real exception text from this
+  /// field over the synthetic <c>"InboxDispatchWorker dead-lettered: attempts=N"</c>
+  /// meta-message — restoring fingerprint cluster diversity in <c>wh_dead_letters</c>.
+  /// </remarks>
+  /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  public string? Error { get; init; }
 }
 
 /// <summary>
@@ -1706,5 +1722,12 @@ public sealed record InboxBatchRow {
   public int? PartitionNumber { get; init; }
   /// <summary>True if this inbox message is also written to the event store.</summary>
   public bool IsEvent { get; init; }
+  /// <summary>
+  /// Previous error text persisted on the inbox row (<c>wh_inbox.error</c>), populated
+  /// by the most recent <c>process_inbox_failures</c> cycle. NULL when no prior failure
+  /// has been recorded. Plumbed into <see cref="InboxWork.Error"/> for the v0.651
+  /// inbox forensic-preservation slice.
+  /// </summary>
+  public string? Error { get; init; }
 }
 

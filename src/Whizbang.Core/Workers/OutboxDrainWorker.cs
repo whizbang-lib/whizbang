@@ -341,7 +341,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       } else {
         foreach (var row in newRowList) {
           var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
-          await _publishOneAsync(row, ct);
+          await PublishOneAsync(row, ct);
           totalPublishMs += (System.Diagnostics.Stopwatch.GetTimestamp() - publishStart)
             * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
           publishedCount++;
@@ -441,29 +441,39 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }
 
       IReadOnlyList<MessagePublishResult> results;
-      // Slice 4 of release/v0.648.0-alpha.1 — wrap PublishBatchAsync in a per-call
-      // timeout. JDX BFF slot-3 stuck row continued to spin even after v0.647
-      // (SecurityContext timeout) shipped: the SDK call hangs indefinitely
-      // without throwing AND without returning. The ct here is the worker's
-      // stoppingToken — only fires at pod shutdown. With the timeout, each row
-      // in the batch routes to the failure channel via a TransportException
-      // reason so wh_outbox.error captures the timeout, and DLQ promotion fires
-      // with a meaningful fingerprint on the next cycle.
+      // Slice 4 of release/v0.648.0-alpha.1, hardened in v0.651: wrap PublishBatchAsync
+      // in a per-call timeout that fires GUARANTEED — not cooperatively. The v0.648
+      // version used CancellationTokenSource.CancelAfter + cooperative catch, which only
+      // worked if the transport SDK observed the token. JDX slot-3 forensic (Jun 2026)
+      // confirmed the SDK can hang without observing cancellation: the timer fired but
+      // the await sat there forever, no OCE thrown, no failure captured, attempts only
+      // ticked up via claim_orphaned_outbox at the DB level. WaitAsync(TimeSpan, ct)
+      // throws TimeoutException after the deadline regardless of inner cooperation; the
+      // still-running publish task is abandoned with an observe-only continuation so any
+      // late exception doesn't escape as UnobservedTaskException.
       var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
-      using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-      if (publishTimeoutSeconds > 0) {
-        publishCts.CancelAfter(TimeSpan.FromSeconds(publishTimeoutSeconds));
-      }
+      Task<IReadOnlyList<MessagePublishResult>>? publishTask = null;
       try {
-        results = await _publishStrategy!.PublishBatchAsync(works, publishCts.Token);
+        // Capture the Task inside the try so a SYNCHRONOUS throw from PublishBatchAsync —
+        // e.g., a strategy that validates inputs and throws before returning — flows into
+        // the existing catch (Exception ex) failure path instead of escaping uncaught.
+        publishTask = _publishStrategy!.PublishBatchAsync(works, ct);
+        results = publishTimeoutSeconds > 0
+          ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
+          : await publishTask;
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         throw;
-      } catch (OperationCanceledException) when (publishCts.IsCancellationRequested) {
-        // Publish-specific timeout (not shutdown). Route every row in the batch
-        // through the failure channel as TransportException so process_outbox_failures
-        // populates wh_outbox.error with the timeout description and Slice 2's
-        // fingerprint clusters on "SDK call did not return" instead of the
-        // pre-publish-gate meta-message.
+      } catch (TimeoutException) {
+        // Publish-specific timeout (not shutdown). Observe the abandoned publish task so
+        // a later exception on it surfaces to UnobservedExceptionDiagnostics rather than
+        // disappearing at GC time.
+        if (publishTask is not null) {
+          _ = publishTask.ContinueWith(
+            static t => { _ = t.Exception; },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        }
         LogPublishTimedOut(_logger, works.Count, publishTimeoutSeconds);
         foreach (var work in works) {
           var row = rowsByMessageId[work.MessageId];
@@ -522,7 +532,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
   }
 
-  private async Task _publishOneAsync(OutboxBatchRow row, CancellationToken ct) {
+  internal async Task PublishOneAsync(OutboxBatchRow row, CancellationToken ct) {
     OutboxWork work;
     try {
       work = _toOutboxWork(row);
@@ -557,17 +567,27 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       "PreOutbox", ct);
 
     MessagePublishResult result;
+    // Singular-path Slice 4: same hardening pattern as the bulk path. WaitAsync(TimeSpan, ct)
+    // guarantees the timeout fires regardless of whether the transport observes ct, and the
+    // abandoned publish task gets an observe-only continuation. Capture the Task inside the
+    // try so a synchronous throw from PublishAsync flows into the existing catch path.
     var publishTimeoutSeconds = _options.PublishTimeoutSeconds;
-    using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-    if (publishTimeoutSeconds > 0) {
-      publishCts.CancelAfter(TimeSpan.FromSeconds(publishTimeoutSeconds));
-    }
+    Task<MessagePublishResult>? publishTask = null;
     try {
-      result = await _publishStrategy!.PublishAsync(work, publishCts.Token);
+      publishTask = _publishStrategy!.PublishAsync(work, ct);
+      result = publishTimeoutSeconds > 0
+        ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
+        : await publishTask;
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       throw;
-    } catch (OperationCanceledException) when (publishCts.IsCancellationRequested) {
-      // Slice 4 — singular-path publish timeout. Mirror of the bulk-path wrap above.
+    } catch (TimeoutException) {
+      if (publishTask is not null) {
+        _ = publishTask.ContinueWith(
+          static t => { _ = t.Exception; },
+          CancellationToken.None,
+          TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+          TaskScheduler.Default);
+      }
       LogPublishTimedOut(_logger, 1, publishTimeoutSeconds);
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
         MessageId = row.MessageId,
@@ -941,30 +961,31 @@ public sealed class OutboxDrainWorkerOptions {
   /// hangs longer than this — i.e. doesn't return AND doesn't throw — the worker
   /// cancels the call, enqueues a <see cref="MessageFailure"/> per row with
   /// <see cref="MessageFailureReason.TransportException"/>, and proceeds. Default
-  /// 120 s. Set to 0 to disable (legacy hang-until-shutdown behavior).
+  /// 60 s — matches the Azure Service Bus client's request-timeout convention.
+  /// Set to 0 to disable (legacy hang-until-shutdown behavior).
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Introduced in Slice 4 of release/v0.648.0-alpha.1. Slice 5a (v0.647) wrapped
-  /// the SecurityContext establishment in a timeout; the JDX BFF slot-3 stuck row
-  /// still spun after v0.647 because the hang was one stack frame later — the
-  /// Azure SDK <c>PublishBatchAsync</c> call never returns AND never throws.
-  /// Without this timeout, the worker waits for the SDK indefinitely;
+  /// Introduced in Slice 4 of release/v0.648.0-alpha.1 (initially default 120 s,
+  /// then briefly default 0 / opt-in). Slice 5a (v0.647) wrapped the
+  /// SecurityContext establishment in a timeout; the slot-3-pattern stuck row
+  /// still spun because the hang was one stack frame later — the transport
+  /// SDK <c>PublishBatchAsync</c> call never returns AND never throws. Without
+  /// this timeout, the worker waits for the SDK indefinitely;
   /// <c>claim_orphaned_outbox</c> re-leases the row, attempts increments
   /// forever, the topic's last-access timestamp stays stale, and no forensic
   /// signal surfaces.
   /// </para>
   /// <para>
-  /// Default 0 (disabled). Production deployments hit by the slot-3 pattern
-  /// must opt in by setting a value via configuration — e.g. JDX BFF sets
-  /// 60 s. Disabled by default because the heuristic threshold for "SDK
-  /// hung" cannot be picked generically: too low fires on legitimate
-  /// slowdowns under CI load and starts a fail-cascade that eats the test
-  /// budget; too high doesn't catch the hang any sooner than the next
-  /// operator-driven restart would. The conservative default lets per-env
-  /// owners pick the right value.
+  /// Default 60 s is on out-of-box because every consumer needs the protection,
+  /// not just the one that hit the issue first. The threshold matches the
+  /// Azure SDK request-timeout convention — long enough to absorb a normal
+  /// publish + worst-case slowdowns under load, short enough to break the
+  /// claim-orphan retry cycle within a single operator pager-window. If a
+  /// deployment legitimately needs longer publishes, set this option higher
+  /// per environment rather than disabling it.
   /// </para>
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
-  public int PublishTimeoutSeconds { get; set; }
+  public int PublishTimeoutSeconds { get; set; } = 60;
 }
