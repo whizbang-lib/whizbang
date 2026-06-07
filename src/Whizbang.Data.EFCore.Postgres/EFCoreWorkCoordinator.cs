@@ -1638,6 +1638,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var results = new List<InboxBatchRow>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    // v0.651 inbox forensic-preservation slice — defensive ordinal lookup for the new
+    // error column. Mirrors the outbox-side pattern: older fetch_inbox_batch revisions
+    // (pre-v0.651) don't return it; leave Error null in that case so a mid-rollout
+    // package mix doesn't blow up.
+    var hasErrorCol = false;
+    var errorOrdinal = -1;
+    try {
+      errorOrdinal = reader.GetOrdinal("error");
+      hasErrorCol = true;
+    } catch (IndexOutOfRangeException) {
+      // Pre-v0.651 fetch_inbox_batch without the error column — leave Error null.
+    }
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -1650,7 +1662,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Status = reader.GetInt32(7),
         Attempts = reader.GetInt32(8),
         PartitionNumber = await reader.IsDBNullAsync(9, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt32(9),
-        IsEvent = reader.GetBoolean(10)
+        IsEvent = reader.GetBoolean(10),
+        Error = hasErrorCol && !await reader.IsDBNullAsync(errorOrdinal, cancellationToken).ConfigureAwait(false)
+          ? reader.GetString(errorOrdinal)
+          : null,
       });
     }
     return results;

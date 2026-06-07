@@ -113,7 +113,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_inbox_batch(
   status INTEGER,
   attempts INTEGER,
   partition_number INTEGER,
-  is_event BOOLEAN
+  is_event BOOLEAN,
+  error TEXT
 ) AS $$
 BEGIN
   IF p_stream_ids IS NULL OR array_length(p_stream_ids, 1) IS NULL THEN
@@ -146,7 +147,8 @@ BEGIN
     r.status,
     r.attempts,
     r.partition_number,
-    r.is_event
+    r.is_event,
+    r.error
   FROM ranked r
   WHERE r.rank_in_stream <= p_max_per_stream
   ORDER BY r.stream_id, r.message_id;
