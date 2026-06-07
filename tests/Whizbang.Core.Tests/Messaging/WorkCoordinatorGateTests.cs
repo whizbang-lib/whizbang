@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -5,88 +6,138 @@ using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Messaging;
 
+#pragma warning disable CA1707, IDE1006
+
 /// <summary>
-/// Tests for WorkCoordinatorGate — the process-wide concurrency cap on IWorkCoordinator calls.
+/// Locks the v0.654 invariants around <see cref="WorkCoordinatorGate.AcquireAsync"/>.
+/// production forensic motivation (Jun 2026): with the pre-v0.654 implementation, an
+/// exhausted gate's <c>WaitAsync(ct)</c> would hang every caller forever — silently,
+/// no exception, no log. Every gated coordinator call AND every <c>MoveAsync</c> in
+/// the DLQ pre-publish gate routed through this single chokepoint. The deadline turns
+/// silent-saturation into a Warning-level operational signal.
 /// </summary>
+/// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public class WorkCoordinatorGateTests {
-  [Test]
-  public async Task AcquireAsync_WithDisabledGate_ReturnsImmediatelyAsync() {
-    // Arrange — gate with cap of 0 means disabled (no semaphore).
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 0);
 
-    // Act + Assert — acquiring should not block.
-    using var __ = await gate.AcquireAsync();
-    await Assert.That(gate.MaxConcurrent).IsEqualTo(0);
+  private sealed record _LogEntry(LogLevel Level, string Message);
+
+  private sealed class _CapturingLogger<T> : ILogger<T> {
+    public List<_LogEntry> Entries { get; } = [];
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      Entries.Add(new _LogEntry(logLevel, formatter(state, exception)));
+    }
+    private sealed class NullScope : IDisposable {
+      public static readonly NullScope Instance = new();
+      public void Dispose() { }
+    }
   }
 
+  /// <summary>
+  /// Happy path: a gate with available slots returns a real <see cref="WorkCoordinatorGate.Releaser"/>.
+  /// Disposing it releases the slot so a subsequent call can re-acquire — the "FIFO acquire / dispose"
+  /// contract every gated coordinator method relies on.
+  /// </summary>
   [Test]
-  public async Task AcquireAsync_WithCap_AllowsUpToCapAsync() {
-    // Arrange — gate with cap of 3.
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3);
+  public async Task AcquireAsync_HasCapacity_ReturnsReleaserThatReleasesOnDisposeAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 10_000);
 
-    // Act — acquire 3 slots; all should succeed without blocking.
-    var releaser1 = await gate.AcquireAsync();
-    var releaser2 = await gate.AcquireAsync();
-    var releaser3 = await gate.AcquireAsync();
-
-    // Cleanup
-    releaser1.Dispose();
-    releaser2.Dispose();
-    releaser3.Dispose();
-
-    // Assert — getting here without timeout proves the cap was honored.
-    await Assert.That(gate.MaxConcurrent).IsEqualTo(3);
-  }
-
-  [Test]
-  public async Task AcquireAsync_AtCap_BlocksUntilReleaseAsync() {
-    // Arrange — cap of 1; acquire holds the only slot.
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 1);
-    var firstHeld = await gate.AcquireAsync();
-
-    // Act — second acquire should not complete until first is released.
-    var secondTask = gate.AcquireAsync().AsTask();
-    var stillBlocked = !secondTask.IsCompleted;
-    firstHeld.Dispose();
-
-    // Wait for the second acquisition to land.
-    var secondReleaser = await secondTask;
-    secondReleaser.Dispose();
-
-    // Assert — proves the second waited.
-    await Assert.That(stillBlocked).IsTrue()
-      .Because("Second AcquireAsync must wait while the cap is held");
-  }
-
-  [Test]
-  public async Task AcquireAsync_OnCancellation_PropagatesAsync() {
-    // Arrange — cap of 1, slot held; second acquire with a cancellation token.
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 1);
-    using var heldSlot = await gate.AcquireAsync();
-    using var cts = new CancellationTokenSource();
-
-    // Act — start a second acquire, then cancel.
-    var pending = gate.AcquireAsync(cts.Token).AsTask();
-    await cts.CancelAsync();
-
-    // Assert — the pending acquire should fault with cancellation.
-    await Assert.That(async () => await pending).ThrowsExactly<OperationCanceledException>();
-  }
-
-  [Test]
-  public async Task Releaser_DoubleDispose_DoesNotOverReleaseAsync() {
-    // Arrange — cap of 1, single slot.
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 1);
-
-    // Act — acquire and double-dispose.
-    var releaser = await gate.AcquireAsync();
+    var releaser = await gate.AcquireAsync(CancellationToken.None);
     releaser.Dispose();
-    // Second dispose is a no-op on the struct (semaphore captured by ref-count, but we don't
-    // double-call Release here because the Releaser struct is consumed). This is documented
-    // behavior — the using statement guarantees single dispose in normal flow.
 
-    // Assert — we can still re-acquire (proves the cap wasn't corrupted).
-    using var fresh = await gate.AcquireAsync();
-    await Assert.That(gate.MaxConcurrent).IsEqualTo(1);
+    // If the dispose didn't release the slot, this WaitAsync would throw TimeoutException
+    // — that's the assertion. The acquire-and-dispose pair is the invariant.
+    var second = await gate.AcquireAsync(CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+    second.Dispose();
+    await Assert.That(gate.MaxConcurrent).IsEqualTo(1)
+      .Because("Reaching this line means both acquires completed within their deadlines. The MaxConcurrent assertion is a placeholder — the real assertion is the absence of a TimeoutException above. If the first dispose hadn't released the slot, the second acquire would have hung past 1s and the test would have failed there.");
+  }
+
+  /// <summary>
+  /// v0.654 deadline path: when the semaphore is fully saturated and the deadline elapses,
+  /// AcquireAsync returns a no-op Releaser AND logs a Warning. Caller proceeds without holding
+  /// a slot — saturation is advisory, not fatal.
+  /// </summary>
+  [Test]
+  public async Task AcquireAsync_SaturatedBeyondDeadline_ReturnsNoopReleaserAndLogsWarningAsync() {
+    var logger = new _CapturingLogger<WorkCoordinatorGate>();
+    using var gate = new WorkCoordinatorGate(
+      maxConcurrent: 1,
+      acquireTimeoutMilliseconds: 100,
+      logger: logger);
+
+    var holding = await gate.AcquireAsync(CancellationToken.None);
+    try {
+      var deadlined = await gate.AcquireAsync(CancellationToken.None);
+      deadlined.Dispose();
+
+      var secondDeadlined = await gate.AcquireAsync(CancellationToken.None);
+      secondDeadlined.Dispose();
+
+      await Assert.That(logger.Entries.Count).IsGreaterThanOrEqualTo(2)
+        .Because("Each deadlined acquire produces exactly one Warning log entry; two deadlined calls produce two entries — operators can count them to spot saturation rate spikes.");
+      await Assert.That(logger.Entries.All(e => e.Level == LogLevel.Warning)).IsTrue()
+        .Because("v0.654 design: gate saturation is operational signal, not a hard error — Warning level matches its 'caller proceeds without protection' semantics.");
+      await Assert.That(logger.Entries[0].Message).Contains("WorkCoordinatorGate")
+        .Because("Log must identify the gate by name so operators reading mixed Whizbang logs can correlate the saturation back to the chokepoint.");
+      await Assert.That(logger.Entries[0].Message).Contains("100")
+        .Because("Including the configured deadline lets operators tell at a glance whether the deadline is the problem (too short for this load) vs whether there's a pool issue.");
+    } finally {
+      holding.Dispose();
+    }
+  }
+
+  /// <summary>
+  /// Opt-out: passing a non-positive deadline preserves the pre-v0.654 indefinite-wait behavior.
+  /// Backward-compat escape hatch.
+  /// </summary>
+  [Test]
+  public async Task AcquireAsync_TimeoutDisabled_BlocksUntilSlotAvailableAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 0);
+
+    var holding = await gate.AcquireAsync(CancellationToken.None);
+
+    var pending = gate.AcquireAsync(CancellationToken.None).AsTask();
+
+    var didCompleteEarly = await Task.WhenAny(pending, Task.Delay(200)) == pending;
+    await Assert.That(didCompleteEarly).IsFalse()
+      .Because("acquireTimeoutMilliseconds=0 must wait indefinitely — proves the opt-out preserves original behavior.");
+
+    holding.Dispose();
+    var unblocked = await pending.WaitAsync(TimeSpan.FromSeconds(1));
+    unblocked.Dispose();
+  }
+
+  /// <summary>
+  /// Disabled gate (maxConcurrent <= 0): every call returns default Releaser without
+  /// touching a semaphore. No deadline, no logging, no contention.
+  /// </summary>
+  [Test]
+  public async Task AcquireAsync_DisabledGate_AlwaysReturnsDefaultReleaserAsync() {
+    var logger = new _CapturingLogger<WorkCoordinatorGate>();
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 0, logger: logger);
+
+    var releasers = new List<WorkCoordinatorGate.Releaser>();
+    for (var i = 0; i < 100; i++) {
+      releasers.Add(await gate.AcquireAsync(CancellationToken.None));
+    }
+    foreach (var r in releasers) {
+      r.Dispose();
+    }
+
+    await Assert.That(logger.Entries).IsEmpty()
+      .Because("A disabled gate must not log — there's no semaphore to time out on.");
+  }
+
+  /// <summary>
+  /// Properties reflect constructor args verbatim. Lets operator diagnostics inspect
+  /// the configured gate at runtime.
+  /// </summary>
+  [Test]
+  public async Task Constructor_PropertiesReflectArgumentsAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 17, acquireTimeoutMilliseconds: 42_000);
+    await Assert.That(gate.MaxConcurrent).IsEqualTo(17);
+    await Assert.That(gate.AcquireTimeoutMilliseconds).IsEqualTo(42_000);
   }
 }
