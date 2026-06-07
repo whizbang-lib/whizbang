@@ -208,7 +208,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // or by the surrounding plumbing (lease handle + DI scope + handler commit channel).
     var dispatchStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
     try {
-      await _processOneInnerAsync(work, stoppingToken);
+      await ProcessOneInnerAsync(work, stoppingToken);
     } finally {
       if (_logger.IsEnabled(LogLevel.Debug)) {
         var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - dispatchStartTicks)
@@ -224,7 +224,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
   }
 
-  private async Task _processOneInnerAsync(InboxWork work, CancellationToken stoppingToken) {
+  internal async Task ProcessOneInnerAsync(InboxWork work, CancellationToken stoppingToken) {
     LogDiagProcessOneEntered(_logger, work.MessageId, work.MessageType, work.Attempts);
     var maxAttempts = _options.MaxInboxAttempts;
     // Phase H step 8 slice D: attempts is one-based after the slice D refactor — the row
