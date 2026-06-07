@@ -177,9 +177,14 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
 
     // Defense-in-depth concurrency cap on IWorkCoordinator calls. Default 50 (matches
-    // recommended Npgsql Maximum Pool Size). Users can register their own gate before
-    // calling AddWhizbang to override.
-    services.TryAddSingleton(_ => new WorkCoordinatorGate(maxConcurrent: 50));
+    // recommended Npgsql Maximum Pool Size). v0.654 adds a 30 s deadline on the internal
+    // semaphore wait so a saturated gate logs + degrades gracefully instead of hanging
+    // every caller silently. Users can register their own gate before calling
+    // AddWhizbang to override either the cap or the deadline.
+    services.TryAddSingleton(sp => new WorkCoordinatorGate(
+      maxConcurrent: 50,
+      acquireTimeoutMilliseconds: 30000,
+      logger: sp.GetService<ILogger<WorkCoordinatorGate>>()));
 
     // AddOptions<T>() is idempotent (uses TryAdd internally for IOptions<T>).
     services.AddOptions<HeartbeatWorkerOptions>();
