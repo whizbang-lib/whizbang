@@ -75,13 +75,12 @@ public class WorkCoordinatorGateTests {
       var secondDeadlined = await gate.AcquireAsync(CancellationToken.None);
       secondDeadlined.Dispose();
 
-      await Assert.That(logger.Entries.Count).IsGreaterThanOrEqualTo(2)
-        .Because("Each deadlined acquire produces exactly one Warning log entry; two deadlined calls produce two entries — operators can count them to spot saturation rate spikes.");
-      await Assert.That(logger.Entries.All(e => e.Level == LogLevel.Warning)).IsTrue()
-        .Because("v0.654 design: gate saturation is operational signal, not a hard error — Warning level matches its 'caller proceeds without protection' semantics.");
-      await Assert.That(logger.Entries[0].Message).Contains("WorkCoordinatorGate")
+      var warnings = logger.Entries.Where(e => e.Level == LogLevel.Warning).ToList();
+      await Assert.That(warnings.Count).IsGreaterThanOrEqualTo(2)
+        .Because("Each deadlined acquire produces exactly one Warning log entry; two deadlined calls produce two entries — operators can count them to spot saturation rate spikes. (v0.656 also emits Debug entry/grant/timeout breadcrumbs; the Warning invariant is what callers/operators key off of.)");
+      await Assert.That(warnings[0].Message).Contains("WorkCoordinatorGate")
         .Because("Log must identify the gate by name so operators reading mixed Whizbang logs can correlate the saturation back to the chokepoint.");
-      await Assert.That(logger.Entries[0].Message).Contains("100")
+      await Assert.That(warnings[0].Message).Contains("100")
         .Because("Including the configured deadline lets operators tell at a glance whether the deadline is the problem (too short for this load) vs whether there's a pool issue.");
     } finally {
       holding.Dispose();
