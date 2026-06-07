@@ -838,13 +838,13 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var bffHostedServices = _bffHost!.Services.GetServices<IHostedService>().ToList();
 
     WireOutboxPublish("Inventory", inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
-    WireOutboxPublish("BFF",       bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
-    WireOutboxDrain("Inventory",   inventoryHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
-    WireOutboxDrain("BFF",         bffHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
-    WireInboxDrain("Inventory",    inventoryHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
-    WireInboxDrain("BFF",          bffHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
-    WirePerspective("Inventory",   inventoryHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
-    WirePerspective("BFF",         bffHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+    WireOutboxPublish("BFF", bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
+    WireOutboxDrain("Inventory", inventoryHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireOutboxDrain("BFF", bffHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain("Inventory", inventoryHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain("BFF", bffHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WirePerspective("Inventory", inventoryHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+    WirePerspective("BFF", bffHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
 
     if (snapshots.Count == 0) {
       Console.WriteLine("[RabbitMqFixture] No idle-capable workers found — proceeding");
