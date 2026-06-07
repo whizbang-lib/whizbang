@@ -207,7 +207,7 @@ public class UnobservedExceptionDiagnosticsTests {
       GC.Collect();
       GC.WaitForPendingFinalizers();
       GC.Collect();
-      var hit = logger.Entries.FirstOrDefault(e => e.Exception is not null && e.Exception.Message.Contains(marker, StringComparison.Ordinal));
+      var hit = logger.Entries.FirstOrDefault(e => e.Exception?.Message.Contains(marker, StringComparison.Ordinal) == true);
       if (hit is not null) {
         await Assert.That(hit.Level).IsEqualTo(LogLevel.Error)
           .Because("v0.651 design: unobserved exceptions are surface-level forensic signal — Error level matches their operational severity and keeps them out of Information/Warning noise.");

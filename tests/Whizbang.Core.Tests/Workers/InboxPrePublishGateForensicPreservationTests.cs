@@ -157,7 +157,7 @@ public class InboxPrePublishGateForensicPreservationTests {
   /// </summary>
   [Test]
   public async Task PrePublishGate_WorkHasRealError_PromotesUsingWorkErrorNotMetaMessageAsync() {
-    var realStack = """
+    const string realStack = """
       System.InvalidOperationException: Receptor 'CreateProductHandler' threw on duplicate product key
          at JDX.JobService.Features.JobFeature.JobDuplicateGuard.AssertUnique(Guid productId)
          at JDX.JobService.Features.JobFeature.Receptors.CreateProductHandler.HandleAsync()
