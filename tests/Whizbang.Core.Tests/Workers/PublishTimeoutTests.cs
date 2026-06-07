@@ -110,6 +110,28 @@ public class PublishTimeoutTests {
     }
   }
 
+  /// <summary>Simulates the production worst case: a transport SDK that IGNORES the
+  /// cancellation token entirely. The TaskCompletionSource is never completed; the
+  /// `ct` parameter is unused. With the v0.648 cooperative-CT implementation, the
+  /// worker's <c>CancelAfter</c> timer fires but the await sits forever — exactly
+  /// what we observed on a consumer BFF production (715+ attempts, error column empty, no logs).
+  /// v0.651's <c>WaitAsync(TimeSpan, ct)</c> hardening MUST throw TimeoutException
+  /// regardless of inner cooperation — that's the invariant this test locks.</summary>
+  private sealed class _UncooperativeHangingPublishStrategy : IMessagePublishStrategy {
+    private readonly TaskCompletionSource<MessagePublishResult> _tcsOne = new();
+    private readonly TaskCompletionSource<IReadOnlyList<MessagePublishResult>> _tcsBatch = new();
+    public bool SupportsBulkPublish => true;
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+      // CT intentionally ignored — never completes, never observes cancellation.
+      return _tcsOne.Task;
+    }
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
+      // CT intentionally ignored — same pattern as a consumer BFF production transport hang.
+      return _tcsBatch.Task;
+    }
+  }
+
   // --- helpers ---
 
   private static readonly JsonSerializerOptions _jsonOpts = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
@@ -196,5 +218,57 @@ public class PublishTimeoutTests {
       .Because("The error text MUST describe the hang site so the wh_outbox.error column (and later wh_dead_letters.error_text + fingerprint) carries useful triage information for operators.");
     await Assert.That(captured.Error).Contains("SDK call did not return")
       .Because("The diagnostic phrase 'SDK call did not return' explicitly distinguishes this case from a transport that returned with an error — operators reading wh_dead_letters can immediately tell which class of bug this is.");
+  }
+
+  /// <summary>
+  /// v0.651 hardening RED→GREEN: the production worst case is a transport that ignores the
+  /// cancellation token entirely. v0.648's <c>CancelAfter</c>+cooperative-catch pattern
+  /// would hang here forever because the await never completes. v0.651's <c>WaitAsync</c>
+  /// pattern MUST throw <see cref="TimeoutException"/> at the deadline regardless of
+  /// inner cooperation — locking the "guaranteed deadline" invariant.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_PublishStrategyIgnoresCt_StillTimesOutAndEnqueuesFailureAsync() {
+    var failure = new _FakeFailureChannel();
+    var uncooperativeStrategy = new _UncooperativeHangingPublishStrategy();
+
+    var services = new ServiceCollection();
+    var sp = services.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new _FakeServiceInstanceProvider(),
+      new _FakeOutboxDrainChannel(),
+      new _FakeOutboxCompletionChannel(),
+      failure,
+      gate,
+      Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        PublishTimeoutSeconds = 1,
+      }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      uncooperativeStrategy);
+
+    var row1 = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+    var row2 = _row((Guid)TrackedGuid.NewMedo(), row1.StreamId!.Value);
+
+    // Drive the bulk publish path with a transport that ignores CT. v0.648's pattern
+    // would hang forever; v0.651's WaitAsync(TimeSpan, ct) forces a TimeoutException at
+    // ~1s and the failure-channel enqueue lands for each row.
+    var bulkTask = worker.PublishBulkAsync([row1, row2], CancellationToken.None);
+
+    var captured = await failure.FirstFailure.Task.WaitAsync(TimeSpan.FromSeconds(3));
+    await bulkTask;
+
+    await Assert.That(failure.All.Count).IsGreaterThanOrEqualTo(2)
+      .Because("production worst case: the transport ignores the cancellation token entirely. The hardened timeout MUST still produce one MessageFailure per row in the batch.");
+    await Assert.That(captured.Reason).IsEqualTo(MessageFailureReason.TransportException)
+      .Because("Uncooperative transport hangs are still transport-layer failures — same operational class as the cooperative case, same reason code.");
+    await Assert.That(captured.Error).Contains("Publish timed out after")
+      .Because("The error text is identical in both the cooperative and uncooperative cases — operators don't need to know which mode the transport was in; the timeout signal is unambiguous either way.");
   }
 }

@@ -54,6 +54,12 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
     services.TryAddSingleton<IDeadLetterRecoveryPolicy, DefaultDeadLetterRecoveryPolicy>();
     services.TryAddSingleton<Whizbang.Core.Observability.DeadLetterMetrics>();
+    // Process-wide TaskScheduler.UnobservedTaskException + (optional)
+    // AppDomain.FirstChanceException subscription. Without this, exceptions raised on
+    // fire-and-forget Tasks after their registered catch handler completes silently vanish
+    // at GC time — see UnobservedExceptionDiagnostics for the production forensic that drove this.
+    services.TryAddSingleton<Whizbang.Core.Observability.UnobservedExceptionDiagnostics>();
+    services.AddOptions<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsOptions>();
 
     // Phase H step 7 slice 7: cooldown cache for the perspective drainer's short-circuit gate.
     // Singleton — PerspectiveWorker reads/writes it; the sweep worker periodically evicts.
@@ -117,6 +123,11 @@ public static class WorkerPipelineExtensions {
 
     // Hosted services — delegate to the singleton instance so DI hands the same one
     // to both the hosted-service collection and the channel-surface registrations.
+    // Diagnostics warm-up runs BEFORE any worker so the TaskScheduler.UnobservedTaskException
+    // + FirstChanceException subscriptions are in place before any fire-and-forget Task can
+    // be spawned. Singleton construction is the side-effect we want — StartAsync just
+    // resolves the singleton from DI and returns.
+    services.AddHostedService<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsWarmUp>();
     services.AddHostedService(sp => sp.GetRequiredService<HeartbeatWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<ClaimWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
