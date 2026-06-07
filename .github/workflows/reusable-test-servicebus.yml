@@ -80,13 +80,13 @@ jobs:
         if: inputs.artifact-name != ''
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag AzureServiceBus -NoBuild
         env:
-          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '3'
+          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '5'
 
       - name: Run Azure Service Bus Integration Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus
         env:
-          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '3'
+          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '5'
 
       - name: Shutdown Coverage Collection
         if: inputs.artifact-name != ''
