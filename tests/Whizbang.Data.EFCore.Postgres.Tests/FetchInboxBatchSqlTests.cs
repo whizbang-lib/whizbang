@@ -134,6 +134,68 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
     await Assert.That(fetched.Count).IsEqualTo(3);
   }
 
+  /// <summary>
+  /// v0.658 slice 7 inbox mirror: row with <c>stream_id = Guid.Empty</c> MUST be
+  /// drainable via the <c>message_id</c>-as-sentinel pattern. See the outbox
+  /// counterpart for the full slot-3 forensic.
+  /// </summary>
+  [Test]
+  public async Task FetchInboxBatch_RowWithEmptyStreamId_FoundViaMessageIdSentinelAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    await _registerInstanceAsync(connection, instanceId);
+    await _insertInboxRowAsync(connection, messageId, streamId: Guid.Empty, instanceId);
+
+    var fetched = await _fetchInboxBatchAsync(connection, [messageId], instanceId, maxPerStream: 100);
+
+    await Assert.That(fetched.Count).IsEqualTo(1)
+      .Because("Mirror of the slot-3 outbox case for inbox — Empty stream_id is the producer-side bug, message_id sentinel from the coordinator's WorkId fallback MUST resolve.");
+    await Assert.That(fetched[0].MessageId).IsEqualTo(messageId);
+  }
+
+  /// <summary>
+  /// NULL stream_id is the documented singleton-stream marker; the message-id
+  /// sentinel path MUST resolve to the actual row.
+  /// </summary>
+  [Test]
+  public async Task FetchInboxBatch_RowWithNullStreamId_FoundViaMessageIdSentinelAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    await _registerInstanceAsync(connection, instanceId);
+    await _insertInboxRowWithNullStreamAsync(connection, messageId, instanceId);
+
+    var fetched = await _fetchInboxBatchAsync(connection, [messageId], instanceId, maxPerStream: 100);
+
+    await Assert.That(fetched.Count).IsEqualTo(1);
+    await Assert.That(fetched[0].MessageId).IsEqualTo(messageId);
+  }
+
+  private static async Task _insertInboxRowWithNullStreamAsync(
+      NpgsqlConnection connection, Guid messageId, Guid instanceId) {
+    await using var ins = connection.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_inbox
+        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+         instance_id, lease_expiry, stream_id, partition_number)
+      VALUES (@msg, 'TestHandler', 'TestEvent', '{""payload"":1}', '{""hop"":1}', 1, 0, NOW(),
+              @inst, NOW() + INTERVAL '5 minutes', NULL, NULL)";
+    ins.Parameters.AddWithValue("msg", messageId);
+    ins.Parameters.AddWithValue("inst", instanceId);
+    await ins.ExecuteNonQueryAsync();
+  }
+
   private static async Task<List<InboxBatchRow>> _fetchInboxBatchAsync(
       NpgsqlConnection connection, Guid[] streamIds, Guid instanceId, int maxPerStream) {
     await using var cmd = connection.CreateCommand();
