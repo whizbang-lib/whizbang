@@ -56,6 +56,7 @@ public class InboxLifecycleTests {
   /// Receptor invocation should wait for this lifecycle receptor to complete.
   /// </summary>
   [Test]
+  [Timeout(180_000)]
   public async Task PreInboxInline_FiresBeforeReceptorInvocation_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -68,12 +69,11 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent (received by BFF from RabbitMQ).
-    // Filter by ProductId so any in-flight stale event from a prior test (still flowing through
-    // RabbitMQ between this test's CleanupDatabaseAsync and dispatch) is ignored — the receptor
-    // only signals completion when our own ProductCreatedEvent arrives.
+    // CT plumbed through so the helper takes the deterministic LifecycleStageFiringObserver
+    // path (no internal scaled-timer race). [Timeout] above bounds wall-clock.
     var receptorTask = fixture.BffHost.WaitForPreInboxInlineAsync<ProductCreatedEvent>(
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -96,6 +96,7 @@ public class InboxLifecycleTests {
   /// Should use Task.Run and not block receptor invocation.
   /// </summary>
   [Test]
+  [Timeout(180_000)]
   public async Task PreInboxDetached_FiresParallelWithReceptor_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -108,10 +109,10 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent (received by BFF).
-    // Filter on ProductId so a stale event still in flight from a prior test cannot satisfy our wait.
+    // CT plumbed through (deterministic observer path); [Timeout] bounds wall-clock.
     var receptorTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>(
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -142,11 +143,11 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Register the lifecycle wait BEFORE dispatching so the receptor is in place when the event arrives.
-    // Filter by ProductId so the wait only signals on OUR event, not a stale in-flight event from a
-    // prior test that survived CleanupDatabaseAsync's queue purge.
+    // Register the lifecycle wait BEFORE dispatching so the receptor is in place when the event
+    // arrives. CT plumbed through (deterministic observer path); [Timeout(120_000)] bounds wall-clock.
     var receptorTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>(
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     await fixture.Dispatcher.SendAsync(command);
 
@@ -164,6 +165,7 @@ public class InboxLifecycleTests {
   /// Should use Task.Run and not block next steps.
   /// </summary>
   [Test]
+  [Timeout(180_000)]
   public async Task PostInboxDetached_FiresAfterReceptorCompletes_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -176,11 +178,10 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent (received by BFF).
-    // Filter by ProductId — without it, a stale event from the prior test (still flushing through
-    // RabbitMQ) can satisfy this wait and mismatch the assertion further down.
+    // CT plumbed through (deterministic observer path); [Timeout] bounds wall-clock.
     var receptorTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>(
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -212,7 +213,8 @@ public class InboxLifecycleTests {
     };
 
     var receptorTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>(
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     await fixture.Dispatcher.SendAsync(command);
 
@@ -230,6 +232,7 @@ public class InboxLifecycleTests {
   /// Next step should wait for this lifecycle receptor to complete.
   /// </summary>
   [Test]
+  [Timeout(180_000)]
   public async Task PostInboxInline_FiresAfterReceptorCompletes_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -242,10 +245,10 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent (received by BFF).
-    // Filter on ProductId so we ignore stale events still flushing through RabbitMQ.
+    // CT plumbed through (deterministic observer path); [Timeout] bounds wall-clock.
     var receptorTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>(
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);

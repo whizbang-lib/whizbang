@@ -1,4 +1,5 @@
 using ECommerce.Integration.Tests.Fixtures;
+using ECommerce.Integration.TestUtilities.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core;
@@ -388,38 +389,42 @@ public static class LifecycleStageTestExtensions {
 
     ArgumentNullException.ThrowIfNull(host);
 
-    // Create completion source for signaling
-    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    // The receptor is still registered so the caller can read InvocationCount /
+    // LastMessage from the returned instance — but the COMPLETION SIGNAL is now
+    // driven by LifecycleStageFiringObserver.OnReceptorFiredAsync rather than
+    // the receptor's own HandleAsync. This eliminates the receptor-side failure
+    // modes (AsyncLocal context loss → silent filter-skip, perspective-name
+    // mismatch on missing context, etc.) that surfaced as TimeoutExceptions
+    // under CI parallel pressure.
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    // Create receptor that will signal completion
     var receptor = new GenericLifecycleCompletionReceptor<TMessage>(
       completionSource,
       expectedStage: stage,
       perspectiveName: perspectiveName,
       messageFilter: messageFilter);
 
-    // Get registry from host
     var registry = host.Services.GetRequiredService<IReceptorRegistry>();
-
-    // Register receptor at specified stage
     registry.Register<TMessage>(receptor, stage);
+
+    // The observer is the deterministic single source of truth. It fires from
+    // ReceptorInvoker.OnReceptorFiredAsync — after the receptor delegate
+    // completes — so any state the receptor mutated (InvocationCount) is
+    // visible by the time the await resumes.
+    var observer = host.Services.GetRequiredService<LifecycleStageFiringObserver>();
+    var observerTask = observer.WaitForStageAsync(stage, messageFilter, cancellationToken);
 
     try {
       if (cancellationToken.CanBeCanceled) {
-        // Deterministic path: only the caller's CT bounds the wait. The
-        // test-framework deadline (e.g. [Timeout(180_000)]) cancels the CT;
-        // no separate internal timer that could fire first and produce
-        // spurious flakes when CI is slow under load.
-        await completionSource.Task.WaitAsync(cancellationToken);
+        // CT-driven path: test-framework deadline (e.g. [Timeout(180_000)])
+        // cancels the CT. Single source of truth.
+        await observerTask;
       } else {
         // Legacy/back-compat path for callers that don't plumb their CT
         // through — fall back to the scaled internal timer.
         var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
-        await completionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+        await observerTask.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
       }
     } finally {
-      // Always unregister, even if timeout / cancellation occurs
       registry.Unregister<TMessage>(receptor, stage);
     }
 
