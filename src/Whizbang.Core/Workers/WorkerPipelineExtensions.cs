@@ -184,7 +184,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton(sp => new WorkCoordinatorGate(
       maxConcurrent: 50,
       acquireTimeoutMilliseconds: 30000,
-      logger: sp.GetService<ILogger<WorkCoordinatorGate>>()));
+      logger: sp.GetService<ILogger<WorkCoordinatorGate>>(),
+      metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
 
     // AddOptions<T>() is idempotent (uses TryAdd internally for IOptions<T>).
     services.AddOptions<HeartbeatWorkerOptions>();
