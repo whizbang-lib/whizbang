@@ -82,6 +82,73 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     await Assert.That(status).IsEqualTo(3).Because("recovered_at is set + status=Recovered");
   }
 
+  /// <summary>
+  /// v0.657 slice 4: when a wh_dead_letters row has <c>stream_id = Guid.Empty</c>
+  /// (preserved verbatim from the source-side row by <c>move_to_dead_letters</c>),
+  /// <c>recover_dead_letter</c> MUST normalize Empty → NULL on the INSERT back into
+  /// the source table. Otherwise the recovered row immediately re-sticks under the
+  /// same silent-stuck pattern that put it in the DLQ in the first place.
+  /// </summary>
+  /// <remarks>
+  /// Slot-3 forensic context: rows with Empty stream_id are the bug; recovering
+  /// one without normalization would land it back in <c>wh_outbox</c> with the
+  /// same broken value, and ClaimWorker would resume bumping <c>attempts</c>
+  /// silently forever. Normalize at recovery time so the row can drain via the
+  /// slice-3 WorkId fallback path.
+  /// </remarks>
+  [Test]
+  public async Task RecoverDeadLetter_OutboxRowWithEmptyStreamId_NormalizesToNullAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var (dlqId, originalMessageId) = await _moveToDlqWithMessageIdAsync(
+      conn, sourceTable: "wh_outbox", streamId: Guid.Empty);
+
+    var recovered = await _callRecoverAsync(conn, dlqId);
+
+    await Assert.That(recovered).IsTrue();
+    var recoveredStreamId = await _readOutboxStreamIdAsync(conn, originalMessageId);
+    await Assert.That(recoveredStreamId).IsNull()
+      .Because("Empty stream_id MUST be normalized to NULL on recovery — otherwise the recovered row hits the same silent-stuck path that put it in the DLQ. NULL is the documented singleton-stream marker; the slice-3 coordinator backstop coalesces NULL→WorkId at drain time.");
+  }
+
+  /// <summary>
+  /// Mirror invariant for inbox recovery.
+  /// </summary>
+  [Test]
+  public async Task RecoverDeadLetter_InboxRowWithEmptyStreamId_NormalizesToNullAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var (dlqId, originalMessageId) = await _moveToDlqWithMessageIdAsync(
+      conn, sourceTable: "wh_inbox", streamId: Guid.Empty);
+
+    var recovered = await _callRecoverAsync(conn, dlqId);
+
+    await Assert.That(recovered).IsTrue();
+    var recoveredStreamId = await _readInboxStreamIdAsync(conn, originalMessageId);
+    await Assert.That(recoveredStreamId).IsNull()
+      .Because("Inbox path same as outbox — Empty stream_id MUST be normalized to NULL on recovery.");
+  }
+
+  /// <summary>
+  /// Negative case: rows with a real (non-Empty) stream_id MUST keep that
+  /// stream_id on recovery. Don't accidentally null-ify legitimate values.
+  /// </summary>
+  [Test]
+  public async Task RecoverDeadLetter_OutboxRowWithRealStreamId_PreservesStreamIdAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    Guid realStreamId = TrackedGuid.NewMedo();
+    var (dlqId, originalMessageId) = await _moveToDlqWithMessageIdAsync(
+      conn, sourceTable: "wh_outbox", streamId: realStreamId);
+
+    var recovered = await _callRecoverAsync(conn, dlqId);
+
+    await Assert.That(recovered).IsTrue();
+    var recoveredStreamId = await _readOutboxStreamIdAsync(conn, originalMessageId);
+    await Assert.That(recoveredStreamId).IsEqualTo(realStreamId)
+      .Because("Normalization MUST be Empty-only — real stream_ids ride through unchanged so multi-message streams preserve their per-stream FIFO ordering on recovery.");
+  }
+
   [Test]
   public async Task RecoverDeadLetter_AlreadyRecovered_ReturnsFalseAsync() {
     await using var ctx = CreateDbContext();
@@ -146,10 +213,10 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
   }
 
   private static async Task<(Guid DlqId, Guid OriginalMessageId)> _moveToDlqWithMessageIdAsync(
-      NpgsqlConnection conn, string sourceTable, string generation = "v0.502") {
+      NpgsqlConnection conn, string sourceTable, string generation = "v0.502", Guid? streamId = null) {
     var dlqId = (Guid)TrackedGuid.NewMedo();
     var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var sid = streamId ?? (Guid)TrackedGuid.NewMedo();
 
     if (sourceTable == "wh_outbox") {
       await using var ins = conn.CreateCommand();
@@ -159,7 +226,17 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
            created_at, stream_id, partition_number)
         VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{}', '{}', 1, 11, NOW(), @stream, 0)";
       ins.Parameters.AddWithValue("msg", messageId);
-      ins.Parameters.AddWithValue("stream", streamId);
+      ins.Parameters.AddWithValue("stream", sid);
+      await ins.ExecuteNonQueryAsync();
+    } else if (sourceTable == "wh_inbox") {
+      await using var ins = conn.CreateCommand();
+      ins.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, envelope_type, event_data, metadata, status, attempts,
+           received_at, stream_id, partition_number)
+        VALUES (@msg, 'TestHandler', 'TestEvent', 'TestEnvelope', '{}', '{}', 1, 11, NOW(), @stream, 0)";
+      ins.Parameters.AddWithValue("msg", messageId);
+      ins.Parameters.AddWithValue("stream", sid);
       await ins.ExecuteNonQueryAsync();
     }
 
@@ -174,6 +251,22 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     move.Parameters.AddWithValue("gen", generation);
     await move.ExecuteNonQueryAsync();
     return (dlqId, messageId);
+  }
+
+  private static async Task<Guid?> _readOutboxStreamIdAsync(NpgsqlConnection conn, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT stream_id FROM wh_outbox WHERE message_id = @id";
+    cmd.Parameters.AddWithValue("id", messageId);
+    var result = await cmd.ExecuteScalarAsync();
+    return result is Guid g ? g : null;
+  }
+
+  private static async Task<Guid?> _readInboxStreamIdAsync(NpgsqlConnection conn, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT stream_id FROM wh_inbox WHERE message_id = @id";
+    cmd.Parameters.AddWithValue("id", messageId);
+    var result = await cmd.ExecuteScalarAsync();
+    return result is Guid g ? g : null;
   }
 
   private static async Task<List<Guid>> _fetchDueAsync(NpgsqlConnection conn, int max) {
