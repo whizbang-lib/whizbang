@@ -182,6 +182,48 @@ public class WorkCoordinatorGateTests {
   }
 
   /// <summary>
+  /// v0.660 Slice 1 — gate cap derived from connection-pool size. The gate's
+  /// job is to bound concurrent <c>IWorkCoordinator</c> calls, NOT to bound
+  /// the absolute number of DB connections. Each slot maps to at most one
+  /// connection from the per-pod Npgsql pool, so the gate's *effective*
+  /// ceiling is <c>min(MaxConcurrent, MaxPoolSize)</c>. Defaulting the gate
+  /// to <c>MaxPoolSize - reserve</c> resolves to the env-tuned pool ceiling
+  /// automatically — no separate magic number to drift.
+  /// </summary>
+  [Test]
+  public async Task FromPoolSize_DerivesMaxConcurrentAsPoolMinusReserveAsync() {
+    using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 30, reserve: 5);
+    await Assert.That(gate.MaxConcurrent).IsEqualTo(25)
+      .Because("Pool size 30 minus reserve 5 = 25. The reserve protects non-gated DB work (LISTEN connections, health-check pings, manual queries) from being starved by gated callers saturating the pool.");
+  }
+
+  /// <summary>
+  /// Pool tiny / reserve oversized: clamp to a minimum of 1 so the gate
+  /// remains operative. A 0-or-negative cap would silently disable the gate
+  /// (per the <c>maxConcurrent &lt;= 0</c> branch in the main constructor)
+  /// which is NOT what FromPoolSize means — it means "match pool, minus
+  /// reserve" with at least one slot available.
+  /// </summary>
+  [Test]
+  public async Task FromPoolSize_TinyPool_ClampsToMinimumOneAsync() {
+    using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 3, reserve: 5);
+    await Assert.That(gate.MaxConcurrent).IsEqualTo(1)
+      .Because("(3 - 5) = -2 would disable the gate. Floor at 1 instead: a slow pipeline is recoverable; a silently-disabled gate is the slot-3-stuck-row class of bug the v0.654 hardening was supposed to prevent.");
+  }
+
+  /// <summary>
+  /// Default reserve is 5 — chosen to leave headroom for the LISTEN
+  /// connection (1), maintenance queries (1-2), and ad-hoc operator work
+  /// (1-2). Tests below verify the parameter is wired all the way through.
+  /// </summary>
+  [Test]
+  public async Task FromPoolSize_DefaultReserveIsFiveAsync() {
+    using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 50);
+    await Assert.That(gate.MaxConcurrent).IsEqualTo(45)
+      .Because("Default reserve must be 5 — documented in the connection-budget framing in plans/throughput-optimization.md. If this changes, the connection-pool-sizing doc must be updated in lockstep.");
+  }
+
+  /// <summary>
   /// The default-Releaser path (degraded after timeout-induced no-op) MUST NOT
   /// emit a histogram observation — nothing was held, so timing it is noise
   /// that would distort p95.
