@@ -78,6 +78,18 @@ public sealed class WorkCoordinatorMetrics {
   /// <summary>Rows cleaned per task.</summary>
   public Histogram<long> MaintenanceTaskRowsAffected { get; }
 
+  // Gate
+
+  /// <summary>
+  /// Time between <see cref="Messaging.WorkCoordinatorGate.AcquireAsync"/> grant
+  /// and the returned <c>Releaser.Dispose</c>, tagged with <c>caller</c> (the
+  /// method that called <c>AcquireAsync</c>). Surfaces which gated code paths
+  /// are holding slots longest; production forensic showed BFF at 20% CPU with the
+  /// gate saturated, meaning slots were held during application work, not just
+  /// DB I/O.
+  /// </summary>
+  public Histogram<double> GateHoldDuration { get; }
+
   /// <summary>Initializes a new instance of the <see cref="WorkCoordinatorMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public WorkCoordinatorMetrics(WhizbangMetrics whizbangMetrics) {
@@ -105,5 +117,7 @@ public sealed class WorkCoordinatorMetrics {
 
     MaintenanceTaskDuration = meter.CreateHistogram<double>("whizbang.maintenance.task.duration", "ms", "Duration per maintenance task");
     MaintenanceTaskRowsAffected = meter.CreateHistogram<long>("whizbang.maintenance.task.rows_affected", description: "Rows cleaned per task");
+
+    GateHoldDuration = meter.CreateHistogram<double>("whizbang.gate.hold_duration_ms", "ms", "WorkCoordinatorGate slot-held duration; tagged with caller");
   }
 }
