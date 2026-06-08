@@ -131,6 +131,25 @@ public sealed class WhizbangCoreOptions {
   /// </remarks>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
   public int ImmediateDetachedChainWarningThreshold { get; set; } = 10;
+
+  /// <summary>
+  /// Governs how Whizbang handles rows whose <c>stream_id</c> is
+  /// <see cref="System.Guid.Empty"/> (the all-zeros UUID, distinct from NULL).
+  /// Default: <see cref="EmptyStreamIdPolicy.Reject"/> — producers see a typed
+  /// exception at INSERT time. Operators with legacy producers can flip to
+  /// <see cref="EmptyStreamIdPolicy.FallbackToMessageId"/> until the source is
+  /// fixed.
+  /// </summary>
+  /// <remarks>
+  /// production forensic (Jun 2026): a single producer wrote ~990 silent-stuck
+  /// rows over 24 h because Empty <c>stream_id</c> bypassed the
+  /// <c>r.StreamId ?? r.WorkId</c> NULL-only fallback. The
+  /// <see cref="EmptyStreamIdPolicy.Reject"/> default closes that surface
+  /// at the producer; the coordinator-side Empty→WorkId recovery is
+  /// unconditional so already-stored bad rows can still drain.
+  /// </remarks>
+  /// <docs>operations/configuration/empty-stream-id-policy</docs>
+  public EmptyStreamIdPolicy EmptyStreamIdPolicy { get; set; } = EmptyStreamIdPolicy.Reject;
 }
 
 /// <summary>
