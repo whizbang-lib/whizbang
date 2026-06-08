@@ -818,6 +818,55 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<Whizbang.Core.Messaging.StuckRow>> FindStuckOutboxRowsAsync(
+    int maxAttempts,
+    int limit,
+    CancellationToken cancellationToken = default)
+    => await _findStuckRowsAsync("find_stuck_outbox_rows", maxAttempts, limit, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<Whizbang.Core.Messaging.StuckRow>> FindStuckInboxRowsAsync(
+    int maxAttempts,
+    int limit,
+    CancellationToken cancellationToken = default)
+    => await _findStuckRowsAsync("find_stuck_inbox_rows", maxAttempts, limit, cancellationToken);
+
+  // v0.657 slice 5c: shared shape for both sentinel methods — they only differ
+  // in the SQL function name. Both use the partial indexes from migration 054
+  // so the cost is O(log N) on a near-empty partial in steady state.
+  private async Task<IReadOnlyList<Whizbang.Core.Messaging.StuckRow>> _findStuckRowsAsync(
+      string functionShortName, int maxAttempts, int limit, CancellationToken ct) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, functionShortName);
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT message_id, message_type, stream_id, attempts, claimed_since FROM {functionName}(@p_max, @p_limit)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxAttempts });
+    cmd.Parameters.Add(new NpgsqlParameter("p_limit", NpgsqlTypes.NpgsqlDbType.Integer) { Value = limit });
+
+    var rows = new List<Whizbang.Core.Messaging.StuckRow>();
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    while (await reader.ReadAsync(ct)) {
+      rows.Add(new Whizbang.Core.Messaging.StuckRow {
+        MessageId = reader.GetGuid(0),
+        MessageType = reader.GetString(1),
+        StreamId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
+        Attempts = reader.GetInt32(3),
+        ClaimedSince = reader.GetDateTime(4),
+      });
+    }
+    return rows;
+  }
+
+  /// <inheritdoc />
   public async Task<int> CleanupCompletedStreamsAsync(
     IReadOnlyList<Guid> streamIds,
     CancellationToken cancellationToken = default) {
