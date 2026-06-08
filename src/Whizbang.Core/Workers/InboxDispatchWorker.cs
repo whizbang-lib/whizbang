@@ -74,6 +74,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly IDeadLetterStore? _deadLetterStore;
   private readonly IGenerationProvider? _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
+  // v0.660 slice 8 — per-message-type dispatch duration histogram.
+  private readonly Whizbang.Core.Observability.InboxMetrics? _inboxMetrics;
 
   /// <summary>Constructor.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
@@ -99,7 +101,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IReceptorRegistry? runtimeReceptorRegistry = null,
     IDeadLetterStore? deadLetterStore = null,
     IGenerationProvider? generationProvider = null,
-    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) {
+    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
+    Whizbang.Core.Observability.InboxMetrics? inboxMetrics = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -121,6 +124,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _deadLetterStore = deadLetterStore;
     _generationProvider = generationProvider;
     _dlqMetrics = dlqMetrics;
+    _inboxMetrics = inboxMetrics;
   }
 
   /// <inheritdoc />
@@ -210,16 +214,19 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     try {
       await ProcessOneInnerAsync(work, stoppingToken);
     } finally {
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - dispatchStartTicks)
-          * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-        if (totalMs > 100) {
+      var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - dispatchStartTicks)
+        * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+      // v0.660 slice 8: always record into the per-message-type histogram so
+      // operators can see distribution by event type without enabling Debug
+      // logging. Operator dashboards filter the slow tail; nothing depends on
+      // the >100ms gate.
+      _inboxMetrics?.RecordDispatch(work.MessageType, totalMs);
+      if (_logger.IsEnabled(LogLevel.Debug) && totalMs > 100) {
 #pragma warning disable CA1848
-          _logger.LogDebug(
-            "PERF InboxDispatch message {MessageId} type {MessageType}: total={TotalMs:F0}ms attempts={Attempts}",
-            work.MessageId, work.MessageType, totalMs, work.Attempts);
+        _logger.LogDebug(
+          "PERF InboxDispatch message {MessageId} type {MessageType}: total={TotalMs:F0}ms attempts={Attempts}",
+          work.MessageId, work.MessageType, totalMs, work.Attempts);
 #pragma warning restore CA1848
-        }
       }
     }
   }
