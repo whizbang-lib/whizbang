@@ -63,7 +63,20 @@ BEGIN
     FROM __SCHEMA__.wh_outbox o
     LEFT JOIN __SCHEMA__.wh_event_store es
       ON o.is_event AND es.event_id = o.message_id
-    WHERE o.stream_id = ANY(p_stream_ids)
+    -- v0.658 slice 7: singleton-stream / Empty-stream rows are looked up by
+    -- message_id-as-sentinel rather than stream_id. The coordinator's claim_work
+    -- output emits message_id as the sentinel for rows whose stream_id is NULL
+    -- (the documented singleton-stream marker) or Guid.Empty (the producer-side
+    -- bug from the slot-3 forensic — v0.657 slice 3's Empty→WorkId fallback). The
+    -- pre-v0.658 filter `stream_id = ANY(p_stream_ids)` couldn't match either
+    -- case: NULL=ANY is NULL/false, and Empty doesn't equal the message_id
+    -- sentinel. The additive OR branch only fires when stream_id is non-routable,
+    -- so real-stream rows still match exclusively via their stream_id.
+    WHERE (
+        o.stream_id = ANY(p_stream_ids)
+        OR ((o.stream_id IS NULL OR o.stream_id = '00000000-0000-0000-0000-000000000000'::uuid)
+            AND o.message_id = ANY(p_stream_ids))
+      )
       AND o.instance_id = p_instance_id
       AND o.lease_expiry > NOW()
       AND o.processed_at IS NULL
@@ -130,7 +143,13 @@ BEGIN
       i.*,
       ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.message_id) AS rank_in_stream
     FROM __SCHEMA__.wh_inbox i
-    WHERE i.stream_id = ANY(p_stream_ids)
+    -- v0.658 slice 7: mirror of fetch_outbox_batch's Empty/NULL stream handling —
+    -- see the matching comment in the outbox query for the full rationale.
+    WHERE (
+        i.stream_id = ANY(p_stream_ids)
+        OR ((i.stream_id IS NULL OR i.stream_id = '00000000-0000-0000-0000-000000000000'::uuid)
+            AND i.message_id = ANY(p_stream_ids))
+      )
       AND i.instance_id = p_instance_id
       AND i.lease_expiry > NOW()
       AND i.processed_at IS NULL  -- inbox uses processed_at as both production-marker and debug-kept-marker
