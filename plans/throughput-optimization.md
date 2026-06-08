@@ -103,9 +103,64 @@ This slice ships:
 
 ### Slice 4 — Release gate before blocking on perspective completion
 
-**This is the structural fix.** Slices 1-3 raise the cap; this slice removes the in-app stall that makes the cap matter so much.
+**STATUS (2026-06-08): BLOCKED on Slice 7 telemetry. The original premise was invalidated by reading the actual code; see the "Premise invalidated" subsection below before doing any further work on this slice.**
 
-**Current state**: `InboxDispatchWorker._publishOneAsync` (or its equivalent dispatch path) acquires the `WorkCoordinatorGate` slot via `IWorkCoordinator.<Some Op>`, then invokes the receptor. The receptor's invoker chain calls into `IReceptorInvoker.InvokeAsync` which may pass through `PerspectiveCompletionWaiter` to synchronously wait for the perspective worker to finish processing the event before returning. During that wait, **the gate slot is still held**.
+**Original framing (kept for posterity)**: Slices 1-3 raise the cap; this slice removes the in-app stall that makes the cap matter so much.
+
+**Original-state claim**: `InboxDispatchWorker._publishOneAsync` (or its equivalent dispatch path) acquires the `WorkCoordinatorGate` slot via `IWorkCoordinator.<Some Op>`, then invokes the receptor. The receptor's invoker chain calls into `IReceptorInvoker.InvokeAsync` which may pass through `PerspectiveCompletionWaiter` to synchronously wait for the perspective worker to finish processing the event before returning. During that wait, **the gate slot is still held**.
+
+#### Premise invalidated (2026-06-08 audit)
+
+A direct audit of every `_gate.AcquireAsync(...)` call site in both drivers contradicts the original framing:
+
+- **`EFCoreWorkCoordinator.cs`** — 13 gated methods, all the same shape: acquire gate → single `SELECT some_function(...)` SQL call → release gate. Examples: `RecordHeartbeatAsync:182`, `CompletePerspectiveAsync:293`, `ClaimWorkAsync:451`, `CommitHandlerBatchAsync:553`, `FlushCompletionsAsync:320`, `ReportFailuresAsync:627`. No application work inside the gate scope.
+- **`DapperWorkCoordinator.cs`** — 13 gated methods, same shape (acquire → single SQL call → release).
+- **`EFCoreDeadLetterStore`, `ScopedEFCoreDeadLetterStore`, `EFCoreDeadLetterRecoveryService`, `DapperDeadLetterStore`** — 5 additional gated call sites; all single-SQL-call scope.
+- **`InboxDispatchWorker`** — does NOT call `IWorkCoordinator` at all on the dispatch path. The receptor is invoked via `receptorInvoker.InvokeAsync(...)` (line 570) with no gate held. Failures route via `_failureChannel`, results via `_handlerCommitChannel` — both channels, not coordinator calls.
+- **`ReceptorInvoker.cs`** — `_invokeReceptorBodyAsync` (line 685) has no gate acquisition. The receptor body just invokes the user's pre-compiled handler delegate.
+- **`PerspectiveCompletionWaiter`** — lives in `Whizbang.Testing/Lifecycle/PerspectiveCompletionWaiter.cs`, not production code. It's a test utility, not a production wait.
+
+The perspective-wait path that DOES exist is `Dispatcher._waitForPerspectivesIfNeededAsync` (`Dispatcher.cs:367`), invoked when `DispatchOptions.WaitForPerspectives = true`. It calls `_eventCompletionAwaiter.WaitForEventsAsync(...)` and blocks until perspectives signal complete. But the call sequence is:
+
+1. Receptor handler → `_dispatcher.SendAsync(...)`
+2. Dispatcher → `_workCoordinator.StoreOutboxMessagesAsync(...)` (gate briefly held here)
+3. Coordinator returns, **gate released**
+4. Dispatcher → `_waitForPerspectivesIfNeededAsync(...)` ← the synchronous wait
+5. Returns to receptor
+
+The gate is released at step 3, before step 4 starts. **The perspective wait happens with no gate slot held.** There is no "release gate before perspective wait" lever to pull because the gate isn't held during the wait.
+
+#### What production's 49-50/50 saturation actually means
+
+The production forensic that motivated this slice — "gate held at 49-50/50 with BFF CPU at 20%" — is real, but the root cause is NOT the pattern Slice 4 targeted. Working hypotheses, in priority order (to be validated by Slice 7's `whizbang.gate.hold_duration_ms` histogram with `caller` tagging once it ships):
+
+1. **`ClaimWorkAsync`** (`EFCoreWorkCoordinator.cs:448`, `DapperWorkCoordinator.cs:343`) — the `claim_work()` RPC scans across categories, does the lease assignment in SQL. Under heavy load with many active streams and large unclaimed backlogs, this single call can run hundreds of ms. With multiple workers concurrently calling it, the gate fills.
+2. **`FlushCompletionsAsync`** (`EFCoreWorkCoordinator.cs:317`) and **`CommitHandlerBatchAsync`** (`EFCoreWorkCoordinator.cs:546`) — batched-write coordinator methods whose payload size scales with traffic.
+3. **Npgsql connection-pool exhaustion masquerading as gate exhaustion** — `await conn.OpenAsync(...)` happens *inside* the gate scope. If the pool is contended (e.g., pgbouncer in PROD or direct-PG max_connections in DEV), the gate slot is held during the pool wait. From `GateHoldDuration` alone we can't distinguish "long SQL execution" from "long connection-acquire" — but the `caller` tag will at least narrow which method is implicated.
+
+#### What we actually need before reshaping anything
+
+production needs Slice 7's hold-duration histogram running in production for long enough to read the per-caller p50/p95 distribution. That observation tells us:
+
+- Which gated method dominates the hold time (1 vs 2 vs 3 above)
+- Whether the slow caller's slowness is from SQL execution or connection acquisition (compare gate hold time against `npgsql_pool_*` counters or `ExecuteScalarAsync` traces if available)
+- Whether the structural fix is "split this specific slow call" (rare, surgical), "raise the pool size in this env" (config, not code), or "introduce work-stealing/batching to reduce call rate" (targeted)
+
+Until that data exists, **Slice 4 has no concrete lever to pull**. Any refactor based on the original "gate-held-during-perspective-wait" premise would be a no-op at best, and at worst would destabilize a correctly-scoped concurrency primitive with no measurable benefit.
+
+#### Unblock criteria
+
+Slice 4 reopens when at least one of these is true:
+
+1. The `whizbang.gate.hold_duration_ms` histogram (Slice 7) has been deployed and read in production production for a continuous import workload; the per-caller p95 identifies a specific gated method as the hot path AND that method's hold time is dominated by application work (not SQL execution or connection acquisition).
+2. New evidence emerges that the current gate scoping is wrong somewhere I missed in this audit. (Possible — large codebase. The audit above covered the 31 known `_gate.AcquireAsync(...)` call sites; if a new one shows up in a refactor, re-evaluate.)
+3. The work-coordinator chain grows a "long-running coordinator op" — e.g., a future call that batches across many SQL invocations within a single gated scope. That would be exactly the pattern Slice 4 was designed for.
+
+#### Why this is left in the plan rather than deleted
+
+Two reasons. First, the framing — "don't hold a concurrency primitive across application work" — IS a real architectural rule, even though the current code already follows it. Future refactors could violate it inadvertently; a documented rationale here makes the "why not" of any future regression visible. Second, the production forensic raised a real question (why is the gate saturated?) and the answer needs to be telemetry-driven, not premise-driven. Keeping the slice as a placeholder with clear unblock criteria preserves the question.
+
+#### Original design (for reference; do not implement)
 
 **Functional implications** (your question):
 
@@ -263,18 +318,18 @@ Per `feedback_show_full_namespace`: don't strip namespace segments when humanizi
 
 ## Sequencing
 
-| Slice | Effort | Depends on | Notes |
-|---|---|---|---|
-| 7 — Gate hold-duration histogram | ~2 h | — | Land first so subsequent tuning is measured |
-| 8 — Inbox dispatch duration by message type | ~2 h | — | Same: instrument before tuning |
-| 1 — Gate default derived from pool | ~1 h | 7 (for measurement) | Cheap config refactor |
-| 2 — Connection-budget sanity check | ~2 h | — | Independent; safety net |
-| 3 — InboxDispatch concurrency clamp | ~1 h | 1 | Trivial follow-on |
-| 4 — Release gate before perspective wait | ~half day | 7 | The structural win |
-| 5 — Within-stream parallelism (opt-in) | ~3 h | 4 | Layered on top of restructured holds |
-| 6 — Batched perspective writes | ~3 h | — | Independent; uses ExecuteAsync per a consumer retry-strategy rule |
+| Slice | Status | Effort | Depends on | Notes |
+|---|---|---|---|---|
+| 7 — Gate hold-duration histogram | DONE (v0.660) | ~2 h | — | Land first so subsequent tuning is measured |
+| 8 — Inbox dispatch duration by message type | DONE (v0.660) | ~2 h | — | Same: instrument before tuning |
+| 1 — Gate default derived from pool | DONE (v0.660) | ~1 h | 7 (for measurement) | Cheap config refactor — landed as `WorkCoordinatorGate.FromPoolSize` |
+| 3 — InboxDispatch concurrency clamp | DONE (v0.660) | ~1 h | 1 | Trivial follow-on — `ClampPartitionCount` |
+| 2 — Connection-budget sanity check | TODO | ~2 h | — | Independent; safety net |
+| 4 — Release gate before perspective wait | **BLOCKED on Slice 7 telemetry** | ~half day | 7 (telemetry-derived evidence) | Original premise invalidated 2026-06-08; see slice body for audit findings + unblock criteria |
+| 5 — Within-stream parallelism (opt-in) | TODO | ~3 h | Was 4 — now unblocked (Slice 4 stalled) | Layered on top of restructured holds |
+| 6 — Batched perspective writes | **NEXT** | ~3 h | — | Independent; uses ExecuteAsync per a consumer retry-strategy rule |
 
-Total: ~2 engineering days. Parallelizable: pair A on 7/8/1/3 (instrumentation + cheap tuning); pair B on 4 (gate refactor); pair C on 5/6 (parallelism + batching). Sync after 7/8 land so 1-6 measure improvements properly.
+Remaining: Slice 6 first (independent, measurable throughput win), then Slice 2 (safety net), then Slice 5 (within-stream parallelism — note: was originally blocked on Slice 4 in this plan; with Slice 4 stalled on telemetry, Slice 5's gains stand on their own and are no longer transitively blocked). Slice 4 reopens when production hold-duration histograms surface a specific caller to target.
 
 ## Next plan: Composite events (a consumer + Whizbang)
 
