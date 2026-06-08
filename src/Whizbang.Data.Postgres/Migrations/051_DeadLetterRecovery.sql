@@ -102,6 +102,19 @@ BEGIN
     RETURN FALSE;  -- already claimed by another worker or already terminal
   END IF;
 
+  -- v0.657 slice 4: DLQ replay self-repair. If the DLQ row preserves a
+  -- Guid.Empty stream_id (the production pattern — producer bug from before the
+  -- v0.657 storage-time Reject guard shipped), normalize to NULL on the
+  -- INSERT back into the source table. Otherwise the recovered row immediately
+  -- re-sticks under the same silent-stuck pattern that DLQ'd it in the first
+  -- place: stream_id=Empty bypasses the NULL-only `??` coalesce in the C#
+  -- coordinator (pre-v0.657) and the slice-3 coordinator backstop sees Empty
+  -- as "no real stream identity" → WorkId fallback. NULL is the documented
+  -- singleton-stream marker; that's the value we want on recovery.
+  IF v_stream_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
+    v_stream_id := NULL;
+  END IF;
+
   -- Extract the original event_data from the envelope JSONB.
   v_event_data := v_envelope -> 'event_data';
   v_partition := CASE WHEN v_stream_id IS NULL THEN 0 ELSE 0 END;  -- partition recomputed on store_*_messages path; fixed to 0 here is fine because claim_orphaned_* recomputes via wh_active_streams

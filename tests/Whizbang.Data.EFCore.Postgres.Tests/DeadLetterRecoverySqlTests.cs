@@ -232,9 +232,9 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
       await using var ins = conn.CreateCommand();
       ins.CommandText = @"
         INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, envelope_type, event_data, metadata, status, attempts,
+          (message_id, handler_name, message_type, event_data, metadata, status, attempts,
            received_at, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', 'TestEnvelope', '{}', '{}', 1, 11, NOW(), @stream, 0)";
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 11, NOW(), @stream, 0)";
       ins.Parameters.AddWithValue("msg", messageId);
       ins.Parameters.AddWithValue("stream", sid);
       await ins.ExecuteNonQueryAsync();
