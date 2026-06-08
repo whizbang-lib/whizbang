@@ -493,22 +493,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // (work_id, stream_id). Both OutboxWork and InboxWork stay empty. The legacy
     // OutboxPublishWorker / InboxDispatchWorker channels are populated by the new
     // OutboxDrainWorker / InboxDrainWorker after they fetch payloads on demand.
-    var perspectiveStreamIds = rows
-      .Where(r => r.Source == "perspective_stream" && r.StreamId.HasValue)
-      .Select(r => r.StreamId!.Value)
-      .ToList();
-    var outboxStreamIds = rows
-      .Where(r => r.Source == "outbox")
-      .Select(r => r.StreamId ?? r.WorkId ?? Guid.Empty)
-      .Where(g => g != Guid.Empty)
-      .Distinct()
-      .ToList();
-    var inboxStreamIds = rows
-      .Where(r => r.Source == "inbox")
-      .Select(r => r.StreamId ?? r.WorkId ?? Guid.Empty)
-      .Where(g => g != Guid.Empty)
-      .Distinct()
-      .ToList();
+    //
+    // v0.657 slice 3: stream_id coalesce moved into StreamIdCoalescer.Coalesce so
+    // Guid.Empty rows are recovered via WorkId fallback (with a Warning naming
+    // the offending row) instead of being silently dropped. See
+    // operations/configuration/empty-stream-id-policy for the production forensic.
+    var (perspectiveStreamIds, outboxStreamIds, inboxStreamIds) =
+      StreamIdCoalescer.Coalesce(rows, _logger);
 
     return new WorkBatch {
       OutboxWork = [],
