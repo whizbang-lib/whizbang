@@ -822,6 +822,41 @@ public interface IWorkCoordinator {
     IReadOnlyList<string> handledTypeNames,
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<PurgedOrphanInboxRow>>([]);
+
+  /// <summary>
+  /// v0.657 slice 5: structural canary for the "row claimed but never drained"
+  /// bug class. Returns <c>wh_outbox</c> rows whose <c>attempts</c> exceeds
+  /// <paramref name="maxAttempts"/> AND have not been processed.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Slot-3 forensic exposed a class of bug — silent stuck rows — that bypasses
+  /// every downstream defense. This surface lets the maintenance worker log a
+  /// Warning per row exhibiting the symptom, independent of root cause.
+  /// </para>
+  /// <para>
+  /// Default impl returns empty list so non-Postgres backends and test fakes
+  /// don't need to override. Postgres backend uses a partial index gated on
+  /// <c>attempts &gt; 5</c> so query cost is O(log N) on a near-empty set.
+  /// </para>
+  /// </remarks>
+  /// <param name="maxAttempts">Threshold — rows with attempts &gt; this are surfaced.</param>
+  /// <param name="limit">Cap on returned rows so log emission is bounded under saturation.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>operations/observability/stuck-row-sentinel</docs>
+  Task<IReadOnlyList<StuckRow>> FindStuckOutboxRowsAsync(
+    int maxAttempts,
+    int limit,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<StuckRow>>([]);
+
+  /// <summary>Mirror of <see cref="FindStuckOutboxRowsAsync"/> for <c>wh_inbox</c>.</summary>
+  /// <docs>operations/observability/stuck-row-sentinel</docs>
+  Task<IReadOnlyList<StuckRow>> FindStuckInboxRowsAsync(
+    int maxAttempts,
+    int limit,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<StuckRow>>([]);
 }
 
 /// <summary>

@@ -19,7 +19,6 @@ namespace Whizbang.Core.Tests.Workers;
 /// exactly one Warning per stuck row so operators see the symptom.
 /// </summary>
 /// <docs>operations/observability/stuck-row-sentinel</docs>
-[NotInParallel("WhizbangBackgroundServiceTests")]
 public class MaintenanceWorkerStuckRowSentinelTests {
 
   private sealed record _LogEntry(LogLevel Level, string Message);
@@ -29,9 +28,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => _NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      lock (Entries) {
-        Entries.Add(new _LogEntry(logLevel, formatter(state, exception)));
-      }
+      Entries.Add(new _LogEntry(logLevel, formatter(state, exception)));
     }
     private sealed class _NullScope : IDisposable {
       public static readonly _NullScope Instance = new();
@@ -40,7 +37,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   }
 
   private sealed class _FakeCoordinator : IWorkCoordinator {
-    public TaskCompletionSource SentinelCalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int SentinelCallCount { get; private set; }
     public List<StuckRow> StuckOutbox { get; init; } = [];
     public List<StuckRow> StuckInbox { get; init; } = [];
 
@@ -48,7 +45,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
       => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 
     public Task<IReadOnlyList<StuckRow>> FindStuckOutboxRowsAsync(int maxAttempts, int limit, CancellationToken ct = default) {
-      SentinelCalled.TrySetResult();
+      SentinelCallCount++;
       return Task.FromResult<IReadOnlyList<StuckRow>>(StuckOutbox);
     }
 
@@ -88,10 +85,9 @@ public class MaintenanceWorkerStuckRowSentinelTests {
     var coord = new _FakeCoordinator {
       StuckOutbox = [_stuck(stuckId, "JDX.RemoveShellUserCommand", attempts: 992)]
     };
-    var (worker, logger, cts) = _buildWorker(coord);
+    var (worker, logger) = _buildWorker(coord);
 
-    await worker.StartAsync(cts.Token);
-    await coord.SentinelCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
     var warnings = logger.Entries.Where(e => e.Level == LogLevel.Warning).ToList();
     await Assert.That(warnings.Count).IsGreaterThanOrEqualTo(1)
@@ -102,9 +98,6 @@ public class MaintenanceWorkerStuckRowSentinelTests {
       .Because("The Warning MUST name the message_type — that's the producer-side hint for operators chasing down the source.");
     await Assert.That(warnings.Any(w => w.Message.Contains("992"))).IsTrue()
       .Because("Reporting the attempts count is what tells operators how long this has been stuck — 992 vs 11 frames the urgency differently.");
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
   }
 
   /// <summary>
@@ -114,21 +107,17 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   [Test]
   public async Task MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync() {
     var coord = new _FakeCoordinator();
-    var (worker, logger, cts) = _buildWorker(coord);
+    var (worker, logger) = _buildWorker(coord);
 
-    await worker.StartAsync(cts.Token);
-    await coord.SentinelCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    // Allow log entries to flush
-    await Task.Delay(50, CancellationToken.None);
     var sentinelWarnings = logger.Entries
       .Where(e => e.Level == LogLevel.Warning && e.Message.Contains("stuck", StringComparison.OrdinalIgnoreCase))
       .ToList();
     await Assert.That(sentinelWarnings).IsEmpty()
       .Because("Healthy traffic must produce zero stuck-row Warnings — the sentinel must be quiet by default.");
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
+    await Assert.That(coord.SentinelCallCount).IsEqualTo(1)
+      .Because("The sentinel call still happens (default Enabled=true) — just returns an empty list so no Warnings fire.");
   }
 
   /// <summary>
@@ -147,20 +136,15 @@ public class MaintenanceWorkerStuckRowSentinelTests {
         _stuck(TrackedGuid.NewMedo(), "TypeD", 12),
       ]
     };
-    var (worker, logger, cts) = _buildWorker(coord);
+    var (worker, logger) = _buildWorker(coord);
 
-    await worker.StartAsync(cts.Token);
-    await coord.SentinelCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(50, CancellationToken.None);
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
     var stuckWarnings = logger.Entries
       .Where(e => e.Level == LogLevel.Warning && e.Message.Contains("stuck", StringComparison.OrdinalIgnoreCase))
       .ToList();
-    await Assert.That(stuckWarnings.Count).IsGreaterThanOrEqualTo(4)
-      .Because("3 outbox + 1 inbox = 4 stuck rows = 4 Warnings. Per-row granularity lets operators GROUP BY message_type to find spammy producers.");
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
+    await Assert.That(stuckWarnings.Count).IsEqualTo(4)
+      .Because("3 outbox + 1 inbox = 4 stuck rows = exactly 4 Warnings. Per-row granularity lets operators GROUP BY message_type to find spammy producers.");
   }
 
   /// <summary>
@@ -173,20 +157,15 @@ public class MaintenanceWorkerStuckRowSentinelTests {
     var coord = new _FakeCoordinator {
       StuckOutbox = [_stuck(TrackedGuid.NewMedo(), "TypeA", 50)]
     };
-    var (worker, logger, cts) = _buildWorker(coord, sentinelEnabled: false);
+    var (worker, _) = _buildWorker(coord, sentinelEnabled: false);
 
-    await worker.StartAsync(cts.Token);
-    // Wait for at least one maintenance tick to fire (PerformMaintenanceAsync runs regardless)
-    await Task.Delay(500, CancellationToken.None);
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(coord.SentinelCalled.Task.IsCompleted).IsFalse()
+    await Assert.That(coord.SentinelCallCount).IsEqualTo(0)
       .Because("With the sentinel disabled, FindStuckOutboxRowsAsync MUST NOT be called — the SQL query has a cost (small but non-zero) operators may opt out of.");
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
   }
 
-  private static (MaintenanceWorker Worker, _CapturingLogger Logger, CancellationTokenSource Cts) _buildWorker(
+  private static (MaintenanceWorker Worker, _CapturingLogger Logger) _buildWorker(
       _FakeCoordinator coord, bool sentinelEnabled = true) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -204,6 +183,6 @@ public class MaintenanceWorkerStuckRowSentinelTests {
         StuckRowSentinelLimit = 50,
       }),
       logger);
-    return (worker, logger, new CancellationTokenSource());
+    return (worker, logger);
   }
 }
