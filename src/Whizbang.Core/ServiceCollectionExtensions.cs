@@ -250,6 +250,7 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<TransportMetrics>();
     services.TryAddSingleton<PerspectiveMetrics>();
     services.TryAddSingleton<LifecycleMetrics>();
+    services.TryAddSingleton<InboxMetrics>();
     services.TryAddSingleton<LifecycleCoordinatorMetrics>();
 
     // Cross-worker dedup: prevents same message+stage from firing twice
