@@ -58,7 +58,11 @@ public class InboxMetricsTests {
     var metrics = _newMetrics();
     var observed = new List<KeyValuePair<string, object?>[]>();
     using var listener = new MeterListener();
-    listener.InstrumentPublished = (i, l) => { if (ReferenceEquals(i, metrics.DispatchDuration)) l.EnableMeasurementEvents(i); };
+    listener.InstrumentPublished = (i, l) => {
+      if (ReferenceEquals(i, metrics.DispatchDuration)) {
+        l.EnableMeasurementEvents(i);
+      }
+    };
     listener.SetMeasurementEventCallback<double>((_, _, tags, _) => observed.Add(tags.ToArray()));
     listener.Start();
 
@@ -78,7 +82,11 @@ public class InboxMetricsTests {
     var metrics = _newMetrics();
     var observed = new List<KeyValuePair<string, object?>[]>();
     using var listener = new MeterListener();
-    listener.InstrumentPublished = (i, l) => { if (ReferenceEquals(i, metrics.DispatchDuration)) l.EnableMeasurementEvents(i); };
+    listener.InstrumentPublished = (i, l) => {
+      if (ReferenceEquals(i, metrics.DispatchDuration)) {
+        l.EnableMeasurementEvents(i);
+      }
+    };
     listener.SetMeasurementEventCallback<double>((_, _, tags, _) => observed.Add(tags.ToArray()));
     listener.Start();
 
@@ -100,7 +108,11 @@ public class InboxMetricsTests {
     var metrics = _newMetrics();
     var observed = new List<KeyValuePair<string, object?>[]>();
     using var listener = new MeterListener();
-    listener.InstrumentPublished = (i, l) => { if (ReferenceEquals(i, metrics.DispatchDuration)) l.EnableMeasurementEvents(i); };
+    listener.InstrumentPublished = (i, l) => {
+      if (ReferenceEquals(i, metrics.DispatchDuration)) {
+        l.EnableMeasurementEvents(i);
+      }
+    };
     listener.SetMeasurementEventCallback<double>((_, _, tags, _) => observed.Add(tags.ToArray()));
     listener.Start();
 
