@@ -139,4 +139,74 @@ public class WorkCoordinatorGateTests {
     await Assert.That(gate.MaxConcurrent).IsEqualTo(17);
     await Assert.That(gate.AcquireTimeoutMilliseconds).IsEqualTo(42_000);
   }
+
+  /// <summary>
+  /// v0.660 Slice 7 — gate hold-duration histogram. Records the time between
+  /// acquire and dispose so operators can see which gated code paths are
+  /// holding slots longest. production forensic showed gate held at 49-50/50 with
+  /// BFF CPU at 20% — gate slots are being held during application work, not
+  /// just DB I/O. The histogram makes that visible per-caller.
+  /// </summary>
+  [Test]
+  public async Task AcquireAsync_OnDispose_RecordsHistogramObservationAsync() {
+    var metrics = new Whizbang.Core.Observability.WorkCoordinatorMetrics(
+      new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: null));
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, metrics: metrics);
+
+    var observed = new List<KeyValuePair<string, object?>[]>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (instrument.Name == "whizbang.gate.hold_duration_ms") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => {
+      observed.Add(tags.ToArray());
+    });
+    listener.Start();
+
+    using (await gate.AcquireAsync(CancellationToken.None)) {
+      // gate held — Dispose triggers the histogram record
+    }
+
+    listener.Dispose();
+    await Assert.That(observed.Count).IsEqualTo(1)
+      .Because("Each completed acquire/dispose pair MUST emit exactly one histogram observation — operators count these to compute gate throughput and p95 hold latency.");
+    var callerTag = observed[0].FirstOrDefault(kv => kv.Key == "caller");
+    await Assert.That((string?)callerTag.Value).IsNotNull()
+      .Because("Observations MUST be tagged with the calling method name so dashboards can group by caller (ClaimWorkAsync vs StoreOutboxMessagesAsync vs FetchOutboxBatchAsync).");
+  }
+
+  /// <summary>
+  /// The default-Releaser path (degraded after timeout-induced no-op) MUST NOT
+  /// emit a histogram observation — nothing was held, so timing it is noise
+  /// that would distort p95.
+  /// </summary>
+  [Test]
+  public async Task AcquireAsync_DegradedNoopReleaser_NoHistogramObservationAsync() {
+    var metrics = new Whizbang.Core.Observability.WorkCoordinatorMetrics(
+      new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: null));
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 100, metrics: metrics);
+
+    var observed = new List<KeyValuePair<string, object?>[]>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (instrument.Name == "whizbang.gate.hold_duration_ms") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => {
+      observed.Add(tags.ToArray());
+    });
+    listener.Start();
+
+    var holding = await gate.AcquireAsync(CancellationToken.None);  // 1 observation when this disposes
+    var degraded = await gate.AcquireAsync(CancellationToken.None);  // deadlines after 100ms; returns default
+    degraded.Dispose();
+    holding.Dispose();
+    listener.Dispose();
+
+    await Assert.That(observed.Count).IsEqualTo(1)
+      .Because("Only the actually-held acquire records a hold duration. The degraded default Releaser disposes without recording because nothing was held; including it would distort histograms with bogus near-zero measurements.");
+  }
 }
