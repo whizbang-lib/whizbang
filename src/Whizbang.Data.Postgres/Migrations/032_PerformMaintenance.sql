@@ -118,21 +118,36 @@ BEGIN
   -- ========================================
   -- Task 6: Purge abandoned active-stream rows
   -- ========================================
-  -- Removes wh_active_streams entries whose assigned_instance_id no longer exists
-  -- in wh_service_instances. After the heartbeat-recency liveness check in
-  -- claim_orphaned_inbox / claim_orphaned_outbox (migrations 024/025) these rows
-  -- are already non-blocking, but they accumulate indefinitely because
-  -- cleanup_stale_instances only nulls assigned_instance_id in the tick where the
-  -- instance is deleted, and the field can be re-populated by concurrent UPSERTs
-  -- via the COALESCE preserve-existing-ownership clause in process_work_batch
-  -- Phase 5.5. No age guard — a missing wh_service_instances row means the
-  -- instance is fully gone (UUIDv7 IDs never repeat).
+  -- Two branches, both safe because UUIDv7 IDs never repeat (a missing
+  -- wh_service_instances row means the instance is fully gone):
+  --
+  --   (a) Rows whose assigned_instance_id is non-NULL but points at a
+  --       wh_service_instances row that no longer exists. After the
+  --       heartbeat-recency liveness check in claim_orphaned_inbox /
+  --       claim_orphaned_outbox (migrations 024/025) these are already
+  --       non-blocking; the cleanup just bounds accumulation. No age guard.
+  --
+  --   (b) Rows whose assigned_instance_id IS NULL AND whose last_activity_at
+  --       is older than the grace period. cleanup_stale_instances nulls the
+  --       assigned_instance_id in the same tick where it deletes the dead
+  --       wh_service_instances row, so without this branch every dead
+  --       instance leaves its streams in the table forever (slot-3 forensic,
+  --       Jun 2026: 75k rows accumulated, 99% with NULL owner). The age
+  --       guard preserves the legitimate transient-NULL race window between
+  --       cleanup_stale_instances nulling the field and the next
+  --       claim_orphaned_* cycle re-assigning via INSERT ON CONFLICT.
   v_start := clock_timestamp();
   DELETE FROM __SCHEMA__.wh_active_streams
-  WHERE assigned_instance_id IS NOT NULL
-    AND NOT EXISTS (
-      SELECT 1 FROM __SCHEMA__.wh_service_instances si
-      WHERE si.instance_id = __SCHEMA__.wh_active_streams.assigned_instance_id
+  WHERE (
+      assigned_instance_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_service_instances si
+        WHERE si.instance_id = __SCHEMA__.wh_active_streams.assigned_instance_id
+      )
+    )
+    OR (
+      assigned_instance_id IS NULL
+      AND last_activity_at < NOW() - INTERVAL '1 hour'
     );
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   RETURN QUERY SELECT
