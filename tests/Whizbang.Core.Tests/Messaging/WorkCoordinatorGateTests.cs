@@ -156,7 +156,11 @@ public class WorkCoordinatorGateTests {
     var observed = new List<KeyValuePair<string, object?>[]>();
     using var listener = new System.Diagnostics.Metrics.MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Name == "whizbang.gate.hold_duration_ms") {
+      // Filter by instrument REFERENCE, not name — other tests run in parallel,
+      // creating their own WorkCoordinatorMetrics instances on Meters that share
+      // the "Whizbang.WorkCoordinator" name. Name-based matching would catch
+      // their measurements and inflate our counts.
+      if (ReferenceEquals(instrument, metrics.GateHoldDuration)) {
         l.EnableMeasurementEvents(instrument);
       }
     };
@@ -191,7 +195,11 @@ public class WorkCoordinatorGateTests {
     var observed = new List<KeyValuePair<string, object?>[]>();
     using var listener = new System.Diagnostics.Metrics.MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Name == "whizbang.gate.hold_duration_ms") {
+      // Filter by instrument REFERENCE, not name — other tests run in parallel,
+      // creating their own WorkCoordinatorMetrics instances on Meters that share
+      // the "Whizbang.WorkCoordinator" name. Name-based matching would catch
+      // their measurements and inflate our counts.
+      if (ReferenceEquals(instrument, metrics.GateHoldDuration)) {
         l.EnableMeasurementEvents(instrument);
       }
     };

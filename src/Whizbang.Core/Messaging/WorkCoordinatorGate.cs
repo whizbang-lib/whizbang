@@ -1,4 +1,7 @@
+using System.Diagnostics.Metrics;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
 
@@ -27,6 +30,7 @@ namespace Whizbang.Core.Messaging;
 public sealed partial class WorkCoordinatorGate : IDisposable {
   private readonly SemaphoreSlim? _semaphore;
   private readonly ILogger<WorkCoordinatorGate>? _logger;
+  private readonly Histogram<double>? _holdDurationHistogram;
 
   /// <summary>Maximum concurrent calls. 0 disables the cap.</summary>
   public int MaxConcurrent { get; }
@@ -56,11 +60,13 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   public WorkCoordinatorGate(
       int maxConcurrent,
       int acquireTimeoutMilliseconds = 30000,
-      ILogger<WorkCoordinatorGate>? logger = null) {
+      ILogger<WorkCoordinatorGate>? logger = null,
+      WorkCoordinatorMetrics? metrics = null) {
     MaxConcurrent = maxConcurrent;
     AcquireTimeoutMilliseconds = acquireTimeoutMilliseconds;
     _semaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent, maxConcurrent) : null;
     _logger = logger;
+    _holdDurationHistogram = metrics?.GateHoldDuration;
   }
 
   /// <summary>
@@ -74,7 +80,9 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// pre-v0.654 behavior) was to wait forever silently, which surfaced as the production
   /// "stuck row that never DLQ-promotes" pattern.
   /// </remarks>
-  public async ValueTask<Releaser> AcquireAsync(CancellationToken cancellationToken = default) {
+  public async ValueTask<Releaser> AcquireAsync(
+      CancellationToken cancellationToken = default,
+      [CallerMemberName] string caller = "<unknown>") {
     if (_semaphore is null) {
       return default;
     }
@@ -88,7 +96,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       if (_logger is not null) {
         LogAcquireGrantedNoDeadline(_logger);
       }
-      return new Releaser(_semaphore);
+      return new Releaser(_semaphore, _holdDurationHistogram, caller);
     }
     var acquired = await _semaphore
       .WaitAsync(AcquireTimeoutMilliseconds, cancellationToken)
@@ -97,7 +105,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       if (_logger is not null) {
         LogAcquireGranted(_logger, _semaphore.CurrentCount, MaxConcurrent);
       }
-      return new Releaser(_semaphore);
+      return new Releaser(_semaphore, _holdDurationHistogram, caller);
     }
     if (_logger is not null) {
       LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent);
@@ -106,18 +114,40 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     // holding a slot. The cap becomes advisory for this single call; pool exhaustion
     // (if it materialises) surfaces at the Npgsql layer with a real exception instead
     // of a silent indefinite hang in our own code.
+    // No-op Releaser has no histogram → no observation recorded; correct because
+    // nothing was held.
     return default;
   }
 
   /// <summary>Disposable returned by <see cref="AcquireAsync"/> — releases the slot on dispose.</summary>
+  /// <remarks>
+  /// On dispose: releases the underlying semaphore slot AND records the elapsed
+  /// time into <see cref="WorkCoordinatorMetrics.GateHoldDuration"/>, tagged with
+  /// the calling method name (captured at <see cref="AcquireAsync"/> via
+  /// <c>[CallerMemberName]</c>). The default-constructed Releaser (degraded
+  /// timeout path) does NOT record because nothing was held.
+  /// </remarks>
   public readonly struct Releaser : IDisposable {
     private readonly SemaphoreSlim? _semaphore;
-    internal Releaser(SemaphoreSlim semaphore) {
+    private readonly Histogram<double>? _holdDurationHistogram;
+    private readonly string? _caller;
+    private readonly long _startTicks;
+
+    internal Releaser(SemaphoreSlim semaphore, Histogram<double>? holdDurationHistogram, string? caller) {
       _semaphore = semaphore;
+      _holdDurationHistogram = holdDurationHistogram;
+      _caller = caller;
+      _startTicks = Environment.TickCount64;
     }
+
     /// <inheritdoc />
     public void Dispose() {
       _semaphore?.Release();
+      if (_holdDurationHistogram is not null && _semaphore is not null) {
+        var elapsedMs = (double)(Environment.TickCount64 - _startTicks);
+        _holdDurationHistogram.Record(elapsedMs,
+          new KeyValuePair<string, object?>("caller", _caller ?? "<unknown>"));
+      }
     }
   }
 
