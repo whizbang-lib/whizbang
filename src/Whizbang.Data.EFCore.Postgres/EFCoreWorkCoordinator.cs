@@ -48,7 +48,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null,
   WorkCoordinatorMetrics? metrics = null,
   WorkCoordinatorGate? gate = null,
-  IServiceInstanceProvider? instanceProvider = null
+  IServiceInstanceProvider? instanceProvider = null,
+  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
@@ -68,6 +69,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly WorkCoordinatorGate? _gate = gate;
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  // v0.657 slice 2: enforce EmptyStreamIdPolicy at StoreOutboxMessagesAsync /
+  // StoreInboxMessagesAsync time. When the options aren't wired into DI,
+  // default to the same Reject value as WhizbangCoreOptions itself.
+  private readonly Whizbang.Core.Configuration.EmptyStreamIdPolicy _emptyStreamIdPolicy =
+    coreOptions?.Value.EmptyStreamIdPolicy ?? Whizbang.Core.Configuration.EmptyStreamIdPolicy.Reject;
 
   private static TDbContext _initDbContext(TDbContext ctx) {
     ArgumentNullException.ThrowIfNull(ctx);
@@ -752,6 +758,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return;
     }
 
+    // v0.657 slice 2: storage-time Reject guard. See StoreOutboxMessagesAsync.
+    Whizbang.Core.Messaging.EmptyStreamIdGuard.ThrowIfAnyHasEmptyStreamId(messages, _emptyStreamIdPolicy);
+
     var json = _serializeNewInboxMessages(messages);
 
     var schema = GetSchemaWithFallback(
@@ -780,6 +789,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (messages.Length == 0) {
       return;
     }
+
+    // v0.657 slice 2: storage-time Reject guard. With the default
+    // EmptyStreamIdPolicy.Reject, throws EmptyStreamIdException naming the first
+    // offending row so producers see the bug at INSERT time — not 990 silent
+    // claim cycles later (the slot-3 forensic pattern).
+    Whizbang.Core.Messaging.EmptyStreamIdGuard.ThrowIfAnyHasEmptyStreamId(messages, _emptyStreamIdPolicy);
 
     var json = _serializeNewOutboxMessages(messages);
 
