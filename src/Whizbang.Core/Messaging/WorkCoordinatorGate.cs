@@ -70,6 +70,42 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   }
 
   /// <summary>
+  /// Creates a gate whose <see cref="MaxConcurrent"/> defaults to
+  /// <paramref name="maxPoolSize"/> minus <paramref name="reserve"/>, with a
+  /// floor of 1.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The gate's effective ceiling on DB-touching work is already
+  /// <c>min(MaxConcurrent, MaxPoolSize)</c> because each slot holds at most
+  /// one connection from the per-pod Npgsql pool. Deriving the cap from the
+  /// pool size eliminates a separate magic number that has to be re-tuned
+  /// every time the pool is resized.
+  /// </para>
+  /// <para>
+  /// <paramref name="reserve"/> (default 5) protects non-gated DB work — the
+  /// LISTEN connection, maintenance queries, health-check pings, ad-hoc
+  /// operator queries — from being starved when every gate slot is held
+  /// against a tight pool. Tune up if you have heavier non-gated traffic;
+  /// never let it drive the effective cap to ≤ 0 (the floor of 1 catches
+  /// that, but a 1-slot gate is a serialized pipeline).
+  /// </para>
+  /// </remarks>
+  public static WorkCoordinatorGate FromPoolSize(
+      int maxPoolSize,
+      int reserve = 5,
+      int acquireTimeoutMilliseconds = 30000,
+      ILogger<WorkCoordinatorGate>? logger = null,
+      WorkCoordinatorMetrics? metrics = null) {
+    var derived = Math.Max(1, maxPoolSize - reserve);
+    return new WorkCoordinatorGate(
+      maxConcurrent: derived,
+      acquireTimeoutMilliseconds: acquireTimeoutMilliseconds,
+      logger: logger,
+      metrics: metrics);
+  }
+
+  /// <summary>
   /// Acquire a slot. Returns a disposable that releases on dispose.
   /// </summary>
   /// <remarks>
