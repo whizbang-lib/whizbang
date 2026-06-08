@@ -58,7 +58,8 @@ public class PerspectiveLifecycleTests {
   /// Perspective processing should wait for this receptor to complete.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveInline_FiresBeforePerspectiveProcessing_BlocksUntilCompleteAsync() {
+  [Timeout(180_000)]
+  public async Task PrePerspectiveInline_FiresBeforePerspectiveProcessing_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -72,9 +73,12 @@ public class PerspectiveLifecycleTests {
 
     // Act - Register receptor for ProductCreatedEvent in BFF (where perspective processing happens).
     // Filter by ProductId so a stale event from a prior test cannot satisfy our wait.
+    // Plumb the test-method CancellationToken through so _waitForLifecycleStageAsync takes
+    // the deterministic path (no internal scaled timer race) — the [Timeout] attribute is
+    // the single source of truth for the wall-clock budget under CI parallel pressure.
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
@@ -117,7 +121,8 @@ public class PerspectiveLifecycleTests {
   /// Should use Task.Run and not block perspective processing.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveDetached_FiresParallelWithProcessing_NonBlockingAsync() {
+  [Timeout(180_000)]
+  public async Task PrePerspectiveDetached_FiresParallelWithProcessing_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -130,10 +135,11 @@ public class PerspectiveLifecycleTests {
     };
 
     // Act - Register receptor for ProductCreatedEvent in BFF, filtered to OUR event only
-    // (stale event from prior test would otherwise satisfy this wait).
+    // (stale event from prior test would otherwise satisfy this wait). CT-driven
+    // deterministic wait (see PrePerspectiveInline_FiresBeforePerspectiveProcessing_… for rationale).
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
@@ -187,7 +193,8 @@ public class PerspectiveLifecycleTests {
   /// Should use Task.Run and not block checkpoint reporting.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveDetached_FiresAfterPerspectiveCompletes_NonBlockingAsync() {
+  [Timeout(180_000)]
+  public async Task PostPerspectiveDetached_FiresAfterPerspectiveCompletes_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -200,10 +207,11 @@ public class PerspectiveLifecycleTests {
     };
 
     // Act - Register receptor for ProductCreatedEvent in BFF, filtered to OUR ProductId
-    // (stale events from prior tests would otherwise satisfy this wait).
+    // (stale events from prior tests would otherwise satisfy this wait). CT-driven
+    // deterministic wait (see PrePerspectiveInline_FiresBeforePerspectiveProcessing_… for rationale).
     var receptorTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
