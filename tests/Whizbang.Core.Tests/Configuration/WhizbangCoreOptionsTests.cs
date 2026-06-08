@@ -40,6 +40,35 @@ public class WhizbangCoreOptionsTests {
 
   #endregion
 
+  #region EmptyStreamIdPolicy Tests
+
+  /// <summary>
+  /// Locks the v0.657 default: brand-new deployments REJECT producers writing
+  /// zero-UUID stream_ids at storage time. Reason: the production forensic confirmed
+  /// the silent-stuck pattern only exists because the producer's bug isn't surfaced
+  /// at write time — by the time anyone notices (~990 attempts later) the producer
+  /// has shipped a thousand more. Reject default = fail at the producer, not at the
+  /// silent consumer.
+  /// </summary>
+  [Test]
+  public async Task EmptyStreamIdPolicy_DefaultsToRejectAsync() {
+    var options = new WhizbangCoreOptions();
+
+    await Assert.That(options.EmptyStreamIdPolicy).IsEqualTo(EmptyStreamIdPolicy.Reject)
+      .Because("Reject is the secure default — producers see a typed exception at INSERT time. Operators with legacy producers can opt into FallbackToMessageId until they fix the source.");
+  }
+
+  [Test]
+  public async Task EmptyStreamIdPolicy_CanBeSetToFallbackToMessageIdAsync() {
+    var options = new WhizbangCoreOptions {
+      EmptyStreamIdPolicy = EmptyStreamIdPolicy.FallbackToMessageId
+    };
+
+    await Assert.That(options.EmptyStreamIdPolicy).IsEqualTo(EmptyStreamIdPolicy.FallbackToMessageId);
+  }
+
+  #endregion
+
   #region EnableTagProcessing Tests
 
   [Test]

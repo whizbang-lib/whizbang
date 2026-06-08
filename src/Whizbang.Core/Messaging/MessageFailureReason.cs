@@ -84,5 +84,19 @@ public enum MessageFailureReason {
   /// indefinitely on a test-pattern tenant id. See
   /// operations/dead-letter-queue/internal-dlq doc page.
   /// </remarks>
-  SecurityContextEstablishmentFailure = 10
+  SecurityContextEstablishmentFailure = 10,
+
+  /// <summary>
+  /// Producer wrote a row whose <c>stream_id</c> is the all-zeros UUID
+  /// (<c>Guid.Empty</c>, distinct from NULL). Under
+  /// <see cref="Whizbang.Core.Configuration.EmptyStreamIdPolicy.DeadLetter"/>
+  /// or <see cref="Whizbang.Core.Configuration.EmptyStreamIdPolicy.Purge"/>,
+  /// the coordinator stamps this reason on the row to give operators a
+  /// grep-able code distinct from generic transport / serialization failures.
+  /// </summary>
+  /// <remarks>
+  /// Introduced in v0.657 after the production silent-stuck forensic.
+  /// See operations/configuration/empty-stream-id-policy.
+  /// </remarks>
+  EmptyStreamId = 11
 }
