@@ -1,8 +1,10 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -221,6 +223,50 @@ public class WorkCoordinatorGateTests {
     using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 50);
     await Assert.That(gate.MaxConcurrent).IsEqualTo(45)
       .Because("Default reserve must be 5 — documented in the connection-budget framing in plans/throughput-optimization.md. If this changes, the connection-pool-sizing doc must be updated in lockstep.");
+  }
+
+  /// <summary>
+  /// v0.659.1-alpha.15 regression — the default DI registration in
+  /// <c>WorkerPipelineExtensions.AddWhizbangWorkers</c> MUST resolve
+  /// <see cref="Whizbang.Core.Observability.WorkCoordinatorMetrics"/> from the
+  /// container and pass it to the gate, so the histogram from
+  /// <see cref="AcquireAsync_OnDispose_RecordsHistogramObservationAsync"/>
+  /// actually records under production wiring. Slice 7 originally landed only
+  /// the class-level histogram contract; the DI factory was left passing
+  /// <c>logger</c> alone, so 14 minutes of production traffic produced zero
+  /// <c>whizbang.gate.hold_duration_ms</c> observations in App Insights —
+  /// proving the wiring gap. This test locks the wiring so any future
+  /// refactor of the factory that drops the metrics arg fails here.
+  /// </summary>
+  [Test]
+  public async Task AddWhizbangWorkers_GateRegistration_PassesMetricsAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    // AddWhizbang registers WorkCoordinatorMetrics; AddWhizbangWorkers registers
+    // the gate. Both are required for the gate's DI factory to receive the metrics.
+    services.AddWhizbang();
+    services.AddWhizbangWorkers();
+    using var provider = services.BuildServiceProvider();
+    var metrics = provider.GetRequiredService<Whizbang.Core.Observability.WorkCoordinatorMetrics>();
+    var gate = provider.GetRequiredService<WorkCoordinatorGate>();
+
+    var observed = new List<KeyValuePair<string, object?>[]>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument, metrics.GateHoldDuration)) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => observed.Add(tags.ToArray()));
+    listener.Start();
+
+    using (await gate.AcquireAsync(CancellationToken.None)) {
+      // held — Dispose triggers histogram record, IF wiring is correct
+    }
+
+    listener.Dispose();
+    await Assert.That(observed.Count).IsEqualTo(1)
+      .Because("The DI factory at WorkerPipelineExtensions.cs:184 MUST pass `metrics: sp.GetService<WorkCoordinatorMetrics>()` so the singleton gate carries the meter. Without it, every acquire/dispose pair records nothing — the production 0-observation forensic that caught this gap.");
   }
 
   /// <summary>
