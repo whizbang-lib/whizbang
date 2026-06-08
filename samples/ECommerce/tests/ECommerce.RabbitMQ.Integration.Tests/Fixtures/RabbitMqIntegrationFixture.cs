@@ -444,6 +444,14 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
+    // Lifecycle stage firing observer — deterministic test-side signal that fires
+    // from ReceptorInvoker.OnReceptorFiredAsync after every receptor invocation completes.
+    // Replaces the prior receptor-TCS pattern (fragile under shared-fixture state +
+    // parallel CI scheduling). See LifecycleStageFiringObserver for rationale.
+    builder.Services.AddSingleton<ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserver>();
+    builder.Services.AddSingleton<Whizbang.Core.Messaging.IReceptorFiringObserver>(sp =>
+      sp.GetRequiredService<ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserver>());
+
     // Configure security to allow anonymous messages for testing
     // This is required because lifecycle receptors in PerspectiveWorker need security context
     // and test events don't have TenantId/UserId in their hops
@@ -598,6 +606,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // Register lifecycle services for Distribute stage support
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
+
+    // Lifecycle stage firing observer — see InventoryHost rationale.
+    builder.Services.AddSingleton<ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserver>();
+    builder.Services.AddSingleton<Whizbang.Core.Messaging.IReceptorFiringObserver>(sp =>
+      sp.GetRequiredService<ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserver>());
 
     // Configure security to allow anonymous messages for testing
     // This is required because lifecycle receptors in PerspectiveWorker need security context
