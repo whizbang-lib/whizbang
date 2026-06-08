@@ -344,6 +344,64 @@ public class MaintenanceTests : EFCoreTestBase {
     await Assert.That(remaining).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// Slot-3 forensic (Jun 2026): wh_active_streams accumulated 56k rows
+  /// older than 7 days, 99% of them with <c>assigned_instance_id IS NULL</c>.
+  /// Root cause: <c>cleanup_stale_instances</c> nulls
+  /// <c>assigned_instance_id</c> when its owner instance dies, but
+  /// <c>perform_maintenance</c>'s Task 6 DELETE filters on
+  /// <c>assigned_instance_id IS NOT NULL</c> — so NULL-owner rows are
+  /// invisible to the cleanup forever. This test locks the fix: NULL-owner
+  /// rows older than a grace period MUST also be purged.
+  /// </summary>
+  [Test]
+  public async Task PerformMaintenance_PrunesNullOwnerActiveStreamsOlderThanGrace_DeletesAbandonedAsync() {
+    await using var conn = await _openConnectionAsync();
+
+    var oldUnowned = Guid.CreateVersion7();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, lease_expiry, last_activity_at)
+      VALUES ('{oldUnowned}', 0, NULL, NULL, NOW() - INTERVAL '2 hours')");
+
+    var results = await _runMaintenanceAsync(conn);
+
+    var (TaskName, RowsAffected, _, Status) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    await Assert.That(TaskName).IsNotNull();
+    await Assert.That(Status).IsEqualTo("ok");
+    await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1L)
+      .Because("A NULL-owner row whose last activity is past the grace period (1 hour) MUST be deleted — otherwise these rows accumulate forever (slot-3 hit 75k of them).");
+
+    var remaining = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_active_streams WHERE stream_id = '{oldUnowned}'");
+    await Assert.That(remaining).IsEqualTo(0)
+      .Because("The specific NULL-owner row past the grace period MUST be gone after maintenance.");
+  }
+
+  /// <summary>
+  /// Race-safety regression lock: a NULL-owner row whose last activity is
+  /// RECENT must be preserved. NULL-owner is briefly transient — between
+  /// <c>cleanup_stale_instances</c> nulling the field and the next claim
+  /// cycle re-assigning via <c>INSERT ON CONFLICT</c>, the row legitimately
+  /// has no owner. Deleting these would race the re-assignment path and
+  /// risk losing in-flight stream identity.
+  /// </summary>
+  [Test]
+  public async Task PerformMaintenance_PreservesFreshNullOwnerActiveStreams_RaceSafetyAsync() {
+    await using var conn = await _openConnectionAsync();
+
+    var freshUnowned = Guid.CreateVersion7();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, lease_expiry, last_activity_at)
+      VALUES ('{freshUnowned}', 0, NULL, NULL, NOW())");
+
+    await _runMaintenanceAsync(conn);
+
+    var remaining = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_active_streams WHERE stream_id = '{freshUnowned}'");
+    await Assert.That(remaining).IsEqualTo(1)
+      .Because("A fresh NULL-owner row (within the grace period) MUST survive maintenance — it may be mid-reassignment via claim_orphaned_*'s INSERT ON CONFLICT path.");
+  }
+
   [Test]
   public async Task PerformMaintenance_WithNoAbandonedStreams_ReportsZeroRowsAffectedAsync() {
     // Empty-state guard: no rows to clean up should still return a result record.
