@@ -312,8 +312,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
-  // RED: returns interface-default null. GREEN commit changes this to the Standard tier ceiling.
-  public long? MaxMessageSizeBytes => null;
+  // Azure Service Bus Standard tier hard limit: 256 KB per message including envelope+headers.
+  // Premium supports up to 100 MB — consumers running Premium can override at the options layer;
+  // we ship the conservative Standard default so out-of-the-box deployments don't silently exceed.
+  public long? MaxMessageSizeBytes => 256L * 1024L;
 
   /// <inheritdoc />
   /// <tests>No tests found</tests>
