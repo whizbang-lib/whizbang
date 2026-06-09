@@ -116,6 +116,28 @@ public class AzureServiceBusTransportUnitTests {
     await Assert.That(adminClient.CreatedTopics).IsEmpty();
   }
 
+  /// <summary>
+  /// Azure Service Bus Standard tier enforces a 256 KB per-message ceiling
+  /// (envelope+body+headers). Surfacing this on ITransport lets size-aware
+  /// strategies (composite events, body offload) decide pre-flight whether a
+  /// message fits the wire or needs to be sent via claim-check pattern.
+  /// </summary>
+  /// <remarks>
+  /// 256 KB matches the documented Standard tier max — Premium tier supports
+  /// up to 100 MB, but we ship the conservative Standard default. Consumers
+  /// who run Premium can override at the options layer in a follow-up; the
+  /// transport-default ceiling is the safe one to start from.
+  /// </remarks>
+  [Test]
+  public async Task MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync() {
+    var transport = _createTransport();
+
+    var max = transport.MaxMessageSizeBytes;
+
+    await Assert.That(max).IsEqualTo(256L * 1024L)
+      .Because("Azure Service Bus Standard tier enforces 256 KB max message size (including envelope headers). Offload strategies set their threshold BELOW this to leave headroom for envelope metadata.");
+  }
+
   // ========================================
   // HELPERS
   // ========================================

@@ -125,6 +125,10 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   // Note: Ordered only when SAC is enabled - RabbitMQ doesn't guarantee ordering in multi-consumer scenarios
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:MaxMessageSizeBytes_ReturnsNull_NoEnforcedLimitAsync</tests>
+  public long? MaxMessageSizeBytes => null;
+
+  /// <inheritdoc />
   public Task InitializeAsync(CancellationToken cancellationToken = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
