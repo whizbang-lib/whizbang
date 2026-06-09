@@ -435,6 +435,103 @@ public class PostgresFunctionTests : PostgresTestBase {
     await Assert.That(exists).IsEqualTo(0);
   }
 
+  /// <summary>
+  /// v0.671 — multi-row regression lock for the bulk DELETE/UPDATE refactor of
+  /// <c>process_perspective_event_completions</c>. The current PL/pgSQL FOR-loop
+  /// implementation does TWO statements per completion (a SELECT to fetch
+  /// stream_id/perspective_name, then a DELETE). For N completions that's 2N
+  /// round trips through the planner. Slot-3 during-import gate-hold data
+  /// (PR #252 cycle) showed <c>CompletePerspectiveAsync</c> at avg 122 ms /
+  /// max 11.7 s — process_perspective_event_completions is one of three
+  /// sub-calls inside <c>complete_perspective</c>, and the loop-per-row pattern
+  /// is the per-call structural cost.
+  /// </summary>
+  /// <remarks>
+  /// This test must pass on BOTH the current loop-per-row implementation AND
+  /// the post-refactor single-statement implementation. It locks the
+  /// invariants the refactor must preserve:
+  ///   1. Returns exactly one row per completion that matched an existing
+  ///      <c>wh_perspective_events</c> row — not-found IDs MUST be silently
+  ///      skipped (not returned).
+  ///   2. Returned <c>stream_id</c> / <c>perspective_name</c> match the
+  ///      pre-delete row data for each EventWorkId.
+  ///   3. Matched rows MUST be removed from <c>wh_perspective_events</c>
+  ///      (production mode).
+  /// </remarks>
+  [Test]
+  public async Task ProcessPerspectiveEventCompletions_MultiRowBatch_ReturnsAllMatchedAndSkipsMissingAsync() {
+    // Arrange — three valid completions across two streams + one bogus ID
+    var stream1 = _idProvider.NewGuid();
+    var stream2 = _idProvider.NewGuid();
+    var work1 = _idProvider.NewGuid();
+    var work2 = _idProvider.NewGuid();
+    var work3 = _idProvider.NewGuid();
+    var bogusWork = _idProvider.NewGuid();
+    var event1 = _idProvider.NewGuid();
+    var event2 = _idProvider.NewGuid();
+    var event3 = _idProvider.NewGuid();
+    const string perspective1 = "PerspectiveA";
+    const string perspective2 = "PerspectiveB";
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Insert event-store rows for the three real events (FK requirement).
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+      VALUES (@e1, @s1, @s1, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
+             (@e2, @s1, @s1, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
+             (@e3, @s2, @s2, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      new { e1 = event1, e2 = event2, e3 = event3, s1 = stream1, s2 = stream2, now });
+
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, created_at)
+      VALUES (@w1, @s1, @p1, @e1, 1, @now),
+             (@w2, @s1, @p2, @e2, 1, @now),
+             (@w3, @s2, @p1, @e3, 1, @now)",
+      new { w1 = work1, w2 = work2, w3 = work3, s1 = stream1, s2 = stream2, e1 = event1, e2 = event2, e3 = event3, p1 = perspective1, p2 = perspective2, now });
+
+    var completions = JsonSerializer.Serialize(new[] {
+      new { EventWorkId = (Guid)work1, StatusFlags = 1 },
+      new { EventWorkId = (Guid)work2, StatusFlags = 1 },
+      new { EventWorkId = (Guid)work3, StatusFlags = 1 },
+      new { EventWorkId = (Guid)bogusWork, StatusFlags = 1 },  // doesn't exist — must be silently skipped
+    });
+
+    // Act
+    var results = (await connection.QueryAsync<PerspectiveCompletionResult>(@"
+      SELECT event_work_id, stream_id, perspective_name, was_deleted
+      FROM process_perspective_event_completions(@completions::jsonb, @now, false)",
+      new { completions, now })).ToList();
+
+    // Assert — exactly 3 returned rows (bogus skipped), all marked deleted
+    await Assert.That(results.Count).IsEqualTo(3)
+      .Because("Bogus EventWorkId must be silently skipped (not returned). The refactor MUST NOT add a row for a not-found ID — both the loop pattern and the bulk DELETE/RETURNING pattern naturally satisfy this; this test locks it.");
+
+    var byWorkId = results.ToDictionary(r => r.event_work_id);
+    await Assert.That(byWorkId.ContainsKey((Guid)work1)).IsTrue();
+    await Assert.That(byWorkId.ContainsKey((Guid)work2)).IsTrue();
+    await Assert.That(byWorkId.ContainsKey((Guid)work3)).IsTrue();
+    await Assert.That(byWorkId.ContainsKey((Guid)bogusWork)).IsFalse();
+
+    await Assert.That(byWorkId[(Guid)work1].stream_id).IsEqualTo((Guid)stream1);
+    await Assert.That(byWorkId[(Guid)work1].perspective_name).IsEqualTo(perspective1);
+    await Assert.That(byWorkId[(Guid)work2].stream_id).IsEqualTo((Guid)stream1);
+    await Assert.That(byWorkId[(Guid)work2].perspective_name).IsEqualTo(perspective2);
+    await Assert.That(byWorkId[(Guid)work3].stream_id).IsEqualTo((Guid)stream2);
+    await Assert.That(byWorkId[(Guid)work3].perspective_name).IsEqualTo(perspective1);
+
+    foreach (var r in results) {
+      await Assert.That(r.was_deleted).IsTrue();
+    }
+
+    // Verify all three real rows were deleted, bogus was a no-op
+    var remaining = await connection.QuerySingleAsync<int>(@"
+      SELECT COUNT(*) FROM wh_perspective_events WHERE event_work_id = ANY(@ids)",
+      new { ids = new[] { (Guid)work1, (Guid)work2, (Guid)work3, (Guid)bogusWork } });
+    await Assert.That(remaining).IsEqualTo(0);
+  }
+
   [Test]
   public async Task UpdatePerspectiveCursors_UpdatesCursorWithHighestSequenceAsync() {
     // Arrange
@@ -493,6 +590,125 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { streamId, perspectiveName });
 
     await Assert.That(checkpointEventId).IsEqualTo(event2Id);
+  }
+
+  /// <summary>
+  /// v0.671 — multi-pair regression lock for the bulk INSERT/UPDATE refactor of
+  /// <c>update_perspective_cursors</c>. The current PL/pgSQL FOR-loop
+  /// implementation does FOUR statements per (StreamId, PerspectiveName) pair
+  /// (latest-gap-free SELECT, is-complete NOT EXISTS, UPDATE, conditional
+  /// INSERT). Bulk pattern collapses that to two statements (one UPDATE for
+  /// existing cursors, one INSERT for new pairs), regardless of M.
+  ///
+  /// Mixed-state scenario this test locks:
+  ///   - pair A: existing cursor, gap-free progress to event2 → advance
+  ///     last_event_id, status stays incomplete (event3 still pending)
+  ///   - pair B: existing cursor, fully drained (no pending events) →
+  ///     status=Complete (2), last_event_id unchanged
+  ///   - pair C: existing cursor, no events with processed_at NOT NULL,
+  ///     but pending events exist → no change (last_event_id unchanged,
+  ///     status unchanged)
+  /// </summary>
+  [Test]
+  public async Task UpdatePerspectiveCursors_MultiPair_MixedStates_RetainOldSemanticsAsync() {
+    var streamA = _idProvider.NewGuid();
+    var streamB = _idProvider.NewGuid();
+    var streamC = _idProvider.NewGuid();
+    const string perspName = "Perspective_BulkTest";
+
+    var eA1 = _idProvider.NewGuid();
+    var eA2 = _idProvider.NewGuid();
+    var eA3 = _idProvider.NewGuid();
+    var eB1 = _idProvider.NewGuid();
+    var eC1 = _idProvider.NewGuid();
+    var initialA = _idProvider.NewGuid();
+    var initialB = _idProvider.NewGuid();
+    var initialC = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Event store rows for FK
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+      VALUES
+        (@eA1, @sA, @sA, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
+        (@eA2, @sA, @sA, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
+        (@eA3, @sA, @sA, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
+        (@eB1, @sB, @sB, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
+        (@eC1, @sC, @sC, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      new { eA1, eA2, eA3, eB1, eC1, sA = streamA, sB = streamB, sC = streamC, now });
+
+    // Pair A: events 1,2 processed; 3 pending → expect last_event_id=eA2, status stays 0
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, created_at, processed_at)
+      VALUES
+        (@w1, @sA, @p, @eA1, 1, @now, @now),
+        (@w2, @sA, @p, @eA2, 1, @now, @now),
+        (@w3, @sA, @p, @eA3, 1, @now, NULL)",
+      new {
+        w1 = _idProvider.NewGuid(),
+        w2 = _idProvider.NewGuid(),
+        w3 = _idProvider.NewGuid(),
+        sA = streamA,
+        p = perspName,
+        eA1,
+        eA2,
+        eA3,
+        now
+      });
+
+    // Pair B: no remaining events (fully drained in prod) → expect status=2, last_event_id unchanged
+    // (matches the production path where process_perspective_event_completions DELETEd the rows)
+
+    // Pair C: pending events with no processed_at → no change
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, created_at, processed_at)
+      VALUES (@w1, @sC, @p, @eC1, 1, @now, NULL)",
+      new { w1 = _idProvider.NewGuid(), sC = streamC, p = perspName, eC1, now });
+
+    // Pre-existing cursors so UPDATE path fires (not INSERT path)
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status)
+      VALUES
+        (@sA, @p, @initialA, 0),
+        (@sB, @p, @initialB, 0),
+        (@sC, @p, @initialC, 0)",
+      new { sA = streamA, sB = streamB, sC = streamC, p = perspName, initialA, initialB, initialC });
+
+    var completedEvents = JsonSerializer.Serialize(new[] {
+      new { StreamId = (Guid)streamA, PerspectiveName = perspName },
+      new { StreamId = (Guid)streamB, PerspectiveName = perspName },
+      new { StreamId = (Guid)streamC, PerspectiveName = perspName },
+    });
+
+    await connection.ExecuteAsync(@"
+      SELECT update_perspective_cursors(@completedEvents::jsonb, false)",
+      new { completedEvents });
+
+    var cursorA = await connection.QuerySingleAsync<(Guid LastEventId, short Status)>(@"
+      SELECT last_event_id, status FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p",
+      new { s = streamA, p = perspName });
+    await Assert.That(cursorA.LastEventId).IsEqualTo((Guid)eA2)
+      .Because("Pair A: events 1&2 processed, gap-free run ends at eA2 (eA3 still pending). Cursor must advance to eA2.");
+    await Assert.That((int)cursorA.Status).IsEqualTo(0)
+      .Because("Pair A is not complete (eA3 still pending), status must stay at 0.");
+
+    var cursorB = await connection.QuerySingleAsync<(Guid LastEventId, short Status)>(@"
+      SELECT last_event_id, status FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p",
+      new { s = streamB, p = perspName });
+    await Assert.That(cursorB.LastEventId).IsEqualTo((Guid)initialB)
+      .Because("Pair B has no perspective_events rows (drained). last_event_id must be PRESERVED (COALESCE with NULL gap-free result).");
+    await Assert.That((int)cursorB.Status).IsEqualTo(2)
+      .Because("Pair B is drained — NOT EXISTS unprocessed = TRUE → status must be set to 2 (Complete).");
+
+    var cursorC = await connection.QuerySingleAsync<(Guid LastEventId, short Status)>(@"
+      SELECT last_event_id, status FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p",
+      new { s = streamC, p = perspName });
+    await Assert.That(cursorC.LastEventId).IsEqualTo((Guid)initialC)
+      .Because("Pair C has only-pending events. Gap-free result is NULL. last_event_id MUST be preserved.");
+    await Assert.That((int)cursorC.Status).IsEqualTo(0)
+      .Because("Pair C is not complete (eC1 pending). Status must stay 0.");
   }
 
   [Test]

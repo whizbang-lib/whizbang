@@ -56,7 +56,8 @@ public class DistributeLifecycleTests {
   /// Verifies that PreDistributeInline lifecycle stage fires before work distribution (blocking).
   /// </summary>
   [Test]
-  public async Task PreDistributeInline_FiresBeforeDistribution_BlocksUntilCompleteAsync() {
+  [Timeout(180_000)]
+  public async Task PreDistributeInline_FiresBeforeDistribution_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -73,7 +74,8 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -96,7 +98,8 @@ public class DistributeLifecycleTests {
   /// Should use Task.Run and not block ProcessWorkBatchAsync.
   /// </summary>
   [Test]
-  public async Task PreDistributeDetached_FiresBeforeDistribution_NonBlockingAsync() {
+  [Timeout(180_000)]
+  public async Task PreDistributeDetached_FiresBeforeDistribution_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -114,7 +117,8 @@ public class DistributeLifecycleTests {
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForPreDistributeDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -137,7 +141,8 @@ public class DistributeLifecycleTests {
   /// Should use Task.Run and execute concurrently with work distribution.
   /// </summary>
   [Test]
-  public async Task DistributeDetached_FiresInParallelWithDistribution_NonBlockingAsync() {
+  [Timeout(180_000)]
+  public async Task DistributeDetached_FiresInParallelWithDistribution_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -155,7 +160,8 @@ public class DistributeLifecycleTests {
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -224,7 +230,8 @@ public class DistributeLifecycleTests {
   /// Should use Task.Run and not block next steps.
   /// </summary>
   [Test]
-  public async Task PostDistributeDetached_FiresAfterDistribution_NonBlockingAsync() {
+  [Timeout(180_000)]
+  public async Task PostDistributeDetached_FiresAfterDistribution_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -242,7 +249,8 @@ public class DistributeLifecycleTests {
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -265,7 +273,8 @@ public class DistributeLifecycleTests {
   /// Next step should wait for this receptor to complete.
   /// </summary>
   [Test]
-  public async Task PostDistributeInline_FiresAfterDistribution_BlocksUntilCompleteAsync() {
+  [Timeout(180_000)]
+  public async Task PostDistributeInline_FiresAfterDistribution_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -282,7 +291,8 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);

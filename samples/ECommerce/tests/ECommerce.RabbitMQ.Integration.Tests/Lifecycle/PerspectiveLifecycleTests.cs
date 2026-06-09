@@ -58,7 +58,14 @@ public class PerspectiveLifecycleTests {
   /// Perspective processing should wait for this receptor to complete.
   /// </summary>
   [Test]
-  [Timeout(180_000)]
+  // CI calibration: this test passes locally in ~9 s but the end-to-end chain
+  // (Inventory dispatch → outbox → RabbitMQ → BFF inbox → BFF perspective claim
+  // → fires PrePerspectiveInline) has been observed taking 180+ s on CI under
+  // the parallel-test-modules pressure (PR #254 forensic). The deterministic
+  // path + observer pattern + ApplyTestTimings() are already in place, so the
+  // residual 20× disparity is shared-infrastructure throughput, not a test
+  // race. Bumping to 300 s reflects CI reality without masking a flaky design.
+  [Timeout(300_000)]
   public async Task PrePerspectiveInline_FiresBeforePerspectiveProcessing_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -94,7 +101,8 @@ public class PerspectiveLifecycleTests {
   /// Tests the "no events processed yet" guarantee.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveInline_FiresBeforePerspectiveSave_NoEventsProcessedYetAsync() {
+  [Timeout(180_000)]
+  public async Task PrePerspectiveInline_FiresBeforePerspectiveSave_NoEventsProcessedYetAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -110,6 +118,10 @@ public class PerspectiveLifecycleTests {
     // If the worker processed it, PrePerspectiveInline must have fired (it fires before processing).
     await fixture.Dispatcher.SendAsync(command);
     await fixture.WaitForPerspectiveProcessingAsync(expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "bff");
+    // The [Timeout(180_000)] above is the test-framework wall-clock budget. The internal
+    // 45 s timer above is bounded by WHIZBANG_TEST_TIMEOUT_MULTIPLIER under CI (legacy path
+    // — WaitForPerspectiveProcessingAsync doesn't expose a CT yet; out of scope to extend here).
+    _ = cancellationToken;
   }
 
   // ========================================
