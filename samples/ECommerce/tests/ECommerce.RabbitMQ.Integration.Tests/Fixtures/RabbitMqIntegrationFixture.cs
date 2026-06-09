@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using ECommerce.BFF.API.Generated;
+using ECommerce.Integration.TestUtilities.Fixtures;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Generated;
@@ -498,13 +499,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       options.IdleThresholdPolls = 2;
     });
 
-    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
-    // in tests the cascade-write → NOTIFY delivery isn't always tight enough to avoid the
-    // safety-net poll, and a 30 s floor would dominate test runtime. Drop to 500 ms so the
-    // safety net catches up promptly without burning CI on idle waits.
-    builder.Services.Configure<ClaimWorkerOptions>(options => {
-      options.NotifyHealthyPollingIntervalMilliseconds = 500;
-    });
+    // Centralized test-side timing overrides — ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, and SlidingWindow* MaxWait. See
+    // TestWorkerTimingOverrides XML doc for the per-knob rationale.
+    builder.Services.ApplyTestTimings();
 
     // Register background workers
     builder.Services.AddHostedService<PerspectiveWorker>();
@@ -661,13 +659,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       options.IdleThresholdPolls = 2;
     });
 
-    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
-    // in tests the cascade-write → NOTIFY delivery isn't always tight enough to avoid the
-    // safety-net poll, and a 30 s floor would dominate test runtime. Drop to 500 ms so the
-    // safety net catches up promptly without burning CI on idle waits.
-    builder.Services.Configure<ClaimWorkerOptions>(options => {
-      options.NotifyHealthyPollingIntervalMilliseconds = 500;
-    });
+    // Centralized test-side timing overrides — ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, and SlidingWindow* MaxWait. See
+    // TestWorkerTimingOverrides XML doc for the per-knob rationale.
+    builder.Services.ApplyTestTimings();
 
     // Register background workers
     builder.Services.AddHostedService<PerspectiveWorker>();
