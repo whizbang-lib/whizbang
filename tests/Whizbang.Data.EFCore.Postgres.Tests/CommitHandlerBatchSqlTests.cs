@@ -265,15 +265,16 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("req", resultsJson);
     await cmd.ExecuteNonQueryAsync();
 
-    // All three inbox rows must be DELETEd (production mode) — the inbox completion
-    // ran inside the single bulk transaction. Equivalent to commit_handler_batch's
-    // happy path but without per-handler savepoint overhead.
+    // All three inbox completions ran inside a single transaction with NO
+    // savepoint isolation — same observable end-state as commit_handler_batch's
+    // happy path (processed_at stamped via the debug-mode test DB) but without
+    // per-handler savepoint overhead.
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox WHERE message_id = ANY(@ids)";
+    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
-    var remaining = (long)(await verify.ExecuteScalarAsync())!;
-    await Assert.That(remaining).IsEqualTo(0L)
-      .Because("Tier 1 happy path: every inbox completion ran atomically inside the bulk transaction; production DELETE removed all three rows.");
+    var processed = (long)(await verify.ExecuteScalarAsync())!;
+    await Assert.That(processed).IsEqualTo(3L)
+      .Because("Tier 1 happy path: every inbox completion's commit_handler_result ran atomically inside the bulk transaction and stamped processed_at on all three rows.");
   }
 
   /// <summary>
