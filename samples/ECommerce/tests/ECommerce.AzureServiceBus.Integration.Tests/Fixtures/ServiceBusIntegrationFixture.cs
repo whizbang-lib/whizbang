@@ -5,6 +5,7 @@ using Dapper;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
+using ECommerce.Integration.TestUtilities.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Medo;
@@ -493,9 +494,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
     // override in test fixture so the safety-net poll catches up promptly when NOTIFY
     // delivery doesn't align with cascade-write timing.
-    builder.Services.Configure<ClaimWorkerOptions>(options => {
-      options.NotifyHealthyPollingIntervalMilliseconds = 500;
-    });
+    // Centralized test-side timing overrides (ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, SlidingWindow* MaxWait). See
+    // TestWorkerTimingOverrides XML doc — PR #251 forensic for rationale.
+    builder.Services.ApplyTestTimings();
 
     // Register background workers
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors

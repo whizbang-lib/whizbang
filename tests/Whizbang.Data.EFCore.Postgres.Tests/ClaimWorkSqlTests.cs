@@ -656,4 +656,79 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await Assert.That(calls).IsEqualTo(0L);
     }
   }
+
+  /// <summary>
+  /// v0.661 — negative invariant for the drain-mode hint. When claim_work returns
+  /// FEWER rows than the requested cap (i.e., the instance has no more eligible
+  /// work after this batch), it MUST NOT raise the <c>whizbang.has_more=true</c>
+  /// NOTICE. Otherwise the C# claim worker would skip its NOTIFY-wait cycle and
+  /// hot-loop the empty path, defeating zero-idle-polling.
+  /// </summary>
+  /// <remarks>
+  /// Paired with <see cref="ClaimWork_FullBatch_RaisesHasMoreNoticeAsync"/>. Both
+  /// must pass: NOTICE fires when there's more work, NOTICE does NOT fire when
+  /// caught up. The implementation refactor that replaces the four
+  /// <c>COUNT(*)</c> drain-mode-hint queries with <c>GET DIAGNOSTICS ROW_COUNT</c>
+  /// after each <c>RETURN QUERY</c> must preserve both invariants.
+  /// </remarks>
+  [Test]
+  public async Task ClaimWork_PartialBatch_DoesNotRaiseHasMoreNoticeAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    const int cap = 10;
+
+    await using (var hb = connection.CreateCommand()) {
+      hb.CommandText = @"
+        INSERT INTO wh_service_instances
+          (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)";
+      hb.Parameters.AddWithValue("id", instanceId);
+      await hb.ExecuteNonQueryAsync();
+    }
+
+    // Insert only 3 outbox rows — well below the cap of 10 — so claim_work can
+    // drain the queue completely. No more work after this batch.
+    for (var i = 0; i < 3; i++) {
+      await using var ins = connection.CreateCommand();
+      ins.CommandText = @"
+        INSERT INTO wh_outbox
+          (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number)
+        VALUES (@msg, 'test-topic', 'TestEvent', '{}', '{}', 0, 0, NOW(), @stream, 0)";
+      ins.Parameters.AddWithValue("msg", Guid.NewGuid());
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var notices = new List<string>();
+    void OnNotice(object? sender, NpgsqlNoticeEventArgs e) {
+      notices.Add(e.Notice.MessageText);
+    }
+    connection.Notice += OnNotice;
+    try {
+      await using var cmd = connection.CreateCommand();
+      cmd.CommandText = @"
+        SELECT count(*) FROM claim_work(
+          p_instance_id => @id,
+          p_service_name => 'test',
+          p_host_name => 'test-host',
+          p_process_id => 1,
+          p_max_streams => @cap,
+          p_partition_count => 10000,
+          p_lease_seconds => 300
+        )";
+      cmd.Parameters.AddWithValue("id", instanceId);
+      cmd.Parameters.AddWithValue("cap", cap);
+      _ = await cmd.ExecuteScalarAsync();
+    } finally {
+      connection.Notice -= OnNotice;
+    }
+
+    await Assert.That(notices.Any(n => n.Contains("whizbang.has_more=true"))).IsFalse()
+      .Because("Only 3 outbox rows with cap=10 — the instance has fully drained. Raising whizbang.has_more=true here would make the C# claim worker hot-loop the empty path, defeating zero-idle-polling.");
+  }
 }
