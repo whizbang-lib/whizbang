@@ -435,6 +435,103 @@ public class PostgresFunctionTests : PostgresTestBase {
     await Assert.That(exists).IsEqualTo(0);
   }
 
+  /// <summary>
+  /// v0.671 — multi-row regression lock for the bulk DELETE/UPDATE refactor of
+  /// <c>process_perspective_event_completions</c>. The current PL/pgSQL FOR-loop
+  /// implementation does TWO statements per completion (a SELECT to fetch
+  /// stream_id/perspective_name, then a DELETE). For N completions that's 2N
+  /// round trips through the planner. Slot-3 during-import gate-hold data
+  /// (PR #252 cycle) showed <c>CompletePerspectiveAsync</c> at avg 122 ms /
+  /// max 11.7 s — process_perspective_event_completions is one of three
+  /// sub-calls inside <c>complete_perspective</c>, and the loop-per-row pattern
+  /// is the per-call structural cost.
+  /// </summary>
+  /// <remarks>
+  /// This test must pass on BOTH the current loop-per-row implementation AND
+  /// the post-refactor single-statement implementation. It locks the
+  /// invariants the refactor must preserve:
+  ///   1. Returns exactly one row per completion that matched an existing
+  ///      <c>wh_perspective_events</c> row — not-found IDs MUST be silently
+  ///      skipped (not returned).
+  ///   2. Returned <c>stream_id</c> / <c>perspective_name</c> match the
+  ///      pre-delete row data for each EventWorkId.
+  ///   3. Matched rows MUST be removed from <c>wh_perspective_events</c>
+  ///      (production mode).
+  /// </remarks>
+  [Test]
+  public async Task ProcessPerspectiveEventCompletions_MultiRowBatch_ReturnsAllMatchedAndSkipsMissingAsync() {
+    // Arrange — three valid completions across two streams + one bogus ID
+    var stream1 = _idProvider.NewGuid();
+    var stream2 = _idProvider.NewGuid();
+    var work1 = _idProvider.NewGuid();
+    var work2 = _idProvider.NewGuid();
+    var work3 = _idProvider.NewGuid();
+    var bogusWork = _idProvider.NewGuid();
+    var event1 = _idProvider.NewGuid();
+    var event2 = _idProvider.NewGuid();
+    var event3 = _idProvider.NewGuid();
+    const string perspective1 = "PerspectiveA";
+    const string perspective2 = "PerspectiveB";
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Insert event-store rows for the three real events (FK requirement).
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+      VALUES (@e1, @s1, @s1, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
+             (@e2, @s1, @s1, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
+             (@e3, @s2, @s2, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      new { e1 = event1, e2 = event2, e3 = event3, s1 = stream1, s2 = stream2, now });
+
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, created_at)
+      VALUES (@w1, @s1, @p1, @e1, 1, @now),
+             (@w2, @s1, @p2, @e2, 1, @now),
+             (@w3, @s2, @p1, @e3, 1, @now)",
+      new { w1 = work1, w2 = work2, w3 = work3, s1 = stream1, s2 = stream2, e1 = event1, e2 = event2, e3 = event3, p1 = perspective1, p2 = perspective2, now });
+
+    var completions = JsonSerializer.Serialize(new[] {
+      new { EventWorkId = (Guid)work1, StatusFlags = 1 },
+      new { EventWorkId = (Guid)work2, StatusFlags = 1 },
+      new { EventWorkId = (Guid)work3, StatusFlags = 1 },
+      new { EventWorkId = (Guid)bogusWork, StatusFlags = 1 },  // doesn't exist — must be silently skipped
+    });
+
+    // Act
+    var results = (await connection.QueryAsync<PerspectiveCompletionResult>(@"
+      SELECT event_work_id, stream_id, perspective_name, was_deleted
+      FROM process_perspective_event_completions(@completions::jsonb, @now, false)",
+      new { completions, now })).ToList();
+
+    // Assert — exactly 3 returned rows (bogus skipped), all marked deleted
+    await Assert.That(results.Count).IsEqualTo(3)
+      .Because("Bogus EventWorkId must be silently skipped (not returned). The refactor MUST NOT add a row for a not-found ID — both the loop pattern and the bulk DELETE/RETURNING pattern naturally satisfy this; this test locks it.");
+
+    var byWorkId = results.ToDictionary(r => r.event_work_id);
+    await Assert.That(byWorkId.ContainsKey((Guid)work1)).IsTrue();
+    await Assert.That(byWorkId.ContainsKey((Guid)work2)).IsTrue();
+    await Assert.That(byWorkId.ContainsKey((Guid)work3)).IsTrue();
+    await Assert.That(byWorkId.ContainsKey((Guid)bogusWork)).IsFalse();
+
+    await Assert.That(byWorkId[(Guid)work1].stream_id).IsEqualTo((Guid)stream1);
+    await Assert.That(byWorkId[(Guid)work1].perspective_name).IsEqualTo(perspective1);
+    await Assert.That(byWorkId[(Guid)work2].stream_id).IsEqualTo((Guid)stream1);
+    await Assert.That(byWorkId[(Guid)work2].perspective_name).IsEqualTo(perspective2);
+    await Assert.That(byWorkId[(Guid)work3].stream_id).IsEqualTo((Guid)stream2);
+    await Assert.That(byWorkId[(Guid)work3].perspective_name).IsEqualTo(perspective1);
+
+    foreach (var r in results) {
+      await Assert.That(r.was_deleted).IsTrue();
+    }
+
+    // Verify all three real rows were deleted, bogus was a no-op
+    var remaining = await connection.QuerySingleAsync<int>(@"
+      SELECT COUNT(*) FROM wh_perspective_events WHERE event_work_id = ANY(@ids)",
+      new { ids = new[] { (Guid)work1, (Guid)work2, (Guid)work3, (Guid)bogusWork } });
+    await Assert.That(remaining).IsEqualTo(0);
+  }
+
   [Test]
   public async Task UpdatePerspectiveCursors_UpdatesCursorWithHighestSequenceAsync() {
     // Arrange
