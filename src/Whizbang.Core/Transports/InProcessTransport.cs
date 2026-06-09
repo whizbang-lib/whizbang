@@ -63,6 +63,10 @@ public class InProcessTransport : ITransport {
     TransportCapabilities.Reliable;
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_MaxMessageSizeBytes_InProcessTransport_ReturnsNullAsync</tests>
+  public long? MaxMessageSizeBytes => null;
+
+  /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithNoSubscribers_CompletesSuccessfullyAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithSingleSubscriber_InvokesHandlerAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithMultipleSubscribers_InvokesAllHandlersAsync</tests>

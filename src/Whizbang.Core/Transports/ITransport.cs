@@ -51,6 +51,26 @@ public interface ITransport {
   TransportCapabilities Capabilities { get; }
 
   /// <summary>
+  /// Maximum per-message size (envelope + body + headers) the transport will
+  /// accept on the wire, in bytes. <c>null</c> means there is no enforced
+  /// limit relevant to Whizbang offload-strategy decisions (e.g., in-process
+  /// transports, or transports whose ceiling is high enough that no Whizbang
+  /// outbox message could reasonably exceed it).
+  /// </summary>
+  /// <remarks>
+  /// Size-aware strategies — composite events, body offload — read this value
+  /// pre-flight in <c>OutboxPublishWorker</c> to decide whether to send a
+  /// large message inline or route it through a body-store (claim-check
+  /// pattern). Offload thresholds are set BELOW this value to leave room for
+  /// envelope headers and broker metadata.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_MaxMessageSizeBytes_InProcessTransport_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:MaxMessageSizeBytes_ReturnsNull_NoEnforcedLimitAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
+  /// <docs>messaging/transports/transports#max-message-size</docs>
+  long? MaxMessageSizeBytes => null;
+
+  /// <summary>
   /// Publishes a message to a destination (fire-and-forget).
   /// The message is sent asynchronously with no response expected.
   /// </summary>

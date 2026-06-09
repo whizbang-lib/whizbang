@@ -311,6 +311,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     (_options.EnableSessions ? TransportCapabilities.Ordered : TransportCapabilities.None);
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
+  // RED: returns interface-default null. GREEN commit changes this to the Standard tier ceiling.
+  public long? MaxMessageSizeBytes => null;
+
+  /// <inheritdoc />
   /// <tests>No tests found</tests>
   public Task PublishAsync(
     IMessageEnvelope envelope,
