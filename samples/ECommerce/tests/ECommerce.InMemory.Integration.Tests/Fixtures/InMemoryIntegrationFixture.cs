@@ -5,6 +5,7 @@ using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InMemory.Integration.Tests.Workflows;
 using ECommerce.Integration.Tests.Fixtures;
+using ECommerce.Integration.TestUtilities.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.EntityFrameworkCore;
@@ -379,9 +380,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // delivered before the listener subscribes, so the 30 s safety-net poll becomes the
     // observed latency floor. Drop it to a test-friendly cadence so the safety net catches
     // up promptly when NOTIFY misses.
-    builder.Services.Configure<ClaimWorkerOptions>(options => {
-      options.NotifyHealthyPollingIntervalMilliseconds = 500;
-    });
+    // Centralized test-side timing overrides (ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, SlidingWindow* MaxWait). See
+    // TestWorkerTimingOverrides XML doc — PR #251 forensic for rationale.
+    builder.Services.ApplyTestTimings();
 
     // Register background workers
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
@@ -533,9 +535,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // delivered before the listener subscribes, so the 30 s safety-net poll becomes the
     // observed latency floor. Drop it to a test-friendly cadence so the safety net catches
     // up promptly when NOTIFY misses.
-    builder.Services.Configure<ClaimWorkerOptions>(options => {
-      options.NotifyHealthyPollingIntervalMilliseconds = 500;
-    });
+    // Centralized test-side timing overrides (ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, SlidingWindow* MaxWait). See
+    // TestWorkerTimingOverrides XML doc — PR #251 forensic for rationale.
+    builder.Services.ApplyTestTimings();
 
     // Register background workers
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
