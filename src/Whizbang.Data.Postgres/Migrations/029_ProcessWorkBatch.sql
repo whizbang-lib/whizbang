@@ -67,6 +67,12 @@ BEGIN
     v_stale_cutoff TIMESTAMPTZ := v_now - INTERVAL '30 seconds';
     v_rank INTEGER;
     v_count INTEGER;
+    -- v0.661: track per-category RETURN QUERY rowcount so the drain-mode hint
+    -- can be derived from ROW_COUNT instead of four fresh COUNT(*) queries.
+    v_outbox_rows INTEGER := 0;
+    v_inbox_rows INTEGER := 0;
+    v_receptor_rows INTEGER := 0;
+    v_perspective_rows INTEGER := 0;
   BEGIN
     SELECT instance_rank, active_instance_count INTO v_rank, v_count
     FROM __SCHEMA__.calculate_instance_rank(p_instance_id, v_stale_cutoff);
@@ -132,6 +138,11 @@ BEGIN
       NULL::VARCHAR(200)            AS perspective_name
     FROM ordered_outbox oo;
 
+    -- v0.661: track this category's RETURN QUERY rowcount so the drain-mode
+    -- hint at function end can be derived from ROW_COUNT instead of a fresh
+    -- COUNT(*) scan. See drain-mode hint block below.
+    GET DIAGNOSTICS v_outbox_rows = ROW_COUNT;
+
     -- Return inbox work owned by this instance. Inbox uses handler_name (cast to destination)
     -- and received_at (cast to created_at). envelope_type is NULL for inbox.
     RETURN QUERY
@@ -171,6 +182,9 @@ BEGIN
       NULL::VARCHAR(200)            AS perspective_name
     FROM ordered_inbox oi;
 
+    -- v0.661: see outbox block above.
+    GET DIAGNOSTICS v_inbox_rows = ROW_COUNT;
+
     -- Return receptor work owned by this instance.
     -- Receptor work uses `id` as the work_id (not message_id) and `completed_at` as the "done" marker.
     -- Most fields are NULL — receptors carry their state in dedicated columns the worker reads
@@ -196,6 +210,9 @@ BEGIN
       AND rp.lease_expiry > v_now
       AND rp.completed_at IS NULL
     LIMIT p_max_streams;
+
+    -- v0.661: see outbox block above.
+    GET DIAGNOSTICS v_receptor_rows = ROW_COUNT;
 
     -- Return perspective work as one row per distinct stream owned by this instance.
     -- Two-tier fairness ordering: small streams (≤ 100 pending events) come first, then
@@ -234,28 +251,29 @@ BEGIN
       sc.pending_count                                       -- within tier, smallest-first
     LIMIT p_max_streams;
 
-    -- Drain-mode hint: if this instance has more eligible work than fits in a single
-    -- batch, RAISE NOTICE so the C# claim worker skips its wait and re-polls immediately.
-    -- Survives pgbouncer (protocol message, not a session-state thing).
-    DECLARE
-      v_pending INTEGER;
-    BEGIN
-      SELECT
-        (SELECT COUNT(*) FROM __SCHEMA__.wh_outbox o
-           WHERE o.instance_id = p_instance_id AND o.lease_expiry > v_now AND o.processed_at IS NULL
-             AND (o.scheduled_for IS NULL OR o.scheduled_for <= v_now))
-        + (SELECT COUNT(*) FROM __SCHEMA__.wh_inbox i
-           WHERE i.instance_id = p_instance_id AND i.lease_expiry > v_now AND i.processed_at IS NULL)
-        + (SELECT COUNT(*) FROM __SCHEMA__.wh_receptor_processing rp
-           WHERE rp.instance_id = p_instance_id AND rp.lease_expiry > v_now AND rp.completed_at IS NULL)
-        + (SELECT COUNT(DISTINCT pe.stream_id) FROM __SCHEMA__.wh_perspective_events pe
-           WHERE pe.instance_id = p_instance_id AND pe.lease_expiry > v_now AND pe.processed_at IS NULL)
-      INTO v_pending;
+    -- v0.661: see outbox block above.
+    GET DIAGNOSTICS v_perspective_rows = ROW_COUNT;
 
-      IF v_pending > p_max_streams THEN
-        RAISE NOTICE 'whizbang.has_more=true';
-      END IF;
-    END;
+    -- Drain-mode hint: if any of the four return categories filled its LIMIT
+    -- (rows == p_max_streams), there's likely more eligible work for this
+    -- instance — RAISE NOTICE so the C# claim worker skips its wait and
+    -- re-polls immediately. Survives pgbouncer (protocol message, not a
+    -- session-state thing).
+    --
+    -- v0.661 forensic (gate.hold_duration_ms histogram during a a consumer
+    -- draft-job import): the prior implementation ran four separate
+    -- COUNT(*) queries here (one per category, plus a COUNT(DISTINCT
+    -- stream_id) on wh_perspective_events). Under import load with millions
+    -- of leased rows per instance, those counts dominated claim_work hold
+    -- time — ClaimWorkAsync at p99 5031 ms / avg 128 ms. We don't need
+    -- exact counts; we only need to know whether ANY category filled its
+    -- LIMIT. ROW_COUNT after each RETURN QUERY gives us that for free.
+    IF v_outbox_rows = p_max_streams
+       OR v_inbox_rows = p_max_streams
+       OR v_receptor_rows = p_max_streams
+       OR v_perspective_rows = p_max_streams THEN
+      RAISE NOTICE 'whizbang.has_more=true';
+    END IF;
   END;
 
   RETURN;
