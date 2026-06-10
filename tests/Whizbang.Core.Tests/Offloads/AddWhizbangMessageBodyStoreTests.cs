@@ -66,6 +66,45 @@ public class AddWhizbangMessageBodyStoreTests {
   }
 
   [Test]
+  public async Task AddWhizbangBodyOffload_RegistersHookChain_ResolvableFromDIAsync() {
+    var services = new ServiceCollection();
+    services.AddWhizbangBodyOffload();
+
+    var provider = services.BuildServiceProvider();
+    var chain = provider.GetService<PostSerializeHookChain>();
+
+    await Assert.That(chain).IsNotNull()
+      .Because("AddWhizbangBodyOffload MUST register PostSerializeHookChain so transports can resolve it from DI and inject into TransportPublishStrategy — that's the keystone of the end-to-end wiring.");
+    await Assert.That(chain!.IsEmpty).IsFalse()
+      .Because("Chain MUST include the body-offload hook after AddWhizbangBodyOffload — otherwise the strategy will skip pre-serialize and the offload feature is dead code.");
+  }
+
+  [Test]
+  public async Task AddWhizbangPostSerializeHook_MultipleHooks_AllRegisteredInChainAsync() {
+    var services = new ServiceCollection();
+    services.AddWhizbangPostSerializeHook<_orderTenHook>();
+    services.AddWhizbangPostSerializeHook<_orderTwentyHook>();
+    services.AddOptions<MessageBodyOffloadOptions>();   // hook ctors don't need to bind anything
+
+    var provider = services.BuildServiceProvider();
+    var chain = provider.GetRequiredService<PostSerializeHookChain>();
+
+    await Assert.That(chain.IsEmpty).IsFalse();
+  }
+
+  private sealed class _orderTenHook : IPostSerializeHook {
+    public int Order => 10;
+    public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken)
+      => Task.FromResult(PostSerializeResult.PassThrough());
+  }
+
+  private sealed class _orderTwentyHook : IPostSerializeHook {
+    public int Order => 20;
+    public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken)
+      => Task.FromResult(PostSerializeResult.PassThrough());
+  }
+
+  [Test]
   public async Task AddWhizbangMessageBodyStore_UnknownKey_ReturnsNullAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangMessageBodyStore<_fakeStore>("known");
