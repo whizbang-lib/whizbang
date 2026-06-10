@@ -47,7 +47,7 @@ public class TransportPublishStrategyTests {
     public IMessageEnvelope? LastPublishedEnvelope { get; private set; }
     public TransportDestination? LastPublishedDestination { get; private set; }
 
-    public async Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+    public async Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
       LastPublishedEnvelope = envelope;
       LastPublishedDestination = destination;
 
@@ -89,7 +89,7 @@ public class TransportPublishStrategyTests {
     public List<(IReadOnlyList<BulkPublishItem> Items, TransportDestination Destination)> PublishBatchCalls { get; } = [];
     public Func<IReadOnlyList<BulkPublishItem>, TransportDestination, Task<IReadOnlyList<BulkPublishItemResult>>>? PublishBatchHandler { get; set; }
 
-    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 

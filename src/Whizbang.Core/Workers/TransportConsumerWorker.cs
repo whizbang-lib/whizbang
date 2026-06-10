@@ -423,6 +423,9 @@ public partial class TransportConsumerWorker : BackgroundService {
 
     // Collect inbox messages for direct INSERT (bypasses full process_work_batch)
     var inboxMessages = new List<InboxMessage>(messages.Count);
+    // Active-cleanup claims accumulated by the rehydrator; fired post-commit
+    // so a failed inbox INSERT doesn't leave bodies stranded in the store.
+    List<Whizbang.Core.Offloads.MessageBodyClaim>? pendingCleanupClaims = null;
     foreach (var msg in messages) {
       // Slice 3 of pump-then-process.md (Half A): drop messages whose inner type has NO
       // consumer on this service BEFORE serialization runs. Mirror of the gate added to
@@ -446,9 +449,25 @@ public partial class TransportConsumerWorker : BackgroundService {
         }
       }
 
-      var inboxMessage = _tryBuildInboxMessageFromTransport(msg, scope.ServiceProvider);
+      var (inboxMessage, cleanupClaim) = await _tryBuildInboxMessageFromTransportAsync(msg, scope.ServiceProvider, cancellationToken);
       if (inboxMessage is not null) {
-        inboxMessages.Add(inboxMessage);
+        // Composite expansion (W3 slice 10): a single composite wire envelope
+        // fans out into N inbox rows, one per inner event. The composite type
+        // itself is wire-only — it does NOT become an inbox row. Downstream
+        // (event store, perspectives, receptors) sees only the inner events.
+        if (inboxMessage.IsComposite) {
+          var expanded = _tryExpandCompositeToInboxMessages(msg, inboxMessage, scope.ServiceProvider);
+          if (expanded is null) {
+            // Cap exceeded or expansion failed — message dropped + logged
+            continue;
+          }
+          inboxMessages.AddRange(expanded);
+        } else {
+          inboxMessages.Add(inboxMessage);
+        }
+        if (cleanupClaim is not null) {
+          (pendingCleanupClaims ??= []).Add(cleanupClaim);
+        }
       }
     }
 
@@ -479,17 +498,109 @@ public partial class TransportConsumerWorker : BackgroundService {
 
     // Signal the publisher worker to poll immediately so messages are claimed and processed promptly.
     _workChannelWriter?.SignalNewWorkAvailable();
+
+    // Active-cleanup body-offload claims (MessageBodyOffloadOptions.ActiveCleanup=true).
+    // Runs AFTER the inbox commit succeeds — a failed insert never deletes a body that's
+    // still needed for redelivery. Fire-and-forget: provider's IgnoreMissing default
+    // (true) tolerates fan-out double-delete in shared-store topologies; transient
+    // delete failures fall back to the provider's storage-level TTL (the default
+    // ActiveCleanup=false path).
+    if (pendingCleanupClaims is { Count: > 0 }) {
+      _ = _fireActiveCleanupAsync(pendingCleanupClaims, cancellationToken);
+    }
     // Handler returns → transport ACKs all N messages → next batch starts collecting
   }
 
   /// <summary>
-  /// Runs owned-domain echo discard, OTEL activity, timestamp population, and envelope
-  /// serialization for a single transport message. Returns null when the message should be
-  /// dropped (echo) or when serialization failed (logged + metric already recorded).
+  /// Expands a composite inbox message into N per-inner-event inbox messages.
+  /// Returns null on cap exceeded / expansion failure (already logged); the
+  /// composite is dropped (transport ACKs as if the message was processed,
+  /// matching the existing "skip on serialize fail" pattern). Future work
+  /// can route to a true DLQ via the failure channel.
+  /// </summary>
+  /// <remarks>
+  /// The composite is wire-only — the composite inbox message itself is
+  /// NEVER persisted. Slice 11 (batched event-store append) makes the bulk
+  /// insert efficient; for slice 10 the inner events flow through the
+  /// existing StoreInboxMessagesAsync batch.
+  /// </remarks>
+  private List<InboxMessage>? _tryExpandCompositeToInboxMessages(
+      TransportMessage msg, InboxMessage compositeInbox, IServiceProvider scopedProvider) {
+    var envelope = msg.Envelope;
+    var messageTypeTag = new KeyValuePair<string, object?>(
+      "composite_type", envelope.GetType().FullName ?? "unknown");
+
+    try {
+      // Expand each inner event into its own InboxMessage. The composite
+      // envelope's identity context (StreamId, SourceServiceId, Hops) is
+      // copied onto each inner envelope by CompositeEventExpander.
+      var expandedInbox = new List<InboxMessage>();
+      foreach (var innerEnvelope in Whizbang.Core.Messaging.CompositeEventExpander.Expand(envelope)) {
+        var innerEnvelopeType = innerEnvelope.GetType().AssemblyQualifiedName
+          ?? innerEnvelope.GetType().FullName
+          ?? throw new InvalidOperationException("Inner envelope type missing assembly-qualified name");
+        var innerInbox = _serializeToNewInboxMessage(innerEnvelope, innerEnvelopeType, scopedProvider);
+        expandedInbox.Add(innerInbox);
+      }
+      _metrics?.InboxMessagesReceived.Add(expandedInbox.Count - 1, messageTypeTag);
+      return expandedInbox;
+    } catch (Whizbang.Core.Messaging.CompositeInnerEventLimitExceededException ex) {
+      _logger.LogError(
+        "Composite '{CompositeType}' exceeded MaxInnerEventsAllowed cap of {Max} (observed at least {Observed}); dropping. {Reason}",
+        ex.CompositeTypeName, ex.MaxInnerEventsAllowed, ex.ObservedAtLeast,
+        MessageFailureReason.CompositeInnerEventLimitExceeded);
+      _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
+      return null;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger.LogError(ex,
+        "Composite expansion failed for message {MessageId}; dropping. {Reason}",
+        envelope.MessageId, MessageFailureReason.CompositeExpansionFailure);
+      _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Fire-and-forget cleanup for active-mode body offload. Resolves the matching
+  /// store per claim (different claims may use different providers) and issues
+  /// DeleteAsync. Failures are logged but do not affect transport ACK — the
+  /// provider's TTL is the backstop.
+  /// </summary>
+  private async Task _fireActiveCleanupAsync(
+      List<Whizbang.Core.Offloads.MessageBodyClaim> claims,
+      CancellationToken cancellationToken) {
+    await using var cleanupScope = _scopeFactory.CreateAsyncScope();
+    foreach (var claim in claims) {
+      try {
+        var store = cleanupScope.ServiceProvider.GetKeyedService<Whizbang.Core.Offloads.IMessageBodyStore>(claim.ProviderName);
+        if (store is null) {
+          _logger.LogWarning(
+            "Active cleanup skipped for claim {StorageKey}: no IMessageBodyStore registered under provider '{ProviderName}'",
+            claim.StorageKey, claim.ProviderName);
+          continue;
+        }
+        await store.DeleteAsync(claim, options: null, cancellationToken);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        _logger.LogWarning(ex,
+          "Active cleanup failed for claim {StorageKey} on provider '{ProviderName}'; provider TTL is the backstop",
+          claim.StorageKey, claim.ProviderName);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Runs owned-domain echo discard, body-offload claim rehydrate (when the
+  /// wire message was a claim envelope), OTEL activity, timestamp population,
+  /// and envelope serialization for a single transport message. Returns null
+  /// when the message should be dropped (echo, claim rehydrate failure, or
+  /// serialize failure — all logged + metric already recorded).
   /// </summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
-  private InboxMessage? _tryBuildInboxMessageFromTransport(TransportMessage msg, IServiceProvider scopedProvider) {
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBodyClaimRehydrateTests.cs</tests>
+  private async Task<(InboxMessage? InboxMessage, Whizbang.Core.Offloads.MessageBodyClaim? PendingCleanupClaim)>
+      _tryBuildInboxMessageFromTransportAsync(
+      TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
     var envelopeType = msg.EnvelopeType;
     var envelope = msg.Envelope;
     var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
@@ -497,7 +608,34 @@ public partial class TransportConsumerWorker : BackgroundService {
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
     if (_shouldDiscardOwnedEcho(envelope, envelopeType, messageType, messageTypeTag)) {
-      return null;
+      return (null, null);
+    }
+
+    // Body-offload claim rehydrate: when the transport handed us a claim
+    // envelope (whizbang.is-claim was set on the wire), download the original
+    // body via the registered IMessageBodyStore, verify SHA-256, and
+    // deserialize as the original envelope type. Pass-through for non-claim
+    // messages (the common case) is O(1) — only the payload-type check.
+    Whizbang.Core.Offloads.MessageBodyClaim? cleanupClaim = null;
+    var jsonOptions = scopedProvider.GetService<System.Text.Json.JsonSerializerOptions>();
+    if (jsonOptions is not null) {
+      var rehydrate = await Whizbang.Core.Offloads.BodyClaimRehydrator.MaybeRehydrateAsync(
+        envelope, envelopeType, jsonOptions, scopedProvider, cancellationToken);
+      if (rehydrate.IsDeadLetter) {
+        _logger.LogError(
+          "Body-offload claim rehydrate failed for message {MessageId}: {Reason} — {Description}; dropping",
+          envelope.MessageId, rehydrate.FailureReason, rehydrate.FailureDescription);
+        _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
+        return (null, null);
+      }
+      envelope = rehydrate.Envelope!;
+      envelopeType = rehydrate.EnvelopeType;
+      cleanupClaim = rehydrate.PendingCleanupClaim;
+      // Refresh the message-type tag now that we know the rehydrated identity.
+      if (rehydrate.WasRehydrated && envelopeType is not null) {
+        messageType = TypeNameFormatter.GetSimpleName(envelopeType);
+        messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
+      }
     }
 
     var inboxActivity = _startInboxActivity(envelope, messageType);
@@ -505,12 +643,12 @@ public partial class TransportConsumerWorker : BackgroundService {
       _populateDeliveredAtTimestamp(envelope, envelopeType);
       var inboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
-      return inboxMessage;
+      return (inboxMessage, cleanupClaim);
     } catch (Exception ex) {
       _logger.LogError(ex, "Failed to serialize message {MessageId} for inbox — skipping", envelope.MessageId);
       _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      return null;
+      return (null, null);
     } finally {
       inboxActivity?.Dispose();
     }
@@ -865,6 +1003,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox", messageTypeName);
     }
 
+    var isComposite = payload is Whizbang.Core.Messaging.ICompositeEvent;
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
@@ -872,6 +1011,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       EnvelopeType = envelopeTypeFromTransport,
       StreamId = streamId,
       IsEvent = isEvent,
+      IsComposite = isComposite,
       Scope = envelope.GetCurrentScope()?.Scope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,

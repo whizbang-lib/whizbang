@@ -127,7 +127,7 @@ internal sealed class TestTransport : ITransport {
     _isInitialized = true;
   }
 
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 
@@ -164,7 +164,7 @@ internal sealed class FailingInitializationTransport : ITransport {
     throw new InvalidOperationException("Failed to connect to transport");
   }
 
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 
@@ -205,7 +205,7 @@ internal sealed class RetryableInitializationTransport : ITransport {
     return Task.CompletedTask;
   }
 
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 

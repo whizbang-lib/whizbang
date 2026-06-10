@@ -49,7 +49,7 @@ public class TransportManagerSubscriptionTests {
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    await transport.PublishAsync(testEnvelope, new TransportDestination("test-topic"), envelopeType: null, CancellationToken.None);
+    await transport.PublishAsync(testEnvelope, new TransportDestination("test-topic"), envelopeType: null, preSerializedBytes: null, cancellationToken: CancellationToken.None);
 
     // Wait for the batch collector to flush and invoke the handler
     await handlerSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -290,7 +290,7 @@ public class TransportManagerSubscriptionTests {
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    await transport.PublishAsync(testEnvelope, new TransportDestination("handler-test"), envelopeType: null, CancellationToken.None);
+    await transport.PublishAsync(testEnvelope, new TransportDestination("handler-test"), envelopeType: null, preSerializedBytes: null, cancellationToken: CancellationToken.None);
 
     // Wait for the batch collector to flush and invoke the handler
     await handlerSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
@@ -311,23 +312,32 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     (_options.EnableSessions ? TransportCapabilities.Ordered : TransportCapabilities.None);
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
+  // Azure Service Bus Standard tier hard limit: 256 KB per message including envelope+headers.
+  // Premium supports up to 100 MB — consumers running Premium can override at the options layer;
+  // we ship the conservative Standard default so out-of-the-box deployments don't silently exceed.
+  public long? MaxMessageSizeBytes => 256L * 1024L;
+
+  /// <inheritdoc />
   /// <tests>No tests found</tests>
   public Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
+    ReadOnlyMemory<byte>? preSerializedBytes = null,
     CancellationToken cancellationToken = default
   ) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
-    return _publishCoreAsync(envelope, destination, envelopeType, cancellationToken);
+    return _publishCoreAsync(envelope, destination, envelopeType, preSerializedBytes, cancellationToken);
   }
 
   private async Task _publishCoreAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType,
+    ReadOnlyMemory<byte>? preSerializedBytes,
     CancellationToken cancellationToken
   ) {
     try {
@@ -342,10 +352,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // For serialization, always use the actual runtime type of the envelope object (AOT-safe)
       var envelopeRuntimeType = envelope.GetType();
 
-      // Serialize envelope to JSON using AOT-compatible options from registry
-      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
-      var json = JsonSerializer.Serialize(envelope, typeInfo);
+      // Honor the upstream pre-serialized hint when present. The publish-side
+      // strategy serializes once (for size measurement + post-serialize hooks
+      // like body offload) and hands us the final bytes; we MUST use them as-is
+      // to preserve the hook chain's substitutions (e.g., claim envelope when
+      // the body was offloaded).
+      string json;
+      if (preSerializedBytes is { } hint) {
+        json = Encoding.UTF8.GetString(hint.Span);
+      } else {
+        // Serialize envelope to JSON using AOT-compatible options from registry
+        var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+          ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+        json = JsonSerializer.Serialize(envelope, typeInfo);
+      }
 
       // DIAGNOSTIC: Log the first 500 chars of JSON to see if MessageId is in there
       if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -567,9 +587,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
 
     var envelopeRuntimeType = envelope.GetType();
-    var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
-    var json = JsonSerializer.Serialize(envelope, typeInfo);
+
+    // Honor per-item pre-serialized hint when present (avoids double-serialize
+    // when the publish strategy ran the post-serialize hook chain).
+    string json;
+    if (item.PreSerializedBytes is { } hint) {
+      json = Encoding.UTF8.GetString(hint.Span);
+    } else {
+      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+      json = JsonSerializer.Serialize(envelope, typeInfo);
+    }
 
     var message = new ServiceBusMessage(json) {
       MessageId = envelope.MessageId.Value.ToString(),
@@ -597,6 +625,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     if (destination.Metadata != null) {
       foreach (var (key, value) in destination.Metadata) {
+        message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
+      }
+    }
+
+    // Per-item metadata overrides shared destination metadata for the same key
+    // (e.g., whizbang.body-size, whizbang.is-claim) — that's the contract.
+    if (item.PerItemMetadata != null) {
+      foreach (var (key, value) in item.PerItemMetadata) {
         message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
       }
     }

@@ -161,7 +161,7 @@ public class InProcessTransportTests {
     cts.Cancel();
 
     // Act & Assert
-    await Assert.That(() => transport.PublishAsync(envelope, destination, envelopeType: null, cts.Token))
+    await Assert.That(() => transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: cts.Token))
       .Throws<OperationCanceledException>();
   }
 
@@ -417,7 +417,7 @@ public class InProcessTransportTests {
         foreach (var msg in batch) {
           // Simulate responder sending response
           var responseDestination = new TransportDestination($"response-{msg.Envelope.MessageId.Value}");
-          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, cancellationToken: ct);
         }
       },
       destination,

@@ -98,5 +98,61 @@ public enum MessageFailureReason {
   /// Introduced in v0.657 after the slot-3 silent-stuck forensic.
   /// See operations/configuration/empty-stream-id-policy.
   /// </remarks>
-  EmptyStreamId = 11
+  EmptyStreamId = 11,
+
+  /// <summary>
+  /// The serialized envelope exceeds the destination transport's
+  /// <see cref="Whizbang.Core.Transports.ITransport.MaxMessageSizeBytes"/>
+  /// AND no post-serialize hook (e.g., body offload / claim-check) substituted
+  /// the body with a smaller wire envelope. The publish strategy raises this
+  /// pre-flight so the outbox row stays put and ops can react — register a
+  /// body-offload provider, raise the transport tier, or trim the payload.
+  /// </summary>
+  /// <remarks>
+  /// Distinct from <see cref="TransportException"/> because the wire-send
+  /// never happened; the transport hasn't been reached. Distinct from
+  /// <see cref="SerializationError"/> because serialization succeeded — the
+  /// payload is just larger than the broker will accept.
+  /// </remarks>
+  MessageBodyTooLarge = 12,
+
+  /// <summary>
+  /// An incoming wire message carried a body claim (<c>whizbang.is-claim</c>
+  /// header) referencing a provider name that has no
+  /// <see cref="Whizbang.Core.Offloads.IMessageBodyStore"/> registered.
+  /// Receiver MUST dead-letter — silently dropping the message would lose
+  /// the event; processing without the body would skip the actual payload.
+  /// </summary>
+  /// <remarks>
+  /// Indicates a misconfiguration: the sender registered a provider name the
+  /// receiver doesn't know. Fix by registering the matching
+  /// <c>AddWhizbang*Offload(name)</c> on the receiver service.
+  /// </remarks>
+  BodyClaimProviderUnknown = 13,
+
+  /// <summary>
+  /// A body claim downloaded successfully but its SHA-256 content hash did
+  /// NOT match the hash on the claim ticket. Indicates either storage
+  /// corruption, a man-in-the-middle modification, or a provider bug.
+  /// Receiver MUST dead-letter to prevent processing a payload the sender
+  /// did not write.
+  /// </summary>
+  BodyClaimIntegrityFailure = 14,
+
+  /// <summary>
+  /// A composite event (<see cref="Whizbang.Core.Messaging.ICompositeEvent"/>)
+  /// yielded more inner events than its
+  /// <see cref="Whizbang.Core.Messaging.ICompositeEvent.MaxInnerEventsAllowed"/>
+  /// cap. The receiver refuses to expand it — likely a producer bug
+  /// (runaway enumerator, accidentally-nested composites).
+  /// </summary>
+  CompositeInnerEventLimitExceeded = 15,
+
+  /// <summary>
+  /// A composite event failed to expand at the receiver — either an
+  /// inner event raised during enumeration, or the all-or-nothing
+  /// event-store append rolled back. The whole composite is rejected
+  /// (no partial inner events recorded).
+  /// </summary>
+  CompositeExpansionFailure = 16
 }

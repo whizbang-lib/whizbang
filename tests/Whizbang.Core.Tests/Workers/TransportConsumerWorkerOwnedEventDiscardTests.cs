@@ -368,7 +368,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
-      string? envelopeType = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+      string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination, CancellationToken cancellationToken = default) {

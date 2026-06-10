@@ -36,7 +36,7 @@ public class ITransportTests {
     var destination = new TransportDestination("test-topic");
 
     // Act & Assert - Should not throw
-    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: CancellationToken.None);
   }
 
   [Test]
@@ -50,7 +50,7 @@ public class ITransportTests {
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>
-      await transport.PublishAsync(envelope, destination, envelopeType: null, cts.Token)
+      await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: cts.Token)
     );
   }
 
@@ -121,6 +121,27 @@ public class ITransportTests {
 
     // Assert - InProcessTransport should NOT declare BulkPublish
     await Assert.That(capabilities.HasFlag(TransportCapabilities.BulkPublish)).IsFalse();
+  }
+
+  /// <summary>
+  /// Surfaces the per-transport hard ceiling on wire-message size so size-aware
+  /// strategies (composite events, body offload) can decide pre-flight whether
+  /// a message fits the wire. <c>null</c> means the transport has no enforced
+  /// limit (e.g., in-process, RabbitMQ at 128 MB default). Non-null transports
+  /// (e.g., Azure Service Bus Standard at 256 KB) drive offload-strategy
+  /// decisions in <c>OutboxPublishWorker</c>.
+  /// </summary>
+  /// <remarks>
+  /// InProcessTransport carries no wire so it has no size ceiling — returns null.
+  /// </remarks>
+  [Test]
+  public async Task ITransport_MaxMessageSizeBytes_InProcessTransport_ReturnsNullAsync() {
+    var transport = _createTestTransport();
+
+    var max = transport.MaxMessageSizeBytes;
+
+    await Assert.That(max).IsNull()
+      .Because("InProcessTransport is in-memory; no wire size ceiling. Null signals to size-aware strategies that no offload pre-flight is required for this transport.");
   }
 
   // Helper methods

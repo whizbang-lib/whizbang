@@ -185,4 +185,163 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     await Assert.That(states[msgIds[1]]).IsFalse();   // handler 1 failed → savepoint rolled back
     await Assert.That(states[msgIds[2]]).IsTrue();    // handler 2 succeeded
   }
+
+  /// <summary>
+  /// v0.673 Option-D Tier 1: <c>commit_handler_batch_bulk(p_results)</c> exists and
+  /// runs each handler's <c>commit_handler_result</c> in a single transaction with
+  /// NO savepoint isolation. The happy-path optimization that the orchestrator
+  /// (<see cref="CommitHandlerBatch_FunctionExists_InPublicSchemaAsync"/>) tries
+  /// before falling back to per-handler savepoint isolation.
+  /// </summary>
+  /// <remarks>
+  /// Semantics on success: all handlers commit atomically; one fsync at the outer
+  /// transaction boundary; zero savepoint overhead. Semantics on any error: the
+  /// whole call raises (the orchestrator catches and falls back).
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/handler-commit#bulk-path</docs>
+  [Test]
+  public async Task CommitHandlerBatchBulk_FunctionExists_InPublicSchemaAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = @"
+      SELECT EXISTS (
+        SELECT 1 FROM pg_proc
+        WHERE proname = 'commit_handler_batch_bulk'
+          AND pronamespace = 'public'::regnamespace
+      );";
+
+    var exists = (bool)(await command.ExecuteScalarAsync())!;
+    await Assert.That(exists).IsTrue()
+      .Because("Option-D Tier 1 requires commit_handler_batch_bulk to exist. The orchestrator (commit_handler_batch) calls it first and falls back to the per-handler savepoint loop on any error.");
+  }
+
+  /// <summary>
+  /// v0.673 Option-D Tier 1 behavior: three handler results all succeed → the
+  /// bulk function processes them in one transaction; all inbox rows are marked
+  /// processed. RETURNS VOID (the orchestrator wraps it to emit the success table).
+  /// </summary>
+  [Test]
+  public async Task CommitHandlerBatchBulk_AllSucceed_AppliesAllInSingleTransactionAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var msgIds = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    foreach (var msgId in msgIds) {
+      await using var ins = connection.CreateCommand();
+      ins.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+           instance_id, lease_expiry, stream_id, partition_number)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
+                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+      ins.Parameters.AddWithValue("msg", msgId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var resultsJson = $$"""
+      [
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[0]}}", "Status": 4}, "new_outbox_messages": []},
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[1]}}", "Status": 4}, "new_outbox_messages": []},
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[2]}}", "Status": 4}, "new_outbox_messages": []}
+      ]
+      """;
+
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT commit_handler_batch_bulk(@req::jsonb)";
+    cmd.Parameters.AddWithValue("req", resultsJson);
+    await cmd.ExecuteNonQueryAsync();
+
+    // All three inbox completions ran inside a single transaction with NO
+    // savepoint isolation — same observable end-state as commit_handler_batch's
+    // happy path (processed_at stamped via the debug-mode test DB) but without
+    // per-handler savepoint overhead.
+    await using var verify = connection.CreateCommand();
+    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
+    verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
+    var processed = (long)(await verify.ExecuteScalarAsync())!;
+    await Assert.That(processed).IsEqualTo(3L)
+      .Because("Tier 1 happy path: every inbox completion's commit_handler_result ran atomically inside the bulk transaction and stamped processed_at on all three rows.");
+  }
+
+  /// <summary>
+  /// v0.673 Option-D Tier 1 failure semantics: when ANY handler in the bulk batch
+  /// raises, the whole call raises (no per-handler savepoint isolation) and zero
+  /// rows are applied. The orchestrator catches this and falls back to the
+  /// savepoint loop — proven by
+  /// <see cref="CommitHandlerBatch_OneHandlerFails_OthersSucceedSavepointIsolationAsync"/>
+  /// continuing to pass post-refactor.
+  /// </summary>
+  [Test]
+  public async Task CommitHandlerBatchBulk_OneHandlerFails_RaisesAndAppliesNothingAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var msgIds = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    foreach (var msgId in msgIds) {
+      await using var ins = connection.CreateCommand();
+      ins.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+           instance_id, lease_expiry, stream_id, partition_number)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
+                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+      ins.Parameters.AddWithValue("msg", msgId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    // Middle handler emits a malformed UUID — same trigger as the savepoint-isolation test.
+    var resultsJson = $$"""
+      [
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[0]}}", "Status": 4}, "new_outbox_messages": []},
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[1]}}", "Status": 4},
+         "new_outbox_messages": [{"MessageId": "not-a-valid-uuid", "Destination": "x", "MessageType": "x",
+           "Envelope": {}, "Metadata": {}, "Scope": null, "StreamId": null, "IsEvent": false}]},
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[2]}}", "Status": 4}, "new_outbox_messages": []}
+      ]
+      """;
+
+    Exception? thrown = null;
+    try {
+      await using var cmd = connection.CreateCommand();
+      cmd.CommandText = "SELECT commit_handler_batch_bulk(@req::jsonb)";
+      cmd.Parameters.AddWithValue("req", resultsJson);
+      await cmd.ExecuteNonQueryAsync();
+    } catch (PostgresException ex) {
+      thrown = ex;
+    }
+
+    await Assert.That(thrown).IsNotNull()
+      .Because("Tier 1 has NO savepoint isolation — any handler error must raise out of the function so the orchestrator can fall back to the savepoint loop.");
+
+    // Zero rows applied: all three inbox completions rolled back atomically.
+    await using var verify = connection.CreateCommand();
+    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox WHERE message_id = ANY(@ids) AND processed_at IS NULL";
+    verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
+    var stillPending = (long)(await verify.ExecuteScalarAsync())!;
+    await Assert.That(stillPending).IsEqualTo(3L)
+      .Because("All three inbox rows remain unprocessed because the bulk transaction rolled back on the malformed-UUID handler. Tier 2 (savepoint loop) then handles per-handler isolation — proven separately by the OneHandlerFails_OthersSucceedSavepointIsolation test.");
+  }
 }
