@@ -1,5 +1,11 @@
 #pragma warning disable CA1707
 
+// W4 Phase 0 — this regression-lock test intentionally exercises the legacy timeout-shaped
+// LocalInvokeAndSyncAsync overload (the one marked [Obsolete] in W4) to capture the existing
+// SyncDecisionContext via onDecisionMade. Suppression is intentional; the test stays as a
+// regression lock for the legacy API until the next major removal.
+#pragma warning disable CS0618
+
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;

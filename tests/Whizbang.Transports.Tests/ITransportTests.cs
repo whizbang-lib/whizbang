@@ -36,7 +36,7 @@ public class ITransportTests {
     var destination = new TransportDestination("test-topic");
 
     // Act & Assert - Should not throw
-    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: CancellationToken.None);
   }
 
   [Test]
@@ -50,7 +50,7 @@ public class ITransportTests {
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>
-      await transport.PublishAsync(envelope, destination, envelopeType: null, cts.Token)
+      await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: cts.Token)
     );
   }
 
