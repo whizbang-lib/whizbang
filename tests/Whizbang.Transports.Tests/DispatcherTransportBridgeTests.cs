@@ -150,7 +150,7 @@ public class DispatcherTransportBridgeTests {
           };
 
           var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
-          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, cancellationToken: ct);
         }
       },
       destination,
@@ -214,7 +214,7 @@ public class DispatcherTransportBridgeTests {
     };
 
     // Act - Publish to transport (simulates remote send)
-    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: CancellationToken.None);
 
     // Wait for dispatcher to be invoked (signal-based)
     await dispatcherInvokedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -272,7 +272,7 @@ public class DispatcherTransportBridgeTests {
     };
 
     // Act - Publish serialized envelope to transport
-    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: CancellationToken.None);
 
     // Wait for dispatcher to process (signal-based)
     await messageReceivedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -406,7 +406,7 @@ public class DispatcherTransportBridgeTests {
           };
 
           var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
-          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, cancellationToken: ct);
         }
       },
       destination,
