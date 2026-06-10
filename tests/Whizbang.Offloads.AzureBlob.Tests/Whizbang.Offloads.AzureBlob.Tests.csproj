@@ -8,6 +8,8 @@
     <OutputType>Exe</OutputType>
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <!-- Unit: Fast tests, no external infrastructure needed (Azure SDK behavior is mocked) -->
+    <WhizbangTestType>Unit</WhizbangTestType>
   </PropertyGroup>
 
   <ItemGroup>
