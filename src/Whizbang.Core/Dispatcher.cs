@@ -3670,6 +3670,7 @@ public abstract partial class Dispatcher(
       EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
       StreamId = streamId,
       IsEvent = eventData is IEvent,
+      IsComposite = eventData is Whizbang.Core.Messaging.ICompositeEvent,
       Scope = _extractScope(jsonEnvelope),
       MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
     };
@@ -4749,6 +4750,7 @@ public abstract partial class Dispatcher(
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
       IsEvent = payload is IEvent,
+      IsComposite = payload is Whizbang.Core.Messaging.ICompositeEvent,
       Scope = _extractScope(envelope),
       MessageType = serialized.MessageType
     };
