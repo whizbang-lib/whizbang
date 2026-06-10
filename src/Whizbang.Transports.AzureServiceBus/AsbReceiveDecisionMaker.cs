@@ -62,16 +62,30 @@ internal sealed class AsbReceiveDecisionMaker {
       };
     }
 
-    var typeInfo = getTypeInfoByName(envelopeTypeName, jsonOptions);
+    // Body-offload claim detection: when the producer's post-serialize hook
+    // substituted the wire body, the bytes are MessageEnvelope<BodyClaimEnvelopePayload>
+    // while ENVELOPE_TYPE_PROPERTY still names the original type (so transport-level
+    // SqlFilter / routing keeps working). The receive-side worker rehydrates from
+    // the claim by downloading the original body via the registered IMessageBodyStore.
+    var isClaimHeader = applicationProperties.TryGetValue(
+      Whizbang.Core.Offloads.BodyOffloadPostSerializeHook.IS_CLAIM_METADATA_KEY,
+      out var isClaimObj) ? isClaimObj?.ToString() : null;
 
-    // Slice 4 — when the JsonContextRegistry lookup misses, fall back to the multi-pass
-    // type binder. If it resolves the envelope type, ask jsonOptions for a JsonTypeInfo —
-    // STJ default resolver can produce one for any type that's loadable, even if no
-    // [ModuleInitializer] registered it explicitly.
-    if (typeInfo == null && typeBinder != null) {
-      var bound = typeBinder.Bind(envelopeTypeName);
-      if (bound != null) {
-        typeInfo = jsonOptions.GetTypeInfo(bound);
+    JsonTypeInfo? typeInfo;
+    if (Whizbang.Core.Offloads.BodyClaimWireHelper.IsClaimHeader(isClaimHeader)) {
+      typeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<Whizbang.Core.Offloads.BodyClaimEnvelopePayload>));
+    } else {
+      typeInfo = getTypeInfoByName(envelopeTypeName, jsonOptions);
+
+      // Slice 4 — when the JsonContextRegistry lookup misses, fall back to the multi-pass
+      // type binder. If it resolves the envelope type, ask jsonOptions for a JsonTypeInfo —
+      // STJ default resolver can produce one for any type that's loadable, even if no
+      // [ModuleInitializer] registered it explicitly.
+      if (typeInfo == null && typeBinder != null) {
+        var bound = typeBinder.Bind(envelopeTypeName);
+        if (bound != null) {
+          typeInfo = jsonOptions.GetTypeInfo(bound);
+        }
       }
     }
 

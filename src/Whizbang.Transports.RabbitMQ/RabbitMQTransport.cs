@@ -1171,9 +1171,20 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       return null;
     }
 
-    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
+    // Body-offload claim detection: when the producer's post-serialize hook
+    // substituted the body, the wire bytes are MessageEnvelope<BodyClaimEnvelopePayload>
+    // while ENVELOPE_TYPE_HEADER still names the original type (so transport-level
+    // SqlFilter / routing keeps working). The receive-side worker rehydrates
+    // from the claim by downloading the original body via the registered
+    // IMessageBodyStore. Keeping ENVELOPE_TYPE_HEADER unchanged on the wire
+    // is intentional — receivers learn the original type from there.
+    var isClaimHeader = _tryReadStringHeader(args.BasicProperties.Headers,
+      Whizbang.Core.Offloads.BodyOffloadPostSerializeHook.IS_CLAIM_METADATA_KEY);
+    var typeInfo = Whizbang.Core.Offloads.BodyClaimWireHelper.ResolveDeserializeTypeInfo(
+      envelopeTypeName, isClaimHeader, _jsonOptions);
     if (typeInfo == null) {
-      _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType}", envelopeTypeName);
+      _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType} (claim={IsClaim})",
+        envelopeTypeName, Whizbang.Core.Offloads.BodyClaimWireHelper.IsClaimHeader(isClaimHeader));
       return null;
     }
 
@@ -1184,6 +1195,25 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     }
 
     return envelope;
+  }
+
+  /// <summary>
+  /// Reads a string-valued header from RabbitMQ properties. RabbitMQ stores
+  /// strings as byte[] over AMQP; the value comes through as either byte[]
+  /// or already-decoded string depending on client version.
+  /// </summary>
+  private static string? _tryReadStringHeader(IDictionary<string, object?>? headers, string key) {
+    if (headers is null) {
+      return null;
+    }
+    if (!headers.TryGetValue(key, out var raw) || raw is null) {
+      return null;
+    }
+    return raw switch {
+      byte[] b => Encoding.UTF8.GetString(b),
+      string s => s,
+      _ => raw.ToString()
+    };
   }
 
   private IMessageEnvelope? _deserializeMessage(BasicDeliverEventArgs args, out string? envelopeTypeName) {
@@ -1199,9 +1229,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     envelopeTypeName = Encoding.UTF8.GetString(envelopeTypeBytes);
     var json = Encoding.UTF8.GetString(args.Body.Span);
 
-    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
+    // Body-offload claim detection (see _deserializeMessageFromBody for details).
+    var isClaimHeader = _tryReadStringHeader(args.BasicProperties.Headers,
+      Whizbang.Core.Offloads.BodyOffloadPostSerializeHook.IS_CLAIM_METADATA_KEY);
+    var typeInfo = Whizbang.Core.Offloads.BodyClaimWireHelper.ResolveDeserializeTypeInfo(
+      envelopeTypeName, isClaimHeader, _jsonOptions);
     if (typeInfo == null) {
-      _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType}", envelopeTypeName);
+      _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType} (claim={IsClaim})",
+        envelopeTypeName, Whizbang.Core.Offloads.BodyClaimWireHelper.IsClaimHeader(isClaimHeader));
       return null;
     }
 
