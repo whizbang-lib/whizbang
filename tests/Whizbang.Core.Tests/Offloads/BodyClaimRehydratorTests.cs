@@ -99,6 +99,85 @@ public class BodyClaimRehydratorTests {
     await Assert.That(result.PendingCleanupClaim.ProviderName).IsEqualTo(claim.ProviderName);
   }
 
+  [Test]
+  public async Task MaybeRehydrateAsync_DownloadThrows_DeadLettersAsTransportExceptionAsync() {
+    // Provider download throws a non-CT exception — receive must dead-letter so the
+    // message is redelivered/diagnosed rather than silently re-processed without the body.
+    var services = new ServiceCollection();
+    var store = new ThrowingStore("memory");
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => store);
+    var sp = services.BuildServiceProvider();
+    var claim = new MessageBodyClaim(
+      ProviderName: "memory", StorageKey: "test://does-not-exist",
+      Size: 4, ContentHash: "sha256-AB",
+      ContentType: "application/json", UploadedAt: DateTimeOffset.UtcNow);
+    var claimEnvelope = _wrapInClaimEnvelope(claim, "OriginalType, MyAssembly");
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsTrue();
+    await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.TransportException)
+      .Because("Provider exceptions during download MUST surface as TransportException dead-letter — distinct from integrity-failure so dashboards can route them separately.");
+    await Assert.That(result.FailureDescription!).Contains("memory");
+  }
+
+  [Test]
+  public async Task MaybeRehydrateAsync_DownloadCanceled_PropagatesOperationCanceledAsync() {
+    // The exception filter explicitly excludes OperationCanceledException so cooperative
+    // cancellation propagates to the caller instead of dead-lettering as TransportException.
+    var services = new ServiceCollection();
+    var store = new CancelingStore("memory");
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => store);
+    var sp = services.BuildServiceProvider();
+    var claim = new MessageBodyClaim(
+      ProviderName: "memory", StorageKey: "test://cancel",
+      Size: 0, ContentHash: "sha256-XX",
+      ContentType: "application/json", UploadedAt: DateTimeOffset.UtcNow);
+    var claimEnvelope = _wrapInClaimEnvelope(claim, "OriginalType, MyAssembly");
+
+    await Assert.That(async () => await BodyClaimRehydrator.MaybeRehydrateAsync(
+        claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName,
+        _buildJsonOptions(), sp, CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("OperationCanceledException is excluded from the catch filter — receiver-shutdown CT propagates instead of dead-lettering.");
+  }
+
+  [Test]
+  public async Task MaybeRehydrateAsync_UnknownOriginalTypeName_DeadLettersAsSerializationErrorAsync() {
+    // The original type name claims a type that has no JsonTypeInfo registered.
+    var sp = _buildProvider(out var store);
+    var realBody = "some-bytes"u8.ToArray();
+    var realClaim = await store.UploadAsync(realBody, "application/json");
+    var claimEnvelope = _wrapInClaimEnvelope(realClaim, originalTypeName: "Some.Unknown.NotRegisteredType, MissingAssembly");
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsTrue();
+    await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError)
+      .Because("Missing JsonTypeInfo is a config gap — dead-letter with a clear message pointing at the registration so ops can diagnose.");
+    await Assert.That(result.FailureDescription!).Contains("Some.Unknown.NotRegisteredType");
+  }
+
+  [Test]
+  public async Task MaybeRehydrateAsync_MalformedJsonBody_DeadLettersAsSerializationErrorAsync() {
+    // Body in storage is not valid JSON for the declared type — JsonException must be
+    // caught and translated to a dead-letter result, not bubbled to the worker.
+    var sp = _buildProvider(out var store);
+    var garbage = "}}}not-json{{{"u8.ToArray();
+    var realClaim = await store.UploadAsync(garbage, "application/json");
+    var claimEnvelope = _wrapInClaimEnvelope(realClaim, originalTypeName: typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!);
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsTrue();
+    await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError)
+      .Because("Storage corruption / wrong-type claims must dead-letter with SerializationError — the worker must never bubble JsonException to its outer scope.");
+    await Assert.That(result.FailureDescription!).Contains("Failed to deserialize");
+  }
+
   // Helpers
   // ============================================================
 
@@ -200,5 +279,29 @@ public class BodyClaimRehydratorTests {
       _bodies.Remove(claim.StorageKey);
       return Task.CompletedTask;
     }
+  }
+
+  /// <summary>Store whose DownloadAsync always throws a non-CT exception — exercises the rehydrator's TransportException dead-letter path.</summary>
+  private sealed class ThrowingStore : IMessageBodyStore {
+    public ThrowingStore(string providerName) { ProviderName = providerName; }
+    public string ProviderName { get; }
+    public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
+      => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
+    public Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default)
+      => throw new InvalidOperationException("simulated provider failure");
+    public Task DeleteAsync(MessageBodyClaim claim, MessageBodyDeleteOptions? options = null, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+  }
+
+  /// <summary>Store whose DownloadAsync throws OperationCanceledException — exercises the rehydrator's cancellation-propagation behavior.</summary>
+  private sealed class CancelingStore : IMessageBodyStore {
+    public CancelingStore(string providerName) { ProviderName = providerName; }
+    public string ProviderName { get; }
+    public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
+      => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
+    public Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default)
+      => throw new OperationCanceledException();
+    public Task DeleteAsync(MessageBodyClaim claim, MessageBodyDeleteOptions? options = null, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
   }
 }
