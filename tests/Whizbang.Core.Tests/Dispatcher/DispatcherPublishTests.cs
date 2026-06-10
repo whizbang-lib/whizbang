@@ -1,4 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+
+// W4 — tests intentionally exercise legacy timeout-shaped LocalInvokeAndSyncAsync overloads now marked [Obsolete].
+// Suppression locks legacy backward-compat behavior until the overloads are removed in the next major.
+#pragma warning disable CS0618
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;

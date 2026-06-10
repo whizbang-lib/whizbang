@@ -469,6 +469,7 @@ public interface IDispatcher {
   /// Note: The handler has already completed successfully; only perspective sync timed out.
   /// </exception>
   /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync</docs>
+  [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken) for void receptors. For receptors returning a typed result, prefer LocalInvokeAsync<TMessage,TResult>(message) followed by an explicit LocalInvokeAndSyncAsync(message, SyncMode.AllProjections, ct) when read-after-write semantics are required. Will be removed in the next major.")]
   Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -506,6 +507,7 @@ public interface IDispatcher {
   /// <param name="cancellationToken">A cancellation token.</param>
   /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
   /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync</docs>
+  [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken). The TimeSpan timeout pattern is replaced by the caller's CancellationToken — perspective health is an observability concern, not a per-call timeout. Will be removed in the next major.")]
   Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -537,6 +539,7 @@ public interface IDispatcher {
   /// <returns>The typed business result from the receptor.</returns>
   /// <exception cref="TimeoutException">Thrown when the perspective doesn't complete processing within the timeout.</exception>
   /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync-perspective</docs>
+  [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken) for SyncMode.AllProjections, then read the specific perspective via repository. Will be removed in the next major.")]
   Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult, TPerspective>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -579,6 +582,45 @@ public interface IDispatcher {
       where TMessage : notnull
       where TPerspective : class
       => throw new NotSupportedException("LocalInvokeAndSyncForPerspectiveAsync requires a Dispatcher implementation with IPerspectiveSyncAwaiter support.");
+
+  // ========================================
+  // W4 — SYNC MODE (NEW SHAPE, NO TIMEOUT)
+  // ========================================
+
+  /// <summary>
+  /// Invokes a receptor in-process and waits for completion as defined by
+  /// <paramref name="mode"/>. CancellationToken-only — no <c>TimeSpan</c> timeout;
+  /// the caller's <paramref name="cancellationToken"/> is the sole wait bound.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// New W4 shape that replaces the timeout-based
+  /// <see cref="LocalInvokeAndSyncAsync{TMessage}(TMessage, System.TimeSpan?, System.Action{Perspectives.Sync.SyncWaitingContext}?, System.Action{Perspectives.Sync.SyncDecisionContext}?, CancellationToken)"/>
+  /// overloads (now <see cref="System.ObsoleteAttribute"/>). Perspective health is
+  /// a separate observability concern — a hung perspective surfaces via metrics and
+  /// the caller's own cancellation, not via an implicit 30 s timeout.
+  /// </para>
+  /// <para>
+  /// <see cref="Perspectives.Sync.SyncMode.AllProjections"/> is the
+  /// read-after-write CQRS default; callers explicitly opt into
+  /// <see cref="Perspectives.Sync.SyncMode.StreamOnly"/> when they do NOT need to
+  /// read from any local perspective in the same request.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="mode">What completion to wait for. Required (no implicit default) — every callsite makes its read-after-write expectation explicit.</param>
+  /// <param name="cancellationToken">A cancellation token. When triggered, propagates as <see cref="System.OperationCanceledException"/>.</param>
+  /// <returns>A task that completes when the chosen sync mode is satisfied.</returns>
+  /// <docs>fundamentals/dispatcher/sync-mode</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs</tests>
+  System.Threading.Tasks.ValueTask LocalInvokeAndSyncAsync<TMessage>(
+      TMessage message,
+      Perspectives.Sync.SyncMode mode,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      => throw new System.NotSupportedException(
+          "LocalInvokeAndSyncAsync(SyncMode) requires a Dispatcher implementation with IEventCompletionAwaiter / IEventStore support. Ensure AddWhizbang() ran.");
 
   // ========================================
   // BATCH OPERATIONS

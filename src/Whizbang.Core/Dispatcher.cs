@@ -4056,6 +4056,7 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
+  [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken). Will be removed in the next major.")]
   public async Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -4089,6 +4090,7 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
+  [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken). Will be removed in the next major.")]
   public async Task<SyncResult> LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -4114,6 +4116,7 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
+  [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken). Will be removed in the next major.")]
   public async Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult, TPerspective>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -4165,6 +4168,43 @@ public abstract partial class Dispatcher(
       // Wait for the specific perspective to process emitted events
       return await _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
           message, timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+    } finally {
+      sw.Stop();
+      _dispatcherMetrics?.LocalInvokeAndSyncDuration.Record(sw.Elapsed.TotalMilliseconds);
+    }
+  }
+
+  // ========================================
+  // W4 — NEW SHAPE: SyncMode + CT-only, no TimeSpan
+  // ========================================
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async ValueTask LocalInvokeAndSyncAsync<TMessage>(
+      TMessage message,
+      SyncMode mode,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull {
+    var sw = Stopwatch.StartNew();
+    try {
+      await LocalInvokeAsync(message);
+
+      // StreamOnly: handler completed + events emitted; no perspective wait.
+      // AllProjections: delegate to the existing per-perspective wait. The wait
+      // uses the caller's CT as the only bound — Timeout.InfiniteTimeSpan signals
+      // "no timeout-based exit" so the legacy timeout path is bypassed.
+      if (mode == SyncMode.StreamOnly) {
+        return;
+      }
+
+      _ = await _waitForAllPerspectivesAsync(
+        Timeout.InfiniteTimeSpan,
+        onWaiting: null,
+        onDecisionMade: null,
+        cancellationToken);
     } finally {
       sw.Stop();
       _dispatcherMetrics?.LocalInvokeAndSyncDuration.Record(sw.Elapsed.TotalMilliseconds);
