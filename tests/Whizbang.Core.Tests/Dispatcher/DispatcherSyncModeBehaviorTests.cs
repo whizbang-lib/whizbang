@@ -6,6 +6,12 @@ using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tests.Generated;
 
+// Reuse the existing VoidCommand + VoidCommandReceptor declared by
+// DispatcherLocalInvokeAndSyncTests so the source-generated AddReceptors() registry
+// count stays stable. (Diagnostics receptor-count tests assert against a fixed
+// total — adding another IReceptor<T> class here would break those.)
+using VoidCommand = Whizbang.Core.Tests.Dispatcher.DispatcherLocalInvokeAndSyncTests.VoidCommand;
+
 namespace Whizbang.Core.Tests.Dispatcher;
 
 /// <summary>
@@ -20,9 +26,6 @@ namespace Whizbang.Core.Tests.Dispatcher;
 [Category("Sync")]
 [NotInParallel] // Uses static ScopedEventTrackerAccessor.CurrentTracker
 public sealed class DispatcherSyncModeBehaviorTests {
-  public record CreateOrderCommand(Guid CustomerId, decimal Amount);
-  public record OrderCreatedResult(Guid OrderId);
-  public record VoidCommand(string Data);
 
   [Test]
   public async Task StreamOnly_WithAwaiterRegistered_DoesNotInvokeAwaiterAsync() {
@@ -155,12 +158,6 @@ public sealed class DispatcherSyncModeBehaviorTests {
     services.AddWhizbangDispatcher();
     var serviceProvider = services.BuildServiceProvider();
     return serviceProvider.GetRequiredService<IDispatcher>();
-  }
-
-  public class VoidCommandReceptor : IReceptor<VoidCommand> {
-    public ValueTask HandleAsync(VoidCommand message, CancellationToken cancellationToken = default) {
-      return ValueTask.CompletedTask;
-    }
   }
 
   private sealed class RecordingEventCompletionAwaiter : IEventCompletionAwaiter {
