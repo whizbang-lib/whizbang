@@ -11,13 +11,14 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
-/// W4 Phase 0 empirical confirmation: does <see cref="IDispatcher.LocalInvokeAndSyncAsync{TMessage}"/>
-/// actually wait for perspectives when called from a real receptor flow (the a consumer seed-code
-/// pattern), or does it silently early-return with <see cref="SyncOutcome.NoPendingEvents"/>?
+/// W4 Phase 0 empirical regression-lock: does <see cref="IDispatcher.LocalInvokeAndSyncAsync{TMessage}"/>
+/// actually wait for perspectives when called from a real receptor flow inside a DI scope,
+/// or does it silently early-return with <see cref="SyncOutcome.NoPendingEvents"/>?
 /// </summary>
 /// <remarks>
 /// <para>
-/// Notes file: <c>plans/notes-w4-phase0.md</c>.
+/// Replicates the canonical receptor-emitting-event call shape that downstream
+/// consumers exercise when running seed code that needs read-after-write semantics.
 /// </para>
 /// <para>
 /// The test probes the dispatcher's behavior via the <c>onDecisionMade</c> callback. The
@@ -27,8 +28,8 @@ namespace Whizbang.Core.Integration.Tests;
 /// <para>
 /// Possible outcomes:
 /// <list type="bullet">
-///   <item><strong>didWait=true, Outcome=Synced</strong> — framework works correctly; a consumer's polling is unnecessary defense; W4 plan stands down (or shrinks to API cleanup only).</item>
-///   <item><strong>didWait=false, Outcome=NoPendingEvents</strong> — framework silently bypassed the wait. Confirms the latent bug; the 2-line fix in <c>_trackEventForSync</c> is the minimum viable patch.</item>
+///   <item><strong>didWait=true, Outcome=Synced</strong> — framework works correctly; any caller-side polling defense is unnecessary; W4 plan stands down (or shrinks to API cleanup only).</item>
+///   <item><strong>didWait=false, Outcome=NoPendingEvents</strong> — framework silently bypassed the wait. Confirms a latent bug; the minimum viable patch is the AsyncLocal fallback in <c>_trackEventForSync</c>.</item>
 ///   <item><strong>didWait=true, Outcome=TimedOut</strong> — framework tried to wait but never got the signal. Different flavor of bug; needs deeper investigation.</item>
 /// </list>
 /// </para>
@@ -39,7 +40,7 @@ namespace Whizbang.Core.Integration.Tests;
 public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
 
   /// <summary>
-  /// A receptor that emits an event when handling a command. Mimics the a consumer seed-code
+  /// A receptor that emits an event when handling a command. Mimics the canonical receptor-emitting-event
   /// pattern: dispatcher.LocalInvokeAndSyncAsync(InitializeSystemManagedListCommand) →
   /// receptor emits SystemManagedListInitializedEvent.
   /// </summary>
@@ -67,7 +68,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
 
   /// <summary>
   /// CRITICAL TEST: does the dispatcher actually wait for perspectives when invoked from
-  /// inside a DI scope, as the a consumer seed receptor does?
+  /// inside a DI scope, as the in-scope receptor does?
   /// </summary>
   [Test]
   public async Task LocalInvokeAndSyncAsync_FromScopeWithReceptorEmittingEvent_DidWaitAsync() {
@@ -91,7 +92,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
 
     var rootProvider = services.BuildServiceProvider();
 
-    // Create a DI scope to mimic the receptor invocation context. a consumer seed receptors run
+    // Create a DI scope to mimic the receptor invocation context. in-scope receptors run
     // inside a scope created by the work coordinator.
     using var scope = rootProvider.CreateScope();
 
@@ -110,7 +111,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
       Tag = "phase-0-empirical-probe",
     };
 
-    // Act: call LocalInvokeAndSyncAsync exactly as a consumer seed code does, with the addition of
+    // Act: call LocalInvokeAndSyncAsync exactly as seed-code patterns do, with the addition of
     // an onDecisionMade callback that captures whether the wait fired.
     var result = await dispatcher.LocalInvokeAndSyncAsync(
       command,
@@ -131,7 +132,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
     var eventsAwaited = result.EventsAwaited;
 
     // Load-bearing claim for Phase 0: the dispatcher actually waited for at least one event
-    // (didWait==true AND EventsAwaited>=1). If that holds, the framework works for the a consumer
+    // (didWait==true AND EventsAwaited>=1). If that holds, the framework works for the consumer
     // seed-code pattern; the proposal's claim is wrong. If didWait==false OR EventsAwaited==0,
     // the wait method bailed out early — that's the silent bug the proposal addresses.
     var conclusion = (didWait, eventsAwaited, outcome) switch {
@@ -142,7 +143,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
 
     await Assert.That(conclusion).StartsWith("FRAMEWORK_WORKS")
       .Because($"PHASE 0 OBSERVATION — {conclusion}, Elapsed={result.ElapsedTime.TotalMilliseconds:F0}ms. " +
-               "Test PASSES → framework correctly waited for at least one event; a consumer's PollUntilAsync is defensive code that the framework already handles correctly. " +
+               "Test PASSES → framework correctly waited for at least one event; caller-side PollUntilAsync is defensive code that the framework already handles correctly. " +
                "Test FAILS with 'BUG_CONFIRMED' → dispatcher bailed without waiting (the latent bug the W4 proposal addresses). " +
                "Test FAILS with 'UNEXPECTED' → different code path; investigate captured values.");
   }
