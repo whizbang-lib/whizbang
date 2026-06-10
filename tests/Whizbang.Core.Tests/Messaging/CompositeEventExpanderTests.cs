@@ -96,6 +96,92 @@ public class CompositeEventExpanderTests {
     await Assert.That(ex!.Message).Contains("ICompositeEvent");
   }
 
+  [Test]
+  public async Task Expand_NullInnerEvent_ThrowsInvalidOperationExceptionAsync() {
+    // Producer's enumerator yields a null reference — the contract says every inner must be non-null.
+    var envelope = new MessageEnvelope<ICompositeEvent> {
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      MessageId = MessageId.New(),
+      Payload = new _nullYieldingComposite(),
+      Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
+    };
+
+    Action act = () => _ = CompositeEventExpander.Expand(envelope).ToList();
+
+    var ex = await Assert.That(act).Throws<InvalidOperationException>();
+    await Assert.That(ex!.Message).Contains("null inner event")
+      .Because("Null inner events corrupt the inbox if not caught at expansion — explicit throw beats silent fan-out of broken envelopes.");
+  }
+
+  [Test]
+  public async Task ExpandGeneric_YieldsTypedEnvelopeForEachInnerAsync() {
+    var composite = new _testComposite(_inner("J-001"), _inner("J-002"));
+    var envelope = _wrap(composite);
+
+    var inners = CompositeEventExpander.Expand<_innerEvent>(envelope).ToList();
+
+    await Assert.That(inners.Count).IsEqualTo(2);
+    await Assert.That(inners[0].Payload).IsTypeOf<_innerEvent>()
+      .Because("Generic overload returns MessageEnvelope<TInner> — the payload is strongly typed for callers that know the inner type at compile time.");
+    await Assert.That(inners[0].Payload.Id).IsEqualTo("J-001");
+    await Assert.That(inners[1].Payload.Id).IsEqualTo("J-002");
+    await Assert.That(inners[0].SourceServiceId).IsEqualTo(envelope.SourceServiceId)
+      .Because("Generic build path inherits identity context just like the non-generic build path.");
+    await Assert.That(inners[0].Hops).IsSameReferenceAs(envelope.Hops!);
+    await Assert.That(inners[0].MessageId).IsNotEqualTo(envelope.MessageId)
+      .Because("Fresh per-inner MessageId so inbox dedup treats each inner as distinct.");
+  }
+
+  [Test]
+  public async Task ExpandGeneric_TypeMismatch_ThrowsInvalidOperationExceptionAsync() {
+    // Producer yielded an inner event of a different runtime type than the caller-specified TInner.
+    var composite = new _testComposite(_inner("X"));
+    var envelope = _wrap(composite);
+
+    // Caller asks for OtherInnerEvent, but the composite actually yields _innerEvent.
+    Action act = () => _ = CompositeEventExpander.Expand<_otherInnerEvent>(envelope).ToList();
+
+    var ex = await Assert.That(act).Throws<InvalidOperationException>();
+    await Assert.That(ex!.Message).Contains("not assignable")
+      .Because("Type mismatch must surface as a clear error — silent skip would lose events; silent cast would corrupt envelopes.");
+  }
+
+  [Test]
+  public async Task ExpandGeneric_OverCap_ThrowsCompositeInnerEventLimitExceededAsync() {
+    var inners = Enumerable.Range(0, 11).Select(i => _inner($"i-{i}")).ToArray();
+    var composite = new _testComposite(inners) { MaxInnerEventsAllowedOverride = 10 };
+    var envelope = _wrap(composite);
+
+    Action act = () => _ = CompositeEventExpander.Expand<_innerEvent>(envelope).ToList();
+
+    var ex = await Assert.That(act).Throws<CompositeInnerEventLimitExceededException>();
+    await Assert.That(ex!.MaxInnerEventsAllowed).IsEqualTo(10);
+  }
+
+  [Test]
+  public async Task Expand_NullEnvelope_ThrowsArgumentNullExceptionAsync() {
+    Action genericAct = () => _ = CompositeEventExpander.Expand<_innerEvent>(null!).ToList();
+    Action nonGenericAct = () => _ = CompositeEventExpander.Expand((IMessageEnvelope)null!).ToList();
+
+    await Assert.That(genericAct).Throws<ArgumentNullException>();
+    await Assert.That(nonGenericAct).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task CompositeInnerEventLimitExceededException_CtorsExposeContextAsync() {
+    // Parameterless + (message) + (message, inner) ctors are exercised so the SonarCloud
+    // coverage on the rich Exception type doesn't drag down the new-code gate.
+    var defaultInstance = new CompositeInnerEventLimitExceededException();
+    await Assert.That(defaultInstance.MaxInnerEventsAllowed).IsEqualTo(0);
+
+    var msgInstance = new CompositeInnerEventLimitExceededException("oops");
+    await Assert.That(msgInstance.Message).IsEqualTo("oops");
+
+    var inner = new InvalidOperationException("inner");
+    var withInner = new CompositeInnerEventLimitExceededException("wrap", inner);
+    await Assert.That(withInner.InnerException).IsSameReferenceAs(inner);
+  }
+
   // ============================================================
   // Test composites + helpers
   // ============================================================
@@ -123,6 +209,17 @@ public class CompositeEventExpanderTests {
   }
 
   private sealed record _innerEvent(string Id) : IEvent;
+
+  private sealed record _otherInnerEvent(string Id) : IEvent;
+
+  private sealed class _nullYieldingComposite : ICompositeEvent {
+    public int MaxInnerEventsAllowed => 10;
+    public IEnumerable<IMessage> InnerEvents {
+      get {
+        yield return null!;
+      }
+    }
+  }
 
   private sealed class _testComposite : ICompositeEvent {
     public _testComposite(params _innerEvent[] inner) {
