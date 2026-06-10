@@ -98,5 +98,21 @@ public enum MessageFailureReason {
   /// Introduced in v0.657 after the slot-3 silent-stuck forensic.
   /// See operations/configuration/empty-stream-id-policy.
   /// </remarks>
-  EmptyStreamId = 11
+  EmptyStreamId = 11,
+
+  /// <summary>
+  /// The serialized envelope exceeds the destination transport's
+  /// <see cref="Whizbang.Core.Transports.ITransport.MaxMessageSizeBytes"/>
+  /// AND no post-serialize hook (e.g., body offload / claim-check) substituted
+  /// the body with a smaller wire envelope. The publish strategy raises this
+  /// pre-flight so the outbox row stays put and ops can react — register a
+  /// body-offload provider, raise the transport tier, or trim the payload.
+  /// </summary>
+  /// <remarks>
+  /// Distinct from <see cref="TransportException"/> because the wire-send
+  /// never happened; the transport hasn't been reached. Distinct from
+  /// <see cref="SerializationError"/> because serialization succeeded — the
+  /// payload is just larger than the broker will accept.
+  /// </remarks>
+  MessageBodyTooLarge = 12
 }
