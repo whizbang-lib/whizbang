@@ -137,5 +137,22 @@ public enum MessageFailureReason {
   /// Receiver MUST dead-letter to prevent processing a payload the sender
   /// did not write.
   /// </summary>
-  BodyClaimIntegrityFailure = 14
+  BodyClaimIntegrityFailure = 14,
+
+  /// <summary>
+  /// A composite event (<see cref="Whizbang.Core.Messaging.ICompositeEvent"/>)
+  /// yielded more inner events than its
+  /// <see cref="Whizbang.Core.Messaging.ICompositeEvent.MaxInnerEventsAllowed"/>
+  /// cap. The receiver refuses to expand it — likely a producer bug
+  /// (runaway enumerator, accidentally-nested composites).
+  /// </summary>
+  CompositeInnerEventLimitExceeded = 15,
+
+  /// <summary>
+  /// A composite event failed to expand at the receiver — either an
+  /// inner event raised during enumeration, or the all-or-nothing
+  /// event-store append rolled back. The whole composite is rejected
+  /// (no partial inner events recorded).
+  /// </summary>
+  CompositeExpansionFailure = 16
 }
