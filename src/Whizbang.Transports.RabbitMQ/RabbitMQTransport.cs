@@ -153,6 +153,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
+    ReadOnlyMemory<byte>? preSerializedBytes = null,
     CancellationToken cancellationToken = default
   ) {
     ObjectDisposedException.ThrowIf(_disposed, this);
@@ -163,13 +164,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       throw new InvalidOperationException(TRANSPORT_NOT_INITIALIZED_MESSAGE);
     }
 
-    return _publishCoreAsync(envelope, destination, envelopeType, cancellationToken);
+    return _publishCoreAsync(envelope, destination, envelopeType, preSerializedBytes, cancellationToken);
   }
 
   private async Task _publishCoreAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType,
+    ReadOnlyMemory<byte>? preSerializedBytes,
     CancellationToken cancellationToken
   ) {
     var exchangeName = destination.Address;
@@ -200,12 +202,22 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
       var envelopeRuntimeType = envelope.GetType();
 
-      // Serialize envelope using AOT-compatible JsonContextRegistry
-      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+      // Honor the upstream pre-serialized hint when present. The publish-side
+      // strategy serializes once (for size measurement + post-serialize hooks
+      // like body offload) and hands us the final bytes; we MUST use them as-is
+      // to preserve the hook chain's substitutions (e.g., claim envelope when
+      // the body was offloaded).
+      byte[] body;
+      if (preSerializedBytes is { } hint) {
+        body = hint.ToArray();
+      } else {
+        // Serialize envelope using AOT-compatible JsonContextRegistry
+        var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+          ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
 
-      var json = JsonSerializer.Serialize(envelope, typeInfo);
-      var body = Encoding.UTF8.GetBytes(json);
+        var json = JsonSerializer.Serialize(envelope, typeInfo);
+        body = Encoding.UTF8.GetBytes(json);
+      }
 
       // Create message properties
       var properties = new BasicProperties {

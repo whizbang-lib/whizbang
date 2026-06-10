@@ -79,9 +79,15 @@ public class InProcessTransport : ITransport {
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
+    ReadOnlyMemory<byte>? preSerializedBytes = null,
     CancellationToken cancellationToken = default
   ) {
     cancellationToken.ThrowIfCancellationRequested();
+
+    // preSerializedBytes is ignored intentionally — InProcessTransport
+    // hands the live CLR envelope reference to subscribers without
+    // serialization. The hint is only meaningful for wire transports.
+    _ = preSerializedBytes;
 
     if (_batchSubscriptions.TryGetValue(destination.Address, out var batchHandlers)) {
       foreach (var (collector, subscription) in batchHandlers.ToArray()) {
@@ -160,7 +166,7 @@ public class InProcessTransport : ITransport {
 
     try {
       // Publish the request
-      await PublishAsync(requestEnvelope, destination, envelopeType: null, cancellationToken);
+      await PublishAsync(requestEnvelope, destination, envelopeType: null, preSerializedBytes: null, cancellationToken);
 
       // Wait for response (with cancellation support)
       using (cancellationToken.Register(() => tcs.TrySetCanceled())) {

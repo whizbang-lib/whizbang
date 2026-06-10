@@ -156,7 +156,7 @@ public class TransportManager(
     );
 
     // Publish to transport
-    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, preSerializedBytes: null, CancellationToken.None);
   }
 
   /// <summary>

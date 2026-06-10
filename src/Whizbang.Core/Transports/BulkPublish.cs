@@ -48,6 +48,22 @@ public record BulkPublishItem {
   /// </summary>
   /// <docs>messaging/transports/transports</docs>
   public Guid? StreamId { get; init; }
+
+  /// <summary>
+  /// Optional pre-serialized envelope bytes. When set, transports MUST
+  /// use these bytes on the wire and SKIP their internal serialization.
+  /// Set by upstream callers (e.g., <c>TransportPublishStrategy</c>) that
+  /// already serialized the envelope once — typically for size measurement
+  /// + post-serialize hook chain — so the transport doesn't re-do the work.
+  /// When null, the transport serializes normally.
+  /// </summary>
+  /// <remarks>
+  /// In-process / object-pass-through transports (e.g.,
+  /// <c>InProcessTransport</c>) MAY ignore this hint, as they don't
+  /// touch bytes; wire transports (RabbitMQ, Azure Service Bus) MUST
+  /// honor it when present.
+  /// </remarks>
+  public ReadOnlyMemory<byte>? PreSerializedBytes { get; init; }
 }
 
 /// <summary>

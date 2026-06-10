@@ -61,7 +61,7 @@ public class TransportPublishStrategyThrottleRetryTests {
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
       var n = Interlocked.Increment(ref _calls);
       if (n <= throttleCount) {
         throw new Azure.Messaging.ServiceBus.ServiceBusException(
@@ -233,7 +233,7 @@ public class TransportPublishStrategyThrottleRetryTests {
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => new();
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
       throwOrSucceed();
       return Task.CompletedTask;
     }
@@ -254,7 +254,7 @@ public class TransportPublishStrategyThrottleRetryTests {
     public TransportCapabilities Capabilities => TransportCapabilities.BulkPublish;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(IReadOnlyList<BulkPublishItem> items, TransportDestination destination, CancellationToken cancellationToken = default) {
       var n = Interlocked.Increment(ref _batchCalls);

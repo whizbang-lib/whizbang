@@ -77,14 +77,18 @@ public interface ITransport {
   /// <param name="envelope">The message envelope to publish</param>
   /// <param name="destination">The destination to publish to</param>
   /// <param name="envelopeType">Optional assembly-qualified name of the envelope type. If provided, used instead of envelope.GetType() for serialization metadata.</param>
+  /// <param name="preSerializedBytes">Optional pre-serialized envelope bytes. When set, wire transports MUST use these bytes on the wire and SKIP their internal serialization. Set by upstream callers (e.g., <c>TransportPublishStrategy</c>) that already serialized once for size measurement / post-serialize hook chain. In-process transports may ignore this hint since they don't touch bytes.</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the message is published</returns>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithCancellation_ThrowsOperationCanceledAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
   Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
+    ReadOnlyMemory<byte>? preSerializedBytes = null,
     CancellationToken cancellationToken = default
   );
 
