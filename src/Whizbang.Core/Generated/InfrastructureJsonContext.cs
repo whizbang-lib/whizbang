@@ -95,6 +95,13 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(MessageEnvelope<ICommand>))]
 [JsonSerializable(typeof(MessageEnvelope<IMessage>))]
 [JsonSerializable(typeof(MessageEnvelope<object>))]
+// Body offload (claim-check) envelope — wire-side substitute when the
+// post-serialize hook chain decides a message body should be uploaded
+// to an IMessageBodyStore. Receivers deserialize the wire bytes as this
+// type when whizbang.is-claim header is present, then rehydrate.
+[JsonSerializable(typeof(MessageEnvelope<Whizbang.Core.Offloads.BodyClaimEnvelopePayload>))]
+[JsonSerializable(typeof(Whizbang.Core.Offloads.BodyClaimEnvelopePayload))]
+[JsonSerializable(typeof(Whizbang.Core.Offloads.MessageBodyClaim))]
 // Work coordinator types
 [JsonSerializable(typeof(OutboxMessage))]
 [JsonSerializable(typeof(OutboxMessage[]))]

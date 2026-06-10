@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Transports;
@@ -48,6 +49,36 @@ public record BulkPublishItem {
   /// </summary>
   /// <docs>messaging/transports/transports</docs>
   public Guid? StreamId { get; init; }
+
+  /// <summary>
+  /// Optional pre-serialized envelope bytes. When set, transports MUST
+  /// use these bytes on the wire and SKIP their internal serialization.
+  /// Set by upstream callers (e.g., <c>TransportPublishStrategy</c>) that
+  /// already serialized the envelope once — typically for size measurement
+  /// + post-serialize hook chain — so the transport doesn't re-do the work.
+  /// When null, the transport serializes normally.
+  /// </summary>
+  /// <remarks>
+  /// In-process / object-pass-through transports (e.g.,
+  /// <c>InProcessTransport</c>) MAY ignore this hint, as they don't
+  /// touch bytes; wire transports (RabbitMQ, Azure Service Bus) MUST
+  /// honor it when present.
+  /// </remarks>
+  public ReadOnlyMemory<byte>? PreSerializedBytes { get; init; }
+
+  /// <summary>
+  /// Optional per-item metadata applied to THIS item's wire-message
+  /// ApplicationProperties / Headers in addition to the shared
+  /// <see cref="TransportDestination.Metadata"/>. Used for properties
+  /// that vary per item — e.g., <c>whizbang.body-size</c> stamped by the
+  /// post-serialize hook chain.
+  /// </summary>
+  /// <remarks>
+  /// Keys collide-by-overwrite: per-item entries override shared
+  /// destination metadata. This makes per-item overrides "win" without
+  /// transport-specific merge logic.
+  /// </remarks>
+  public IReadOnlyDictionary<string, JsonElement>? PerItemMetadata { get; init; }
 }
 
 /// <summary>

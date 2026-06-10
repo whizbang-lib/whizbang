@@ -46,13 +46,22 @@ public partial class TransportPublishStrategy(
   string inboxTopic,
   ILoggerFactory? loggerFactory = null,
   ThrottleRetryOptions? throttleRetryOptions = null,
-  TransportMetrics? metrics = null
+  TransportMetrics? metrics = null,
+  Whizbang.Core.Offloads.PostSerializeHookChain? postSerializeHookChain = null,
+  System.Text.Json.JsonSerializerOptions? jsonOptions = null
 ) : IMessagePublishStrategy {
   private const string LOG_CATEGORY = "Whizbang.Core.Transport";
+
+  /// <summary>Destination metadata key carrying the on-wire envelope size in bytes — stamped by the publish strategy whenever serialization happens, regardless of offload outcome.</summary>
+#pragma warning disable CA1707
+  public const string BODY_SIZE_METADATA_KEY = "whizbang.body-size";
+#pragma warning restore CA1707
 
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ITransportReadinessCheck _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
   private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
+  private readonly Whizbang.Core.Offloads.PostSerializeHookChain? _hookChain = postSerializeHookChain;
+  private readonly System.Text.Json.JsonSerializerOptions? _jsonOptions = jsonOptions;
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
   private readonly ILogger _logger = loggerFactory?.CreateLogger(LOG_CATEGORY) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 #pragma warning restore S4487
@@ -157,6 +166,30 @@ public partial class TransportPublishStrategy(
       destination = _addStreamIdToMetadata(destination, work.StreamId.Value);
     }
 
+    // Pre-serialize + post-serialize hook chain integration.
+    // Only fires when something needs the size before the transport gets it:
+    //   - transport reports a wire ceiling (so we have to validate pre-flight), OR
+    //   - at least one hook is registered (size measurement, body offload, etc.)
+    // When neither applies (e.g., InProcessTransport with no hooks), skip the
+    // serialization cost entirely — preserves the existing fast path.
+    Whizbang.Core.Observability.IMessageEnvelope envelopeToPublish = work.Envelope;
+    var envelopeTypeToPublish = work.EnvelopeType;
+    ReadOnlyMemory<byte>? preSerializedBytes = null;
+
+    var needsPreSerialize = _hookChain is not null
+                            && _jsonOptions is not null
+                            && (!_hookChain.IsEmpty || _transport.MaxMessageSizeBytes is not null);
+    if (needsPreSerialize) {
+      var preflight = await _runPostSerializeChainAsync(work, destination, cancellationToken);
+      if (preflight.Failure is { } failure) {
+        return failure;
+      }
+      envelopeToPublish = preflight.Envelope!;
+      envelopeTypeToPublish = preflight.EnvelopeType;
+      preSerializedBytes = preflight.Bytes;
+      destination = preflight.Destination!;
+    }
+
     // In-memory retry loop on broker-side throttling. Lease is already held; the broker
     // pause is typically sub-second to a few seconds; releasing the lease and waiting for
     // claim_orphaned_outbox would prematurely burn down the dead-letter budget AND add
@@ -168,8 +201,10 @@ public partial class TransportPublishStrategy(
 
         // Publish to transport - envelope is already deserialized
         // OutboxWork is non-generic, Envelope is IMessageEnvelope<object>
-        // Pass EnvelopeType from OutboxWork to preserve original payload type information
-        await _transport.PublishAsync(work.Envelope, destination, work.EnvelopeType, cancellationToken);
+        // Pass EnvelopeType from OutboxWork to preserve original payload type information.
+        // When the hook chain ran, the bytes hint carries whatever the chain produced
+        // (potentially a substitute claim envelope when offload triggered).
+        await _transport.PublishAsync(envelopeToPublish, destination, envelopeTypeToPublish, preSerializedBytes: preSerializedBytes, cancellationToken);
 
         return new MessagePublishResult {
           MessageId = work.MessageId,
@@ -265,16 +300,51 @@ public partial class TransportPublishStrategy(
       // Use the first item's destination as the shared destination (address is the same for all)
       var sharedDestination = groupItems[0].Destination;
 
-      // Build BulkPublishItems with per-item routing keys
+      // Run the post-serialize hook chain per item (when configured) — same
+      // contract as single PublishAsync: serialize once, run chain, stamp
+      // per-item whizbang.body-size, validate ceiling pre-flight. Oversized
+      // items get an individual failure result; other items in the batch
+      // proceed normally.
+      var needsPreSerialize = _hookChain is not null
+                              && _jsonOptions is not null
+                              && (!_hookChain.IsEmpty || _transport.MaxMessageSizeBytes is not null);
+
+      // Build BulkPublishItems with per-item routing keys (and per-item
+      // pre-serialized bytes + metadata when the chain ran).
       var bulkItems = new List<BulkPublishItem>(groupItems.Count);
       foreach (var (work, destination) in groupItems) {
+        Whizbang.Core.Observability.IMessageEnvelope envelopeToPublish = work.Envelope;
+        var envelopeTypeToPublish = work.EnvelopeType;
+        ReadOnlyMemory<byte>? itemBytes = null;
+        IReadOnlyDictionary<string, JsonElement>? itemMetadata = null;
+
+        if (needsPreSerialize) {
+          var itemPreflight = await _runPostSerializeChainAsync(work, destination, cancellationToken);
+          if (itemPreflight.Failure is { } failure) {
+            // Oversized + no offload: per-item failure, skip adding to bulk.
+            results.Add(failure);
+            continue;
+          }
+          envelopeToPublish = itemPreflight.Envelope!;
+          envelopeTypeToPublish = itemPreflight.EnvelopeType;
+          itemBytes = itemPreflight.Bytes;
+          itemMetadata = itemPreflight.Destination!.Metadata;
+        }
+
         bulkItems.Add(new BulkPublishItem {
-          Envelope = work.Envelope,
-          EnvelopeType = work.EnvelopeType,
+          Envelope = envelopeToPublish,
+          EnvelopeType = envelopeTypeToPublish,
           MessageId = work.MessageId,
           RoutingKey = destination.RoutingKey,
-          StreamId = work.StreamId
+          StreamId = work.StreamId,
+          PreSerializedBytes = itemBytes,
+          PerItemMetadata = itemMetadata,
         });
+      }
+
+      if (bulkItems.Count == 0) {
+        // Every item in this group failed pre-flight; nothing to send.
+        continue;
       }
 
       // In-memory throttle retry for the whole batch group. Broker throttling on bulk send
@@ -484,5 +554,84 @@ public partial class TransportPublishStrategy(
     metadata["StreamId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement;
 
     return destination with { Metadata = metadata };
+  }
+
+  /// <summary>
+  /// Pre-flight: serialize the envelope once, run the post-serialize hook
+  /// chain (size measurement, body offload, etc.), stamp
+  /// <c>whizbang.body-size</c> on destination metadata, and validate that
+  /// the final wire bytes fit the transport's ceiling. Returns either the
+  /// chain's outcome (envelope/type/bytes/destination) for the publish
+  /// step or a pre-flight failure result the caller returns directly.
+  /// </summary>
+  private async Task<_postSerializeOutcome> _runPostSerializeChainAsync(
+      OutboxWork work,
+      TransportDestination destination,
+      CancellationToken cancellationToken) {
+    var runtimeType = work.Envelope.GetType();
+    var typeInfo = _jsonOptions!.GetTypeInfo(runtimeType)
+      ?? throw new InvalidOperationException(
+        $"No JsonTypeInfo found for {runtimeType.Name}. Register MessageEnvelope<T> via JsonContextRegistry before enabling post-serialize hooks.");
+
+    var json = JsonSerializer.Serialize(work.Envelope, typeInfo);
+    var originalBytes = System.Text.Encoding.UTF8.GetBytes(json);
+
+    var envelopeTypeName = work.EnvelopeType
+      ?? runtimeType.AssemblyQualifiedName
+      ?? throw new InvalidOperationException("Envelope type must have an assembly-qualified name.");
+
+    var context = new Whizbang.Core.Offloads.PostSerializeContext(
+      Envelope: work.Envelope,
+      EnvelopeType: envelopeTypeName,
+      SerializedBytes: originalBytes,
+      ContentType: "application/json",
+      TransportMaxMessageSizeBytes: _transport.MaxMessageSizeBytes,
+      JsonOptions: _jsonOptions,
+      Destination: destination);
+
+    var outcome = await _hookChain!.RunAsync(context, cancellationToken);
+
+    // Stamp whizbang.body-size based on the FINAL bytes (post-hook chain).
+    var finalDestinationMetadata = new Dictionary<string, JsonElement>();
+    if (outcome.MergedDestinationMetadata is not null) {
+      foreach (var (k, v) in outcome.MergedDestinationMetadata) {
+        finalDestinationMetadata[k] = v;
+      }
+    }
+    var sizeJson = outcome.FinalSerializedBytes.Length.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    finalDestinationMetadata[BODY_SIZE_METADATA_KEY] = JsonDocument.Parse(sizeJson).RootElement;
+
+    var finalDestination = destination with { Metadata = finalDestinationMetadata };
+
+    // Pre-flight ceiling check. If the chain didn't substitute the body and the
+    // size still exceeds the transport's ceiling, fail BEFORE handing it to the
+    // transport — the outbox row stays put with a clear reason code.
+    if (_transport.MaxMessageSizeBytes is long max && outcome.FinalSerializedBytes.Length > max) {
+      return new _postSerializeOutcome {
+        Failure = new MessagePublishResult {
+          MessageId = work.MessageId,
+          Success = false,
+          CompletedStatus = work.Status,
+          Error = $"Serialized envelope is {outcome.FinalSerializedBytes.Length} bytes; transport ceiling is {max} bytes. Register a body-offload provider (services.AddWhizbangBodyOffload() + AddWhizbang*Offload(name) + Configure<MessageBodyOffloadOptions>(opts => opts.ProviderName = name)), raise the transport tier, or trim the payload.",
+          Reason = MessageFailureReason.MessageBodyTooLarge,
+        }
+      };
+    }
+
+    return new _postSerializeOutcome {
+      Envelope = outcome.FinalEnvelope,
+      EnvelopeType = outcome.FinalEnvelopeType,
+      Bytes = outcome.FinalSerializedBytes,
+      Destination = finalDestination,
+    };
+  }
+
+  /// <summary>Internal carrier from <see cref="_runPostSerializeChainAsync"/>. Either Failure is set (pre-flight rejection) or the four chain-outcome fields are.</summary>
+  private sealed class _postSerializeOutcome {
+    public Whizbang.Core.Observability.IMessageEnvelope? Envelope { get; init; }
+    public string? EnvelopeType { get; init; }
+    public ReadOnlyMemory<byte> Bytes { get; init; }
+    public TransportDestination? Destination { get; init; }
+    public MessagePublishResult? Failure { get; init; }
   }
 }

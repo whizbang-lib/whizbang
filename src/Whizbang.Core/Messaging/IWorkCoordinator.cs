@@ -1065,6 +1065,25 @@ public record OutboxMessage {
   public bool IsEvent { get; init; }
 
   /// <summary>
+  /// Whether this message is a composite event (implements
+  /// <see cref="Whizbang.Core.Messaging.ICompositeEvent"/>) that the
+  /// receiver fans out into N inner events. Set at producer-side dispatch
+  /// time; surfaces on the wire via destination metadata and on the
+  /// receiving inbox row so observability dashboards can distinguish
+  /// composite vs. regular flow and so the receiver expansion path
+  /// (slice 10) can detect work to expand without re-running the payload
+  /// type check.
+  /// </summary>
+  /// <remarks>
+  /// Composites flow through the same outbox/transport surface as ordinary
+  /// events — this flag is informational. The composite-events feature
+  /// (W3 slices 8–11) reads this flag at the receiver to decide whether
+  /// to enumerate <see cref="ICompositeEvent.InnerEvents"/> and append
+  /// each inner event to the event store individually.
+  /// </remarks>
+  public bool IsComposite { get; init; }
+
+  /// <summary>
   /// Multi-tenancy and security scope extracted from the envelope.
   /// Stored in the dedicated scope JSONB column for query filtering.
   /// </summary>
@@ -1116,6 +1135,16 @@ public record InboxMessage {
   /// If true and stream_id is not null, it will be persisted to the event store.
   /// </summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// Whether this inbox row carries a composite event
+  /// (<see cref="Whizbang.Core.Messaging.ICompositeEvent"/>) that the
+  /// receiver should fan out into N inner events. Populated post-rehydrate
+  /// by the consumer worker; the composite-expansion path (slice 10) reads
+  /// this flag to trigger inner-event enumeration + batched event-store
+  /// append without re-running the payload type check.
+  /// </summary>
+  public bool IsComposite { get; init; }
 
   /// <summary>
   /// Multi-tenancy and security scope extracted from the envelope.

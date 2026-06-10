@@ -351,7 +351,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     public Task PublishAsync(
         IMessageEnvelope envelope, TransportDestination destination,
-        string? envelopeType = null, CancellationToken cancellationToken = default) =>
+        string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 
     public Task<ISubscription> SubscribeBatchAsync(

@@ -463,6 +463,7 @@ public class SubscriptionRetryHelperTests {
       IMessageEnvelope envelope,
       TransportDestination destination,
       string? envelopeType = null,
+      ReadOnlyMemory<byte>? preSerializedBytes = null,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<ISubscription> SubscribeBatchAsync(

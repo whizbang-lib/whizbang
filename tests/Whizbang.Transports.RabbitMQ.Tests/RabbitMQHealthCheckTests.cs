@@ -100,6 +100,7 @@ public class RabbitMQHealthCheckTests {
       IMessageEnvelope envelope,
       TransportDestination destination,
       string? envelopeType = null,
+      ReadOnlyMemory<byte>? preSerializedBytes = null,
       CancellationToken cancellationToken = default
     ) => throw new NotImplementedException();
 

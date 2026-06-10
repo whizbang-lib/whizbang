@@ -51,20 +51,44 @@ public interface ITransport {
   TransportCapabilities Capabilities { get; }
 
   /// <summary>
+  /// Maximum per-message size (envelope + body + headers) the transport will
+  /// accept on the wire, in bytes. <c>null</c> means there is no enforced
+  /// limit relevant to Whizbang offload-strategy decisions (e.g., in-process
+  /// transports, or transports whose ceiling is high enough that no Whizbang
+  /// outbox message could reasonably exceed it).
+  /// </summary>
+  /// <remarks>
+  /// Size-aware strategies — composite events, body offload — read this value
+  /// pre-flight in <c>OutboxPublishWorker</c> to decide whether to send a
+  /// large message inline or route it through a body-store (claim-check
+  /// pattern). Offload thresholds are set BELOW this value to leave room for
+  /// envelope headers and broker metadata.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_MaxMessageSizeBytes_InProcessTransport_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:MaxMessageSizeBytes_ReturnsNull_NoEnforcedLimitAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
+  /// <docs>messaging/transports/transports#max-message-size</docs>
+  long? MaxMessageSizeBytes => null;
+
+  /// <summary>
   /// Publishes a message to a destination (fire-and-forget).
   /// The message is sent asynchronously with no response expected.
   /// </summary>
   /// <param name="envelope">The message envelope to publish</param>
   /// <param name="destination">The destination to publish to</param>
   /// <param name="envelopeType">Optional assembly-qualified name of the envelope type. If provided, used instead of envelope.GetType() for serialization metadata.</param>
+  /// <param name="preSerializedBytes">Optional pre-serialized envelope bytes. When set, wire transports MUST use these bytes on the wire and SKIP their internal serialization. Set by upstream callers (e.g., <c>TransportPublishStrategy</c>) that already serialized once for size measurement / post-serialize hook chain. In-process transports may ignore this hint since they don't touch bytes.</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the message is published</returns>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithCancellation_ThrowsOperationCanceledAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
   Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
+    ReadOnlyMemory<byte>? preSerializedBytes = null,
     CancellationToken cancellationToken = default
   );
 

@@ -770,12 +770,65 @@ COMMENT ON FUNCTION __SCHEMA__.commit_handler_result IS
 
 
 -- ============================================================================
--- commit_handler_batch — SAVEPOINT-per-handler batched commit. The throughput
--- multiplier: N handler results in one round-trip, one fsync at the outer commit,
--- with per-handler success/failure isolation. PL/pgSQL BEGIN..EXCEPTION blocks
--- create implicit subtransactions (savepoints), so a failing handler rolls back
--- ONLY its own effects; siblings are unaffected.
--- Phase A of work-pump decomposition.
+-- commit_handler_batch_bulk — Tier 1 (Option D) optimistic bulk commit. Runs
+-- every handler's commit_handler_result in a single transaction with NO
+-- savepoint isolation. Failure semantics: all-or-nothing — any error raises
+-- out of the whole call and the caller (commit_handler_batch orchestrator)
+-- catches it and falls back to the per-handler savepoint loop.
+--
+-- Why a separate function: keeping the bulk attempt in its own function gives
+-- the orchestrator a clean BEGIN..EXCEPTION boundary to catch failures. Inline
+-- code in the orchestrator would catch its own RAISE/EXCEPTION too aggressively
+-- and complicate the fallback semantics.
+--
+-- Throughput multiplier on the happy path: zero savepoint overhead (no
+-- per-iteration BEGIN..EXCEPTION subtransaction), one outer fsync, one logical
+-- statement boundary. Estimated ~50-65% drop on CommitHandlerBatchAsync hold
+-- relative to the savepoint-per-handler loop alone.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('commit_handler_batch_bulk');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.commit_handler_batch_bulk(
+  p_results JSONB
+) RETURNS VOID AS $$
+DECLARE
+  r RECORD;
+BEGIN
+  IF jsonb_array_length(p_results) = 0 THEN
+    RETURN;
+  END IF;
+
+  FOR r IN
+    SELECT elem
+    FROM jsonb_array_elements(p_results) AS elem
+  LOOP
+    -- NO BEGIN..EXCEPTION wrapper: any error from commit_handler_result raises
+    -- straight out of the function, aborting the whole batch atomically. The
+    -- orchestrator's EXCEPTION handler is the safety net.
+    PERFORM __SCHEMA__.commit_handler_result(r.elem);
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.commit_handler_batch_bulk IS
+'Tier 1 (Option D) optimistic bulk commit. Runs each handler-result through commit_handler_result in a single transaction with no savepoint isolation — fastest happy path, all-or-nothing failure semantics. Any error raises out of the whole call so the commit_handler_batch orchestrator can fall back to the savepoint-per-handler loop. Caller should only invoke this directly when isolated per-handler error reporting is not needed.';
+
+
+-- ============================================================================
+-- commit_handler_batch — Two-tier orchestrator (Option D).
+--
+-- Tier 1 (optimistic): try commit_handler_batch_bulk in a subtransaction. On
+-- success, emit success rows for every handler and return — no savepoint
+-- overhead in the common case.
+--
+-- Tier 2 (fallback): if the bulk attempt raises, the subtransaction rolls back
+-- cleanly, and we run the original per-handler SAVEPOINT loop. Failing handlers
+-- get individual error reports; siblings commit normally. Rare path (handler
+-- errors are exceptional), so the bulk-then-loop cost is fine.
+--
+-- PL/pgSQL BEGIN..EXCEPTION creates implicit subtransactions (savepoints), so
+-- both tiers preserve transactional isolation against the outer transaction.
 -- ============================================================================
 
 SELECT __SCHEMA__.drop_all_overloads('commit_handler_batch');
@@ -795,6 +848,27 @@ BEGIN
     RETURN;
   END IF;
 
+  -- Tier 1: optimistic bulk attempt. Subtransaction scope means a raise inside
+  -- commit_handler_batch_bulk rolls back cleanly without aborting the outer
+  -- transaction; control falls through to the savepoint loop.
+  BEGIN
+    PERFORM __SCHEMA__.commit_handler_batch_bulk(p_results);
+    RETURN QUERY
+    SELECT (elem ->> 'handler_id')::UUID AS handler_id,
+           TRUE                          AS success,
+           NULL::TEXT                    AS error_message
+    FROM jsonb_array_elements(p_results) AS elem;
+    RETURN;
+  EXCEPTION WHEN OTHERS THEN
+    -- Bulk attempt failed; fall through to Tier 2 (savepoint loop). The
+    -- subtransaction has already rolled back any partial writes from the bulk
+    -- attempt, so the loop starts from a clean state.
+    NULL;
+  END;
+
+  -- Tier 2: per-handler SAVEPOINT loop (rare path). Identical to the
+  -- pre-Option-D body — preserves the per-handler success/failure isolation
+  -- contract for the C# flusher.
   FOR r IN
     SELECT elem
     FROM jsonb_array_elements(p_results) AS elem
@@ -815,7 +889,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.commit_handler_batch IS
-'SAVEPOINT-per-handler batched commit. Accepts an array of handler-result bundles; runs each through commit_handler_result inside its own implicit subtransaction. A failing handler rolls back only its own effects; siblings commit normally. Returns per-handler (handler_id, success, error_message) for the C# flusher to ack successes and re-queue failures. Single fsync at outer commit covers all successful handlers — the throughput multiplier vs single-handler-per-call.';
+'Two-tier (Option D) batched commit orchestrator. Tier 1: optimistic bulk attempt via commit_handler_batch_bulk — no savepoint overhead on the happy path. Tier 2: on any error, falls back to per-handler SAVEPOINT loop preserving isolated per-handler success/failure reporting. Returns per-handler (handler_id, success, error_message) for the C# flusher. Single fsync at outer commit on the happy path; bulk-then-loop on the rare failure path.';
 
 
 -- ============================================================================

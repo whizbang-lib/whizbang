@@ -438,6 +438,7 @@ public class TransportConsumerWorkerResilienceTests {
       IMessageEnvelope envelope,
       TransportDestination destination,
       string? envelopeType = null,
+      ReadOnlyMemory<byte>? preSerializedBytes = null,
       CancellationToken cancellationToken = default
     ) => Task.CompletedTask;
 
@@ -506,6 +507,7 @@ public class TransportConsumerWorkerResilienceTests {
       IMessageEnvelope envelope,
       TransportDestination destination,
       string? envelopeType = null,
+      ReadOnlyMemory<byte>? preSerializedBytes = null,
       CancellationToken cancellationToken = default
     ) => Task.CompletedTask;
 
@@ -550,6 +552,7 @@ public class TransportConsumerWorkerResilienceTests {
       IMessageEnvelope envelope,
       TransportDestination destination,
       string? envelopeType = null,
+      ReadOnlyMemory<byte>? preSerializedBytes = null,
       CancellationToken cancellationToken = default
     ) => Task.CompletedTask;
 
