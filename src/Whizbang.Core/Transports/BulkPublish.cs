@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Transports;
@@ -64,6 +65,20 @@ public record BulkPublishItem {
   /// honor it when present.
   /// </remarks>
   public ReadOnlyMemory<byte>? PreSerializedBytes { get; init; }
+
+  /// <summary>
+  /// Optional per-item metadata applied to THIS item's wire-message
+  /// ApplicationProperties / Headers in addition to the shared
+  /// <see cref="TransportDestination.Metadata"/>. Used for properties
+  /// that vary per item — e.g., <c>whizbang.body-size</c> stamped by the
+  /// post-serialize hook chain.
+  /// </summary>
+  /// <remarks>
+  /// Keys collide-by-overwrite: per-item entries override shared
+  /// destination metadata. This makes per-item overrides "win" without
+  /// transport-specific merge logic.
+  /// </remarks>
+  public IReadOnlyDictionary<string, JsonElement>? PerItemMetadata { get; init; }
 }
 
 /// <summary>
