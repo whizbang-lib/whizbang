@@ -587,9 +587,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
 
     var envelopeRuntimeType = envelope.GetType();
-    var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
-    var json = JsonSerializer.Serialize(envelope, typeInfo);
+
+    // Honor per-item pre-serialized hint when present (avoids double-serialize
+    // when the publish strategy ran the post-serialize hook chain).
+    string json;
+    if (item.PreSerializedBytes is { } hint) {
+      json = Encoding.UTF8.GetString(hint.Span);
+    } else {
+      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+      json = JsonSerializer.Serialize(envelope, typeInfo);
+    }
 
     var message = new ServiceBusMessage(json) {
       MessageId = envelope.MessageId.Value.ToString(),
@@ -617,6 +625,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     if (destination.Metadata != null) {
       foreach (var (key, value) in destination.Metadata) {
+        message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
+      }
+    }
+
+    // Per-item metadata overrides shared destination metadata for the same key
+    // (e.g., whizbang.body-size, whizbang.is-claim) — that's the contract.
+    if (item.PerItemMetadata != null) {
+      foreach (var (key, value) in item.PerItemMetadata) {
         message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
       }
     }

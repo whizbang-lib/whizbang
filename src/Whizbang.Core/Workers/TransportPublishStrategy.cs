@@ -300,16 +300,51 @@ public partial class TransportPublishStrategy(
       // Use the first item's destination as the shared destination (address is the same for all)
       var sharedDestination = groupItems[0].Destination;
 
-      // Build BulkPublishItems with per-item routing keys
+      // Run the post-serialize hook chain per item (when configured) — same
+      // contract as single PublishAsync: serialize once, run chain, stamp
+      // per-item whizbang.body-size, validate ceiling pre-flight. Oversized
+      // items get an individual failure result; other items in the batch
+      // proceed normally.
+      var needsPreSerialize = _hookChain is not null
+                              && _jsonOptions is not null
+                              && (!_hookChain.IsEmpty || _transport.MaxMessageSizeBytes is not null);
+
+      // Build BulkPublishItems with per-item routing keys (and per-item
+      // pre-serialized bytes + metadata when the chain ran).
       var bulkItems = new List<BulkPublishItem>(groupItems.Count);
       foreach (var (work, destination) in groupItems) {
+        Whizbang.Core.Observability.IMessageEnvelope envelopeToPublish = work.Envelope;
+        var envelopeTypeToPublish = work.EnvelopeType;
+        ReadOnlyMemory<byte>? itemBytes = null;
+        IReadOnlyDictionary<string, JsonElement>? itemMetadata = null;
+
+        if (needsPreSerialize) {
+          var itemPreflight = await _runPostSerializeChainAsync(work, destination, cancellationToken);
+          if (itemPreflight.Failure is { } failure) {
+            // Oversized + no offload: per-item failure, skip adding to bulk.
+            results.Add(failure);
+            continue;
+          }
+          envelopeToPublish = itemPreflight.Envelope!;
+          envelopeTypeToPublish = itemPreflight.EnvelopeType;
+          itemBytes = itemPreflight.Bytes;
+          itemMetadata = itemPreflight.Destination!.Metadata;
+        }
+
         bulkItems.Add(new BulkPublishItem {
-          Envelope = work.Envelope,
-          EnvelopeType = work.EnvelopeType,
+          Envelope = envelopeToPublish,
+          EnvelopeType = envelopeTypeToPublish,
           MessageId = work.MessageId,
           RoutingKey = destination.RoutingKey,
-          StreamId = work.StreamId
+          StreamId = work.StreamId,
+          PreSerializedBytes = itemBytes,
+          PerItemMetadata = itemMetadata,
         });
+      }
+
+      if (bulkItems.Count == 0) {
+        // Every item in this group failed pre-flight; nothing to send.
+        continue;
       }
 
       // In-memory throttle retry for the whole batch group. Broker throttling on bulk send

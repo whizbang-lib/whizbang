@@ -105,6 +105,55 @@ public class TransportPublishStrategyHookChainTests {
       .Because("Strategy MUST NOT hand oversized payloads to the transport — that's what we're protecting against.");
   }
 
+  // ============================================================
+  // PublishBatchAsync (bulk path)
+  // ============================================================
+
+  [Test]
+  public async Task PublishBatchAsync_PerItemChainRunsAndStampsPerItemBodySizeAsync() {
+    var transport = new _captureTransport(maxMessageSizeBytes: 256 * 1024);
+    var strategy = new TransportPublishStrategy(
+      transport: transport,
+      readinessCheck: new _alwaysReadyReadinessCheck(),
+      inboxTopic: "test-inbox",
+      postSerializeHookChain: new PostSerializeHookChain([]),
+      jsonOptions: _buildJsonOptions());
+
+    var work1 = _buildWork();
+    var work2 = _buildWork();
+
+    var results = await strategy.PublishBatchAsync([work1, work2], CancellationToken.None);
+
+    await Assert.That(results.Count).IsEqualTo(2);
+    await Assert.That(results.All(r => r.Success)).IsTrue();
+    await Assert.That(transport.LastBulkItems).IsNotNull();
+    await Assert.That(transport.LastBulkItems!.Count).IsEqualTo(2);
+    await Assert.That(transport.LastBulkItems.All(i => i.PreSerializedBytes is not null)).IsTrue()
+      .Because("Every item in the batch MUST carry its own pre-serialized bytes — the bulk path is JIT-after-serialize per item, identical contract to single-publish.");
+    await Assert.That(transport.LastBulkItems.All(i => i.PerItemMetadata is not null && i.PerItemMetadata.ContainsKey(TransportPublishStrategy.BODY_SIZE_METADATA_KEY))).IsTrue()
+      .Because("Per-item whizbang.body-size is the load-bearing observability signal — bulk path MUST stamp it just like single publish.");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_OversizedItem_FailsOnlyThatItemAsync() {
+    // Set a tiny ceiling and feed two items — both will exceed.
+    var transport = new _captureTransport(maxMessageSizeBytes: 10);
+    var strategy = new TransportPublishStrategy(
+      transport: transport,
+      readinessCheck: new _alwaysReadyReadinessCheck(),
+      inboxTopic: "test-inbox",
+      postSerializeHookChain: new PostSerializeHookChain([]),
+      jsonOptions: _buildJsonOptions());
+
+    var works = new[] { _buildWork(), _buildWork() };
+    var results = await strategy.PublishBatchAsync(works, CancellationToken.None);
+
+    await Assert.That(results.Count).IsEqualTo(2);
+    await Assert.That(results.All(r => r.Reason == MessageFailureReason.MessageBodyTooLarge)).IsTrue();
+    await Assert.That(transport.LastBulkItems).IsNull()
+      .Because("Every item failed pre-flight; bulk-path MUST skip the transport call entirely when no items remain — preserves the invariant 'oversized payloads NEVER reach the wire'.");
+  }
+
   [Test]
   public async Task PublishAsync_HookReplacesBody_TransportReceivesReplacementAndUpdatedSizeAsync() {
     var transport = new _captureTransport(maxMessageSizeBytes: null);
@@ -160,7 +209,7 @@ public class TransportPublishStrategyHookChainTests {
       MaxMessageSizeBytes = maxMessageSizeBytes;
     }
     public bool IsInitialized => true;
-    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
+    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.BulkPublish;
     public long? MaxMessageSizeBytes { get; }
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -168,6 +217,7 @@ public class TransportPublishStrategyHookChainTests {
     public ReadOnlyMemory<byte>? LastPreSerializedBytes { get; private set; }
     public TransportDestination? LastDestination { get; private set; }
     public IMessageEnvelope? LastEnvelope { get; private set; }
+    public IReadOnlyList<BulkPublishItem>? LastBulkItems { get; private set; }
 
     public Task PublishAsync(
         IMessageEnvelope envelope, TransportDestination destination,
@@ -179,6 +229,16 @@ public class TransportPublishStrategyHookChainTests {
       LastDestination = destination;
       LastPreSerializedBytes = preSerializedBytes;
       return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(
+        IReadOnlyList<BulkPublishItem> items, TransportDestination destination,
+        CancellationToken cancellationToken = default) {
+      LastBulkItems = items;
+      LastDestination = destination;
+      IReadOnlyList<BulkPublishItemResult> results =
+        items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true }).ToList();
+      return Task.FromResult(results);
     }
 
     public Task<ISubscription> SubscribeBatchAsync(
