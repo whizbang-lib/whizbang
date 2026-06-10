@@ -941,6 +941,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox", messageTypeName);
     }
 
+    var isComposite = payload is Whizbang.Core.Messaging.ICompositeEvent;
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
@@ -948,6 +949,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       EnvelopeType = envelopeTypeFromTransport,
       StreamId = streamId,
       IsEvent = isEvent,
+      IsComposite = isComposite,
       Scope = envelope.GetCurrentScope()?.Scope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
