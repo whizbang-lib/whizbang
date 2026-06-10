@@ -43,6 +43,49 @@ public interface IEventStore {
   Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Appends a BATCH of envelopes to (potentially different) streams in a
+  /// single operation. The default implementation loops over
+  /// <see cref="AppendAsync{TMessage}"/> serially — backends MUST override
+  /// for bulk performance. Used by composite-event receivers (W3 slice 10
+  /// expansion) where a single wire message fans out into N inner events
+  /// that all need to land in the event store.
+  /// </summary>
+  /// <typeparam name="TMessage">The message payload type — must be the same for every entry. Heterogeneous batches need a separate overload.</typeparam>
+  /// <param name="entries">Stream-id + envelope pairs to append.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <remarks>
+  /// <para>
+  /// Semantics: ordered append (entries land in the supplied order). Backends
+  /// MAY use a single transaction for atomicity. The default loop implementation
+  /// makes NO atomicity guarantee across entries — a backend wanting all-or-nothing
+  /// composite append MUST override.
+  /// </para>
+  /// <para>
+  /// EFCore Postgres impl notes (for follow-up work): bulk INSERT via
+  /// <c>INSERT INTO wh_event_store ... SELECT FROM jsonb_array_elements(@payload)</c>
+  /// in a single transaction. One fsync per call regardless of entry count.
+  /// Composite expansion at 5K inner events: O(1) round-trip instead of O(N).
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreAppendBatchTests.cs</tests>
+  /// <docs>fundamentals/events/event-store#append-batch</docs>
+  Task AppendBatchAsync<TMessage>(
+      IReadOnlyList<(Guid streamId, MessageEnvelope<TMessage> envelope)> entries,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(entries);
+    return _appendBatchDefaultAsync(entries, cancellationToken);
+  }
+
+  private async Task _appendBatchDefaultAsync<TMessage>(
+      IReadOnlyList<(Guid streamId, MessageEnvelope<TMessage> envelope)> entries,
+      CancellationToken cancellationToken) {
+    foreach (var (streamId, envelope) in entries) {
+      cancellationToken.ThrowIfCancellationRequested();
+      await AppendAsync(streamId, envelope, cancellationToken);
+    }
+  }
+
+  /// <summary>
   /// Slice 26.11 — resolves the <c>commit_sequence</c> stamped on a given event_id. Used by
   /// runners at snapshot creation time to record the snapshot's commit_sequence anchor so
   /// subsequent rewinds can locate the right snapshot deterministically. Returns null when
