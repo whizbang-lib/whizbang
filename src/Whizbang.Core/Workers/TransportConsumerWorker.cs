@@ -446,7 +446,7 @@ public partial class TransportConsumerWorker : BackgroundService {
         }
       }
 
-      var inboxMessage = _tryBuildInboxMessageFromTransport(msg, scope.ServiceProvider);
+      var inboxMessage = await _tryBuildInboxMessageFromTransportAsync(msg, scope.ServiceProvider, cancellationToken);
       if (inboxMessage is not null) {
         inboxMessages.Add(inboxMessage);
       }
@@ -483,13 +483,17 @@ public partial class TransportConsumerWorker : BackgroundService {
   }
 
   /// <summary>
-  /// Runs owned-domain echo discard, OTEL activity, timestamp population, and envelope
-  /// serialization for a single transport message. Returns null when the message should be
-  /// dropped (echo) or when serialization failed (logged + metric already recorded).
+  /// Runs owned-domain echo discard, body-offload claim rehydrate (when the
+  /// wire message was a claim envelope), OTEL activity, timestamp population,
+  /// and envelope serialization for a single transport message. Returns null
+  /// when the message should be dropped (echo, claim rehydrate failure, or
+  /// serialize failure — all logged + metric already recorded).
   /// </summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
-  private InboxMessage? _tryBuildInboxMessageFromTransport(TransportMessage msg, IServiceProvider scopedProvider) {
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBodyClaimRehydrateTests.cs</tests>
+  private async Task<InboxMessage?> _tryBuildInboxMessageFromTransportAsync(
+      TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
     var envelopeType = msg.EnvelopeType;
     var envelope = msg.Envelope;
     var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
@@ -498,6 +502,31 @@ public partial class TransportConsumerWorker : BackgroundService {
 
     if (_shouldDiscardOwnedEcho(envelope, envelopeType, messageType, messageTypeTag)) {
       return null;
+    }
+
+    // Body-offload claim rehydrate: when the transport handed us a claim
+    // envelope (whizbang.is-claim was set on the wire), download the original
+    // body via the registered IMessageBodyStore, verify SHA-256, and
+    // deserialize as the original envelope type. Pass-through for non-claim
+    // messages (the common case) is O(1) — only the payload-type check.
+    var jsonOptions = scopedProvider.GetService<System.Text.Json.JsonSerializerOptions>();
+    if (jsonOptions is not null) {
+      var rehydrate = await Whizbang.Core.Offloads.BodyClaimRehydrator.MaybeRehydrateAsync(
+        envelope, envelopeType, jsonOptions, scopedProvider, cancellationToken);
+      if (rehydrate.IsDeadLetter) {
+        _logger.LogError(
+          "Body-offload claim rehydrate failed for message {MessageId}: {Reason} — {Description}; dropping",
+          envelope.MessageId, rehydrate.FailureReason, rehydrate.FailureDescription);
+        _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
+        return null;
+      }
+      envelope = rehydrate.Envelope!;
+      envelopeType = rehydrate.EnvelopeType;
+      // Refresh the message-type tag now that we know the rehydrated identity.
+      if (rehydrate.WasRehydrated && envelopeType is not null) {
+        messageType = TypeNameFormatter.GetSimpleName(envelopeType);
+        messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
+      }
     }
 
     var inboxActivity = _startInboxActivity(envelope, messageType);
