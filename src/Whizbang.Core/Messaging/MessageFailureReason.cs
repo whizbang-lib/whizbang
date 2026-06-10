@@ -114,5 +114,28 @@ public enum MessageFailureReason {
   /// <see cref="SerializationError"/> because serialization succeeded — the
   /// payload is just larger than the broker will accept.
   /// </remarks>
-  MessageBodyTooLarge = 12
+  MessageBodyTooLarge = 12,
+
+  /// <summary>
+  /// An incoming wire message carried a body claim (<c>whizbang.is-claim</c>
+  /// header) referencing a provider name that has no
+  /// <see cref="Whizbang.Core.Offloads.IMessageBodyStore"/> registered.
+  /// Receiver MUST dead-letter — silently dropping the message would lose
+  /// the event; processing without the body would skip the actual payload.
+  /// </summary>
+  /// <remarks>
+  /// Indicates a misconfiguration: the sender registered a provider name the
+  /// receiver doesn't know. Fix by registering the matching
+  /// <c>AddWhizbang*Offload(name)</c> on the receiver service.
+  /// </remarks>
+  BodyClaimProviderUnknown = 13,
+
+  /// <summary>
+  /// A body claim downloaded successfully but its SHA-256 content hash did
+  /// NOT match the hash on the claim ticket. Indicates either storage
+  /// corruption, a man-in-the-middle modification, or a provider bug.
+  /// Receiver MUST dead-letter to prevent processing a payload the sender
+  /// did not write.
+  /// </summary>
+  BodyClaimIntegrityFailure = 14
 }
