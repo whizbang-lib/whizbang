@@ -133,7 +133,7 @@ internal sealed class TestTransport(bool isInitialized) : ITransport {
     return Task.CompletedTask;
   }
 
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 

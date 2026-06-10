@@ -169,7 +169,7 @@ public partial class TransportPublishStrategy(
         // Publish to transport - envelope is already deserialized
         // OutboxWork is non-generic, Envelope is IMessageEnvelope<object>
         // Pass EnvelopeType from OutboxWork to preserve original payload type information
-        await _transport.PublishAsync(work.Envelope, destination, work.EnvelopeType, cancellationToken);
+        await _transport.PublishAsync(work.Envelope, destination, work.EnvelopeType, preSerializedBytes: null, cancellationToken);
 
         return new MessagePublishResult {
           MessageId = work.MessageId,

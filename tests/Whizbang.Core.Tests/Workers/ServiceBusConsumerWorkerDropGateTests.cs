@@ -62,7 +62,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     }
 
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
-        string? envelopeType = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
         TransportDestination destination, CancellationToken cancellationToken = default)

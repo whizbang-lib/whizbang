@@ -1096,6 +1096,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
         IMessageEnvelope envelope,
         TransportDestination destination,
         string? envelopeType = null,
+        ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<ISubscription> SubscribeAsync(
@@ -1179,6 +1180,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
         IMessageEnvelope envelope,
         TransportDestination destination,
         string? envelopeType = null,
+        ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<ISubscription> SubscribeAsync(
@@ -1230,6 +1232,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
         IMessageEnvelope envelope,
         TransportDestination destination,
         string? envelopeType = null,
+        ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<ISubscription> SubscribeAsync(

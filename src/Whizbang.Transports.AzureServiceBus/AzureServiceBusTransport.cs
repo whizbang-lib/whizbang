@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
@@ -323,18 +324,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
+    ReadOnlyMemory<byte>? preSerializedBytes = null,
     CancellationToken cancellationToken = default
   ) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
-    return _publishCoreAsync(envelope, destination, envelopeType, cancellationToken);
+    return _publishCoreAsync(envelope, destination, envelopeType, preSerializedBytes, cancellationToken);
   }
 
   private async Task _publishCoreAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType,
+    ReadOnlyMemory<byte>? preSerializedBytes,
     CancellationToken cancellationToken
   ) {
     try {
@@ -349,10 +352,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // For serialization, always use the actual runtime type of the envelope object (AOT-safe)
       var envelopeRuntimeType = envelope.GetType();
 
-      // Serialize envelope to JSON using AOT-compatible options from registry
-      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
-      var json = JsonSerializer.Serialize(envelope, typeInfo);
+      // Honor the upstream pre-serialized hint when present. The publish-side
+      // strategy serializes once (for size measurement + post-serialize hooks
+      // like body offload) and hands us the final bytes; we MUST use them as-is
+      // to preserve the hook chain's substitutions (e.g., claim envelope when
+      // the body was offloaded).
+      string json;
+      if (preSerializedBytes is { } hint) {
+        json = Encoding.UTF8.GetString(hint.Span);
+      } else {
+        // Serialize envelope to JSON using AOT-compatible options from registry
+        var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+          ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+        json = JsonSerializer.Serialize(envelope, typeInfo);
+      }
 
       // DIAGNOSTIC: Log the first 500 chars of JSON to see if MessageId is in there
       if (_logger.IsEnabled(LogLevel.Debug)) {

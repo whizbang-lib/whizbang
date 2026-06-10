@@ -85,7 +85,7 @@ public class DispatcherTransportBridge(
     var envelope = _createEnvelope(message, context);
 
     // Publish to transport
-    await _transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
+    await _transport.PublishAsync(envelope, destination, envelopeType: null, preSerializedBytes: null, CancellationToken.None);
   }
 
   /// <summary>
