@@ -423,6 +423,9 @@ public partial class TransportConsumerWorker : BackgroundService {
 
     // Collect inbox messages for direct INSERT (bypasses full process_work_batch)
     var inboxMessages = new List<InboxMessage>(messages.Count);
+    // Active-cleanup claims accumulated by the rehydrator; fired post-commit
+    // so a failed inbox INSERT doesn't leave bodies stranded in the store.
+    List<Whizbang.Core.Offloads.MessageBodyClaim>? pendingCleanupClaims = null;
     foreach (var msg in messages) {
       // Slice 3 of pump-then-process.md (Half A): drop messages whose inner type has NO
       // consumer on this service BEFORE serialization runs. Mirror of the gate added to
@@ -446,9 +449,12 @@ public partial class TransportConsumerWorker : BackgroundService {
         }
       }
 
-      var inboxMessage = await _tryBuildInboxMessageFromTransportAsync(msg, scope.ServiceProvider, cancellationToken);
+      var (inboxMessage, cleanupClaim) = await _tryBuildInboxMessageFromTransportAsync(msg, scope.ServiceProvider, cancellationToken);
       if (inboxMessage is not null) {
         inboxMessages.Add(inboxMessage);
+        if (cleanupClaim is not null) {
+          (pendingCleanupClaims ??= []).Add(cleanupClaim);
+        }
       }
     }
 
@@ -479,7 +485,45 @@ public partial class TransportConsumerWorker : BackgroundService {
 
     // Signal the publisher worker to poll immediately so messages are claimed and processed promptly.
     _workChannelWriter?.SignalNewWorkAvailable();
+
+    // Active-cleanup body-offload claims (MessageBodyOffloadOptions.ActiveCleanup=true).
+    // Runs AFTER the inbox commit succeeds — a failed insert never deletes a body that's
+    // still needed for redelivery. Fire-and-forget: provider's IgnoreMissing default
+    // (true) tolerates fan-out double-delete in shared-store topologies; transient
+    // delete failures fall back to the provider's storage-level TTL (the default
+    // ActiveCleanup=false path).
+    if (pendingCleanupClaims is { Count: > 0 }) {
+      _ = _fireActiveCleanupAsync(pendingCleanupClaims, cancellationToken);
+    }
     // Handler returns → transport ACKs all N messages → next batch starts collecting
+  }
+
+  /// <summary>
+  /// Fire-and-forget cleanup for active-mode body offload. Resolves the matching
+  /// store per claim (different claims may use different providers) and issues
+  /// DeleteAsync. Failures are logged but do not affect transport ACK — the
+  /// provider's TTL is the backstop.
+  /// </summary>
+  private async Task _fireActiveCleanupAsync(
+      List<Whizbang.Core.Offloads.MessageBodyClaim> claims,
+      CancellationToken cancellationToken) {
+    await using var cleanupScope = _scopeFactory.CreateAsyncScope();
+    foreach (var claim in claims) {
+      try {
+        var store = cleanupScope.ServiceProvider.GetKeyedService<Whizbang.Core.Offloads.IMessageBodyStore>(claim.ProviderName);
+        if (store is null) {
+          _logger.LogWarning(
+            "Active cleanup skipped for claim {StorageKey}: no IMessageBodyStore registered under provider '{ProviderName}'",
+            claim.StorageKey, claim.ProviderName);
+          continue;
+        }
+        await store.DeleteAsync(claim, options: null, cancellationToken);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        _logger.LogWarning(ex,
+          "Active cleanup failed for claim {StorageKey} on provider '{ProviderName}'; provider TTL is the backstop",
+          claim.StorageKey, claim.ProviderName);
+      }
+    }
   }
 
   /// <summary>
@@ -492,7 +536,8 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBodyClaimRehydrateTests.cs</tests>
-  private async Task<InboxMessage?> _tryBuildInboxMessageFromTransportAsync(
+  private async Task<(InboxMessage? InboxMessage, Whizbang.Core.Offloads.MessageBodyClaim? PendingCleanupClaim)>
+      _tryBuildInboxMessageFromTransportAsync(
       TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
     var envelopeType = msg.EnvelopeType;
     var envelope = msg.Envelope;
@@ -501,7 +546,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
     if (_shouldDiscardOwnedEcho(envelope, envelopeType, messageType, messageTypeTag)) {
-      return null;
+      return (null, null);
     }
 
     // Body-offload claim rehydrate: when the transport handed us a claim
@@ -509,6 +554,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     // body via the registered IMessageBodyStore, verify SHA-256, and
     // deserialize as the original envelope type. Pass-through for non-claim
     // messages (the common case) is O(1) — only the payload-type check.
+    Whizbang.Core.Offloads.MessageBodyClaim? cleanupClaim = null;
     var jsonOptions = scopedProvider.GetService<System.Text.Json.JsonSerializerOptions>();
     if (jsonOptions is not null) {
       var rehydrate = await Whizbang.Core.Offloads.BodyClaimRehydrator.MaybeRehydrateAsync(
@@ -518,10 +564,11 @@ public partial class TransportConsumerWorker : BackgroundService {
           "Body-offload claim rehydrate failed for message {MessageId}: {Reason} — {Description}; dropping",
           envelope.MessageId, rehydrate.FailureReason, rehydrate.FailureDescription);
         _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
-        return null;
+        return (null, null);
       }
       envelope = rehydrate.Envelope!;
       envelopeType = rehydrate.EnvelopeType;
+      cleanupClaim = rehydrate.PendingCleanupClaim;
       // Refresh the message-type tag now that we know the rehydrated identity.
       if (rehydrate.WasRehydrated && envelopeType is not null) {
         messageType = TypeNameFormatter.GetSimpleName(envelopeType);
@@ -534,12 +581,12 @@ public partial class TransportConsumerWorker : BackgroundService {
       _populateDeliveredAtTimestamp(envelope, envelopeType);
       var inboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
-      return inboxMessage;
+      return (inboxMessage, cleanupClaim);
     } catch (Exception ex) {
       _logger.LogError(ex, "Failed to serialize message {MessageId} for inbox — skipping", envelope.MessageId);
       _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      return null;
+      return (null, null);
     } finally {
       inboxActivity?.Dispose();
     }
