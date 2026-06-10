@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Whizbang.Core.Offloads;
 
@@ -48,5 +49,30 @@ public static class OffloadServiceCollectionExtensions {
 
     services.AddKeyedSingleton<IMessageBodyStore, TStore>(providerName);
     return services;
+  }
+
+  /// <summary>
+  /// Registers a post-serialize hook in the publish pipeline. The chain
+  /// is built at <see cref="PostSerializeHookChain"/> construction from
+  /// all registered <see cref="IPostSerializeHook"/> instances ordered by
+  /// <see cref="IPostSerializeHook.Order"/>.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Offloads/PostSerializeHookChainTests.cs</tests>
+  public static IServiceCollection AddWhizbangPostSerializeHook<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(
+      this IServiceCollection services) where THook : class, IPostSerializeHook {
+    ArgumentNullException.ThrowIfNull(services);
+    services.AddSingleton<IPostSerializeHook, THook>();
+    services.TryAddSingleton<PostSerializeHookChain>();
+    return services;
+  }
+
+  /// <summary>
+  /// Convenience: register the built-in body-offload hook (claim-check
+  /// pattern). Use this alongside <see cref="AddWhizbangMessageBodyStore{TStore}"/>
+  /// and <c>services.Configure&lt;MessageBodyOffloadOptions&gt;(...)</c>.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyOffloadPostSerializeHookTests.cs</tests>
+  public static IServiceCollection AddWhizbangBodyOffload(this IServiceCollection services) {
+    return services.AddWhizbangPostSerializeHook<BodyOffloadPostSerializeHook>();
   }
 }
