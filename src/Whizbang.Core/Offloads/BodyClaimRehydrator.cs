@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
@@ -89,7 +90,14 @@ public static class BodyClaimRehydrator {
         $"Deserialized rehydrated body but result is null or wrong shape; expected IMessageEnvelope.");
     }
 
-    return RehydrateResult.Rehydrated(rehydrated, claimPayload.OriginalTypeName);
+    // Active-cleanup option: when MessageBodyOffloadOptions.ActiveCleanup is true,
+    // surface the claim so the receive-side worker can delete the body after the
+    // inbox row commits. When false (default), receivers rely on the provider's
+    // storage-level TTL / lifecycle rule — simpler, safer in fan-out topologies.
+    var options = serviceProvider.GetService<IOptionsMonitor<MessageBodyOffloadOptions>>()?.CurrentValue;
+    var cleanupClaim = options?.ActiveCleanup == true ? claim : null;
+
+    return RehydrateResult.Rehydrated(rehydrated, claimPayload.OriginalTypeName, cleanupClaim);
   }
 }
 
@@ -117,13 +125,27 @@ public sealed record RehydrateResult {
   /// <summary>True when the input envelope carried a body claim and was successfully rehydrated.</summary>
   public bool WasRehydrated { get; init; }
 
+  /// <summary>
+  /// When <see cref="MessageBodyOffloadOptions.ActiveCleanup"/> is enabled
+  /// AND this result represents a successful rehydrate, carries the claim
+  /// the worker should delete after the inbox commit succeeds. Null
+  /// otherwise — receivers rely on the provider's storage-level TTL.
+  /// </summary>
+  public MessageBodyClaim? PendingCleanupClaim { get; init; }
+
   /// <summary>Builds a pass-through result (input was not a claim envelope).</summary>
   public static RehydrateResult PassThrough(IMessageEnvelope envelope, string? envelopeType)
     => new() { Envelope = envelope, EnvelopeType = envelopeType, IsDeadLetter = false, WasRehydrated = false };
 
   /// <summary>Builds a rehydrated result (input was a claim envelope; the body was downloaded + deserialized successfully).</summary>
-  public static RehydrateResult Rehydrated(IMessageEnvelope envelope, string envelopeType)
-    => new() { Envelope = envelope, EnvelopeType = envelopeType, IsDeadLetter = false, WasRehydrated = true };
+  public static RehydrateResult Rehydrated(IMessageEnvelope envelope, string envelopeType, MessageBodyClaim? pendingCleanupClaim = null)
+    => new() {
+      Envelope = envelope,
+      EnvelopeType = envelopeType,
+      IsDeadLetter = false,
+      WasRehydrated = true,
+      PendingCleanupClaim = pendingCleanupClaim
+    };
 
   /// <summary>Builds a dead-letter result (rehydrate failed and the message MUST NOT be processed).</summary>
   public static RehydrateResult DeadLetter(MessageFailureReason reason, string description)

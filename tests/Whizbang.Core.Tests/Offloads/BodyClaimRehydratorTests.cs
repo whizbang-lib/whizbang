@@ -3,6 +3,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
@@ -68,8 +69,67 @@ public class BodyClaimRehydratorTests {
       .Because("Hash mismatch indicates storage corruption / MITM / provider bug — receiver MUST refuse to process a body the sender did not write.");
   }
 
+  [Test]
+  public async Task MaybeRehydrateAsync_ActiveCleanupDisabled_PendingCleanupClaimIsNullAsync() {
+    var sp = _buildProviderWithOptions(out var store, activeCleanup: false);
+    var (claim, originalTypeName) = await _uploadSerializedEnvelopeAsync(store, _buildJsonOptions());
+    var claimEnvelope = _wrapInClaimEnvelope(claim, originalTypeName);
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsFalse();
+    await Assert.That(result.PendingCleanupClaim).IsNull()
+      .Because("Default ActiveCleanup=false → rely on the provider's storage-level TTL; the rehydrator must not surface a cleanup claim.");
+  }
+
+  [Test]
+  public async Task MaybeRehydrateAsync_ActiveCleanupEnabled_SurfacesCleanupClaimAsync() {
+    var sp = _buildProviderWithOptions(out var store, activeCleanup: true);
+    var (claim, originalTypeName) = await _uploadSerializedEnvelopeAsync(store, _buildJsonOptions());
+    var claimEnvelope = _wrapInClaimEnvelope(claim, originalTypeName);
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsFalse();
+    await Assert.That(result.PendingCleanupClaim).IsNotNull()
+      .Because("ActiveCleanup=true → rehydrator surfaces the claim so the receive-side worker can delete the body POST-COMMIT.");
+    await Assert.That(result.PendingCleanupClaim!.StorageKey).IsEqualTo(claim.StorageKey);
+    await Assert.That(result.PendingCleanupClaim.ProviderName).IsEqualTo(claim.ProviderName);
+  }
+
   // Helpers
   // ============================================================
+
+  /// <summary>
+  /// Serializes a real MessageEnvelope<JsonElement> and uploads it to the
+  /// store. Returns the claim + the assembly-qualified type name the rehydrator
+  /// will use to deserialize.
+  /// </summary>
+  private static async Task<(MessageBodyClaim Claim, string OriginalTypeName)> _uploadSerializedEnvelopeAsync(
+      InMemoryStoreImpl store, JsonSerializerOptions jsonOptions) {
+    var originalEnvelope = new MessageEnvelope<JsonElement> {
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      MessageId = MessageId.New(),
+      Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+      Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
+    };
+    var typeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var json = JsonSerializer.Serialize(originalEnvelope, typeInfo);
+    var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+    var claim = await store.UploadAsync(bytes, "application/json");
+    return (claim, typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!);
+  }
+
+  private static ServiceProvider _buildProviderWithOptions(out InMemoryStoreImpl store, bool activeCleanup) {
+    var services = new ServiceCollection();
+    var instance = new InMemoryStoreImpl("memory");
+    store = instance;
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => instance);
+    services.AddOptions<MessageBodyOffloadOptions>().Configure(o => o.ActiveCleanup = activeCleanup);
+    return services.BuildServiceProvider();
+  }
 
   private static JsonSerializerOptions _buildJsonOptions() {
     // Use the Whizbang infrastructure context which registers
