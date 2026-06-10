@@ -139,16 +139,33 @@ public static class ServiceCollectionExtensions {
       var readinessCheck = sp.GetRequiredService<ITransportReadinessCheck>();
       var loggerFactory = sp.GetService<ILoggerFactory>();
 
+      // Post-serialize hook chain + JsonSerializerOptions are optional; when
+      // AddWhizbangBodyOffload (or any AddWhizbangPostSerializeHook<T>) is
+      // registered AND the transport's JsonSerializerOptions resolver is
+      // available, the strategy will JIT-serialize, run the chain, stamp
+      // whizbang.body-size, and validate against the 256 KB ASB Standard
+      // ceiling. Both null → existing fast-path behavior (no pre-serialize).
+      var hookChain = sp.GetService<Whizbang.Core.Offloads.PostSerializeHookChain>();
+      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
+
       // Try to get inbox topic from registered outbox routing strategy
       // WithRouting() registers IOutboxRoutingStrategy directly
       var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
       if (outboxStrategy is SharedTopicOutboxStrategy sharedStrategy) {
         // Use the configured inbox topic from outbox strategy
-        return new TransportPublishStrategy(transport, readinessCheck, sharedStrategy.InboxTopic, loggerFactory);
+        return new TransportPublishStrategy(
+          transport, readinessCheck, sharedStrategy.InboxTopic,
+          loggerFactory,
+          throttleRetryOptions: null, metrics: null,
+          postSerializeHookChain: hookChain, jsonOptions: jsonOptions);
       }
 
       // Fall back to default inbox topic
-      return new TransportPublishStrategy(transport, readinessCheck, loggerFactory);
+      return new TransportPublishStrategy(
+        transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic,
+        loggerFactory,
+        throttleRetryOptions: null, metrics: null,
+        postSerializeHookChain: hookChain, jsonOptions: jsonOptions);
     });
 
     return services;

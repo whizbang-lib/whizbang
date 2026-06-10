@@ -68,11 +68,17 @@ public static class OffloadServiceCollectionExtensions {
 
   /// <summary>
   /// Convenience: register the built-in body-offload hook (claim-check
-  /// pattern). Use this alongside <see cref="AddWhizbangMessageBodyStore{TStore}"/>
-  /// and <c>services.Configure&lt;MessageBodyOffloadOptions&gt;(...)</c>.
+  /// pattern) along with the options binding. Use alongside
+  /// <see cref="AddWhizbangMessageBodyStore{TStore}"/> and
+  /// <c>services.Configure&lt;MessageBodyOffloadOptions&gt;(...)</c>;
+  /// without a configured ProviderName the hook is a no-op (pass-through).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyOffloadPostSerializeHookTests.cs</tests>
   public static IServiceCollection AddWhizbangBodyOffload(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    // AddOptions registers IOptions/IOptionsMonitor/IOptionsSnapshot for the
+    // type even when no Configure is called — defaults still resolve.
+    services.AddOptions<MessageBodyOffloadOptions>();
     return services.AddWhizbangPostSerializeHook<BodyOffloadPostSerializeHook>();
   }
 }
