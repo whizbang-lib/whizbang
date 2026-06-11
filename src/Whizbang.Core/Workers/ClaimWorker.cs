@@ -463,21 +463,20 @@ public sealed class ClaimWorkerOptions {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Default <c>1_000</c> (1 s) as of v0.683. Prior versions defaulted to <c>30_000</c>
-  /// (v0.502) and <c>null</c> (pre-v0.502). The 30 s default proved too aggressive for
-  /// new-stream first-event discovery: <c>notify_instance_owners</c> joins
-  /// <c>wh_active_streams</c> on the stream_id and emits <b>zero</b> per-instance
-  /// NOTIFYs for streams not yet claimed (cold-start case). Consumers then waited up to
-  /// 30 s on the safety-net poll before claim_work discovered the orphaned outbox row —
-  /// observed end-to-end as a 30 s+ delay between dispatch and any processing visible
-  /// (slot-3 bulk-job import, 2026-06-11). Same root cause and same fix applied to
-  /// <c>PerspectiveWorkerOptions.NotifyHealthyPollingIntervalMilliseconds</c> in v0.681.
+  /// Default <c>5_000</c> (5 s) as of v0.684. v0.502 introduced 30_000 to eliminate the
+  /// ~4 calls/sec/pod safety-net cost; the v0.683 alpha dropped it to 1_000 to fix a
+  /// 30 s+ cold-start latency observed on the 2026-06-11 slot-3 bulk-job import.
+  /// 1_000 multiplied claim_work call count ~10× on the import drain path and combined
+  /// with the v0.683 emit_chain guard to push claim_work back to 19 % of slot-3 DB time
+  /// (the original problem). 5_000 is the compromise: cold-start latency stays under
+  /// 5 s, but workers don't poll claim_work every second on a steady-state DB.
   /// </para>
   /// <para>
-  /// Production environments with a "new stream wake" mechanism upstream — i.e. a
-  /// broadcast NOTIFY on first-touch before per-instance fan-out — can safely raise this
-  /// back to 30_000 to reclaim the safety-net poll savings (~4 calls/sec/pod that
-  /// claim_work would otherwise pay on the tight cadence).
+  /// Root cause of the cold-start latency: <c>notify_instance_owners</c> joins
+  /// <c>wh_active_streams</c> on the stream_id and emits <b>zero</b> per-instance
+  /// NOTIFYs for streams not yet claimed. The proper architectural fix is a broadcast
+  /// NOTIFY on first-touch (before per-instance fan-out); until that lands, this
+  /// option's value is the trade-off between cold-start latency and steady-state cost.
   /// </para>
   /// <para>
   /// Falls back to the tight <see cref="PollingIntervalMilliseconds"/> automatically the
@@ -488,7 +487,7 @@ public sealed class ClaimWorkerOptions {
   /// Set explicitly to <c>null</c> to restore the pre-v0.502 behavior (tight polling always).
   /// </para>
   /// </remarks>
-  public int? NotifyHealthyPollingIntervalMilliseconds { get; set; } = 1_000;
+  public int? NotifyHealthyPollingIntervalMilliseconds { get; set; } = 5_000;
   /// <summary>Cap on rows returned per claim_work call. Default 1000.</summary>
   public int MaxStreamsPerBatch { get; set; } = 1000;
 
