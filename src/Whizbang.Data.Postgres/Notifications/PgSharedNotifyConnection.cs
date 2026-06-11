@@ -42,7 +42,7 @@ public sealed partial class PgSharedNotifyConnection(
   TimeProvider? timeProvider = null,
   INotificationDataSource? notificationDataSource = null,
   NotifyMetrics? metrics = null
-) : BackgroundService, ISharedNotifyConnection, INotifySignalingGate {
+) : BackgroundService, ISharedNotifyConnection, INotifySignalingGate, Whizbang.Core.Workers.IInstanceAliveLockSource {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -67,9 +67,23 @@ public sealed partial class PgSharedNotifyConnection(
   // NpgsqlConnection isn't thread-safe and a concurrent command would throw.
   private CancellationTokenSource? _resyncSignal;
   private bool _isAvailable;
+  private bool _aliveLockHeld;
   private DateTimeOffset? _lastVerifiedAt;
   private DateTimeOffset? _lastFailureAt;
   private string? _lastFailureReason;
+
+  /// <summary>
+  /// True when this conn holds the session-level alive-lock claimed at open.
+  /// HeartbeatWorker reads this to switch between fast (5 s) and slow (60 s) cadence
+  /// per the adaptive heartbeat design in slice 7b.
+  /// </summary>
+  public bool IsAliveLockHeld {
+    get {
+      lock (_connectionGate) {
+        return _aliveLockHeld && _isAvailable;
+      }
+    }
+  }
 
   /// <summary>
   /// Computes the <c>application_name</c> the per-pod LISTEN connection sets on its
@@ -377,6 +391,27 @@ public sealed partial class PgSharedNotifyConnection(
         // already being live.
         await _syncListensAsync(conn, stoppingToken).ConfigureAwait(false);
 
+        // Slice 7b — acquire the session-level alive-lock so peers querying
+        // is_instance_alive() / cleanup_stale_instances see this pod as alive via pg_locks
+        // (sub-second detection on conn death) without waiting for the heartbeat table.
+        try {
+          await using var lockCmd = conn.CreateCommand();
+          lockCmd.CommandText = "SELECT claim_instance_alive_lock(@instanceId)";
+          lockCmd.Parameters.AddWithValue("@instanceId", _instanceProvider.InstanceId);
+          var lockResult = await lockCmd.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
+          _aliveLockHeld = lockResult is bool b && b;
+          if (!_aliveLockHeld) {
+            // Uncommon: a duplicate-startup race left a previous session holding the lock.
+            // Non-fatal — the heartbeat table fallback still functions.
+            LogAliveLockNotAcquired(_logger);
+          }
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          // Migration 055 may not have run yet (pre-v0.681 schema). Treat as no-lock; the
+          // existing heartbeat path remains the liveness signal.
+          _aliveLockHeld = false;
+          LogAliveLockClaimFailed(_logger, ex);
+        }
+
         // Slice 33.2 — gate IsAvailable behind a real round-trip probe rather than just
         // "connection opened." Probe failure (timeout, error) means the conn is open but
         // NOTIFYs aren't actually flowing — could be pgbouncer in tx-pooling mode, broken
@@ -599,6 +634,14 @@ public sealed partial class PgSharedNotifyConnection(
   [LoggerMessage(EventId = 6, Level = LogLevel.Information,
     Message = "PgSharedNotifyConnection resolved connection string from {Source} for key '{ConnectionStringKey}'")]
   static partial void LogResolvedConnection(ILogger logger, NotificationConnectionStringResolver.ResolutionSource source, string connectionStringKey);
+
+  [LoggerMessage(EventId = 100, Level = LogLevel.Warning,
+    Message = "PgSharedNotifyConnection did not acquire the alive-lock — likely duplicate-startup race or migration 055 not yet applied. Heartbeat-table fallback remains the liveness signal.")]
+  static partial void LogAliveLockNotAcquired(ILogger logger);
+
+  [LoggerMessage(EventId = 101, Level = LogLevel.Warning,
+    Message = "PgSharedNotifyConnection failed to claim the alive-lock; falling back to heartbeat-table liveness")]
+  static partial void LogAliveLockClaimFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
     Message = "PgSharedNotifyConnection resolved the POOLED connection (key '{ConnectionStringKey}') — LISTEN/NOTIFY will not work " +

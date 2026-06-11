@@ -19,6 +19,7 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
   private readonly ILogger<LeaseRenewalWorker> _logger;
   private readonly LeaseRegistry? _leaseRegistry;
   private readonly TimeProvider _timeProvider;
+  private readonly IPinnedConnectionPool _pinnedPool;
   private readonly BatchFlusher<CategorizedLeaseRenewal> _flusher;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
@@ -28,13 +29,15 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     IOptions<LeaseRenewalWorkerOptions> options,
     ILogger<LeaseRenewalWorker> logger,
     LeaseRegistry? leaseRegistry = null,
-    TimeProvider? timeProvider = null) {
+    TimeProvider? timeProvider = null,
+    IPinnedConnectionPool? pinnedPool = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _leaseRegistry = leaseRegistry;
     _timeProvider = timeProvider ?? TimeProvider.System;
+    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
     _flusher = new BatchFlusher<CategorizedLeaseRenewal>(_flushBatchAsync, _options.Flusher, _logger);
   }
 
@@ -57,6 +60,8 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
       return;
     }
     await _schemaReadyGate.WaitForReadyAsync(ct);
+    await using var pin = await _pinnedPool.TryPinForAsync(typeof(LeaseRenewalWorker), ct);
+    using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     foreach (var group in batch.GroupBy(b => b.Category)) {

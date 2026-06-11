@@ -13,10 +13,25 @@ DECLARE
   v_deleted_ids UUID[];
 BEGIN
 
-  -- Find and delete stale instances (older than cutoff)
+  -- Find and delete stale instances (older than cutoff). v0.681 — also skip rows
+  -- whose session-level alive-lock is still held (migration 055): the adaptive
+  -- heartbeat cadence may legitimately delay the heartbeat write past p_stale_cutoff
+  -- when the direct conn is healthy. The lock is the primary liveness signal in
+  -- that mode; the heartbeat-table check remains the fallback.
   WITH deleted AS (
     DELETE FROM wh_service_instances
     WHERE last_heartbeat_at < p_stale_cutoff
+      AND NOT EXISTS (
+        -- pg_locks.classid/objid are oid (uint32). hashtext() returns signed int4 — when
+        -- negative, the lower-32-bit lane evaluates >2^31-1 as bigint, which overflows
+        -- ::int (22003). Compare against the bigint expression and cast to ::oid so the
+        -- comparison stays in oid-space without sign-flip.
+        SELECT 1 FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND classid = ((hashtext('wh_instance_alive:' || wh_service_instances.instance_id::text)::bigint >> 32) & x'FFFFFFFF'::bigint)::oid
+          AND objid = (hashtext('wh_instance_alive:' || wh_service_instances.instance_id::text)::bigint & x'FFFFFFFF'::bigint)::oid
+          AND granted = true
+      )
     RETURNING instance_id
   )
   SELECT ARRAY_AGG(instance_id) INTO v_deleted_ids

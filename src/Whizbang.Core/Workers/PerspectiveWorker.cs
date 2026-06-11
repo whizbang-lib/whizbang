@@ -60,7 +60,13 @@ public partial class PerspectiveWorker(
   // (no DLQ; rows continue to accumulate, matching v0.501 behavior).
   IDeadLetterStore? deadLetterStore = null,
   IGenerationProvider? generationProvider = null,
-  Whizbang.Core.Observability.DeadLetterMetrics? deadLetterMetrics = null
+  Whizbang.Core.Observability.DeadLetterMetrics? deadLetterMetrics = null,
+  // Slice 7a — when the multiplexed NOTIFY listener is wired, the perspective
+  // signal fires on every wh_perspective_events insert. Subscribing here moves
+  // PerspectiveWorker off the 250 ms-default poll loop and onto burst-driven
+  // wake. The safety-net poll cadence (NotifyHealthyPollingIntervalMilliseconds,
+  // default 30 s) still backstops missed signals.
+  Whizbang.Core.Notifications.IWorkNotificationListener? perspectiveNotificationListener = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -106,6 +112,30 @@ public partial class PerspectiveWorker(
   private readonly RecentlyProcessedEventCache? _recentlyProcessedEventCache = recentlyProcessedEventCache;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   private readonly LeaseHandleOptions _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
+  private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _perspectiveNotificationListener = perspectiveNotificationListener;
+  private readonly SemaphoreSlim _perspectiveWake = new(0, 1);
+  private bool _perspectiveSignalSubscribed;
+
+  /// <summary>NOTIFY signal handler — releases the wake semaphore when a Perspective signal arrives.</summary>
+  private void _onPerspectiveSignal(Whizbang.Core.Notifications.WorkSignalCategory category) {
+    if (category != Whizbang.Core.Notifications.WorkSignalCategory.Perspective) {
+      return;
+    }
+    try {
+      _perspectiveWake.Release();
+    } catch (SemaphoreFullException) {
+      // Already pending wake — coalesce.
+    }
+  }
+
+  /// <inheritdoc />
+  public override Task StopAsync(CancellationToken cancellationToken) {
+    if (_perspectiveSignalSubscribed && _perspectiveNotificationListener is not null) {
+      _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
+      _perspectiveSignalSubscribed = false;
+    }
+    return base.StopAsync(cancellationToken);
+  }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions();
   private readonly IDeadLetterStore? _deadLetterStore = deadLetterStore;
   private readonly IGenerationProvider? _generationProvider = generationProvider;
@@ -251,6 +281,13 @@ public partial class PerspectiveWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
+    // Slice 7a — hook the perspective NOTIFY signal so we wake on every new
+    // wh_perspective_events insert instead of polling at PollingIntervalMilliseconds.
+    if (_perspectiveNotificationListener is not null && !_perspectiveSignalSubscribed) {
+      _perspectiveNotificationListener.OnSignal += _onPerspectiveSignal;
+      _perspectiveSignalSubscribed = true;
+    }
+
     await _initializePerspectiveRegistryAsync();
     _processInitialCheckpoints();
     await _reconcileOrphanedLifecyclesAsync(stoppingToken);
@@ -336,10 +373,19 @@ public partial class PerspectiveWorker(
       var drainWait = drainReader is null
         ? new TaskCompletionSource<bool>().Task // never completes — only workReader is consulted
         : drainReader.WaitToReadAsync(stoppingToken).AsTask();
-      var idleTimeout = Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+      // Slice 7a — when the NOTIFY listener is wired, use the relaxed cadence
+      // (safety-net only); otherwise fall back to the legacy tight cadence so a
+      // NOTIFY outage doesn't introduce latency.
+      var pollMs = _perspectiveNotificationListener is null
+        ? _options.PollingIntervalMilliseconds
+        : Math.Max(_options.PollingIntervalMilliseconds, _options.NotifyHealthyPollingIntervalMilliseconds);
+      var idleTimeout = Task.Delay(pollMs, stoppingToken);
+      var perspectiveSignal = _perspectiveNotificationListener is not null
+        ? _perspectiveWake.WaitAsync(stoppingToken)
+        : new TaskCompletionSource<bool>().Task;   // never completes when no listener
 
       try {
-        await Task.WhenAny(workWait, drainWait, idleTimeout).ConfigureAwait(false);
+        await Task.WhenAny(workWait, drainWait, idleTimeout, perspectiveSignal).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         break;
       }
@@ -3691,9 +3737,30 @@ internal static partial class PerspectiveStartupScanLog {
 public class PerspectiveWorkerOptions {
   /// <summary>
   /// Milliseconds to wait between polling for perspective cursor work.
-  /// Default: 1000 (1 second)
+  /// Default: 1000 (1 second). Used as the WAKE cadence when no NOTIFY
+  /// signal is in flight AND the NOTIFY listener is unavailable.
   /// </summary>
   public int PollingIntervalMilliseconds { get; set; } = 1000;
+
+  /// <summary>
+  /// Safety-net cadence when LISTEN/NOTIFY is verified healthy. The
+  /// <see cref="WorkSignalCategory.Perspective"/> signal already fires on
+  /// every perspective_event insert, so the polling loop's primary role is
+  /// to catch anything the signal may have missed.
+  /// Default: equal to <see cref="PollingIntervalMilliseconds"/> (1 s).
+  /// Set higher to relax the safety-net cadence — production environments
+  /// with reliable LISTEN connections can safely use 30000+ to reduce poll
+  /// volume; the NOTIFY signal handles the wake. The legacy 1 s default is
+  /// kept because new streams not yet in <c>wh_active_streams</c> receive no
+  /// per-instance NOTIFY on their first batch, so the safety net must catch
+  /// them quickly.
+  /// </summary>
+  /// <remarks>
+  /// When the NOTIFY listener is unavailable (or this option is &lt;= the
+  /// short polling interval), the worker falls back to <see cref="PollingIntervalMilliseconds"/>
+  /// automatically so a NOTIFY outage doesn't introduce latency.
+  /// </remarks>
+  public int NotifyHealthyPollingIntervalMilliseconds { get; set; } = 1_000;
 
   /// <summary>
   /// Dead-letter threshold for wh_perspective_events rows. Total number of apply attempts
