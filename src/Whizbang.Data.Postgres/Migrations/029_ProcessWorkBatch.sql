@@ -144,26 +144,22 @@ BEGIN
     -- time an inbox event row reaches InboxDispatchWorker, its event_store row exists and
     -- perspective_events have been created so PerspectiveWorker can pick them up.
     --
-    -- v0.683 guard: only call when there is genuine new-emission work — at least
-    -- one inbox event row owned by this instance whose message_id is NOT yet in
-    -- wh_event_store. The earlier draft of this guard (matching only the four
-    -- inbox predicates) was too coarse: under a heavy inbox backlog where every
-    -- row's event_id is already in wh_event_store (handler-side delay), the
-    -- guard fired anyway and emit_chain re-scanned the whole backlog doing
-    -- 10k× redundant PK lookups (observed: 121 ms mean during slot-3 import
-    -- where inbox sat at ~10k for ~2 min). LIMIT 1 stops at the first
-    -- genuinely-pending row, so the worst case is the all-emitted case
-    -- (sequential index scan through up-to-LIMIT rows) — still cheap.
+    -- v0.683 guard: only call when this instance owns at least one unprocessed
+    -- inbox event row with a stream_id. emit_chain's own internal NOT EXISTS
+    -- check against wh_event_store filters out already-emitted rows; we don't
+    -- repeat that check here because the slot-3 2026-06-11 PM measurement
+    -- showed the wrapping NOT EXISTS predicate at 42 ms mean (~4-5% of slot-3
+    -- DB time) under heavy inbox load — overwhelming the savings from skipping
+    -- emit_chain. The simpler EXISTS uses idx_inbox_instance_lease and is
+    -- sub-millisecond. The handler-delay backlog scenario where every event_id
+    -- is already in wh_event_store is rare and is more appropriately addressed
+    -- on the handler side (composite events) than in the work-pump.
     IF EXISTS (
       SELECT 1 FROM __SCHEMA__.wh_inbox i
       WHERE i.instance_id = p_instance_id
         AND i.processed_at IS NULL
         AND i.is_event = true
         AND i.stream_id IS NOT NULL
-        AND i.lease_expiry > v_now
-        AND NOT EXISTS (
-          SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id
-        )
       LIMIT 1
     ) THEN
       PERFORM __SCHEMA__._emit_event_store_chain_for_inbox(p_instance_id, v_lease_expiry, v_now, p_partition_count);

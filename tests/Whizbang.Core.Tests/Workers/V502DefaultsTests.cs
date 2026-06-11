@@ -39,14 +39,14 @@ public class V502DefaultsTests {
   }
 
   [Test]
-  public async Task NotifyHealthyPollingIntervalMilliseconds_DefaultsToOneSecondAsync() {
+  public async Task NotifyHealthyPollingIntervalMilliseconds_DefaultsToFiveSecondsAsync() {
     var options = new ClaimWorkerOptions();
-    await Assert.That(options.NotifyHealthyPollingIntervalMilliseconds).IsEqualTo(1_000)
-      .Because("v0.683 dropped the default from 30000 to 1000 because notify_instance_owners " +
-               "emits zero per-instance NOTIFYs for streams not yet in wh_active_streams, leaving " +
-               "new-stream first-event discovery on the safety-net path. Slot-3 import 2026-06-11 " +
-               "showed the 30 s default as a 30 s+ dispatch-to-processing delay on cold start. " +
-               "Same fix applied to PerspectiveWorkerOptions in v0.681 — see release notes.");
+    await Assert.That(options.NotifyHealthyPollingIntervalMilliseconds).IsEqualTo(5_000)
+      .Because("v0.684 settled on 5000 after measuring both extremes on slot-3 2026-06-11: " +
+               "30000 produced 30 s+ cold-start latency on new streams not yet in wh_active_streams; " +
+               "1000 multiplied claim_work call count ~10x on the bulk-job-import drain path. " +
+               "5000 keeps cold-start under 5 s without paying the steady-state polling cost. " +
+               "Proper fix (broadcast NOTIFY on first-touch) is architectural follow-up.");
   }
 
   [Test]
