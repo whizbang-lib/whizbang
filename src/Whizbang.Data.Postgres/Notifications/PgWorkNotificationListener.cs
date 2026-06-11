@@ -80,6 +80,9 @@ public sealed partial class PgWorkNotificationListener : IWorkNotificationListen
       // v0.502 slice B.3 — emitted by cleanup_stale_instances after releasing leases
       // owned by a dead pod. Live pods react by running claim_orphaned_*.
       "orphan" => WorkSignalCategory.OrphanRedistribute,
+      // v0.681 slice 7c — emitted by the AFTER INSERT trigger on wh_dead_letters.
+      // DeadLetterRecoveryWorker wakes to scan for rows whose recovery policy elapsed.
+      "deadletter" => WorkSignalCategory.DeadLetterReady,
       _ => null,
     };
     if (category is { } cat) {

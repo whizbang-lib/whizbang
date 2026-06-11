@@ -19,6 +19,7 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
   private readonly PerspectiveCompletionFlushWorkerOptions _options;
   private readonly WorkCoordinatorOptions _coordinatorOptions;
   private readonly ILogger<PerspectiveCompletionFlushWorker> _logger;
+  private readonly IPinnedConnectionPool _pinnedPool;
   private readonly BatchFlusher<PerspectiveCompletionItem> _flusher;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
@@ -27,12 +28,14 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
     ISchemaReadyGate schemaReadyGate,
     IOptions<PerspectiveCompletionFlushWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
-    ILogger<PerspectiveCompletionFlushWorker> logger) {
+    ILogger<PerspectiveCompletionFlushWorker> logger,
+    IPinnedConnectionPool? pinnedPool = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
     _flusher = new BatchFlusher<PerspectiveCompletionItem>(_flushBatchAsync, _options.Flusher, _logger);
   }
 
@@ -61,6 +64,8 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
     await _schemaReadyGate.WaitForReadyAsync(ct);
     var workIds = batch.Where(i => i.EventWorkId.HasValue).Select(i => i.EventWorkId!.Value).ToArray();
     var cursors = batch.Where(i => i.Cursor is not null).Select(i => i.Cursor!).ToArray();
+    await using var pin = await _pinnedPool.TryPinForAsync(typeof(PerspectiveCompletionFlushWorker), ct);
+    using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     await coordinator.CompletePerspectiveAsync(cursors, workIds, _coordinatorOptions.DebugMode, ct);

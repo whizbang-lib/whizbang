@@ -112,6 +112,30 @@ public interface ITransport {
   );
 
   /// <summary>
+  /// Opens a long-lived push subscription on the broker's dead-letter queue/subqueue
+  /// for the supplied destination. The transport invokes <paramref name="handler"/>
+  /// for each DLQ message as it arrives, eliminating the polling latency the
+  /// <see cref="Whizbang.Core.Workers.TransportDeadLetterDrainWorker"/> would otherwise
+  /// incur.
+  /// </summary>
+  /// <remarks>
+  /// Default implementation throws <see cref="NotSupportedException"/> so transports
+  /// without push DLQ semantics (or that haven't been updated yet) stay on the
+  /// polling fallback. The worker MUST handle that exception gracefully.
+  /// </remarks>
+  /// <param name="handler">Invoked per DLQ message; the worker maps it to recovery action.</param>
+  /// <param name="destination">DLQ destination (broker-specific resolution — e.g. "$DeadLetterQueue" subqueue on ASB).</param>
+  /// <param name="cancellationToken">Caller cancellation.</param>
+  /// <returns>Subscription handle; dispose to detach.</returns>
+  /// <docs>messaging/transports/dlq-push-subscription</docs>
+  Task<ISubscription> SubscribeToDeadLetterAsync(
+    Func<TransportMessage, CancellationToken, Task> handler,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) => throw new NotSupportedException(
+    $"Transport '{GetType().Name}' does not implement push DLQ subscription. The TransportDeadLetterDrainWorker will fall back to polling on IntervalMinutes.");
+
+  /// <summary>
   /// Sends a request message and waits for a response (request/response pattern).
   /// </summary>
   /// <typeparam name="TRequest">The request message type</typeparam>
