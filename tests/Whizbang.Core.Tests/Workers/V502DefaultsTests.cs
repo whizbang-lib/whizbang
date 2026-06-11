@@ -39,11 +39,14 @@ public class V502DefaultsTests {
   }
 
   [Test]
-  public async Task NotifyHealthyPollingIntervalMilliseconds_DefaultsToThirtySecondsAsync() {
+  public async Task NotifyHealthyPollingIntervalMilliseconds_DefaultsToOneSecondAsync() {
     var options = new ClaimWorkerOptions();
-    await Assert.That(options.NotifyHealthyPollingIntervalMilliseconds).IsEqualTo(30_000)
-      .Because("v0.502 changed the default from null (always-tight 250 ms baseline) to 30000 " +
-               "so NOTIFY-healthy environments don't pay the 4 polls/sec/pod tax for nothing");
+    await Assert.That(options.NotifyHealthyPollingIntervalMilliseconds).IsEqualTo(1_000)
+      .Because("v0.683 dropped the default from 30000 to 1000 because notify_instance_owners " +
+               "emits zero per-instance NOTIFYs for streams not yet in wh_active_streams, leaving " +
+               "new-stream first-event discovery on the safety-net path. production import 2026-06-11 " +
+               "showed the 30 s default as a 30 s+ dispatch-to-processing delay on cold start. " +
+               "Same fix applied to PerspectiveWorkerOptions in v0.681 — see release notes.");
   }
 
   [Test]
