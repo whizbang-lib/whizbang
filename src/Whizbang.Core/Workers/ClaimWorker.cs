@@ -32,6 +32,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IInboxDrainChannel? _inboxDrainChannel;
   private readonly ClaimWorkerOptions _options;
   private readonly ILogger<ClaimWorker> _logger;
+  private readonly IPinnedConnectionPool _pinnedPool;
   private readonly SemaphoreSlim _wake = new(0, 1);
   private int _consecutiveEmptyPolls;
 
@@ -50,7 +51,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     IPerspectiveDrainChannel? perspectiveDrainChannel = null,
     IOutboxDrainChannel? outboxDrainChannel = null,
     IInboxDrainChannel? inboxDrainChannel = null,
-    INotifySignalingGate? signalingGate = null) {
+    INotifySignalingGate? signalingGate = null,
+    IPinnedConnectionPool? pinnedPool = null) {
 #pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -65,6 +67,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     _perspectiveDrainChannel = perspectiveDrainChannel;
     _outboxDrainChannel = outboxDrainChannel;
     _inboxDrainChannel = inboxDrainChannel;
+    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
 
     // Subscribe to outbox/inbox signals only — perspective signals route to PerspectiveProcessWorker.
     _notificationListener.OnSignal += _onSignal;
@@ -314,6 +317,8 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   private async Task<WorkBatch> _claimOnceAsync(CancellationToken ct) {
+    await using var pin = await _pinnedPool.TryPinForAsync(typeof(ClaimWorker), ct);
+    using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     return await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
@@ -327,6 +332,8 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   private async Task _initialHeartbeatAsync(CancellationToken ct) {
+    await using var pin = await _pinnedPool.TryPinForAsync(typeof(ClaimWorker), ct);
+    using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(

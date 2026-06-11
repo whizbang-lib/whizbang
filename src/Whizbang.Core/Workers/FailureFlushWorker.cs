@@ -17,6 +17,7 @@ public sealed partial class FailureFlushWorker : BackgroundService, IFailureChan
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly FailureFlushWorkerOptions _options;
   private readonly ILogger<FailureFlushWorker> _logger;
+  private readonly IPinnedConnectionPool _pinnedPool;
   private readonly BatchFlusher<CategorizedFailure> _flusher;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
@@ -24,11 +25,13 @@ public sealed partial class FailureFlushWorker : BackgroundService, IFailureChan
     IServiceScopeFactory scopeFactory,
     ISchemaReadyGate schemaReadyGate,
     IOptions<FailureFlushWorkerOptions> options,
-    ILogger<FailureFlushWorker> logger) {
+    ILogger<FailureFlushWorker> logger,
+    IPinnedConnectionPool? pinnedPool = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
     _flusher = new BatchFlusher<CategorizedFailure>(_flushBatchAsync, _options.Flusher, _logger);
   }
 
@@ -51,6 +54,8 @@ public sealed partial class FailureFlushWorker : BackgroundService, IFailureChan
       return;
     }
     await _schemaReadyGate.WaitForReadyAsync(ct);
+    await using var pin = await _pinnedPool.TryPinForAsync(typeof(FailureFlushWorker), ct);
+    using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     foreach (var group in batch.GroupBy(b => b.Category)) {

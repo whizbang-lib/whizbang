@@ -19,13 +19,15 @@ public partial class HeartbeatWorker(
   IServiceInstanceProvider instanceProvider,
   ISchemaReadyGate schemaReadyGate,
   IOptions<HeartbeatWorkerOptions> options,
-  ILogger<HeartbeatWorker> logger
+  ILogger<HeartbeatWorker> logger,
+  IPinnedConnectionPool? pinnedPool = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly HeartbeatWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<HeartbeatWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly IPinnedConnectionPool _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
 
   /// <summary>
   /// Fires after every successful <c>RecordHeartbeatAsync</c> call. Slice 4 of
@@ -82,6 +84,8 @@ public partial class HeartbeatWorker(
   }
 
   private async Task _heartbeatOnceAsync(CancellationToken ct) {
+    await using var pin = await _pinnedPool.TryPinForAsync(typeof(HeartbeatWorker), ct);
+    using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(

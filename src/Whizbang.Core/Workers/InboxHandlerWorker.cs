@@ -20,6 +20,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly InboxHandlerWorkerOptions _options;
   private readonly ILogger<InboxHandlerWorker> _logger;
+  private readonly IPinnedConnectionPool _pinnedPool;
   private readonly BatchFlusher<HandlerCommitRequest> _flusher;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
@@ -28,12 +29,14 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     IFailureChannel failureChannel,
     ISchemaReadyGate schemaReadyGate,
     IOptions<InboxHandlerWorkerOptions> options,
-    ILogger<InboxHandlerWorker> logger) {
+    ILogger<InboxHandlerWorker> logger,
+    IPinnedConnectionPool? pinnedPool = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
     _flusher = new BatchFlusher<HandlerCommitRequest>(_flushBatchAsync, _options.Flusher, _logger);
   }
 
@@ -60,6 +63,8 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     LogDiagFlushEntered(_logger, batch.Count);
     await _schemaReadyGate.WaitForReadyAsync(ct);
     LogDiagFlushSchemaReady(_logger, batch.Count);
+    await using var pin = await _pinnedPool.TryPinForAsync(typeof(InboxHandlerWorker), ct);
+    using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
