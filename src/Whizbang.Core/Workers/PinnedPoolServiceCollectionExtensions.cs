@@ -62,6 +62,7 @@ public static class PinnedPoolServiceCollectionExtensions {
         "WhizbangPinnedPoolOptions.Size must be > 0 when Enabled is true with a ConnectionString set.");
 
     services.TryAddSingleton<PinnedWorkerRegistry>();
+    services.TryAddSingleton<Whizbang.Core.Observability.PinnedPoolMetrics>();
 
     // Default registration: NoOp. Whizbang.Data.Postgres replaces this with the real
     // PinnedConnectionPool when the consumer also calls AddWhizbangPostgresPinnedPool.

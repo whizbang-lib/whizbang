@@ -40,7 +40,8 @@ public static class PostgresPinnedPoolServiceCollectionExtensions {
       }
       var registry = sp.GetRequiredService<PinnedWorkerRegistry>();
       var logger = sp.GetService<ILogger<PinnedConnectionPool>>();
-      return new PinnedConnectionPool(opts, registry, logger);
+      var metrics = sp.GetService<Whizbang.Core.Observability.PinnedPoolMetrics>();
+      return new PinnedConnectionPool(opts, registry, logger, metrics);
     }));
 
     return services;
