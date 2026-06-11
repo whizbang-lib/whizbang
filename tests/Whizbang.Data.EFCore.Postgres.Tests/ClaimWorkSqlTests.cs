@@ -828,17 +828,20 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// v0.683 lock-in — the emit_chain guard's NOT EXISTS predicate (the v2
-  /// refinement) MUST skip the call when every candidate inbox row's
-  /// message_id is already in wh_event_store. This is the production
-  /// handler-side-delay scenario: 10 k+ inbox rows backed up because the
-  /// inbox handler is slow, but every emit-chain candidate is already
-  /// emitted. Without the NOT EXISTS predicate, emit_chain re-scans the
-  /// whole backlog every claim_work call doing 10 k× redundant PK lookups.
+  /// v0.684 lock-in — emit_chain MUST be idempotent when called against
+  /// an inbox event row whose message_id is already in wh_event_store.
+  /// The v0.683 guard intentionally does NOT pre-check wh_event_store
+  /// (the production 2026-06-11 PM measurement showed the wrapping NOT EXISTS
+  /// at 42 ms mean — overwhelming the savings from skipping the inner call).
+  /// Instead, emit_chain's own internal NOT EXISTS check filters out
+  /// already-emitted rows, and ON CONFLICT DO NOTHING swallows any race-
+  /// driven duplicate inserts. This test exercises that idempotency on
+  /// the hot path. Renamed from the original v2-guard-skip test now that
+  /// the v0.684 guard is back to the simpler v1 form.
   /// </summary>
   /// <docs>fundamentals/work-coordinator/claim-loop</docs>
   [Test]
-  public async Task ClaimWork_EmitChainGuard_SkipsWhenAllEventsAlreadyEmittedAsync() {
+  public async Task ClaimWork_EmitChain_IsIdempotentWhenEventsAlreadyInStoreAsync() {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
@@ -923,8 +926,15 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     var emitCalls = await _scalarLongAsync(connection,
       "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = '_emit_event_store_chain_for_inbox'");
 
-    await Assert.That(emitCalls).IsEqualTo(0L)
-      .Because("v0.683 emit_chain guard's NOT EXISTS predicate MUST skip the call when every candidate inbox event row's message_id is already in wh_event_store — the production handler-side-delay scenario. Without this lock-in test, the v2 refinement could silently regress to v1 (which re-scanned the whole backlog every call) and the production fix would be lost.");
+    var afterCount = await _scalarLongAsync(connection, "SELECT count(*) FROM wh_event_store");
+
+    // v0.684: emit_chain is INVOKED (the simpler v1-style guard only checks that the
+    // instance owns at least one unprocessed inbox event row with stream_id — true
+    // here) and must idempotently no-op when every row's event_id is already present.
+    await Assert.That(emitCalls).IsGreaterThanOrEqualTo(1L)
+      .Because("v0.684 reverted the guard to the simpler v1 form, so emit_chain runs when this instance owns any unprocessed inbox event row. The production PM measurement showed the v2 NOT EXISTS predicate at 42 ms mean (~5% of production DB time) — net loss under heavy load.");
+    await Assert.That(afterCount).IsEqualTo(1L)
+      .Because("emit_chain MUST be idempotent against pre-emitted events — its internal NOT EXISTS check + ON CONFLICT DO NOTHING guarantee no duplicate wh_event_store rows. This is the lock-in invariant that lets v0.684 ship the cheaper guard safely.");
   }
 
   private async Task<_InnerCallCounts> _runClaimWorkAndCountInnerCallsAsync(
