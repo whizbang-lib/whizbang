@@ -33,7 +33,8 @@ public partial class DeadLetterRecoveryWorker(
   IOptions<DeadLetterRecoveryOptions> options,
   IGenerationProvider generationProvider,
   ILogger<DeadLetterRecoveryWorker> logger,
-  DeadLetterMetrics? metrics = null
+  DeadLetterMetrics? metrics = null,
+  Whizbang.Core.Notifications.IWorkNotificationListener? notificationListener = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
@@ -41,6 +42,26 @@ public partial class DeadLetterRecoveryWorker(
   private readonly IGenerationProvider _generationProvider = generationProvider ?? throw new ArgumentNullException(nameof(generationProvider));
   private readonly ILogger<DeadLetterRecoveryWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly DeadLetterMetrics? _metrics = metrics;
+  private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _notificationListener = notificationListener;
+  private readonly SemaphoreSlim _wake = new(0, 1);
+  private bool _signalSubscribed;
+
+  /// <summary>NOTIFY signal handler — wakes on a DeadLetterReady signal so the next scan runs within ms.</summary>
+  private void _onSignal(Whizbang.Core.Notifications.WorkSignalCategory category) {
+    if (category != Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady) {
+      return;
+    }
+    try { _wake.Release(); } catch (SemaphoreFullException) { /* coalesce */ }
+  }
+
+  /// <inheritdoc />
+  public override Task StopAsync(CancellationToken cancellationToken) {
+    if (_signalSubscribed && _notificationListener is not null) {
+      _notificationListener.OnSignal -= _onSignal;
+      _signalSubscribed = false;
+    }
+    return base.StopAsync(cancellationToken);
+  }
 
   private long _totalScans;
   private long _totalRecovered;
@@ -62,6 +83,14 @@ public partial class DeadLetterRecoveryWorker(
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.ScanIntervalMinutes);
+
+    // Slice 7c — subscribe to the DeadLetterReady NOTIFY signal. The wh_dead_letters
+    // AFTER INSERT trigger (migration 056) fires this on every new DLQ row so the
+    // worker wakes within ms instead of waiting up to ScanIntervalMinutes.
+    if (_notificationListener is not null && !_signalSubscribed) {
+      _notificationListener.OnSignal += _onSignal;
+      _signalSubscribed = true;
+    }
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
@@ -112,7 +141,15 @@ public partial class DeadLetterRecoveryWorker(
       }
 
       try {
-        await Task.Delay(TimeSpan.FromMinutes(_options.ScanIntervalMinutes), stoppingToken);
+        // Slice 7c — race the polling interval against the NOTIFY-driven wake. When the
+        // listener fires, the next scan runs within ms; otherwise the ScanIntervalMinutes
+        // backstop poll still kicks in. When no listener is wired the wake task never
+        // completes so behaviour collapses to the legacy polling-only loop.
+        var pollDelay = Task.Delay(TimeSpan.FromMinutes(_options.ScanIntervalMinutes), stoppingToken);
+        var wakeTask = _notificationListener is not null
+          ? _wake.WaitAsync(stoppingToken)
+          : new TaskCompletionSource<bool>().Task;
+        await Task.WhenAny(pollDelay, wakeTask).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         break;
       }

@@ -18,7 +18,12 @@ public enum WorkSignalCategory {
   /// because <c>cleanup_stale_instances</c> released the leases of a dead pod). The live
   /// claim worker should run a catch-up <c>claim_orphaned_*</c> across all work tables.
   /// </summary>
-  OrphanRedistribute
+  OrphanRedistribute,
+  /// <summary>
+  /// A new <c>wh_dead_letters</c> row was inserted. <c>DeadLetterRecoveryWorker</c> wakes
+  /// to scan for rows whose recovery policy has elapsed (slice 7c — added in v0.681).
+  /// </summary>
+  DeadLetterReady,
 }
 
 /// <summary>
