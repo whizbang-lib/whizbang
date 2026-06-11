@@ -1,5 +1,6 @@
 #pragma warning disable CA1707
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -125,6 +126,93 @@ public class PinnedPoolRegistrationTests {
 
     await Assert.That(registry.IsEligible(typeof(_customWorker), opts)).IsTrue()
       .Because("Consumer opt-in MUST surface as eligibility on the registry; otherwise the custom worker silently doesn't pin.");
+  }
+
+  [Test]
+  public async Task Register_ConnectionStringName_ResolvesFromConfigurationAsync() {
+    var services = new ServiceCollection();
+    var config = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["ConnectionStrings:appservice-db-direct"] = "Host=test;Database=test;Username=x;Password=x",
+      })
+      .Build();
+    services.AddSingleton<IConfiguration>(config);
+    services.AddWhizbangPinnedWorkerPool(opts => {
+      opts.Enabled = true;
+      opts.ConnectionStringName = "appservice-db-direct";
+    });
+    services.AddWhizbangPostgresPinnedPool();
+
+    var sp = services.BuildServiceProvider();
+    var pool = sp.GetRequiredService<IPinnedConnectionPool>();
+
+    await Assert.That(pool).IsTypeOf<PinnedConnectionPool>()
+      .Because("ConnectionStringName MUST resolve via IConfiguration.GetConnectionString — that's the a consumer-convention path operators are pointed at in the devops doc.");
+  }
+
+  [Test]
+  public async Task Register_ConnectionStringName_TakesPrecedenceOverInlineAsync() {
+    var services = new ServiceCollection();
+    var config = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["ConnectionStrings:appservice-db-direct"] = "Host=fromConfig;Database=test;Username=x;Password=x",
+      })
+      .Build();
+    services.AddSingleton<IConfiguration>(config);
+    services.AddWhizbangPinnedWorkerPool(opts => {
+      opts.Enabled = true;
+      opts.ConnectionStringName = "appservice-db-direct";
+      opts.ConnectionString = "Host=inlineLoser;Database=test;Username=x;Password=x";
+    });
+    services.AddWhizbangPostgresPinnedPool();
+
+    var sp = services.BuildServiceProvider();
+    var pool = sp.GetRequiredService<IPinnedConnectionPool>();
+
+    // Real pool resolves — proves ConnectionStringName won (inline string is also valid Npgsql, both
+    // would resolve a real pool, but the precedence is observable via the conn string field below).
+    await Assert.That(pool).IsTypeOf<PinnedConnectionPool>();
+    var real = (PinnedConnectionPool)pool;
+    await Assert.That(real.ConnectionStringForTesting).Contains("fromConfig")
+      .Because("ConnectionStringName MUST win over inline ConnectionString — operators define the secret in standard ConnectionStrings:* config exactly once.");
+  }
+
+  [Test]
+  public async Task Register_ConnectionStringNameNotFound_FallsBackToInlineAsync() {
+    var services = new ServiceCollection();
+    var config = new ConfigurationBuilder().Build();  // no ConnectionStrings:* entry
+    services.AddSingleton<IConfiguration>(config);
+    services.AddWhizbangPinnedWorkerPool(opts => {
+      opts.Enabled = true;
+      opts.ConnectionStringName = "appservice-db-direct";  // unresolvable
+      opts.ConnectionString = "Host=inlineFallback;Database=test;Username=x;Password=x";
+    });
+    services.AddWhizbangPostgresPinnedPool();
+
+    var sp = services.BuildServiceProvider();
+    var pool = sp.GetRequiredService<IPinnedConnectionPool>();
+
+    await Assert.That(pool).IsTypeOf<PinnedConnectionPool>();
+    var real = (PinnedConnectionPool)pool;
+    await Assert.That(real.ConnectionStringForTesting).Contains("inlineFallback")
+      .Because("When ConnectionStringName doesn't resolve, fall back to inline ConnectionString — preserves migration path for operators who haven't moved to the named form yet.");
+  }
+
+  [Test]
+  public async Task Register_NeitherSet_ResolvesNoOpAsync() {
+    var services = new ServiceCollection();
+    services.AddWhizbangPinnedWorkerPool(opts => {
+      opts.Enabled = true;
+      opts.ConnectionStringName = null;
+      opts.ConnectionString = null;
+    });
+    services.AddWhizbangPostgresPinnedPool();
+
+    var sp = services.BuildServiceProvider();
+    var pool = sp.GetRequiredService<IPinnedConnectionPool>();
+
+    await Assert.That(pool).IsTypeOf<NoOpPinnedConnectionPool>()
+      .Because("Enabled=true with no string source resolvable MUST fall to NoOp — silent NoOp matches existing 'safe to call unconditionally' semantics.");
   }
 
   private sealed class _customWorker : Microsoft.Extensions.Hosting.IHostedService {
