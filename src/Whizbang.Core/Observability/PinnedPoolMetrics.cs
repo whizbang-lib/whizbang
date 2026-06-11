@@ -25,10 +25,9 @@ public sealed class PinnedPoolMetrics {
   /// <summary>Count of pinned-connection recycles (driven by <c>ConnectionLifetimeSeconds</c>).</summary>
   public Counter<long> ConnectionRecycles { get; }
 
-  /// <summary>Constructs the metrics group via the host's <see cref="WhizbangMetrics"/> meter factory (matches DispatcherMetrics pattern).</summary>
-  public PinnedPoolMetrics(WhizbangMetrics whizbangMetrics) {
-    ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+  /// <summary>Constructs the metrics group via the host's <see cref="WhizbangMetrics"/> meter factory when available (matches DispatcherMetrics pattern); falls back to a freshly-created <see cref="Meter"/> when the host hasn't registered metrics.</summary>
+  public PinnedPoolMetrics(WhizbangMetrics? whizbangMetrics = null) {
+    var meter = whizbangMetrics?.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
     BorrowDuration = meter.CreateHistogram<double>(
       "whizbang.workers.pinned_pool.borrow.duration",
       "ms",
