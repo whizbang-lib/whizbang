@@ -37,15 +37,40 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
 public sealed class WhizbangPinnedPoolOptions {
   /// <summary>
-  /// Direct (non-pgbouncer) Npgsql connection string used by the pinned pool.
-  /// When null/empty, the feature is a no-op regardless of <see cref="Enabled"/>
-  /// — workers stay on the pooled connection (today's behaviour). This matches
-  /// the safety pattern used by <c>WhizbangNotificationOptions.DirectConnectionString</c>.
+  /// Name of a key under standard .NET <c>ConnectionStrings:*</c> configuration
+  /// that resolves to the direct (non-pgbouncer) Npgsql connection string.
+  /// Convention is the standard <c>{service}-db-direct</c> sibling of the
+  /// existing <c>{service}-db</c> entry. When set, the pool resolves the string
+  /// via <see cref="Microsoft.Extensions.Configuration.IConfiguration.GetConnectionString(string)"/>.
+  /// </summary>
+  /// <remarks>
+  /// Preferred over <see cref="ConnectionString"/> for production use because
+  /// it keeps the secret-bearing string in standard <c>ConnectionStrings:</c>
+  /// configuration (key-vault, env-var conventions, log-redaction rules all
+  /// apply uniformly). When both <see cref="ConnectionStringName"/> and
+  /// <see cref="ConnectionString"/> are set, <see cref="ConnectionStringName"/>
+  /// wins.
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// ConnectionStrings__bffservice-db-direct = "Host=...;Port=5432;..."
+  /// Whizbang__Workers__PinnedPool__ConnectionStringName = "bffservice-db-direct"
+  /// </code>
+  /// </example>
+  public string? ConnectionStringName { get; set; }
+
+  /// <summary>
+  /// Inline direct (non-pgbouncer) Npgsql connection string used by the pinned
+  /// pool when <see cref="ConnectionStringName"/> is not set. When null/empty,
+  /// the feature is a no-op regardless of <see cref="Enabled"/> — workers stay
+  /// on the pooled connection (today's behaviour). This matches the safety
+  /// pattern used by <c>WhizbangNotificationOptions.DirectConnectionString</c>.
   /// </summary>
   /// <remarks>
   /// Must point at the underlying PostgreSQL server directly (typically port
   /// <c>5432</c>), not the pgbouncer fronting port (typically <c>6432</c>).
   /// Otherwise pinning gives no benefit and may confuse pgbouncer's pool math.
+  /// Prefer <see cref="ConnectionStringName"/> instead — see remarks there.
   /// </remarks>
   public string? ConnectionString { get; set; }
 

@@ -1,4 +1,5 @@
 using System;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -20,8 +21,11 @@ public static class PostgresPinnedPoolServiceCollectionExtensions {
   /// <summary>
   /// Replaces the registered <see cref="IPinnedConnectionPool"/> with the
   /// PostgreSQL implementation when the resolved options have
-  /// <see cref="WhizbangPinnedPoolOptions.Enabled"/> = <c>true</c> AND
-  /// <see cref="WhizbangPinnedPoolOptions.ConnectionString"/> is non-empty.
+  /// <see cref="WhizbangPinnedPoolOptions.Enabled"/> = <c>true</c> AND a
+  /// connection string is resolvable via either
+  /// <see cref="WhizbangPinnedPoolOptions.ConnectionStringName"/> (preferred —
+  /// looks up <c>ConnectionStrings:{Name}</c>) or
+  /// <see cref="WhizbangPinnedPoolOptions.ConnectionString"/> (inline fallback).
   /// Otherwise leaves the no-op registration in place — making the
   /// service safe to call unconditionally at startup.
   /// </summary>
@@ -35,15 +39,46 @@ public static class PostgresPinnedPoolServiceCollectionExtensions {
     // wins. AddSingleton + TryAdd would NOT replace, hence Replace.
     services.Replace(ServiceDescriptor.Singleton<IPinnedConnectionPool>(sp => {
       var opts = sp.GetRequiredService<IOptions<WhizbangPinnedPoolOptions>>().Value;
-      if (!opts.Enabled || string.IsNullOrWhiteSpace(opts.ConnectionString)) {
+      if (!opts.Enabled) {
         return NoOpPinnedConnectionPool.Instance;
       }
+
+      var connectionString = _resolveConnectionString(sp, opts);
+      if (string.IsNullOrWhiteSpace(connectionString)) {
+        return NoOpPinnedConnectionPool.Instance;
+      }
+
       var registry = sp.GetRequiredService<PinnedWorkerRegistry>();
       var logger = sp.GetService<ILogger<PinnedConnectionPool>>();
       var metrics = sp.GetService<Whizbang.Core.Observability.PinnedPoolMetrics>();
-      return new PinnedConnectionPool(opts, registry, logger, metrics);
+      // Wrap so the pool sees the resolved string regardless of source.
+      var effectiveOpts = new WhizbangPinnedPoolOptions {
+        ConnectionStringName = opts.ConnectionStringName,
+        ConnectionString = connectionString,
+        Enabled = opts.Enabled,
+        Size = opts.Size,
+        IncludeFlushWorkers = opts.IncludeFlushWorkers,
+        ExcludeWorkers = opts.ExcludeWorkers,
+        ConnectionLifetimeSeconds = opts.ConnectionLifetimeSeconds,
+        BorrowTimeoutMilliseconds = opts.BorrowTimeoutMilliseconds,
+      };
+      return new PinnedConnectionPool(effectiveOpts, registry, logger, metrics);
     }));
 
     return services;
+  }
+
+  // ConnectionStringName wins over inline ConnectionString — keeps secret-bearing
+  // strings in standard ConnectionStrings:* config (key-vault, env-var, log-redaction
+  // conventions all apply uniformly). Falls back to inline only when no name is set.
+  private static string? _resolveConnectionString(IServiceProvider sp, WhizbangPinnedPoolOptions opts) {
+    if (!string.IsNullOrWhiteSpace(opts.ConnectionStringName)) {
+      var configuration = sp.GetService<IConfiguration>();
+      var resolved = configuration?.GetConnectionString(opts.ConnectionStringName);
+      if (!string.IsNullOrWhiteSpace(resolved)) {
+        return resolved;
+      }
+    }
+    return opts.ConnectionString;
   }
 }
