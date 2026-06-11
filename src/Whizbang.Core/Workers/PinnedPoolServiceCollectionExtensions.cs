@@ -63,6 +63,11 @@ public static class PinnedPoolServiceCollectionExtensions {
 
     services.TryAddSingleton<PinnedWorkerRegistry>();
 
+    // Default registration: NoOp. Whizbang.Data.Postgres replaces this with the real
+    // PinnedConnectionPool when the consumer also calls AddWhizbangPostgresPinnedPool.
+    // Workers default to NoOp regardless when no IPinnedConnectionPool is registered.
+    services.TryAddSingleton<IPinnedConnectionPool>(_ => NoOpPinnedConnectionPool.Instance);
+
     return services;
   }
 
@@ -92,9 +97,25 @@ public static class PinnedPoolServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
 
     services.TryAddSingleton<PinnedWorkerRegistry>();
-    services.Configure<PinnedWorkerRegistry>(reg => reg.AddOptIn(typeof(TWorker)));
+    // Collected by PinnedWorkerRegistry's ctor via DI enumeration.
+    services.AddSingleton(new PinnedWorkerOptIn(typeof(TWorker)));
 
     return services;
+  }
+}
+
+/// <summary>
+/// Marker carried in DI to opt a custom worker type into the pinned pool.
+/// Collected by <see cref="PinnedWorkerRegistry"/> at construction.
+/// </summary>
+public sealed class PinnedWorkerOptIn {
+  /// <summary>The worker type being opted in.</summary>
+  public Type WorkerType { get; }
+
+  /// <summary>Constructs the marker for the supplied worker type.</summary>
+  public PinnedWorkerOptIn(Type workerType) {
+    ArgumentNullException.ThrowIfNull(workerType);
+    WorkerType = workerType;
   }
 }
 
@@ -129,6 +150,17 @@ public sealed class PinnedWorkerRegistry {
   };
 
   private readonly HashSet<Type> _optIns = [];
+
+  /// <summary>Default constructor — no consumer opt-ins (used by tests and zero-config setups).</summary>
+  public PinnedWorkerRegistry() { }
+
+  /// <summary>DI constructor — consumes any <see cref="PinnedWorkerOptIn"/> markers registered via <see cref="PinnedPoolServiceCollectionExtensions.AddPinnedWorker{TWorker}"/>.</summary>
+  public PinnedWorkerRegistry(IEnumerable<PinnedWorkerOptIn> optIns) {
+    ArgumentNullException.ThrowIfNull(optIns);
+    foreach (var optIn in optIns) {
+      _optIns.Add(optIn.WorkerType);
+    }
+  }
 
   /// <summary>
   /// Adds a consumer worker type to the eligibility set. Called via the

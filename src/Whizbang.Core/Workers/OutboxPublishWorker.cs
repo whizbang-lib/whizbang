@@ -52,7 +52,9 @@ public sealed partial class OutboxPublishWorker(
   IServiceInstanceProvider? instanceProvider = null,
   IDeadLetterStore? deadLetterStore = null,
   IGenerationProvider? generationProvider = null,
-  Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) : BackgroundService {
+  Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
+  IPinnedConnectionPool? pinnedPool = null) : BackgroundService {
+  private readonly IPinnedConnectionPool _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
   private const string LIFECYCLE_PRE_OUTBOX_ASYNC = "Lifecycle PreOutboxDetached";
   private const string LIFECYCLE_PRE_OUTBOX_INLINE = "Lifecycle PreOutboxInline";
   private const string LIFECYCLE_POST_OUTBOX_ASYNC = "Lifecycle PostOutboxDetached";
@@ -171,6 +173,8 @@ public sealed partial class OutboxPublishWorker(
         _leaseRegistry?.Register(lease);
 
         await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async leaseCt => {
+          await using var pin = await _pinnedPool.TryPinForAsync(typeof(OutboxPublishWorker), leaseCt);
+          using var __ctx = PinnedConnectionContext.Push(pin.Connection);
           await using var scope = _scopeFactory.CreateAsyncScope();
           await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, leaseCt);
           var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();

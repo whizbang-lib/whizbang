@@ -19,6 +19,7 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
   private readonly OutboxCompletionFlushWorkerOptions _options;
   private readonly WorkCoordinatorOptions _coordinatorOptions;
   private readonly ILogger<OutboxCompletionFlushWorker> _logger;
+  private readonly IPinnedConnectionPool _pinnedPool;
   private readonly BatchFlusher<Guid> _flusher;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
@@ -27,12 +28,14 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
     ISchemaReadyGate schemaReadyGate,
     IOptions<OutboxCompletionFlushWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
-    ILogger<OutboxCompletionFlushWorker> logger) {
+    ILogger<OutboxCompletionFlushWorker> logger,
+    IPinnedConnectionPool? pinnedPool = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
     _flusher = new BatchFlusher<Guid>(_flushBatchAsync, _options.Flusher, _logger);
   }
 
@@ -62,6 +65,8 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
     // before the initializer completes, this prevents firing SQL against an unmigrated DB.
     await _schemaReadyGate.WaitForReadyAsync(ct);
 
+    await using var pin = await _pinnedPool.TryPinForAsync(typeof(OutboxCompletionFlushWorker), ct);
+    using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     await coordinator.CompleteOutboxPublishedAsync(ids, _coordinatorOptions.DebugMode, ct);
