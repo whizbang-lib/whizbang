@@ -612,6 +612,16 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
 
     var npgsql = (NpgsqlConnection)connection;
 
+    // track_functions defaults to 'none' in Postgres — pg_stat_user_functions stays
+    // empty without this SET, which would make the IsEqualTo(0L) assertions below
+    // trivially pass even if the sub-functions DID run. Lock-in test value depends on
+    // tracking actually being on. v0.683 — same pattern used in the per-inner-function
+    // guard tests below.
+    await using (var track = npgsql.CreateCommand()) {
+      track.CommandText = "SET track_functions = 'all';";
+      await track.ExecuteNonQueryAsync();
+    }
+
     // Reset pg_stat_user_functions for this database
     await using (var reset = npgsql.CreateCommand()) {
       reset.CommandText = "SELECT pg_stat_reset();";
@@ -636,10 +646,16 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       }
     }
 
+    // Flush the async stats collector so call counts are visible in this session.
+    await using (var flush = npgsql.CreateCommand()) {
+      flush.CommandText = "SELECT pg_stat_force_next_flush();";
+      await flush.ExecuteNonQueryAsync();
+    }
+
     // Assert orphan-claim sub-functions never ran
     await using var check = npgsql.CreateCommand();
     check.CommandText = @"
-      SELECT funcname, calls
+      SELECT funcname, COALESCE(SUM(calls), 0) AS calls
       FROM pg_stat_user_functions
       WHERE funcname IN (
         'claim_orphaned_outbox',
@@ -647,6 +663,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
         'claim_orphaned_receptor_work',
         'claim_orphaned_perspective_events'
       )
+      GROUP BY funcname
       ORDER BY funcname;";
 
     await using var reader2 = await check.ExecuteReaderAsync();
@@ -731,4 +748,303 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     await Assert.That(notices.Any(n => n.Contains("whizbang.has_more=true"))).IsFalse()
       .Because("Only 3 outbox rows with cap=10 — the instance has fully drained. Raising whizbang.has_more=true here would make the C# claim worker hot-loop the empty path, defeating zero-idle-polling.");
   }
+
+  // ============================================================================
+  // v0.683 — per-inner-function guard lock-ins.
+  //
+  // The five IF EXISTS guards added to claim_work in v0.683 are an
+  // architectural invariant — without them, slot-3 paid 22.4% of slot-3 DB
+  // time on always-runs-the-scan orphan-claim / emit_chain calls under steady
+  // load. Future refactors of claim_work must preserve the "skip the inner
+  // function when the corresponding queue has no eligible rows" behavior, or
+  // the regression silently re-appears in production.
+  //
+  // Pattern: pg_stat_reset() before invoking claim_work, then verify call
+  // counts in pg_stat_user_functions. Mirrors
+  // ClaimWork_EmptyQueues_DoesNotInvokeOrphanClaimSubfunctionsAsync above.
+  // ============================================================================
+
+  /// <summary>
+  /// v0.683 lock-in — when ONLY the outbox queue has work, claim_work must
+  /// skip the other three orphan-claim sub-functions AND skip emit_chain
+  /// (no inbox rows means no event-store backfill candidates). Only
+  /// claim_orphaned_outbox runs.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  [Test]
+  public async Task ClaimWork_OnlyOutboxHasWork_SkipsOtherInnerFunctionsAsync() {
+    var counts = await _runClaimWorkAndCountInnerCallsAsync(seedOutbox: 1, seedInbox: 0, seedPerspective: 0, seedReceptor: 0);
+
+    await Assert.That(counts.OutboxCalls).IsEqualTo(1L)
+      .Because("v0.683 outbox guard MUST fire — there's an unprocessed orphan outbox row.");
+    await Assert.That(counts.InboxCalls).IsEqualTo(0L)
+      .Because("v0.683 inbox guard MUST skip — no unprocessed orphan inbox rows.");
+    await Assert.That(counts.PerspectiveCalls).IsEqualTo(0L)
+      .Because("v0.683 perspective_events guard MUST skip — no unprocessed orphan perspective_event rows.");
+    await Assert.That(counts.ReceptorCalls).IsEqualTo(0L)
+      .Because("v0.683 receptor_work guard MUST skip — no uncompleted receptor_processing rows.");
+    await Assert.That(counts.EmitChainCalls).IsEqualTo(0L)
+      .Because("v0.683 emit_chain guard MUST skip — no unprocessed inbox event row with stream_id whose event_id is missing from wh_event_store.");
+  }
+
+  /// <summary>
+  /// v0.683 lock-in — when ONLY the inbox queue has work AND the inbox row's
+  /// event_id is NOT in wh_event_store, both claim_orphaned_inbox AND
+  /// emit_chain MUST fire; the other three orphan-claim guards skip.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  [Test]
+  public async Task ClaimWork_OnlyInboxHasWork_FiresInboxClaimAndEmitChainAsync() {
+    var counts = await _runClaimWorkAndCountInnerCallsAsync(seedOutbox: 0, seedInbox: 1, seedPerspective: 0, seedReceptor: 0);
+
+    await Assert.That(counts.InboxCalls).IsEqualTo(1L)
+      .Because("v0.683 inbox guard MUST fire — there's an unprocessed orphan inbox row.");
+    await Assert.That(counts.EmitChainCalls).IsEqualTo(1L)
+      .Because("v0.683 emit_chain guard MUST fire — the inbox event row's message_id is not yet in wh_event_store.");
+    await Assert.That(counts.OutboxCalls).IsEqualTo(0L)
+      .Because("v0.683 outbox guard MUST skip — no unprocessed orphan outbox rows.");
+    await Assert.That(counts.PerspectiveCalls).IsEqualTo(0L)
+      .Because("v0.683 perspective_events guard MUST skip — no unprocessed orphan perspective_event rows.");
+    await Assert.That(counts.ReceptorCalls).IsEqualTo(0L)
+      .Because("v0.683 receptor_work guard MUST skip — no uncompleted receptor_processing rows.");
+  }
+
+  /// <summary>
+  /// v0.683 lock-in — when ONLY the perspective_events queue has work, only
+  /// claim_orphaned_perspective_events runs. The other three orphan-claim
+  /// guards AND the emit_chain guard skip.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  [Test]
+  public async Task ClaimWork_OnlyPerspectiveEventsHasWork_SkipsOtherInnerFunctionsAsync() {
+    var counts = await _runClaimWorkAndCountInnerCallsAsync(seedOutbox: 0, seedInbox: 0, seedPerspective: 1, seedReceptor: 0);
+
+    await Assert.That(counts.PerspectiveCalls).IsEqualTo(1L)
+      .Because("v0.683 perspective_events guard MUST fire — there's an unprocessed orphan perspective_event row.");
+    await Assert.That(counts.OutboxCalls).IsEqualTo(0L);
+    await Assert.That(counts.InboxCalls).IsEqualTo(0L);
+    await Assert.That(counts.ReceptorCalls).IsEqualTo(0L);
+    await Assert.That(counts.EmitChainCalls).IsEqualTo(0L);
+  }
+
+  /// <summary>
+  /// v0.683 lock-in — the emit_chain guard's NOT EXISTS predicate (the v2
+  /// refinement) MUST skip the call when every candidate inbox row's
+  /// message_id is already in wh_event_store. This is the slot-3
+  /// handler-side-delay scenario: 10 k+ inbox rows backed up because the
+  /// inbox handler is slow, but every emit-chain candidate is already
+  /// emitted. Without the NOT EXISTS predicate, emit_chain re-scans the
+  /// whole backlog every claim_work call doing 10 k× redundant PK lookups.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  [Test]
+  public async Task ClaimWork_EmitChainGuard_SkipsWhenAllEventsAlreadyEmittedAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    // Heartbeat.
+    await using (var hb = connection.CreateCommand()) {
+      hb.CommandText = @"
+        INSERT INTO wh_service_instances
+          (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)";
+      hb.Parameters.AddWithValue("id", instanceId);
+      await hb.ExecuteNonQueryAsync();
+    }
+
+    // Pre-emit the event into wh_event_store so the inbox row's NOT EXISTS
+    // predicate returns false.
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_event_store
+          (event_id, stream_id, aggregate_id, aggregate_type, event_type,
+           event_data, metadata, scope, version, created_at)
+        VALUES (@eid, @stream, @stream, 'Test', 'Test', '{}'::jsonb, '{}'::jsonb, NULL, 1, NOW())";
+      ins.Parameters.AddWithValue("eid", eventId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    // Insert the matching inbox event row — owned by this instance, eligible
+    // by all four inbox predicates, but its event_id is already in wh_event_store.
+    await using (var inbox = connection.CreateCommand()) {
+      inbox.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, scope,
+           stream_id, instance_id, lease_expiry, processed_at, is_event,
+           status, attempts, received_at, partition_number)
+        VALUES (@mid, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, NULL,
+                @stream, @inst, NOW() + INTERVAL '5 minutes', NULL, true,
+                0, 0, NOW(), 1)";
+      inbox.Parameters.AddWithValue("mid", eventId);
+      inbox.Parameters.AddWithValue("stream", streamId);
+      inbox.Parameters.AddWithValue("inst", instanceId);
+      await inbox.ExecuteNonQueryAsync();
+    }
+
+    await using (var track = connection.CreateCommand()) {
+      track.CommandText = "SET track_functions = 'all';";
+      await track.ExecuteNonQueryAsync();
+    }
+
+    await using (var reset = connection.CreateCommand()) {
+      reset.CommandText = "SELECT pg_stat_reset();";
+      await reset.ExecuteNonQueryAsync();
+    }
+
+    await using (var call = connection.CreateCommand()) {
+      call.CommandText = @"
+        SELECT * FROM claim_work(
+          p_instance_id => @id,
+          p_service_name => 'test',
+          p_host_name => 'test-host',
+          p_process_id => 1,
+          p_max_streams => 100,
+          p_partition_count => 10000,
+          p_lease_seconds => 300
+        )";
+      call.Parameters.AddWithValue("id", instanceId);
+      await using var reader = await call.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) { }
+    }
+
+    await using (var flush = connection.CreateCommand()) {
+      flush.CommandText = "SELECT pg_stat_force_next_flush();";
+      await flush.ExecuteNonQueryAsync();
+    }
+
+    var emitCalls = await _scalarLongAsync(connection,
+      "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = '_emit_event_store_chain_for_inbox'");
+
+    await Assert.That(emitCalls).IsEqualTo(0L)
+      .Because("v0.683 emit_chain guard's NOT EXISTS predicate MUST skip the call when every candidate inbox event row's message_id is already in wh_event_store — the slot-3 handler-side-delay scenario. Without this lock-in test, the v2 refinement could silently regress to v1 (which re-scanned the whole backlog every call) and the slot-3 fix would be lost.");
+  }
+
+  private async Task<_InnerCallCounts> _runClaimWorkAndCountInnerCallsAsync(
+      int seedOutbox, int seedInbox, int seedPerspective, int seedReceptor) {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+
+    await using (var hb = connection.CreateCommand()) {
+      hb.CommandText = @"
+        INSERT INTO wh_service_instances
+          (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)";
+      hb.Parameters.AddWithValue("id", instanceId);
+      await hb.ExecuteNonQueryAsync();
+    }
+
+    for (var i = 0; i < seedOutbox; i++) {
+      await using var ins = connection.CreateCommand();
+      ins.CommandText = @"
+        INSERT INTO wh_outbox
+          (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number)
+        VALUES (@msg, 'test-topic', 'TestEvent', '{}', '{}', 0, 0, NOW(), @stream, 0)";
+      ins.Parameters.AddWithValue("msg", Guid.NewGuid());
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    for (var i = 0; i < seedInbox; i++) {
+      await using var ins = connection.CreateCommand();
+      // event_data carries a 'p' payload key — _emit_event_store_chain_for_inbox
+      // COALESCE-extracts that into wh_event_store.event_data, which is NOT NULL.
+      ins.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, scope,
+           stream_id, instance_id, lease_expiry, processed_at, is_event,
+           status, attempts, received_at, partition_number)
+        VALUES (@msg, 'TestHandler', 'Test', '{""p"": {}}'::jsonb, '{}'::jsonb, NULL,
+                @stream, NULL, NULL, NULL, true,
+                0, 0, NOW(), 1)";
+      ins.Parameters.AddWithValue("msg", Guid.NewGuid());
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    for (var i = 0; i < seedPerspective; i++) {
+      await using var ins = connection.CreateCommand();
+      ins.CommandText = @"
+        INSERT INTO wh_perspective_events
+          (stream_id, perspective_name, event_id, status, attempts, created_at)
+        VALUES (@stream, 'TestPerspective', @eid, 0, 0, NOW())";
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      ins.Parameters.AddWithValue("eid", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    // wh_receptor_processing seed is omitted — receptor work is fed via a
+    // separate pipeline not exercised here. seedReceptor stays at 0 in current
+    // tests; left as a parameter for future symmetry.
+    _ = seedReceptor;
+
+    // track_functions defaults to 'none' in Postgres — pg_stat_user_functions is empty
+    // unless tracking is enabled per session. SET on the same connection that runs
+    // claim_work so the inner-function calls are recorded.
+    await using (var track = connection.CreateCommand()) {
+      track.CommandText = "SET track_functions = 'all';";
+      await track.ExecuteNonQueryAsync();
+    }
+
+    await using (var reset = connection.CreateCommand()) {
+      reset.CommandText = "SELECT pg_stat_reset();";
+      await reset.ExecuteNonQueryAsync();
+    }
+
+    await using (var call = connection.CreateCommand()) {
+      call.CommandText = @"
+        SELECT * FROM claim_work(
+          p_instance_id => @id,
+          p_service_name => 'test',
+          p_host_name => 'test-host',
+          p_process_id => 1,
+          p_max_streams => 100,
+          p_partition_count => 10000,
+          p_lease_seconds => 300
+        )";
+      call.Parameters.AddWithValue("id", instanceId);
+      await using var reader = await call.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) { }
+    }
+
+    // pg_stat_user_functions is populated by the async stats collector — without an
+    // explicit flush the counts aren't visible to the same session that ran the calls.
+    await using (var flush = connection.CreateCommand()) {
+      flush.CommandText = "SELECT pg_stat_force_next_flush();";
+      await flush.ExecuteNonQueryAsync();
+    }
+
+    return new _InnerCallCounts(
+      OutboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_outbox'"),
+      InboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_inbox'"),
+      PerspectiveCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_perspective_events'"),
+      ReceptorCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_receptor_work'"),
+      EmitChainCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = '_emit_event_store_chain_for_inbox'"));
+  }
+
+  private static async Task<long> _scalarLongAsync(NpgsqlConnection conn, string sql) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    var result = await cmd.ExecuteScalarAsync();
+    return result is null or DBNull ? 0L : Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  private readonly record struct _InnerCallCounts(
+    long OutboxCalls,
+    long InboxCalls,
+    long PerspectiveCalls,
+    long ReceptorCalls,
+    long EmitChainCalls);
 }

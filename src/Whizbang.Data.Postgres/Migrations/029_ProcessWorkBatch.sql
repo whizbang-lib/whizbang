@@ -77,25 +77,97 @@ BEGIN
     SELECT instance_rank, active_instance_count INTO v_rank, v_count
     FROM __SCHEMA__.calculate_instance_rank(p_instance_id, v_stale_cutoff);
 
-    -- Claim orphaned / unowned work across all categories for this instance.
-    PERFORM __SCHEMA__.claim_orphaned_outbox(
-      p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff
-    );
-    PERFORM __SCHEMA__.claim_orphaned_inbox(
-      p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff
-    );
-    PERFORM __SCHEMA__.claim_orphaned_perspective_events(
-      p_instance_id, v_lease_expiry, v_now, p_max_streams, v_rank, v_count
-    );
-    PERFORM __SCHEMA__.claim_orphaned_receptor_work(
-      p_instance_id, v_rank, v_count, v_lease_expiry, v_now
-    );
+    -- v0.683 — per-inner-function guards. The existing v_has_any_work short-circuit
+    -- (top of the function) only fires when ALL four queues are empty. Under steady
+    -- import load, that's rare — but the typical pattern is "one queue has work,
+    -- the others don't." Without per-function guards, claim_work paid the full
+    -- claim_orphaned_*/emit_chain scan cost on every call regardless. Each guard
+    -- uses an existing partial index (idx_{outbox,inbox}_unprocessed_claiming WHERE
+    -- processed_at IS NULL, etc.) so the EXISTS probe is sub-millisecond. Behavior
+    -- is preserved: if a guard returns false, the corresponding inner function had
+    -- no rows to claim anyway, so skipping its scan is a pure win.
+
+    -- Claim orphaned / unowned outbox work — only if any outbox row is unprocessed
+    -- AND either unowned or has an expired lease (the orphan predicate matched by
+    -- claim_orphaned_outbox's WHERE clause).
+    IF EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_outbox
+      WHERE processed_at IS NULL
+        AND (instance_id IS NULL OR lease_expiry < v_now)
+      LIMIT 1
+    ) THEN
+      PERFORM __SCHEMA__.claim_orphaned_outbox(
+        p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff
+      );
+    END IF;
+
+    -- Claim orphaned / unowned inbox work — same predicate shape.
+    IF EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_inbox
+      WHERE processed_at IS NULL
+        AND (instance_id IS NULL OR lease_expiry < v_now)
+      LIMIT 1
+    ) THEN
+      PERFORM __SCHEMA__.claim_orphaned_inbox(
+        p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff
+      );
+    END IF;
+
+    -- Claim orphaned perspective events — same predicate shape on
+    -- wh_perspective_events.
+    IF EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_perspective_events
+      WHERE processed_at IS NULL
+        AND (instance_id IS NULL OR lease_expiry < v_now)
+      LIMIT 1
+    ) THEN
+      PERFORM __SCHEMA__.claim_orphaned_perspective_events(
+        p_instance_id, v_lease_expiry, v_now, p_max_streams, v_rank, v_count
+      );
+    END IF;
+
+    -- Claim orphaned receptor work — wh_receptor_processing uses completed_at
+    -- (not processed_at) for the "is done" semantic.
+    IF EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_receptor_processing
+      WHERE completed_at IS NULL
+        AND (instance_id IS NULL OR lease_expiry < v_now)
+      LIMIT 1
+    ) THEN
+      PERFORM __SCHEMA__.claim_orphaned_receptor_work(
+        p_instance_id, v_rank, v_count, v_lease_expiry, v_now
+      );
+    END IF;
 
     -- Back-fill wh_event_store + wh_perspective_events for inbox events claimed above.
     -- Replaces legacy process_work_batch Phase 4.5B + 4.6 self-healing — ensures that by the
     -- time an inbox event row reaches InboxDispatchWorker, its event_store row exists and
     -- perspective_events have been created so PerspectiveWorker can pick them up.
-    PERFORM __SCHEMA__._emit_event_store_chain_for_inbox(p_instance_id, v_lease_expiry, v_now, p_partition_count);
+    --
+    -- v0.683 guard: only call when there is genuine new-emission work — at least
+    -- one inbox event row owned by this instance whose message_id is NOT yet in
+    -- wh_event_store. The earlier draft of this guard (matching only the four
+    -- inbox predicates) was too coarse: under a heavy inbox backlog where every
+    -- row's event_id is already in wh_event_store (handler-side delay), the
+    -- guard fired anyway and emit_chain re-scanned the whole backlog doing
+    -- 10k× redundant PK lookups (observed: 121 ms mean during slot-3 import
+    -- where inbox sat at ~10k for ~2 min). LIMIT 1 stops at the first
+    -- genuinely-pending row, so the worst case is the all-emitted case
+    -- (sequential index scan through up-to-LIMIT rows) — still cheap.
+    IF EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_inbox i
+      WHERE i.instance_id = p_instance_id
+        AND i.processed_at IS NULL
+        AND i.is_event = true
+        AND i.stream_id IS NOT NULL
+        AND i.lease_expiry > v_now
+        AND NOT EXISTS (
+          SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id
+        )
+      LIMIT 1
+    ) THEN
+      PERFORM __SCHEMA__._emit_event_store_chain_for_inbox(p_instance_id, v_lease_expiry, v_now, p_partition_count);
+    END IF;
 
     -- Return outbox work owned by this instance.
     -- Per-stream rank prevents one busy stream from starving others; global LIMIT bounds the batch.
