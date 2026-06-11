@@ -52,14 +52,16 @@ DECLARE
   v_lock_held BOOLEAN;
   v_heartbeat_fresh BOOLEAN;
 BEGIN
-  v_lock_key := hashtext('wh_instance_alive:' || p_instance_id::text);
+  -- Cast hashtext (int4) to bigint BEFORE bitwise ops so a negative high-bit
+  -- doesn't propagate into the comparison with pg_locks.classid/objid (oid).
+  v_lock_key := hashtext('wh_instance_alive:' || p_instance_id::text)::bigint;
 
   -- Signal 1: any session currently holds the alive-lock for this instance.
   SELECT EXISTS (
     SELECT 1 FROM pg_locks
     WHERE locktype = 'advisory'
-      AND classid = (v_lock_key >> 32) & x'FFFFFFFF'::bigint
-      AND objid = v_lock_key & x'FFFFFFFF'::bigint
+      AND classid = ((v_lock_key >> 32) & x'FFFFFFFF'::bigint)::oid
+      AND objid = (v_lock_key & x'FFFFFFFF'::bigint)::oid
       AND granted = true
   ) INTO v_lock_held;
 

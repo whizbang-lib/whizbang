@@ -22,10 +22,14 @@ BEGIN
     DELETE FROM wh_service_instances
     WHERE last_heartbeat_at < p_stale_cutoff
       AND NOT EXISTS (
+        -- pg_locks.classid/objid are oid (uint32). hashtext() returns signed int4 — when
+        -- negative, the lower-32-bit lane evaluates >2^31-1 as bigint, which overflows
+        -- ::int (22003). Compare against the bigint expression and cast to ::oid so the
+        -- comparison stays in oid-space without sign-flip.
         SELECT 1 FROM pg_locks
         WHERE locktype = 'advisory'
-          AND classid = (hashtext('wh_instance_alive:' || wh_service_instances.instance_id::text) >> 32)::int
-          AND objid = (hashtext('wh_instance_alive:' || wh_service_instances.instance_id::text) & x'FFFFFFFF'::bigint)::int
+          AND classid = ((hashtext('wh_instance_alive:' || wh_service_instances.instance_id::text)::bigint >> 32) & x'FFFFFFFF'::bigint)::oid
+          AND objid = (hashtext('wh_instance_alive:' || wh_service_instances.instance_id::text)::bigint & x'FFFFFFFF'::bigint)::oid
           AND granted = true
       )
     RETURNING instance_id
