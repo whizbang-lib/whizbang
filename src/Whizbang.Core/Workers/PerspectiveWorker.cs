@@ -3746,16 +3746,21 @@ public class PerspectiveWorkerOptions {
   /// Safety-net cadence when LISTEN/NOTIFY is verified healthy. The
   /// <see cref="WorkSignalCategory.Perspective"/> signal already fires on
   /// every perspective_event insert, so the polling loop's primary role is
-  /// to catch anything the signal may have missed. Default: 30000 (30 s).
-  /// Set lower for tighter recovery; set to <see cref="PollingIntervalMilliseconds"/>
-  /// to disable the relaxed cadence entirely.
+  /// to catch anything the signal may have missed.
+  /// Default: equal to <see cref="PollingIntervalMilliseconds"/> (1 s).
+  /// Set higher to relax the safety-net cadence — production environments
+  /// with reliable LISTEN connections can safely use 30000+ to reduce poll
+  /// volume; the NOTIFY signal handles the wake. The legacy 1 s default is
+  /// kept because new streams not yet in <c>wh_active_streams</c> receive no
+  /// per-instance NOTIFY on their first batch, so the safety net must catch
+  /// them quickly.
   /// </summary>
   /// <remarks>
   /// When the NOTIFY listener is unavailable (or this option is &lt;= the
   /// short polling interval), the worker falls back to <see cref="PollingIntervalMilliseconds"/>
   /// automatically so a NOTIFY outage doesn't introduce latency.
   /// </remarks>
-  public int NotifyHealthyPollingIntervalMilliseconds { get; set; } = 30_000;
+  public int NotifyHealthyPollingIntervalMilliseconds { get; set; } = 1_000;
 
   /// <summary>
   /// Dead-letter threshold for wh_perspective_events rows. Total number of apply attempts
