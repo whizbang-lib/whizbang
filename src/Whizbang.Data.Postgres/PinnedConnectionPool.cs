@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.Postgres;
@@ -38,6 +40,7 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
   private readonly WhizbangPinnedPoolOptions _options;
   private readonly PinnedWorkerRegistry _registry;
   private readonly ILogger<PinnedConnectionPool>? _logger;
+  private readonly PinnedPoolMetrics? _metrics;
   private readonly NpgsqlDataSource _dataSource;
   private bool _disposed;
 
@@ -47,13 +50,15 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
   public PinnedConnectionPool(
       WhizbangPinnedPoolOptions options,
       PinnedWorkerRegistry registry,
-      ILogger<PinnedConnectionPool>? logger = null) {
+      ILogger<PinnedConnectionPool>? logger = null,
+      PinnedPoolMetrics? metrics = null) {
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(registry);
 
     _options = options;
     _registry = registry;
     _logger = logger;
+    _metrics = metrics;
 
     if (string.IsNullOrWhiteSpace(options.ConnectionString)) {
       throw new InvalidOperationException(
@@ -88,17 +93,21 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
       linked.CancelAfter(borrowDeadline);
     }
 
+    var sw = Stopwatch.StartNew();
     NpgsqlConnection conn;
     try {
       conn = await _dataSource.OpenConnectionAsync(linked.Token).ConfigureAwait(false);
     } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      // Caller's CT didn't fire — the borrow timeout deadline did. Surface as OCE
-      // rooted at the original CT so callers don't confuse a pool-starvation timeout
-      // with their own cancellation.
+      // Caller's CT didn't fire — the borrow timeout deadline did. Record timeout and
+      // surface as OCE rooted at the original CT so callers don't confuse a pool-starvation
+      // timeout with their own cancellation.
+      _metrics?.BorrowTimeouts.Add(1, new KeyValuePair<string, object?>("worker", workerType.Name));
       throw new OperationCanceledException(
         $"Pinned pool borrow timed out after {_options.BorrowTimeoutMilliseconds} ms (worker={workerType.Name}). " +
         "Raise WhizbangPinnedPoolOptions.Size or investigate worker that's holding too long.");
     }
+    sw.Stop();
+    _metrics?.BorrowDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("worker", workerType.Name));
 
     return new _activeBorrow(conn);
   }
