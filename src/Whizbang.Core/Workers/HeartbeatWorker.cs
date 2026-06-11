@@ -20,7 +20,8 @@ public partial class HeartbeatWorker(
   ISchemaReadyGate schemaReadyGate,
   IOptions<HeartbeatWorkerOptions> options,
   ILogger<HeartbeatWorker> logger,
-  IPinnedConnectionPool? pinnedPool = null
+  IPinnedConnectionPool? pinnedPool = null,
+  IInstanceAliveLockSource? aliveLockSource = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -28,6 +29,18 @@ public partial class HeartbeatWorker(
   private readonly HeartbeatWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<HeartbeatWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly IPinnedConnectionPool _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
+  private readonly IInstanceAliveLockSource? _aliveLockSource = aliveLockSource;
+
+  /// <summary>Internal hook for tests to query the current cadence decision.</summary>
+  internal int CurrentCadenceSeconds => _resolveCadenceSeconds();
+
+  private int _resolveCadenceSeconds() {
+    if (_options.LivenessSourceMode == HeartbeatLivenessSourceMode.HeartbeatTableOnly) {
+      return _options.IntervalSeconds;
+    }
+    var lockHeld = _aliveLockSource?.IsAliveLockHeld ?? false;
+    return lockHeld ? _options.SlowIntervalSeconds : _options.IntervalSeconds;
+  }
 
   /// <summary>
   /// Fires after every successful <c>RecordHeartbeatAsync</c> call. Slice 4 of
@@ -74,7 +87,11 @@ public partial class HeartbeatWorker(
       }
 
       try {
-        await Task.Delay(TimeSpan.FromSeconds(_options.IntervalSeconds), stoppingToken);
+        // Slice 7b — adaptive cadence: when the direct-conn alive-lock is held, use the
+        // slow cadence; otherwise (no lock OR LivenessSourceMode=HeartbeatTableOnly) use
+        // the fast cadence so the 30-second cleanup_stale_instances recovery guarantee
+        // is preserved via the heartbeat-table fallback.
+        await Task.Delay(TimeSpan.FromSeconds(_resolveCadenceSeconds()), stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }
@@ -152,4 +169,33 @@ public class HeartbeatWorkerOptions {
   /// </para>
   /// </remarks>
   public int IntervalSeconds { get; set; } = 30;
+
+  /// <summary>
+  /// Slow heartbeat cadence in seconds, used by the adaptive path when the
+  /// session-level alive-lock (see migration 055 and <see cref="IInstanceAliveLockSource"/>)
+  /// is held. The lock is the primary liveness signal in that mode — TCP keepalive
+  /// detects pod death within ~10-30 s without depending on the heartbeat row's
+  /// freshness — so the table write can run at a relaxed cadence. Default 60.
+  /// </summary>
+  public int SlowIntervalSeconds { get; set; } = 60;
+
+  /// <summary>
+  /// Selects between the adaptive (lock-aware) cadence and the legacy (table-only)
+  /// cadence. Default <see cref="HeartbeatLivenessSourceMode.AdvisoryLockWhenAvailable"/>.
+  /// Setting <see cref="HeartbeatLivenessSourceMode.HeartbeatTableOnly"/> forces the
+  /// fast cadence even when a lock source is registered — opt-out for environments
+  /// that don't trust the adaptive behaviour.
+  /// </summary>
+  public HeartbeatLivenessSourceMode LivenessSourceMode { get; set; } = HeartbeatLivenessSourceMode.AdvisoryLockWhenAvailable;
+}
+
+/// <summary>
+/// Controls how <see cref="HeartbeatWorker"/> decides between fast and slow
+/// heartbeat cadence.
+/// </summary>
+public enum HeartbeatLivenessSourceMode {
+  /// <summary>Use the slow cadence when the alive-lock is held; fast otherwise. Default.</summary>
+  AdvisoryLockWhenAvailable,
+  /// <summary>Always use the fast (<see cref="HeartbeatWorkerOptions.IntervalSeconds"/>) cadence regardless of lock state. Legacy / opt-out behaviour.</summary>
+  HeartbeatTableOnly,
 }
