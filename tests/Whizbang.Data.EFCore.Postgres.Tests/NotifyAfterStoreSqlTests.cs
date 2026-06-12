@@ -220,6 +220,114 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task StoreInboxMessages_SecondCallSameStream_DoesNotFireNotifyAsync() {
+    // v0.686.1 conditional-NOTIFY invariant: once a stream is pinned in
+    // wh_active_streams (i.e., NOT cold anymore), subsequent store calls for that
+    // stream must NOT emit a NOTIFY. The pinned owner's worker will pick up the
+    // new rows on its own claim cycle. Skipping the redundant NOTIFY eliminates
+    // the per-event NOTIFY storm during bulk imports (17k events on 350 streams
+    // → 350 NOTIFYs instead of 17k) while preserving the cold-start latency fix.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    // First call: stream is COLD → NOTIFY must fire (cold-start contract).
+    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    var firstJson = $"[{_inboxMessageJson(firstMsgId, streamId)}]";
+    var firstReceived = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, firstJson));
+    await Assert.That(firstReceived).Count().IsEqualTo(1)
+      .Because("First store call for a stream must wake the owner — that's the v0.686 cold-start fix that this conditional design preserves.");
+
+    // Second call (DIFFERENT message_id, SAME stream): stream is now HOT (pinned
+    // in wh_active_streams) → NOTIFY must be skipped.
+    var secondMsgId = (Guid)TrackedGuid.NewMedo();
+    var secondJson = $"[{_inboxMessageJson(secondMsgId, streamId)}]";
+    var secondReceived = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, secondJson));
+    await Assert.That(secondReceived).IsEmpty()
+      .Because("v0.686.1 — subsequent store calls for an already-pinned stream MUST NOT emit a NOTIFY. The pinned owner's worker is already on the case; the NOTIFY storm is what made the bulk-import regress on slot 3 (2026-06-12).");
+  }
+
+  [Test]
+  public async Task StoreOutboxMessages_SecondCallSameStream_DoesNotFireNotifyAsync() {
+    // Same invariant as the inbox case, applied to the outbox store path. Locks
+    // BOTH the 'outbox' AND 'perspective' NOTIFY payloads to the cold-stream
+    // gate — neither should fire on the second store for the same stream.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    // First call (event): wake.
+    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    var firstJson = $"[{_outboxMessageJson(firstMsgId, streamId, isEvent: true)}]";
+    var firstReceived = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, firstJson));
+    var firstPayloads = firstReceived.Select(r => r.Payload).OrderBy(p => p).ToList();
+    await Assert.That(firstPayloads).Contains("outbox");
+    await Assert.That(firstPayloads).Contains("perspective");
+
+    // Second call (event, same stream): hot stream → no NOTIFYs.
+    var secondMsgId = (Guid)TrackedGuid.NewMedo();
+    var secondJson = $"[{_outboxMessageJson(secondMsgId, streamId, isEvent: true)}]";
+    var secondReceived = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, secondJson));
+    await Assert.That(secondReceived).IsEmpty()
+      .Because("v0.686.1 — both outbox AND perspective NOTIFY paths gate on cold-stream pinning. Hot streams skip both payloads; the pinned owner drains naturally on its next claim cycle.");
+  }
+
+  [Test]
+  public async Task StoreInboxMessages_MixedColdAndHotStreams_NotifiesOnlyColdStreamsAsync() {
+    // The cold-stream gate must operate per-stream within a batch: a single
+    // store call that includes BOTH a fresh stream AND a pre-pinned stream
+    // should emit a NOTIFY for the cold one only. Locks the subset semantics.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+
+    var hotStream = (Guid)TrackedGuid.NewMedo();
+    var coldStream = (Guid)TrackedGuid.NewMedo();
+
+    // Pre-pin hotStream by storing a first message; consume that NOTIFY.
+    var preMsgId = (Guid)TrackedGuid.NewMedo();
+    var preJson = $"[{_inboxMessageJson(preMsgId, hotStream)}]";
+    _ = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, preJson));
+
+    // Now batch a hot-stream message AND a cold-stream message in one call.
+    var hotMsg = (Guid)TrackedGuid.NewMedo();
+    var coldMsg = (Guid)TrackedGuid.NewMedo();
+    var batchJson = $"[{_inboxMessageJson(hotMsg, hotStream)},{_inboxMessageJson(coldMsg, coldStream)}]";
+    var received = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, batchJson));
+
+    await Assert.That(received).Count().IsEqualTo(1)
+      .Because("v0.686.1 — exactly one NOTIFY for the cold subset of the batch. The hot stream contributes nothing; the cold stream contributes one.");
+  }
+
+  [Test]
   public async Task StoreOutboxMessages_NonEventMessage_OnlyOutboxNotifyAsync() {
     // Outbox messages that are NOT events (IsEvent=false) skip the event-store chain
     // and so should NOT emit the 'perspective' notify. Locks in the if-cardinality-gate
