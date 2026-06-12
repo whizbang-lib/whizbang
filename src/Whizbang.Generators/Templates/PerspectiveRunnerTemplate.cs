@@ -915,24 +915,59 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       #endregion
     };
 
-    // Read all events from replay point
-    var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
-    await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
-        streamId,
-        replayFromEventId,
-        eventTypes,
-        cancellationToken)) {
-      events.Add(envelope);
-    }
+    // v0.688 — Rewind catch-up loop (slot-3 2026-06-12 fix). The original
+    // implementation read events ONCE here and applied that fixed list. Events
+    // appended to the stream during the in-memory apply window were silently
+    // dropped (slot-3 BulkJobImport saga landed at CompletedItems=347/350 with
+    // ProcessedLineNumbers missing 3 entries even though all 350 events were
+    // durable). The wrapping while loop re-checks the event store after each
+    // apply pass — if new events arrived they get picked up in the next
+    // iteration instead of being lost between PerspectiveRewindStarted and
+    // PerspectiveRewindCompleted. The loop exits when the read returns zero
+    // new events (event store quiescent w.r.t. lastSuccessfulEventId).
+    // Bounded by MAX_REWIND_CATCH_UP_ITERATIONS as a safety against pathological
+    // append rates; in practice 1-2 iterations cover the bulk-import case.
+    // <docs>fundamentals/perspectives/rewind-invariants</docs>
+    // <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs</tests>
+    const int MAX_REWIND_CATCH_UP_ITERATIONS = 100;
+    var rewindCatchUpIterations = 0;
+    var anchorEventId = replayFromEventId;
 
-    // Ordering invariant: sort by MessageId before applying. Event-store reads should be
-    // sorted at the source, but this is defensive — replays must be strictly time-ordered.
-    if (events.Count > 1) {
-      events = events.OrderByMessageId().ToList();
-    }
+    while (true) {
+      rewindCatchUpIterations++;
+      if (rewindCatchUpIterations > MAX_REWIND_CATCH_UP_ITERATIONS) {
+        _logger.LogWarning(
+            "Rewind for {PerspectiveName} stream {StreamId} hit MAX_REWIND_CATCH_UP_ITERATIONS ({Max}); breaking — sustained append rate exceeds apply rate, projection may still trail event-store HEAD until next claim cycle",
+            perspectiveName, streamId, MAX_REWIND_CATCH_UP_ITERATIONS);
+        break;
+      }
 
-    // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
-    foreach (var envelope in events) {
+      // Read events from the current anchor. First pass uses replayFromEventId
+      // (snapshot or null=from-beginning). Subsequent passes use the last event
+      // we applied, so we only pick up the delta of events appended since.
+      var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+      await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
+          streamId,
+          anchorEventId,
+          eventTypes,
+          cancellationToken)) {
+        events.Add(envelope);
+      }
+
+      if (events.Count == 0) {
+        // Event store quiescent — rewind has caught up to HEAD AT THIS COMMIT.
+        // This is the contract PerspectiveRewindCompleted now honours.
+        break;
+      }
+
+      // Ordering invariant: sort by MessageId before applying. Event-store reads should be
+      // sorted at the source, but this is defensive — replays must be strictly time-ordered.
+      if (events.Count > 1) {
+        events = events.OrderByMessageId().ToList();
+      }
+
+      // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
+      foreach (var envelope in events) {
       var @event = envelope.Payload;
 
       // Track scope from envelope for perspective upsert
@@ -1014,7 +1049,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           }
         }
       }
-    }
+      } // closes foreach (var envelope in events)
+
+      // v0.688 — advance the catch-up anchor to the last event we applied so
+      // the next iteration's ReadPolymorphicAsync only returns events appended
+      // since. If for some reason lastSuccessfulEventId didn't advance (e.g.
+      // every event errored in apply), use the read-window's tail as the
+      // anchor to prevent re-reading the same set forever.
+      anchorEventId = lastSuccessfulEventId ?? events[events.Count - 1].MessageId.Value;
+    } // closes while (true)
 
     // Single atomic write at the end — lenses see pre-replay data until this point
     if (eventsProcessed > 0) {
