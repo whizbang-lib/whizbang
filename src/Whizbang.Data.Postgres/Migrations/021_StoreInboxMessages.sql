@@ -22,6 +22,11 @@ DECLARE
   v_msg RECORD;
   v_partition INTEGER;
   v_was_new INTEGER;  -- Changed from BOOLEAN - ROW_COUNT returns integer
+  -- v0.686: stream_ids of newly-stored rows are collected for end-of-call
+  -- notify_instance_owners — wakes consumers immediately instead of waiting on
+  -- the safety-net poll. notify_instance_owners (mig 045) early-returns when
+  -- every stream is already pinned, so cost is sub-millisecond on the hot path.
+  v_new_stream_ids UUID[] := ARRAY[]::UUID[];
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
@@ -122,10 +127,25 @@ BEGIN
         END;
       END IF;
 
+      -- Collect newly-stored stream_ids (non-null only) for end-of-call NOTIFY. Null
+      -- stream_ids skip routing because notify_instance_owners cannot compute a
+      -- partition for them; polling backstop covers the stream-less inbox rows.
+      IF v_msg.stream_id IS NOT NULL THEN
+        v_new_stream_ids := array_append(v_new_stream_ids, v_msg.stream_id);
+      END IF;
+
       -- Return message as newly created (deduplication succeeded)
       RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, (v_was_new = 1) AS was_newly_created;
     END IF;  -- Close IF v_was_new = 1 THEN
   END LOOP;
+
+  -- v0.686: emit NOTIFY for newly-stored stream-bearing rows so WorkCoordinatorPublisherWorker
+  -- (the inbox dispatcher) wakes immediately instead of waiting on the safety-net poll.
+  -- notify_instance_owners emits one pg_notify per unique owner across the input set
+  -- and short-circuits Step 2 when every stream is already pinned (mig 045 perf rewrite).
+  IF cardinality(v_new_stream_ids) > 0 THEN
+    PERFORM __SCHEMA__.notify_instance_owners('inbox', v_new_stream_ids);
+  END IF;
 END;
 $$ LANGUAGE plpgsql;
 
