@@ -316,4 +316,101 @@ public class InboxDrainWorkerTests {
       .Because("Only the good row should be enqueued; the malformed one is logged + skipped.");
     await Assert.That(inboxChannelWriter.Written.First().MessageId).IsEqualTo(goodMsg);
   }
+
+  /// <summary>
+  /// Captures the per-call <c>streamIds</c> arrays so we can assert how many fetch calls
+  /// were issued and what shape they had. Same semantics as <see cref="FakeWorkCoordinator"/>
+  /// otherwise.
+  /// </summary>
+  private sealed class CountingFakeWorkCoordinator : IWorkCoordinator {
+    public Dictionary<Guid, List<InboxBatchRow>> RowsByStream { get; } = [];
+    public ConcurrentBag<Guid[]> FetchedStreamIdArrays { get; } = [];
+    public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+      IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
+      FetchedStreamIdArrays.Add(streamIds.ToArray());
+      var result = new List<InboxBatchRow>();
+      foreach (var sid in streamIds) {
+        if (RowsByStream.TryGetValue(sid, out var rows)) {
+          var taken = rows.Take(maxPerStream).ToList();
+          result.AddRange(taken);
+          rows.RemoveRange(0, taken.Count);
+        }
+      }
+      return Task.FromResult<IReadOnlyList<InboxBatchRow>>(result);
+    }
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) =>
+      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>
+  /// v0.685 lock-in — when the InboxDrainWorker receives a sliding-window batch
+  /// containing multiple distinct stream_ids, it MUST drain them via a SINGLE
+  /// multi-stream <c>FetchInboxBatchAsync</c> call rather than looping per-stream.
+  /// Slot-3 2026-06-11 measurement showed ~1.9 fetch calls per event because every
+  /// stream had only 1-2 rows and the per-call CTE setup cost dominated. Batching
+  /// the fetch amortizes that cost across the whole window. Without this lock-in,
+  /// a future refactor of <c>InboxDrainWorker.ExecuteAsync</c> could silently
+  /// regress back to per-stream loops and the slot-3 win would be lost.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/inbox-drain</docs>
+  [Test]
+  public async Task InboxDrainWorker_MultipleStreamsInBatch_FetchesOnceWithAllStreamIdsAsync() {
+    var streamA = (Guid)TrackedGuid.NewMedo();
+    var streamB = (Guid)TrackedGuid.NewMedo();
+    var streamC = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new CountingFakeWorkCoordinator();
+    coord.RowsByStream[streamA] = [_row((Guid)TrackedGuid.NewMedo(), streamA), _row((Guid)TrackedGuid.NewMedo(), streamA)];
+    coord.RowsByStream[streamB] = [_row((Guid)TrackedGuid.NewMedo(), streamB), _row((Guid)TrackedGuid.NewMedo(), streamB)];
+    coord.RowsByStream[streamC] = [_row((Guid)TrackedGuid.NewMedo(), streamC), _row((Guid)TrackedGuid.NewMedo(), streamC)];
+
+    var drainChannel = new FakeInboxDrainChannel();
+    var inbox = new CapturingInboxChannel { TargetCount = 6 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    // SlidingWindowBatcher accumulates writes within its window. Pre-queue all three
+    // stream_ids before StartAsync so the batcher sees them in one window batch.
+    _ = drainChannel.TryWrite(streamA);
+    _ = drainChannel.TryWrite(streamB);
+    _ = drainChannel.TryWrite(streamC);
+
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, inbox, gate,
+      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    _ = await Task.WhenAny(inbox.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(inbox.Written.Count).IsEqualTo(6)
+      .Because("All 6 inbox rows across 3 streams must be enqueued for the inbox dispatch path; the batching change is behaviour-preserving.");
+
+    await Assert.That(coord.FetchedStreamIdArrays.Count).IsEqualTo(1)
+      .Because("v0.685 — the deduped sliding-window batch MUST be drained with a single multi-stream FetchInboxBatchAsync call. The pre-v0.685 per-stream loop produced one fetch per stream (slot-3 2026-06-11: 31k calls for 16k events ≈ 1.9 per event, 59% of slot-3 DB time).");
+
+    var firstArray = coord.FetchedStreamIdArrays.First();
+    await Assert.That(firstArray).Contains(streamA);
+    await Assert.That(firstArray).Contains(streamB);
+    await Assert.That(firstArray).Contains(streamC);
+  }
 }
