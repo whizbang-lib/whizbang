@@ -111,17 +111,14 @@ public sealed partial class InboxDrainWorker : BackgroundService {
         _setIdleState(active: true);
         try {
           // Dedupe within the batch — multiple ClaimWorker ticks during the sliding window can
-          // emit the same stream_id repeatedly. Each unique stream is drained once;
-          // FetchInboxBatchAsync returns all pending rows for it in stream-FIFO order.
+          // emit the same stream_id repeatedly. v0.685 — drain the whole deduped batch with a
+          // SINGLE multi-stream FetchInboxBatchAsync call, then dispatch per-stream in C#.
+          // Slot-3 measurement 2026-06-11 PM showed ~1.9 fetch calls per event with the prior
+          // per-stream loop because each stream had only 1-2 rows; the fetch CTE's per-call
+          // setup (parse + plan + window-sort) dominated. Batching streams amortizes that.
           var distinctStreams = new HashSet<Guid>(batch);
-          foreach (var streamId in distinctStreams) {
-            try {
-              await _drainStreamAsync(streamId, stoppingToken);
-            } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
-              throw;
-            } catch (Exception ex) {
-              LogDrainError(_logger, streamId, ex);
-            }
+          if (distinctStreams.Count > 0) {
+            await _drainStreamBatchAsync(distinctStreams.ToList(), stoppingToken);
           }
         } finally {
           _setIdleState(active: false);
@@ -158,6 +155,90 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       await _drainStreamInnerAsync(streamId, ct);
     } finally {
       _drainChannel.MarkDrained(streamId);
+    }
+  }
+
+  /// <summary>
+  /// v0.685 — batched-fetch drain for a set of stream_ids. One multi-stream
+  /// <see cref="IWorkCoordinator.FetchInboxBatchAsync"/> call amortizes the
+  /// CTE setup cost (parse + plan + window-sort) across the whole batch.
+  /// Streams that filled their per-stream cap fall back to the existing
+  /// per-stream loop-until-empty path so they don't get short-changed on the
+  /// tail. Per-stream error isolation matches the prior foreach pattern.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/inbox-drain</docs>
+  private async Task _drainStreamBatchAsync(IReadOnlyList<Guid> streamIds, CancellationToken ct) {
+    foreach (var sid in streamIds) {
+      _drainChannel.MarkDraining(sid);
+    }
+    var batchScopeOk = false;
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+
+      var rowsRaw = await coordinator.FetchInboxBatchAsync(
+        streamIds, _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+      batchScopeOk = true;
+
+      // Group rows by drain-key (stream_id when set, else message_id — matches the
+      // fallback semantics in fetch_inbox_batch's WHERE clause for unscoped/null-stream
+      // rows). The drain channel feeds the same key, so dispatch can look it up.
+      var perStream = rowsRaw
+        .GroupBy(r => r.StreamId ?? r.MessageId)
+        .ToDictionary(g => g.Key, g => g.OrderByMessageId().ToList());
+
+      foreach (var sid in streamIds) {
+        if (ct.IsCancellationRequested) {
+          break;
+        }
+        try {
+          var hasRows = perStream.TryGetValue(sid, out var rows) && rows is { Count: > 0 };
+          if (!hasRows) {
+            continue;
+          }
+
+          // Dispatch all rows from the batched fetch first — they're already in hand and
+          // were consumed at the SQL level, so they won't reappear in the inner-loop fetch.
+          var seen = new HashSet<Guid>();
+          var hadAnyNew = false;
+          foreach (var row in rows!) {
+            if (!seen.Add(row.MessageId)) {
+              continue;
+            }
+            InboxWork work;
+            try {
+              work = _toInboxWork(row);
+            } catch (Exception ex) {
+              LogDeserializeFailed(_logger, row.MessageId, ex);
+              continue;
+            }
+            await _inboxChannelWriter.WriteAsync(work, ct);
+            hadAnyNew = true;
+          }
+
+          // Cap-filling streams may have more rows pending — fall back to the legacy
+          // per-stream loop-until-empty path to drain the tail. The inner loop fetches
+          // afresh from where we left off (the batched fetch consumed up to MaxPerStream
+          // rows from this stream); its seen-set is independent but redundant fetches
+          // can only happen on real races, dedupped downstream by wh_message_deduplication.
+          if (rows.Count >= _options.MaxPerStream) {
+            await _drainStreamInnerAsync(sid, ct);
+          } else if (hadAnyNew) {
+            _inboxChannelWriter.SignalNewInboxWorkAvailable();
+          }
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+          throw;
+        } catch (Exception ex) {
+          LogDrainError(_logger, sid, ex);
+        }
+      }
+    } finally {
+      // Always release the draining marker, even if the batched fetch threw before
+      // dispatch — otherwise the channel thinks these streams are stuck draining.
+      _ = batchScopeOk;  // kept for future diagnostics; intentionally unused
+      foreach (var sid in streamIds) {
+        _drainChannel.MarkDrained(sid);
+      }
     }
   }
 
