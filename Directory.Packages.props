@@ -23,6 +23,10 @@
     <PackageVersion Include="HotChocolate.Data" Version="15.1.14" />
     <PackageVersion Include="ILRepack.Lib.MSBuild.Task" Version="2.0.44.1" />
     <PackageVersion Include="Medo.Uuid7" Version="3.2.0" />
+    <!-- Transitive via Aspire.Hosting -> StreamJsonRpc. Pinned to patch CVE-2026-48109
+         (GHSA-hv8m-jj95-wg3x, LZ4 OOB read); 2.5.192 is vulnerable, 2.5.301 is the patched
+         2.x release. Consumed via direct PackageReferences in the Whizbang.Hosting.* projects. -->
+    <PackageVersion Include="MessagePack" Version="2.5.301" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.2" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="4.14.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
