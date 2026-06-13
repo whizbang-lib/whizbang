@@ -1515,50 +1515,75 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("      }");
       sb.AppendLine("    });");
       sb.AppendLine();
-      sb.AppendLine("    // Build temporary service provider to resolve IConfiguration");
-      sb.AppendLine("    // This allows us to get connection string at registration time");
-      sb.AppendLine("    using var tempProvider = services.BuildServiceProvider(new ServiceProviderOptions {");
-      sb.AppendLine("      ValidateOnBuild = false,");
-      sb.AppendLine("      ValidateScopes = false");
-      sb.AppendLine(CLOSE_BRACE_INDENT_4);
-      sb.AppendLine("    var config = tempProvider.GetRequiredService<IConfiguration>();");
-      sb.AppendLine("    var connectionString = config.GetConnectionString(connectionStringKey)");
-      sb.AppendLine("        ?? throw new InvalidOperationException($\"Connection string '{connectionStringKey}' not found in configuration.\");");
-      sb.AppendLine();
-      sb.AppendLine("    // Apply connection pool settings from configuration (ConnectionPool section)");
-      sb.AppendLine("    var connStringBuilder = new NpgsqlConnectionStringBuilder(connectionString);");
-      sb.AppendLine("    var poolSection = config.GetSection(\"ConnectionPool\");");
-      sb.AppendLine("    if (poolSection.Exists()) {");
-      sb.AppendLine("      if (int.TryParse(poolSection[\"MaxPoolSize\"], out var maxPool))");
-      sb.AppendLine("        connStringBuilder.MaxPoolSize = maxPool;");
-      sb.AppendLine("      if (int.TryParse(poolSection[\"MinPoolSize\"], out var minPool))");
-      sb.AppendLine("        connStringBuilder.MinPoolSize = minPool;");
-      sb.AppendLine("      if (int.TryParse(poolSection[\"Timeout\"], out var timeout))");
-      sb.AppendLine("        connStringBuilder.Timeout = timeout;");
-      sb.AppendLine("      if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
-      sb.AppendLine("        connStringBuilder.CommandTimeout = commandTimeout;");
-      sb.AppendLine("    }");
-      sb.AppendLine("    connectionString = connStringBuilder.ToString();");
-      sb.AppendLine();
-      sb.AppendLine("    // Build NpgsqlDataSource synchronously at registration time");
-      sb.AppendLine("    // This allows us to capture it by closure for AddPooledDbContextFactory (singleton options)");
-      sb.AppendLine("    var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);");
-      sb.AppendLine();
-      sb.AppendLine("    // Configure JSON serialization using Whizbang's combined options");
-      sb.AppendLine("    var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
-      sb.AppendLine("    dataSourceBuilder.ConfigureJsonOptions(jsonOptions);");
-      sb.AppendLine("    dataSourceBuilder.EnableDynamicJson();");
-      sb.AppendLine();
-      if (hasVectorFields) {
-        sb.AppendLine("    // Auto-configured: pgvector support required for [VectorField] columns");
-        sb.AppendLine("    dataSourceBuilder.UseVector();");
-        sb.AppendLine();
-      }
-      sb.AppendLine("    var dataSource = dataSourceBuilder.Build();");
-      sb.AppendLine();
+      // 2026-06-12 fix: defer all IConfiguration access to provider-build time.
+      // The previous shape built a temporary ServiceProvider at registration
+      // time to resolve IConfiguration. In a WebApplicationBuilder host the
+      // shared ConfigurationManager is registered such that the container
+      // that first resolves it becomes its owner — the temp provider took
+      // ownership, and the `using` disposed it (and the shared CM) as a
+      // side effect. The disposed CM kept serving reads (so nothing visibly
+      // broke at boot) but destroyed every provider→CM change-token
+      // subscription. Result: IOptionsMonitor, IFeatureManager,
+      // appsettings.json reloadOnChange, Azure App Configuration refresh, and
+      // any ChangeToken.OnChange(() => config.GetReloadToken(), …) were all
+      // silently dead from process start. Reported by Bijan Camp (a consumer/a consumer application).
+      // Lock-in test: tests/Whizbang.Hosting.AspNet.Tests/Configuration/
+      // HostConfigurationDisposalTests.cs
       sb.AppendLine("    // Remove any existing NpgsqlDataSource registration (e.g., from Aspire)");
       sb.AppendLine("    services.RemoveAll<NpgsqlDataSource>();");
-      sb.AppendLine("    services.AddSingleton(dataSource);");
+      sb.AppendLine();
+      sb.AppendLine("    // Register NpgsqlDataSource as a singleton factory. IConfiguration is");
+      sb.AppendLine("    // resolved via the REAL provider's `sp` at the moment the factory runs,");
+      sb.AppendLine("    // so no temp container is built and the host's ConfigurationManager is");
+      sb.AppendLine("    // not disposed. Preserves IOptionsMonitor, IFeatureManager, appsettings");
+      sb.AppendLine("    // reloadOnChange, Azure App Configuration refresh, and every");
+      sb.AppendLine("    // ChangeToken.OnChange subscription downstream.");
+      sb.AppendLine("    services.AddSingleton<NpgsqlDataSource>(sp => {");
+      sb.AppendLine("      var config = sp.GetRequiredService<IConfiguration>();");
+      sb.AppendLine("      var connectionString = config.GetConnectionString(connectionStringKey)");
+      sb.AppendLine("          ?? throw new InvalidOperationException($\"Connection string '{connectionStringKey}' not found in configuration.\");");
+      sb.AppendLine();
+      sb.AppendLine("      // Apply connection pool settings from configuration (ConnectionPool section)");
+      sb.AppendLine("      var connStringBuilder = new NpgsqlConnectionStringBuilder(connectionString);");
+      sb.AppendLine("      var poolSection = config.GetSection(\"ConnectionPool\");");
+      sb.AppendLine("      if (poolSection.Exists()) {");
+      sb.AppendLine("        if (int.TryParse(poolSection[\"MaxPoolSize\"], out var maxPool))");
+      sb.AppendLine("          connStringBuilder.MaxPoolSize = maxPool;");
+      sb.AppendLine("        if (int.TryParse(poolSection[\"MinPoolSize\"], out var minPool))");
+      sb.AppendLine("          connStringBuilder.MinPoolSize = minPool;");
+      sb.AppendLine("        if (int.TryParse(poolSection[\"Timeout\"], out var timeout))");
+      sb.AppendLine("          connStringBuilder.Timeout = timeout;");
+      sb.AppendLine("        if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
+      sb.AppendLine("          connStringBuilder.CommandTimeout = commandTimeout;");
+      sb.AppendLine("      }");
+      sb.AppendLine("      connectionString = connStringBuilder.ToString();");
+      sb.AppendLine();
+      sb.AppendLine("      var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);");
+      sb.AppendLine("      dataSourceBuilder.ConfigureJsonOptions(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+      sb.AppendLine("      dataSourceBuilder.EnableDynamicJson();");
+      if (hasVectorFields) {
+        sb.AppendLine();
+        sb.AppendLine("      // Auto-configured: pgvector support required for [VectorField] columns");
+        sb.AppendLine("      dataSourceBuilder.UseVector();");
+        sb.AppendLine();
+        sb.AppendLine("      // Pre-create the vector extension before Build() so Npgsql's pg_type catalog");
+        sb.AppendLine("      // scan finds it. Check pg_extension first to avoid permission errors when the");
+        sb.AppendLine("      // extension is pre-created by infrastructure (Azure PostgreSQL).");
+        sb.AppendLine("      using (var tempConn = new NpgsqlConnection(connectionString)) {");
+        sb.AppendLine("        tempConn.Open();");
+        sb.AppendLine("        using var checkCmd = tempConn.CreateCommand();");
+        sb.AppendLine("        checkCmd.CommandText = \"SELECT 1 FROM pg_extension WHERE extname = 'vector'\";");
+        sb.AppendLine("        var extensionExists = checkCmd.ExecuteScalar() != null;");
+        sb.AppendLine("        if (!extensionExists) {");
+        sb.AppendLine("          using var createCmd = tempConn.CreateCommand();");
+        sb.AppendLine("          createCmd.CommandText = \"CREATE EXTENSION vector\";");
+        sb.AppendLine("          createCmd.ExecuteNonQuery();");
+        sb.AppendLine("        }");
+        sb.AppendLine("      }");
+      }
+      sb.AppendLine();
+      sb.AppendLine("      return dataSourceBuilder.Build();");
+      sb.AppendLine("    });");
       sb.AppendLine();
       sb.AppendLine("    // Remove any existing DbContext registration (e.g., from manual AddDbContext calls)");
       sb.AppendLine("    // to avoid conflicts with our registration");
@@ -1566,18 +1591,19 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"    services.RemoveAll<{dbContext.FullyQualifiedName}>();");
       sb.AppendLine($"    services.RemoveAll<IDbContextFactory<{dbContext.FullyQualifiedName}>>();");
       sb.AppendLine();
-      sb.AppendLine("    // Register scoped DbContext using AddDbContext");
-      sb.AppendLine("    // dataSource is captured by closure from the synchronous build above");
+      sb.AppendLine("    // DbContext registration resolves the NpgsqlDataSource via `sp` at build time");
+      sb.AppendLine("    // (the (sp, options) AddDbContext overload). This keeps config access deferred");
+      sb.AppendLine("    // and avoids the temp-provider/CM-disposal trap.");
       if (hasVectorFields) {
-        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
-        sb.AppendLine("      options.UseNpgsql(dataSource, npgsqlOptions => {");
+        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>((sp, options) => {{");
+        sb.AppendLine("      options.UseNpgsql(sp.GetRequiredService<NpgsqlDataSource>(), npgsqlOptions => {");
         sb.AppendLine("        // Auto-configured: pgvector support for EF Core");
         sb.AppendLine("        npgsqlOptions.UseVector();");
         sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
         sb.AppendLine(CLOSE_BRACE_INDENT_6);
       } else {
-        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
-        sb.AppendLine("      options.UseNpgsql(dataSource, npgsqlOptions => {");
+        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>((sp, options) => {{");
+        sb.AppendLine("      options.UseNpgsql(sp.GetRequiredService<NpgsqlDataSource>(), npgsqlOptions => {");
         sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
         sb.AppendLine(CLOSE_BRACE_INDENT_6);
       }
@@ -1652,71 +1678,65 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("        }");
     sb.AppendLine("      });");
     sb.AppendLine();
-    sb.AppendLine("      // Build temporary service provider to resolve IConfiguration");
-    sb.AppendLine("      // This allows us to get connection string at registration time");
-    sb.AppendLine("      using var tempProvider = services.BuildServiceProvider(new Microsoft.Extensions.DependencyInjection.ServiceProviderOptions {");
-    sb.AppendLine("        ValidateOnBuild = false,");
-    sb.AppendLine("        ValidateScopes = false");
-    sb.AppendLine(CLOSE_BRACE_INDENT_6);
-    sb.AppendLine("      var config = tempProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();");
-    sb.AppendLine("      var connectionString = config.GetConnectionString(connectionStringKey)");
-    sb.AppendLine("          ?? throw new InvalidOperationException($\"Connection string '{connectionStringKey}' not found in configuration.\");");
-    sb.AppendLine();
-    sb.AppendLine("      // Apply connection pool settings from configuration (ConnectionPool section)");
-    sb.AppendLine("      var connStringBuilder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);");
-    sb.AppendLine("      var poolSection = config.GetSection(\"ConnectionPool\");");
-    sb.AppendLine("      if (poolSection.Exists()) {");
-    sb.AppendLine("        if (int.TryParse(poolSection[\"MaxPoolSize\"], out var maxPool))");
-    sb.AppendLine("          connStringBuilder.MaxPoolSize = maxPool;");
-    sb.AppendLine("        if (int.TryParse(poolSection[\"MinPoolSize\"], out var minPool))");
-    sb.AppendLine("          connStringBuilder.MinPoolSize = minPool;");
-    sb.AppendLine("        if (int.TryParse(poolSection[\"Timeout\"], out var timeout))");
-    sb.AppendLine("          connStringBuilder.Timeout = timeout;");
-    sb.AppendLine("        if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
-    sb.AppendLine("          connStringBuilder.CommandTimeout = commandTimeout;");
-    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
-    sb.AppendLine("      connectionString = connStringBuilder.ToString();");
-    sb.AppendLine();
-    sb.AppendLine("      // Build NpgsqlDataSource synchronously at registration time");
-    sb.AppendLine("      // This allows us to capture it by closure for AddPooledDbContextFactory (singleton options)");
-    sb.AppendLine("      var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);");
-    sb.AppendLine();
-    sb.AppendLine("      // Configure JSON serialization using Whizbang's combined options");
-    sb.AppendLine("      var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
-    sb.AppendLine("      dataSourceBuilder.ConfigureJsonOptions(jsonOptions);");
-    sb.AppendLine("      dataSourceBuilder.EnableDynamicJson();");
-    sb.AppendLine();
-    if (hasVectorFields) {
-      sb.AppendLine("      // Auto-configured: pgvector support required for [VectorField] columns");
-      sb.AppendLine("      dataSourceBuilder.UseVector();");
-      sb.AppendLine();
-      sb.AppendLine("      // CRITICAL: Ensure pgvector extension exists BEFORE building the data source.");
-      sb.AppendLine("      // When NpgsqlDataSource.Build() executes, Npgsql queries the database's pg_type catalog");
-      sb.AppendLine("      // to load type information. If the vector extension doesn't exist at that moment,");
-      sb.AppendLine("      // Npgsql won't know how to handle Vector types, causing runtime errors.");
-      sb.AppendLine("      // Using a temporary connection (without UseVector) to check/create the extension first.");
-      sb.AppendLine("      // NOTE: We check pg_extension first to avoid permission errors when the extension");
-      sb.AppendLine("      // already exists (infrastructure typically pre-creates it). This is required for");
-      sb.AppendLine("      // Azure PostgreSQL which checks CREATE permissions before evaluating IF NOT EXISTS.");
-      sb.AppendLine("      using (var tempConn = new Npgsql.NpgsqlConnection(connectionString)) {");
-      sb.AppendLine("        tempConn.Open();");
-      sb.AppendLine("        using var checkCmd = tempConn.CreateCommand();");
-      sb.AppendLine("        checkCmd.CommandText = \"SELECT 1 FROM pg_extension WHERE extname = 'vector'\";");
-      sb.AppendLine("        var extensionExists = checkCmd.ExecuteScalar() != null;");
-      sb.AppendLine("        if (!extensionExists) {");
-      sb.AppendLine("          using var createCmd = tempConn.CreateCommand();");
-      sb.AppendLine("          createCmd.CommandText = \"CREATE EXTENSION vector\";");
-      sb.AppendLine("          createCmd.ExecuteNonQuery();");
-      sb.AppendLine("        }");
-      sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
-      sb.AppendLine();
-    }
-    sb.AppendLine("      var dataSource = dataSourceBuilder.Build();");
-    sb.AppendLine();
+    // 2026-06-12 fix: defer all IConfiguration access to provider-build time.
+    // See Site 1 (above) for the full rationale and Bijan Camp's bug report.
+    // The previous shape built a temporary ServiceProvider here which disposed
+    // the host's ConfigurationManager as a side effect, silently killing every
+    // change-token subscription downstream. Lock-in test:
+    // tests/Whizbang.Hosting.AspNet.Tests/Configuration/HostConfigurationDisposalTests.cs
     sb.AppendLine("      // Remove any existing NpgsqlDataSource registration (e.g., from Aspire)");
-    sb.AppendLine("      // to ensure Whizbang's version with UseVector() and JSON options is used");
     sb.AppendLine("      services.RemoveAll<Npgsql.NpgsqlDataSource>();");
-    sb.AppendLine("      services.AddSingleton(dataSource);");
+    sb.AppendLine();
+    sb.AppendLine("      // Register NpgsqlDataSource via a singleton factory. IConfiguration is");
+    sb.AppendLine("      // resolved from the REAL provider's `sp` when the factory runs — no temp");
+    sb.AppendLine("      // container, no host ConfigurationManager disposal, IOptionsMonitor /");
+    sb.AppendLine("      // IFeatureManager / appsettings reloadOnChange / AAC refresh all stay alive.");
+    sb.AppendLine("      services.AddSingleton<Npgsql.NpgsqlDataSource>(sp => {");
+    sb.AppendLine("        var config = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();");
+    sb.AppendLine("        var connectionString = config.GetConnectionString(connectionStringKey)");
+    sb.AppendLine("            ?? throw new InvalidOperationException($\"Connection string '{connectionStringKey}' not found in configuration.\");");
+    sb.AppendLine();
+    sb.AppendLine("        // Apply connection pool settings from configuration (ConnectionPool section)");
+    sb.AppendLine("        var connStringBuilder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);");
+    sb.AppendLine("        var poolSection = config.GetSection(\"ConnectionPool\");");
+    sb.AppendLine("        if (poolSection.Exists()) {");
+    sb.AppendLine("          if (int.TryParse(poolSection[\"MaxPoolSize\"], out var maxPool))");
+    sb.AppendLine("            connStringBuilder.MaxPoolSize = maxPool;");
+    sb.AppendLine("          if (int.TryParse(poolSection[\"MinPoolSize\"], out var minPool))");
+    sb.AppendLine("            connStringBuilder.MinPoolSize = minPool;");
+    sb.AppendLine("          if (int.TryParse(poolSection[\"Timeout\"], out var timeout))");
+    sb.AppendLine("            connStringBuilder.Timeout = timeout;");
+    sb.AppendLine("          if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
+    sb.AppendLine("            connStringBuilder.CommandTimeout = commandTimeout;");
+    sb.AppendLine("        }");
+    sb.AppendLine("        connectionString = connStringBuilder.ToString();");
+    sb.AppendLine();
+    sb.AppendLine("        var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);");
+    sb.AppendLine("        dataSourceBuilder.ConfigureJsonOptions(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+    sb.AppendLine("        dataSourceBuilder.EnableDynamicJson();");
+    if (hasVectorFields) {
+      sb.AppendLine();
+      sb.AppendLine("        // Auto-configured: pgvector support required for [VectorField] columns");
+      sb.AppendLine("        dataSourceBuilder.UseVector();");
+      sb.AppendLine();
+      sb.AppendLine("        // Pre-create the vector extension before Build() so Npgsql's pg_type catalog");
+      sb.AppendLine("        // scan finds it. Check pg_extension first to avoid permission errors when the");
+      sb.AppendLine("        // extension is pre-created by infrastructure (Azure PostgreSQL).");
+      sb.AppendLine("        using (var tempConn = new Npgsql.NpgsqlConnection(connectionString)) {");
+      sb.AppendLine("          tempConn.Open();");
+      sb.AppendLine("          using var checkCmd = tempConn.CreateCommand();");
+      sb.AppendLine("          checkCmd.CommandText = \"SELECT 1 FROM pg_extension WHERE extname = 'vector'\";");
+      sb.AppendLine("          var extensionExists = checkCmd.ExecuteScalar() != null;");
+      sb.AppendLine("          if (!extensionExists) {");
+      sb.AppendLine("            using var createCmd = tempConn.CreateCommand();");
+      sb.AppendLine("            createCmd.CommandText = \"CREATE EXTENSION vector\";");
+      sb.AppendLine("            createCmd.ExecuteNonQuery();");
+      sb.AppendLine("          }");
+      sb.AppendLine("        }");
+    }
+    sb.AppendLine();
+    sb.AppendLine("        return dataSourceBuilder.Build();");
+    sb.AppendLine("      });");
     sb.AppendLine();
     sb.AppendLine("      // Remove any existing DbContext registration (e.g., from manual AddDbContext calls)");
     sb.AppendLine("      // to avoid conflicts with our registration");
@@ -1724,18 +1744,19 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"      services.RemoveAll<{dbContext.FullyQualifiedName}>();");
     sb.AppendLine($"      services.RemoveAll<Microsoft.EntityFrameworkCore.IDbContextFactory<{dbContext.FullyQualifiedName}>>();");
     sb.AppendLine();
-    sb.AppendLine("      // Register scoped DbContext using AddDbContext");
-    sb.AppendLine("      // dataSource is captured by closure from the synchronous build above");
+    sb.AppendLine("      // DbContext registration resolves the NpgsqlDataSource via `sp` at build time");
+    sb.AppendLine("      // ((sp, options) AddDbContext overload). Defers all dependency resolution to");
+    sb.AppendLine("      // the real provider — no temp container, no CM disposal.");
     if (hasVectorFields) {
-      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
-      sb.AppendLine("        options.UseNpgsql(dataSource, npgsqlOptions => {");
+      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>((sp, options) => {{");
+      sb.AppendLine("        options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>(), npgsqlOptions => {");
       sb.AppendLine("          // Auto-configured: pgvector support for EF Core");
       sb.AppendLine("          npgsqlOptions.UseVector();");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
       sb.AppendLine(CLOSE_BRACE_INDENT_8);
     } else {
-      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
-      sb.AppendLine("        options.UseNpgsql(dataSource, npgsqlOptions => {");
+      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>((sp, options) => {{");
+      sb.AppendLine("        options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>(), npgsqlOptions => {");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
       sb.AppendLine(CLOSE_BRACE_INDENT_8);
     }
