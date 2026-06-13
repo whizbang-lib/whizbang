@@ -23,6 +23,15 @@ DECLARE
   v_partition INTEGER;
   v_was_new BOOLEAN;
   v_inserted_event_ids UUID[] := ARRAY[]::UUID[];
+  -- v0.686.1 cold-stream-only NOTIFY: stream_ids accumulate ONLY when the
+  -- wh_active_streams INSERT below actually succeeds (cold path — stream not
+  -- yet pinned). Hot streams (ON CONFLICT DO NOTHING) skip the NOTIFY entirely
+  -- because their pinned owner is already on the case via its own claim cycle.
+  -- This eliminates the per-event NOTIFY storm during bulk imports (17k events
+  -- on 350 streams emits 350 NOTIFYs, not 17k) while preserving the cold-start
+  -- latency fix from v0.686.
+  v_cold_stream_ids UUID[] := ARRAY[]::UUID[];
+  v_was_pinned INTEGER;
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
@@ -104,6 +113,12 @@ BEGIN
     -- class that prompted the original deletion of this UPSERT.
     -- The local UUID/INTEGER variables avoid plpgsql FOR-record field-name shadowing
     -- that would otherwise make `stream_id` ambiguous to the planner.
+    --
+    -- v0.686.1: the UPSERT's ROW_COUNT tells us whether this stream is COLD
+    -- (insert succeeded, no owner yet) or HOT (already pinned). We collect cold
+    -- streams into v_cold_stream_ids so the end-of-call NOTIFY only wakes
+    -- consumers for streams that don't yet have an active owner. Hot streams'
+    -- pinned owner picks up new rows naturally on its next claim cycle.
     IF v_was_new AND v_msg.stream_id IS NOT NULL AND p_instance_id IS NOT NULL THEN
       DECLARE
         v_pin_stream UUID := v_msg.stream_id;
@@ -114,6 +129,10 @@ BEGIN
         VALUES
           (v_pin_stream, v_pin_partition, p_instance_id, p_now)
         ON CONFLICT (stream_id) DO NOTHING;
+        GET DIAGNOSTICS v_was_pinned = ROW_COUNT;
+        IF v_was_pinned = 1 THEN
+          v_cold_stream_ids := array_append(v_cold_stream_ids, v_pin_stream);
+        END IF;
       END;
     END IF;
 
@@ -141,6 +160,25 @@ BEGIN
       p_now,
       p_partition_count  -- Phase H step 6 slice 2: thread partition_count for wh_perspective_events.partition_number
     );
+  END IF;
+
+  -- v0.686.1: emit NOTIFY for COLD streams only — streams whose wh_active_streams
+  -- INSERT actually succeeded in the loop above. Hot streams (already pinned) do
+  -- NOT need a NOTIFY here because their pinned owner is already running its own
+  -- claim cycle on ~5 s safety-net cadence. This gating is what eliminates the
+  -- per-event NOTIFY storm during bulk imports while keeping the cold-start
+  -- latency fix from v0.686 (≤ 100 ms wake on first-event-per-stream).
+  --
+  -- Two payloads when events were stored:
+  --   'outbox'      → wakes OutboxDrainWorker to publish the new rows
+  --   'perspective' → wakes PerspectiveEventWorker because _emit_event_store_chain
+  --                   created wh_perspective_events rows for the same stream_ids
+  -- For non-event rows (v_inserted_event_ids empty), only the 'outbox' notify fires.
+  IF cardinality(v_cold_stream_ids) > 0 THEN
+    PERFORM __SCHEMA__.notify_instance_owners('outbox', v_cold_stream_ids);
+    IF cardinality(v_inserted_event_ids) > 0 THEN
+      PERFORM __SCHEMA__.notify_instance_owners('perspective', v_cold_stream_ids);
+    END IF;
   END IF;
 END;
 $$ LANGUAGE plpgsql;

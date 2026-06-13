@@ -1024,6 +1024,10 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.record_heartbeat(
 ) RETURNS VOID AS $$
 DECLARE
   v_stale_cutoff TIMESTAMPTZ := NOW() - INTERVAL '30 seconds';
+  -- v0.687: any heartbeat older than this is treated as definitively dead and
+  -- bypasses the v0.681 alive-lock guard. Covers OOMKilled pods on half-open TCP
+  -- where the session lock can linger until OS keepalive (~2 h default on Linux).
+  v_definitive_dead_cutoff TIMESTAMPTZ := NOW() - INTERVAL '5 minutes';
 BEGIN
   INSERT INTO __SCHEMA__.wh_service_instances
     (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
@@ -1045,7 +1049,7 @@ BEGIN
       AND instance_id != p_instance_id
     LIMIT 1
   ) THEN
-    PERFORM __SCHEMA__.cleanup_stale_instances(v_stale_cutoff);
+    PERFORM __SCHEMA__.cleanup_stale_instances(v_stale_cutoff, v_definitive_dead_cutoff);
   END IF;
 END;
 $$ LANGUAGE plpgsql;
