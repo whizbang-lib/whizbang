@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
@@ -81,26 +82,23 @@ public static class ServiceCollectionExtensions {
     var options = new PostgresOptions();
     configureOptions?.Invoke(options);
 
-    // Build a temporary service provider to get logger (if logging is configured)
-    var tempProvider = services.BuildServiceProvider();
-    var logger = tempProvider.GetService<ILogger<PostgresConnectionRetry>>();
+    // Logger left at NullLogger — we deliberately do NOT call
+    // services.BuildServiceProvider() here. Doing so leaks a parallel singleton
+    // universe (and, worse, when combined with `using` further down, disposes
+    // the host's shared ConfigurationManager — see Bijan Camp's 2026-06-12
+    // report). Startup connection-retry diagnostics surface via the host's
+    // normal logging once MessageTypeRegistryReconciliationHostedService runs
+    // and via any failure thrown out of WaitForConnectionAsync below.
+    ILogger<PostgresConnectionRetry> logger = NullLogger<PostgresConnectionRetry>.Instance;
 
-    // Wait for database connection with retry
-    if (logger?.IsEnabled(LogLevel.Information) == true) {
-      var initialRetryAttempts = options.InitialRetryAttempts;
-      var retryIndefinitely = options.RetryIndefinitely;
-      logger.LogInformation("Waiting for PostgreSQL connection (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", initialRetryAttempts, retryIndefinitely);
-    }
     var connectionRetry = new PostgresConnectionRetry(options, logger);
     connectionRetry.WaitForConnectionAsync(connectionString).GetAwaiter().GetResult();
 
     // Initialize schema with per-perspective hash tracking
     if (initializeSchema) {
-      logger?.LogInformation("Initializing PostgreSQL schema with per-perspective tracking...");
       var initializer = new PostgresSchemaInitializer(connectionString, perspectiveEntries);
       initializer.InitializeSchema();
       connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
-      logger?.LogInformation("PostgreSQL schema initialized and database ready");
     }
 
     // Register database infrastructure
@@ -167,15 +165,14 @@ public static class ServiceCollectionExtensions {
     // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
     // Runs only when the schema was just initialized here (we know the table exists) and
     // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
+    //
+    // 2026-06-12: replaced the prior `using var populatorProvider = services.BuildServiceProvider();`
+    // pattern with an IHostedService that runs at host startup using the REAL provider —
+    // no temp container, no shared-ConfigurationManager disposal trap. The hosted service
+    // gracefully no-ops when IMessageTypeCatalog isn't registered (matches the prior null-
+    // catalog log line).
     if (initializeSchema) {
-      using var populatorProvider = services.BuildServiceProvider();
-      var catalog = populatorProvider.GetService<IMessageTypeCatalog>();
-      if (catalog is not null) {
-        var populator = populatorProvider.GetRequiredService<IMessageTypeRegistryPopulator>();
-        populator.PopulateAsync().GetAwaiter().GetResult();
-      } else {
-        logger?.LogInformation("Skipping message type registry population — no IMessageTypeCatalog registered (did you call services.AddWhizbang() before AddWhizbangPostgres()?).");
-      }
+      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
     }
 
     return services;
@@ -207,26 +204,17 @@ public static class ServiceCollectionExtensions {
     var options = new PostgresOptions();
     configureOptions?.Invoke(options);
 
-    // Build a temporary service provider to get logger (if logging is configured)
-    var tempProvider = services.BuildServiceProvider();
-    var logger = tempProvider.GetService<ILogger<PostgresConnectionRetry>>();
+    // See the first overload for the rationale on NullLogger / no temp provider.
+    ILogger<PostgresConnectionRetry> logger = NullLogger<PostgresConnectionRetry>.Instance;
 
-    // Wait for database connection with retry
-    if (logger?.IsEnabled(LogLevel.Information) == true) {
-      var initialRetryAttempts = options.InitialRetryAttempts;
-      var retryIndefinitely = options.RetryIndefinitely;
-      logger.LogInformation("Waiting for PostgreSQL connection (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", initialRetryAttempts, retryIndefinitely);
-    }
     var connectionRetry = new PostgresConnectionRetry(options, logger);
     connectionRetry.WaitForConnectionAsync(connectionString).GetAwaiter().GetResult();
 
     // Initialize schema if requested
     if (initializeSchema) {
-      logger?.LogInformation("Initializing PostgreSQL schema...");
       var initializer = new PostgresSchemaInitializer(connectionString, perspectiveSchemaSql);
       initializer.InitializeSchema();
       connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
-      logger?.LogInformation("PostgreSQL schema initialized and database ready");
     }
 
     // Register database infrastructure
@@ -300,18 +288,11 @@ public static class ServiceCollectionExtensions {
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
 
-    // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
-    // Runs only when the schema was just initialized here (we know the table exists) and
-    // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
+    // See the first overload for the rationale: the prior `services.BuildServiceProvider()`
+    // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer
+    // the populator run to host startup via an IHostedService that uses the REAL provider.
     if (initializeSchema) {
-      using var populatorProvider = services.BuildServiceProvider();
-      var catalog = populatorProvider.GetService<IMessageTypeCatalog>();
-      if (catalog is not null) {
-        var populator = populatorProvider.GetRequiredService<IMessageTypeRegistryPopulator>();
-        populator.PopulateAsync().GetAwaiter().GetResult();
-      } else {
-        logger?.LogInformation("Skipping message type registry population — no IMessageTypeCatalog registered (did you call services.AddWhizbang() before AddWhizbangPostgres()?).");
-      }
+      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
     }
 
     return services;
