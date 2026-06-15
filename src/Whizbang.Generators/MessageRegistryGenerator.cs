@@ -183,9 +183,45 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var invocation = (InvocationExpressionSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    // Defensive guard: throws if Roslyn returns null (indicates compiler bug)
-    // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
-    var methodSymbol = RoslynGuards.GetMethodSymbolOrThrow(invocation, semanticModel, cancellationToken);
+    // Crash-fix (2026-06-15): the predicate matches purely on method name
+    // ("SendAsync" / "PublishAsync"), so invocations resolve to *any* type with
+    // a same-named method — including Rocks-generated expectations classes
+    // (e.g. `IDispatcherCreateExpectations.SetupsExpectations.PublishAsync<T>(Argument<T>)`)
+    // and any user-written wrapper. In overload-resolution-ambiguous cases
+    // Roslyn returns a null `Symbol`, and the prior `GetMethodSymbolOrThrow`
+    // dereference fired CS8785, breaking every a consumer test project that uses Rocks
+    // to mock `IDispatcher`. A generator must never throw on an invocation it
+    // cannot resolve — skip safely instead.
+    var symbolInfo = semanticModel.GetSymbolInfo(invocation, cancellationToken);
+    if (symbolInfo.Symbol is not IMethodSymbol methodSymbol) {
+      return null;
+    }
+
+    // Correctness filter: only register invocations whose containing type
+    // actually IS, or implements, `Whizbang.Core.IDispatcher`. This excludes:
+    //   - Rocks/NSubstitute/Moq generated `Setups.PublishAsync<T>` / `SendAsync<T>`
+    //     methods on expectations or mock proxy types,
+    //   - User-defined wrappers that happen to expose same-named methods
+    //     (e.g. an HTTP messenger named `SendAsync`).
+    // The match is fully qualified to avoid name collisions across assemblies.
+    // For the IS check we compare both `containingType` AND its `OriginalDefinition`
+    // — when SendAsync is called as a constructed generic method on an interface
+    // (the typical case), `ContainingType` is the same interface, but in some
+    // overload-resolution paths Roslyn returns an open or constructed wrapper
+    // whose `OriginalDefinition` is what matches our constant.
+    var containingType = methodSymbol.ContainingType;
+    if (containingType is null) {
+      return null;
+    }
+    var containingTypeName = TypeNameHelper.GetFullyQualifiedName(containingType);
+    var containingTypeOriginalName = TypeNameHelper.GetFullyQualifiedName(containingType.OriginalDefinition);
+    var isDispatcherMethod =
+        containingTypeName == StandardInterfaceNames.I_DISPATCHER
+        || containingTypeOriginalName == StandardInterfaceNames.I_DISPATCHER
+        || TypeNameHelper.ImplementsInterface(containingType, StandardInterfaceNames.I_DISPATCHER);
+    if (!isDispatcherMethod) {
+      return null;
+    }
 
     // Predicate already filtered for SendAsync/PublishAsync method names
 
