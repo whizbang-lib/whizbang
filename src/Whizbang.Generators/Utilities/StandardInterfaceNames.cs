@@ -20,6 +20,13 @@ internal static class StandardInterfaceNames {
   public const string I_EVENT = "global::Whizbang.Core.IEvent";
   public const string I_MESSAGE = "global::Whizbang.Core.IMessage";
 
+  // Dispatcher interface — used by MessageRegistryGenerator to filter SendAsync /
+  // PublishAsync invocations to genuine dispatcher calls. Without this filter the
+  // generator picks up identically-named methods on unrelated types (e.g. Rocks-
+  // generated `IDispatcherCreateExpectations.SetupsExpectations.PublishAsync<T>`)
+  // and crashes on the symbol-info dereference (CS8785).
+  public const string I_DISPATCHER = "global::Whizbang.Core.IDispatcher";
+
   // Receptor interfaces
   public const string I_RECEPTOR = "global::Whizbang.Core.IReceptor";
   public const string I_SYNC_RECEPTOR = "global::Whizbang.Core.ISyncReceptor";
