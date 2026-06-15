@@ -1105,9 +1105,13 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task MessageRegistryGenerator_SendAsyncWithStringArgument_DiscoversDispatcherAsync() {
-    // Arrange - Tests ExtractDispatcher with non-IDispatcher.SendAsync (different method)
-    // The generator looks for any method named SendAsync, including non-IDispatcher ones
+  public async Task MessageRegistryGenerator_SendAsyncOnNonDispatcherStaticClass_SkipsAsync() {
+    // History: this test previously asserted "Generator discovers any SendAsync call,
+    // even non-IDispatcher ones" — codifying the bug that the 2026-06-15 Rocks-interop
+    // fix corrects. Under the corrected semantic, only invocations whose method's
+    // ContainingType IS, or implements, Whizbang.Core.IDispatcher are registered.
+    // `SomeMethod.SendAsync(string)` is a static helper on a non-dispatcher class
+    // and must be skipped.
     const string source = """
 
 using Whizbang.Core;
@@ -1121,7 +1125,9 @@ namespace TestNamespace {
 
   public class TestService {
     public async Task ExecuteAsync() {
-      // SendAsync with a string - different method, not IDispatcher.SendAsync
+      // SendAsync with a string — different method, not IDispatcher.SendAsync.
+      // Pre-fix the generator picked this up; post-fix the symbol-based filter
+      // rejects it because `SomeMethod` does not implement Whizbang.Core.IDispatcher.
       await SomeMethod.SendAsync("not a message");
     }
   }
@@ -1135,11 +1141,13 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
 
-    // Assert - Generator discovers any SendAsync call, even non-IDispatcher ones
+    // Assert — the registry must not include the non-dispatcher call site.
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("TestService");
-    await Assert.That(generatedSource).Contains("\"\"type\"\": \"\"string\"\"");  // Type of the argument
+    await Assert.That(generatedSource).DoesNotContain("\"\"TestService\"\"")
+      .Because("TestService.ExecuteAsync calls SomeMethod.SendAsync (a non-IDispatcher static method); the dispatchers section must exclude it.");
+    await Assert.That(generatedSource).DoesNotContain("\"\"ExecuteAsync\"\"")
+      .Because("ExecuteAsync is the call-site method for a non-IDispatcher SendAsync; it must not be registered as a dispatch site.");
   }
 
   [Test]
@@ -1690,6 +1698,130 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
     await Assert.That(generatedJson).IsNotNull();
     await Assert.That(generatedJson).Contains("ServiceWithFieldDispatch");
     await Assert.That(generatedJson).Contains("TestCommand");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_RocksLikeLookAlikePublishAsync_DoesNotCrashAsync() {
+    // Regression for Rocks-mock interop crash (2026-06-15).
+    //
+    // The generator's dispatcher discovery filtered invocations purely by method name
+    // ("SendAsync" / "PublishAsync") and then assumed every match resolved to an
+    // IMethodSymbol via a hard `??-throw` (RoslynGuards.GetMethodSymbolOrThrow).
+    //
+    // Rocks generates expectations classes that include a same-named method on an
+    // unrelated type (e.g.
+    //   class IDispatcherCreateExpectations.SetupsExpectations { void PublishAsync<T>(Rocks.Argument<T> e) }
+    // ). When test code calls `exp.Setups.PublishAsync<SomeEvent>(...)`, Roslyn
+    // legitimately resolves to that look-alike method (or to a candidate-set with no
+    // best match). The `??-throw` then fired as CS8785 generator failure and broke
+    // every a consumer test project that uses Rocks against IDispatcher.
+    //
+    // The fix is two-part: (1) treat an unresolved IMethodSymbol as "skip, not crash"
+    // and (2) only register invocations whose containing type is (or implements)
+    // Whizbang.Core.IDispatcher. This RED test exercises both: a look-alike type with
+    // a PublishAsync<T>(Argument<T>) method, called from user code, must not appear
+    // in the registry AND must not crash the generator.
+    const string source = """
+
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace RocksLikeLib {
+  // Stand-in for a Rocks-generated argument-wrapper struct.
+  public readonly struct Argument<T> {
+    public Argument(T value) { Value = value; }
+    public T Value { get; }
+  }
+
+  // Same-named method on an unrelated, NOT-IDispatcher type.
+  public sealed class IDispatcherCreateExpectations {
+    public SetupsExpectations Setups { get; } = new();
+  }
+
+  public sealed class SetupsExpectations {
+    public void PublishAsync<TEvent>(Argument<TEvent> arg) { }
+    public void SendAsync<TCommand>(Argument<TCommand> arg) { }
+  }
+}
+
+namespace TestNamespace {
+  public record SomeEvent : IEvent { public string Id { get; init; } = ""; }
+
+  public class TestSetup {
+    public void Configure() {
+      var exp = new RocksLikeLib.IDispatcherCreateExpectations();
+      // These two calls must NOT be treated as dispatcher invocations and must NOT
+      // crash the generator on symbol-info dereference.
+      exp.Setups.PublishAsync(new RocksLikeLib.Argument<SomeEvent>(new SomeEvent()));
+      exp.Setups.SendAsync(new RocksLikeLib.Argument<SomeEvent>(new SomeEvent()));
+    }
+  }
+}
+""";
+
+    // Pre-fix: this `RunGenerator` call throws InvalidOperationException from
+    // RoslynGuards.GetMethodSymbolOrThrow, surfacing as CS8785 in real builds.
+    // Post-fix: the generator skips the look-alike and produces a valid registry.
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
+
+    var generatedJson = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+    await Assert.That(generatedJson).IsNotNull()
+      .Because("Generator must complete without throwing when a non-Whizbang type has same-named SendAsync/PublishAsync methods (Rocks scenario).");
+
+    // The look-alike calls happen inside TestSetup.Configure. Pre-fix the generator
+    // walks them as if they were real dispatcher calls and lists Configure/TestSetup
+    // in the dispatchers section of MessageRegistry. Post-fix the symbol-based filter
+    // recognises that the methods are not on Whizbang.Core.IDispatcher and skips them.
+    await Assert.That(generatedJson).DoesNotContain("\"\"TestSetup\"\"")
+      .Because("TestSetup.Configure invokes look-alike PublishAsync/SendAsync that are NOT on IDispatcher; symbol-based filter must exclude it from the dispatchers section.");
+    await Assert.That(generatedJson).DoesNotContain("\"\"Configure\"\"")
+      .Because("Configure is the method that holds the look-alike calls; it must not be registered as a dispatch site.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_NonDispatcherSendAsyncOnUnrelatedType_DoesNotRegisterAsync() {
+    // Symbol-based filter must also exclude same-named methods on classes the user
+    // wrote themselves (e.g. an HttpClient helper named SendAsync). Locks in the
+    // "only IDispatcher counts" semantic of the post-fix generator.
+    const string source = """
+
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace TestNamespace {
+  public record SomeCommand : ICommand;
+
+  // NOT a dispatcher — but exposes SendAsync<T>.
+  public class CustomMessenger {
+    public Task SendAsync<T>(T message) => Task.CompletedTask;
+    public Task PublishAsync<T>(T message) => Task.CompletedTask;
+  }
+
+  public class TestService {
+    public async Task GoAsync() {
+      var m = new CustomMessenger();
+      // Same names as IDispatcher; not actually dispatcher calls.
+      await m.SendAsync(new SomeCommand());
+      await m.PublishAsync(new SomeCommand());
+    }
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
+
+    var generatedJson = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+    await Assert.That(generatedJson).IsNotNull();
+
+    // Pre-fix, TestService.GoAsync (the call-site) lands in the dispatchers section
+    // because the generator filtered purely by method name. Post-fix, the symbol-
+    // based check that `methodSymbol.ContainingType` is IDispatcher excludes it.
+    await Assert.That(generatedJson).DoesNotContain("\"\"TestService\"\"")
+      .Because("TestService.GoAsync calls SendAsync/PublishAsync on a class that does not implement Whizbang.Core.IDispatcher; symbol-based filter must exclude it.");
+    await Assert.That(generatedJson).DoesNotContain("\"\"GoAsync\"\"")
+      .Because("GoAsync holds the look-alike call sites and must not be registered as a dispatch method.");
   }
 
   [System.Text.RegularExpressions.GeneratedRegex("\"\"receptors\"\":")]
