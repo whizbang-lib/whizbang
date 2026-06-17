@@ -140,7 +140,7 @@ public class CollectiveSpecContractTests {
   private sealed class _tenantResolverStub : ICollectiveScopeResolver {
     public string ScopeKind => "tenant";
 
-    public bool AcceptsPerspective<TModel>() => true;
+    public bool AcceptsPerspective<TModel>() where TModel : class => true;
 
     public Expression<Func<PerspectiveRow<TModel>, bool>> ScopeFilter<TModel>(ICollectiveScope scope)
       where TModel : class => _ => true;
