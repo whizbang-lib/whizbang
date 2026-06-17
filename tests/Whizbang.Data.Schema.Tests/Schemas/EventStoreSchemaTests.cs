@@ -27,7 +27,8 @@ public class EventStoreSchemaTests {
     var columns = EventStoreSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).Count().IsEqualTo(10);
+    // 10 base columns + is_collective (Slice 2 of collective-events feature).
+    await Assert.That(columns).Count().IsEqualTo(11);
 
     // Verify each column definition
     var eventId = columns[0];

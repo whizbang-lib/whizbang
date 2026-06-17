@@ -26,8 +26,9 @@ public class OutboxSchemaTests {
     // Arrange & Act
     var columns = OutboxSchema.Table.Columns;
 
-    // Assert - Verify column count (20 columns total)
-    await Assert.That(columns).Count().IsEqualTo(20);
+    // Assert - Verify column count
+    // 20 base columns + is_collective (Slice 2 of collective-events feature; mirrors W3 slice 9 is_composite).
+    await Assert.That(columns).Count().IsEqualTo(21);
 
     // Verify each column definition
     var messageId = columns[0];
