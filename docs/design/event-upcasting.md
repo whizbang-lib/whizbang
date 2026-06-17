@@ -1,11 +1,21 @@
 # Design: First-Class Event Upcasting
 
-## Status: PROPOSED — not yet implemented
+## Status: IMPLEMENTED (core) — a consumer upcasters + snapshot versioning pending
 
 > RFC authored against Whizbang 0.688. First customer driving the requirement:
 > **a consumer** (per-item saga streams migration). The pattern Whizbang ships here is the
 > pattern every customer inherits — so the bar is *correctness of the seam*, not
 > speed of the first implementation.
+>
+> **Shipped:** `IEventUpcaster` + `EventUpcasterPipeline` (ordered, AOT-safe) +
+> `AddEventUpcaster<T>()` registration + `UpcastingEventStoreDecorator` wired innermost
+> in the `IEventStore` stack, applying the pipeline on all three polymorphic read paths
+> (`ReadPolymorphicAsync`, `DeserializeStreamEvents`, `GetEventsBetweenPolymorphicAsync`)
+> with a seam contract test. Zero-cost passthrough when no upcasters are registered.
+>
+> **Pending:** a consumer registers `SagaItemStreamUpcaster` + `LegacyDomainItemEventUpcaster`
+> and validates re-key-through-the-runner end-to-end, then deletes its frozen replay
+> `Apply` methods (Slice 3); snapshot versioning + `SnapshotUpgradePolicy` (below).
 
 ## Problem
 
