@@ -1084,6 +1084,28 @@ public record OutboxMessage {
   public bool IsComposite { get; init; }
 
   /// <summary>
+  /// True when the payload implements
+  /// <see cref="Whizbang.Core.Messaging.ICollectiveEvent"/> — a first-class
+  /// persistable event that mutates a set of streams as a unit (Slice 3
+  /// of the collective-events feature). Defaults to false so existing
+  /// outbox builders that don't set the flag explicitly continue to
+  /// route through the ordinary per-row Apply path.
+  /// </summary>
+  /// <remarks>
+  /// Mirrors the <see cref="IsComposite"/> producer-stamps-consumer-
+  /// preserves shape from W3 slice 9. The dispatcher sets this to true
+  /// when the payload is an <c>ICollectiveEvent</c>; the transport
+  /// consumer worker copies the flag onto the <see cref="InboxMessage"/>;
+  /// the projection runner (Slice 7) reads the inbox flag to branch
+  /// onto the set-based <c>BulkApply</c> path without re-running the
+  /// payload type check.
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventOutboxStampTests.cs:OutboxMessage_IsCollective_DefaultsToFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventOutboxStampTests.cs:OutboxMessage_IsCollective_CanBeSetToTrueAsync</tests>
+  public bool IsCollective { get; init; }
+
+  /// <summary>
   /// Multi-tenancy and security scope extracted from the envelope.
   /// Stored in the dedicated scope JSONB column for query filtering.
   /// </summary>
@@ -1145,6 +1167,19 @@ public record InboxMessage {
   /// append without re-running the payload type check.
   /// </summary>
   public bool IsComposite { get; init; }
+
+  /// <summary>
+  /// Mirrors <see cref="OutboxMessage.IsCollective"/>: true when the
+  /// rehydrated envelope's payload implements
+  /// <see cref="Whizbang.Core.Messaging.ICollectiveEvent"/>. Stamped by
+  /// the transport consumer worker so the projection runner (Slice 7)
+  /// can branch onto the set-based <c>BulkApply</c> path without
+  /// re-running the type check on every received message.
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventOutboxStampTests.cs:InboxMessage_IsCollective_DefaultsToFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventOutboxStampTests.cs:InboxMessage_IsCollective_CanBeSetToTrueAsync</tests>
+  public bool IsCollective { get; init; }
 
   /// <summary>
   /// Multi-tenancy and security scope extracted from the envelope.
