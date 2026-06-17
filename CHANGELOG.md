@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Event upcasting** — first-class read-time event transformation. `IEventUpcaster`
+  (re-key / type-change / field-backfill, pure & AOT-safe) + `EventUpcasterPipeline`
+  (ordered, registration-order composition) + `AddEventUpcaster<T>()` registration +
+  `UpcastingEventStoreDecorator` wired innermost in the `IEventStore` stack, applying the
+  pipeline on every polymorphic read path (`ReadPolymorphicAsync`, `DeserializeStreamEvents`,
+  `GetEventsBetweenPolymorphicAsync`) — one unified materialization seam. Zero-cost passthrough
+  when no upcasters are registered. See `docs/design/event-upcasting.md` + `docs/event-upcasting.md`.
+- **Framework-wide serialization versioning** — `SerializationVersion.CURRENT` (version of the
+  JSON serialization logic), `VersionedJsonEnvelope` (stamp/read a version on any persisted JSON
+  blob), `IVersionedJsonSerializer` + `IVersionedJsonSerializer<T>` and
+  `VersionedJsonSerializerRegistry` (recall the correct serializer by version).
+- **Snapshot serialization versioning** — `SnapshotEnvelope` + `SnapshotUpgradePolicy`
+  (`RebuildFromEvents` default / `None` / `LazyUpcast` / `UpgradeOnStartup`); perspective-runner
+  snapshots are stamped on write and, on a version mismatch or legacy blob, rebuilt from events
+  instead of misparsing. `PerspectiveSnapshotOptions.UpgradePolicy` added.
+- **Size-aware serialization** — `SerializationResult` (bytes + `SizeBytes` + content type +
+  version) and `SerializationOptions` (forward-extensible), produced by `WireEnvelopeSerializer`
+  at a single serialize-once point so the message body-path (inline vs offload) decision reads the
+  size off the result.
+- Canonical `EventTypeMatchingHelper.BuildTypeLookup` / `TryResolveType` — one normalized
+  stored-`EventType` → `Type` resolver shared by every event-store read path.
+
+### Changed
+- EFCore and Dapper event stores route all polymorphic type resolution through the shared
+  `EventTypeMatchingHelper` resolver (removes duplicated per-store type maps).
+- Publish path (`TransportPublishStrategy`) and both RabbitMQ + Azure Service Bus transports route
+  wire serialization through the shared `WireEnvelopeSerializer`; ASB receive resolves types via
+  the shared `BodyClaimWireHelper` (its type-binder / raw-receptor fallbacks preserved).
+- Perspective snapshot blobs are now versioned envelopes; pre-existing unversioned snapshots are
+  transparently rebuilt from events on first read.
+
+### Fixed
+- Perspective snapshot serialization now uses the source-generated JSON registry options instead
+  of reflection-based `JsonSerializer` (AOT-correct; WhizbangId-bearing model fields no longer
+  collapse to `{}`).
+
 ## [0.1.0-alpha] - 2026-01-XX
 
 ### Added
