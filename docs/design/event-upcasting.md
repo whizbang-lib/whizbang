@@ -228,6 +228,31 @@ re-emit is not: re-emit perturbs the very sequence rewind depends on.)
 - **Cross-event aggregation.** An upcaster sees one event at a time. Folding multiple
   old events into one new event is out of scope (and would break per-row replay).
 
+## Snapshot versioning & upgrade (companion to event upcasting)
+
+Snapshots are a derived cache of the perspective model — but unlike events they carry no
+shape version, so a model-shape change silently misparses or loses fields (the Tier-1
+serialization fix exposed this: it changed the blob format with no way to *detect* a stale
+blob). The fix mirrors event upcasting, applied to the model:
+
+- **Stamp a `SchemaVersion`** on every snapshot blob at write time (the version of the model
+  shape that produced it). Cheap to read back before deserializing.
+- **Read through a configurable `SnapshotUpgradePolicy`:**
+  - `RebuildFromEvents` *(default, safest)* — version mismatch ⇒ discard the snapshot and
+    replay from events. Always correct: snapshots are a pure derived cache, so the stamp just
+    turns a silent misparse into an explicit "stale → rebuild". No old deserializers needed.
+  - `LazyUpcast` — keep old-version model deserializers in C# (snapshot upcasters keyed by
+    `SchemaVersion`) and upgrade a stream's snapshot when it is next used.
+  - `UpgradeOnStartup` — scan and rewrite all snapshots to the current version at boot.
+  - `None` — treat a mismatch as an error.
+- **Old-version deserializers** (for `LazyUpcast`/`UpgradeOnStartup`) are registered, versioned
+  C# functions — the snapshot analogue of `IEventUpcaster`. AOT-safe (explicit registration, no
+  reflection).
+
+This supersedes the interim "invalidate old snapshots on deploy" note from the Tier-1
+serialization change: `RebuildFromEvents` makes that automatic and detectable rather than a
+manual deploy step.
+
 ## Open questions
 
 1. **Decorator (a) vs shared-step (b).** Recommendation is (b) for structural
@@ -237,9 +262,8 @@ re-emit is not: re-emit perturbs the very sequence rewind depends on.)
    methods become deletable. Is a transitional analyzer/attribute (mark a method as
    historical, hash its body, warn on edit) still worth shipping, or does upcasting
    make it moot? (Original a consumer ask; upcasting subsumes most of its value.)
-3. **Snapshot invalidation.** When a new upcaster is registered that changes the shape
-   of events already folded into a snapshot, snapshots taken before it must be
-   invalidated/rebuilt. Tie snapshot validity to a registered-upcaster version stamp?
+3. ~~**Snapshot invalidation.**~~ *Resolved* — see "Snapshot versioning & upgrade" above:
+   stamp `SchemaVersion`, read through `SnapshotUpgradePolicy` (default `RebuildFromEvents`).
 
 ## Rollout / sequencing
 
