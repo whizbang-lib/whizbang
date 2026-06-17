@@ -235,26 +235,8 @@ public sealed class EFCoreEventStore<TDbContext>(
       IReadOnlyList<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
-    // Build type lookup dictionary with multiple keys for flexible matching
-    // Supports: TypeNameFormatter format (medium form), AssemblyQualifiedName (long form), FullName, and Name (short form)
-    var typeMap = new Dictionary<string, Type>();
-    foreach (var type in eventTypes) {
-      // Add all possible keys for this type
-
-      // PRIMARY KEY: TypeNameFormatter format ("TypeName, AssemblyName")
-      // This is the format used by AppendAsync (line 90) and matches wh_message_associations
-      var formattedName = TypeNameFormatter.Format(type);
-      typeMap[formattedName] = type;
-
-      // FALLBACK KEYS: Support other formats for compatibility
-      if (type.AssemblyQualifiedName != null) {
-        typeMap[type.AssemblyQualifiedName] = type;
-      }
-      if (type.FullName != null) {
-        typeMap[type.FullName] = type;
-      }
-      typeMap[type.Name] = type;
-    }
+    // Canonical normalized stored-EventType -> Type lookup, shared by every read path.
+    var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
 
     // Query events from the specified event ID onwards. Slice 26: deterministic replay
     // order = commit_sequence ASC NULLS LAST, then event_id. Unstamped rows (NULL
@@ -278,9 +260,8 @@ public sealed class EFCoreEventStore<TDbContext>(
           .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
-      // Look up the concrete type from the EventType column
-      var concreteType = _resolveConcreteType(record.EventType, typeMap);
-      if (concreteType == null) {
+      // Look up the concrete type from the EventType column (canonical resolver — skip unknowns)
+      if (!EventTypeMatchingHelper.TryResolveType(typeMap, record.EventType, out var concreteType)) {
         continue;
       }
 
@@ -412,23 +393,15 @@ public sealed class EFCoreEventStore<TDbContext>(
       .OrderBy(e => e.Id)
       .ToListAsync(cancellationToken);
 
-    // Build type lookup dictionary for fast O(1) lookups (AOT-compatible)
-    var typeLookup = new Dictionary<string, Type>(eventTypes.Count);
-    foreach (var type in eventTypes) {
-      typeLookup[type.FullName ?? type.Name] = type;
-    }
+    // Canonical normalized stored-EventType -> Type lookup, shared by every read path.
+    var typeLookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
 
     // Deserialize to message envelopes with polymorphic payloads
     var envelopes = new List<MessageEnvelope<IEvent>>(records.Count);
 
     foreach (var record in records) {
-      // Normalize event type name (remove assembly version/culture/publickey if present)
-      var storedTypeName = record.EventType;
-      var commaIndex = storedTypeName.IndexOf(',');
-      var normalizedTypeName = commaIndex > 0 ? storedTypeName[..commaIndex].Trim() : storedTypeName;
-
       // Skip events that aren't in the perspective's list
-      if (!typeLookup.TryGetValue(normalizedTypeName, out var concreteType)) {
+      if (!EventTypeMatchingHelper.TryResolveType(typeLookup, record.EventType, out var concreteType)) {
         continue;
       }
 
@@ -469,24 +442,6 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <summary>
-  /// Resolves a concrete type from the stored EventType string using the type map.
-  /// Returns null if the type is not in the requested list (allows perspectives to skip irrelevant events).
-  /// </summary>
-  private static Type? _resolveConcreteType(string eventType, Dictionary<string, Type> typeMap) {
-    if (typeMap.TryGetValue(eventType, out var concreteType)) {
-      return concreteType;
-    }
-
-    // Try without version/culture/token (extract "TypeName, AssemblyName" from full qualified name)
-    var typeAndAssembly = string.Join(", ", eventType.Split(',').Take(2).Select(s => s.Trim()));
-    if (!string.IsNullOrEmpty(typeAndAssembly) && typeMap.TryGetValue(typeAndAssembly, out concreteType)) {
-      return concreteType;
-    }
-
-    return null;
-  }
-
-  /// <summary>
   /// Restores scope from the dedicated scope column into the first hop's ScopeDelta.
   /// Returns the (possibly modified) hops list.
   /// </summary>
@@ -524,7 +479,8 @@ public sealed class EFCoreEventStore<TDbContext>(
       return [];
     }
 
-    var typeMap = _buildEventTypeLookup(eventTypes);
+    // Canonical normalized stored-EventType -> Type lookup, shared by every read path.
+    var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
 
     var results = new List<MessageEnvelope<IEvent>>(streamEvents.Count);
     foreach (var raw in streamEvents) {
@@ -537,24 +493,6 @@ public sealed class EFCoreEventStore<TDbContext>(
     return results;
   }
 
-  /// <summary>Builds a case-sensitive type lookup with one entry per format the producer might
-  /// emit: short (TypeNameFormatter.Format), assembly-qualified, full, and simple name. Matches
-  /// the pattern used by ReadPolymorphicAsync.</summary>
-  private static Dictionary<string, Type> _buildEventTypeLookup(IReadOnlyList<Type> eventTypes) {
-    var typeMap = new Dictionary<string, Type>();
-    foreach (var type in eventTypes) {
-      typeMap[TypeNameFormatter.Format(type)] = type;
-      if (type.AssemblyQualifiedName != null) {
-        typeMap[type.AssemblyQualifiedName] = type;
-      }
-      if (type.FullName != null) {
-        typeMap[type.FullName] = type;
-      }
-      typeMap[type.Name] = type;
-    }
-    return typeMap;
-  }
-
   /// <summary>
   /// Deserializes a single StreamEventData row into a MessageEnvelope. Returns null to signal
   /// "skip this row" — unknown event type, null deserialisation result, or any exception
@@ -564,8 +502,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       StreamEventData raw,
       Dictionary<string, Type> typeMap) {
     try {
-      var concreteType = _resolveConcreteType(raw.EventType, typeMap);
-      if (concreteType is null) {
+      if (!EventTypeMatchingHelper.TryResolveType(typeMap, raw.EventType, out var concreteType)) {
         return null;
       }
 
