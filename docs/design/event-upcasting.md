@@ -259,12 +259,37 @@ blob). The fix mirrors event upcasting, applied to the model:
   - `UpgradeOnStartup` — scan and rewrite all snapshots to the current version at boot.
   - `None` — treat a mismatch as an error.
 - **Old-version deserializers** (for `LazyUpcast`/`UpgradeOnStartup`) are registered, versioned
-  C# functions — the snapshot analogue of `IEventUpcaster`. AOT-safe (explicit registration, no
-  reflection).
+  C# implementations — the snapshot analogue of `IEventUpcaster`. AOT-safe (explicit registration,
+  no reflection).
 
 This supersedes the interim "invalidate old snapshots on deploy" note from the Tier-1
 serialization change: `RebuildFromEvents` makes that automatic and detectable rather than a
 manual deploy step.
+
+### Implemented (core) — `Whizbang.Core.Serialization`
+
+The serialization-version mechanism is built as **framework-wide, reusable** primitives — any
+persisted-JSON path can adopt them, snapshots first:
+
+- `SerializationVersion.CURRENT` — framework-owned, hard-coded version of the JSON serialization
+  *logic/implementation* (not a domain schema version); bump when the code path changes such that
+  prior blobs can't be read by the new code.
+- `VersionedJsonEnvelope.Wrap` / `TryRead` — stamps/reads the version on a blob; legacy
+  (unversioned) blobs read back as `VersionedJsonEnvelope.LEGACY` (0).
+- `IVersionedJsonSerializer` (non-generic base; the registry keys on `Version`) and
+  `IVersionedJsonSerializer<T>` (typed) — a serialization implementation **locked to a version**.
+  Type-agnostic serializers implement the base (one instance, any model type via supplied
+  `JsonTypeInfo`); type-specific ones implement the generic; both recall uniformly by `Version`.
+- `IVersionedJsonSerializerRegistry` / `VersionedJsonSerializerRegistry` — recalls the serializer
+  for a blob's version; `Current` (highest) writes new blobs; an older version's serializer reads a
+  legacy blob, which can then be re-serialized with `Current` to upgrade it.
+- `SnapshotEnvelope` + `SnapshotUpgradePolicy` — the snapshot consumer: stamp on write; on read,
+  use the model if the version matches, else apply policy (default `RebuildFromEvents`).
+
+**Pending integration:** wire the perspective runner's snapshot write/read through
+`SnapshotEnvelope` + the registry (stamp `SerializationVersion.CURRENT` on write; on read, recall
+the matching serializer or rebuild), and add `SnapshotUpgradePolicy` to `PerspectiveSnapshotOptions`.
+This is the runner/generator change that activates versioning end-to-end.
 
 ## Open questions
 
