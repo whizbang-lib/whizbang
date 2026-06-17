@@ -806,11 +806,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             streamId, perspectiveName, triggeringCommitSequence.Value, cancellationToken);
         if (seqSnapshot.HasValue) {
           snapshotModel = FromSnapshotJson(seqSnapshot.Value.SnapshotData);
-          replayFromEventId = seqSnapshot.Value.SnapshotEventId;
-          hasSnapshot = true;
-          _logger.LogWarning(
-              "Restoring {PerspectiveName} stream {StreamId} from commit-sequence snapshot at {SnapshotEventId} (commit_sequence < {TriggeringCommitSequence}) due to late event {TriggeringEventId}",
-              perspectiveName, streamId, seqSnapshot.Value.SnapshotEventId, triggeringCommitSequence.Value, triggeringEventId);
+          if (snapshotModel is not null) {
+            replayFromEventId = seqSnapshot.Value.SnapshotEventId;
+            hasSnapshot = true;
+            _logger.LogWarning(
+                "Restoring {PerspectiveName} stream {StreamId} from commit-sequence snapshot at {SnapshotEventId} (commit_sequence < {TriggeringCommitSequence}) due to late event {TriggeringEventId}",
+                perspectiveName, streamId, seqSnapshot.Value.SnapshotEventId, triggeringCommitSequence.Value, triggeringEventId);
+          } else {
+            _logger.LogWarning(
+                "Commit-sequence snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; rebuilding from events",
+                perspectiveName, streamId);
+          }
         }
       }
 
@@ -820,12 +826,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
         if (snapshot.HasValue) {
           snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
-          replayFromEventId = snapshot.Value.SnapshotEventId;
-          hasSnapshot = true;
+          if (snapshotModel is not null) {
+            replayFromEventId = snapshot.Value.SnapshotEventId;
+            hasSnapshot = true;
 
-          _logger.LogWarning(
-              "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
-              perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
+            _logger.LogWarning(
+                "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
+                perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
+          } else {
+            _logger.LogWarning(
+                "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
+                perspectiveName, streamId, triggeringEventId);
+          }
         } else {
           _logger.LogWarning(
               "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
@@ -1149,10 +1161,26 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       _snapshotModelTypeInfo ??= (global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<__MODEL_TYPE_NAME__>)
           global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(__MODEL_TYPE_NAME__));
 
-  private static JsonDocument ToSnapshotJson(__MODEL_TYPE_NAME__ model) =>
-      JsonSerializer.SerializeToDocument(model, _SnapshotModelTypeInfo);
+  // Write: serialize the model with the current serialization logic, then stamp it with the
+  // current serialization version so a future reader knows which implementation wrote it.
+  private static JsonDocument ToSnapshotJson(__MODEL_TYPE_NAME__ model) {
+    using var modelDoc = JsonSerializer.SerializeToDocument(model, _SnapshotModelTypeInfo);
+    return global::Whizbang.Core.Perspectives.SnapshotEnvelope.Wrap(
+        modelDoc.RootElement, global::Whizbang.Core.Serialization.SerializationVersion.CURRENT);
+  }
 
-  private static __MODEL_TYPE_NAME__ FromSnapshotJson(JsonDocument doc) =>
-      JsonSerializer.Deserialize(doc.RootElement.GetRawText(), _SnapshotModelTypeInfo)!;
+  // Read: if the stored serialization version matches, deserialize the model; otherwise apply the
+  // configured SnapshotUpgradePolicy. Returns null to signal "rebuild from events" (the caller
+  // then falls back to a full replay, exactly as if no snapshot existed).
+  private __MODEL_TYPE_NAME__? FromSnapshotJson(JsonDocument doc) {
+    var policy = _snapshotOptions?.Value.UpgradePolicy
+        ?? global::Whizbang.Core.Perspectives.SnapshotUpgradePolicy.RebuildFromEvents;
+    var result = global::Whizbang.Core.Perspectives.SnapshotEnvelope.Read(
+        doc, global::Whizbang.Core.Serialization.SerializationVersion.CURRENT, policy);
+    if (result.Action != global::Whizbang.Core.Perspectives.SnapshotReadAction.UseModel) {
+      return null;
+    }
+    return JsonSerializer.Deserialize(result.Model.GetRawText(), _SnapshotModelTypeInfo)!;
+  }
   #endregion
 }
