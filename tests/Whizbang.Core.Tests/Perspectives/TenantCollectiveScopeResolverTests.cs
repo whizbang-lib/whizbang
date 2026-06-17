@@ -29,7 +29,12 @@ public class TenantCollectiveScopeResolverTests {
 
   [Test]
   public async Task TenantCollectiveScope_ScopeKind_IsTenantAsync() {
+    // Type as ICollectiveScope explicitly to assert the interface property
+    // is what's returned, not the concrete record member. CA1859 false
+    // positive here — the test is the discriminator-via-interface contract.
+#pragma warning disable CA1859
     ICollectiveScope scope = new TenantCollectiveScope("00000000-0000-0000-0000-000000000001");
+#pragma warning restore CA1859
 
     await Assert.That(scope.ScopeKind).IsEqualTo("tenant")
       .Because("The string is the routing key the resolver registry uses to dispatch incoming collective events to the right resolver. 'tenant' must be stable across versions.");
@@ -173,7 +178,7 @@ public class TenantCollectiveScopeResolverTests {
       Metadata = new PerspectiveMetadata(),
       Scope = new PerspectiveScope { TenantId = tenantId },
       CreatedAt = DateTime.UtcNow,
-      UpdatedAt = null,
+      UpdatedAt = DateTime.UtcNow,
       Version = 1,
     };
 }
