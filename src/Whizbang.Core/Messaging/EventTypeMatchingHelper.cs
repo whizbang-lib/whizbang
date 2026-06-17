@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 namespace Whizbang.Core.Messaging;
@@ -122,5 +123,65 @@ public static class EventTypeMatchingHelper {
              et.FullName + ", " + et.Assembly.GetName().Name == messageTypeName ||
              etNormalized == normalizedMessageType;
     });
+  }
+
+  /// <summary>
+  /// Builds the canonical normalized lookup from a perspective's candidate event types, used to
+  /// resolve a stored <c>EventType</c> string back to its concrete <see cref="Type"/>.
+  /// This is the ONE strategy every event-store read path shares (replacing the hand-rolled
+  /// per-store type maps); keys cover every form a producer may have written:
+  /// the storage form "FullName, AssemblyName" (what <see cref="TypeNameFormatter.Format"/> and
+  /// <c>AppendAsync</c> write — also the normalized form of an assembly-qualified name),
+  /// the bare <see cref="Type.FullName"/>, and the simple <see cref="MemberInfo.Name"/>.
+  /// AOT-safe: uses only compile-time type metadata, no reflection-based binding.
+  /// </summary>
+  /// <param name="candidateTypes">The event types the caller is willing to materialize (e.g. a perspective's known types).</param>
+  /// <returns>A case-sensitive lookup keyed by every normalized name form, mapping to the concrete type.</returns>
+  public static Dictionary<string, Type> BuildTypeLookup(IReadOnlyList<Type> candidateTypes) {
+    ArgumentNullException.ThrowIfNull(candidateTypes);
+
+    var lookup = new Dictionary<string, Type>(candidateTypes.Count * 3, StringComparer.Ordinal);
+    foreach (var type in candidateTypes) {
+      var assemblyName = type.Assembly.GetName().Name;
+      if (type.FullName is { } fullName) {
+        if (assemblyName is not null) {
+          // Storage form — identical to NormalizeTypeName(AssemblyQualifiedName) and to Format(type).
+          lookup[fullName + ", " + assemblyName] = type;
+        }
+        lookup[fullName] = type;
+      }
+      // Simple-name fallback (last resort; mirrors the legacy per-store maps).
+      lookup[type.Name] = type;
+    }
+    return lookup;
+  }
+
+  /// <summary>
+  /// Resolves a stored <c>EventType</c> string against a lookup built by <see cref="BuildTypeLookup"/>.
+  /// Tries the raw stored string first, then its normalized (version-stripped) form. Returns
+  /// <c>false</c> when the type is not among the candidates — the caller skips the event, since a
+  /// perspective only materializes its own registered types.
+  /// </summary>
+  /// <param name="lookup">A lookup produced by <see cref="BuildTypeLookup"/>.</param>
+  /// <param name="storedTypeName">The stored <c>EventType</c> string from the event row.</param>
+  /// <param name="resolved">The resolved concrete type when this returns <c>true</c>.</param>
+  /// <returns><c>true</c> if the stored type name maps to a candidate type; otherwise <c>false</c>.</returns>
+  public static bool TryResolveType(
+      Dictionary<string, Type> lookup,
+      string storedTypeName,
+      [NotNullWhen(true)] out Type? resolved) {
+    ArgumentNullException.ThrowIfNull(lookup);
+
+    resolved = null;
+    if (string.IsNullOrEmpty(storedTypeName)) {
+      return false;
+    }
+
+    if (lookup.TryGetValue(storedTypeName, out resolved)) {
+      return true;
+    }
+
+    var normalized = NormalizeTypeName(storedTypeName);
+    return lookup.TryGetValue(normalized, out resolved);
   }
 }

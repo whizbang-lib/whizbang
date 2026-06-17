@@ -163,7 +163,127 @@ public class EventTypeMatchingHelperTests {
     await Assert.That(result).IsTrue();
   }
 
+  // ========================================
+  // TryResolveType / BuildTypeLookup Tests
+  //
+  // The canonical stored-EventType -> concrete Type resolver that replaces the
+  // hand-rolled per-store type maps (EFCore _resolveConcreteType / _buildEventTypeLookup
+  // / inline; Dapper _buildTypeLookup). One normalized strategy for every read path.
+  // ========================================
+
+  [Test]
+  public async Task TryResolveType_WithStorageForm_ResolvesAsync() {
+    // Arrange — "FullName, AssemblyName" is exactly what TypeNameFormatter.Format / AppendAsync writes.
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup([typeof(TestEvent)]);
+    var stored = TypeNameFormatter.Format(typeof(TestEvent));
+
+    // Act
+    var ok = EventTypeMatchingHelper.TryResolveType(lookup, stored, out var resolved);
+
+    // Assert
+    await Assert.That(ok).IsTrue();
+    await Assert.That(resolved).IsEqualTo(typeof(TestEvent));
+  }
+
+  [Test]
+  public async Task TryResolveType_WithAssemblyQualifiedNameWithVersion_ResolvesAsync() {
+    // Arrange — old rows / cross-build rows may carry the full AQN with version.
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup([typeof(TestEvent)]);
+    var stored = typeof(TestEvent).AssemblyQualifiedName!;
+
+    // Act
+    var ok = EventTypeMatchingHelper.TryResolveType(lookup, stored, out var resolved);
+
+    // Assert — normalization strips Version/Culture/PublicKeyToken before matching.
+    await Assert.That(ok).IsTrue();
+    await Assert.That(resolved).IsEqualTo(typeof(TestEvent));
+  }
+
+  [Test]
+  public async Task TryResolveType_WithFullNameOnly_ResolvesAsync() {
+    // Arrange
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup([typeof(TestEvent)]);
+    var stored = typeof(TestEvent).FullName!;
+
+    // Act
+    var ok = EventTypeMatchingHelper.TryResolveType(lookup, stored, out var resolved);
+
+    // Assert
+    await Assert.That(ok).IsTrue();
+    await Assert.That(resolved).IsEqualTo(typeof(TestEvent));
+  }
+
+  [Test]
+  public async Task TryResolveType_WithSimpleName_ResolvesAsync() {
+    // Arrange
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup([typeof(TestEvent)]);
+
+    // Act
+    var ok = EventTypeMatchingHelper.TryResolveType(lookup, nameof(TestEvent), out var resolved);
+
+    // Assert
+    await Assert.That(ok).IsTrue();
+    await Assert.That(resolved).IsEqualTo(typeof(TestEvent));
+  }
+
+  [Test]
+  public async Task TryResolveType_WithNestedTypeStorageForm_ResolvesAsync() {
+    // Arrange — nested types serialize with '+' in their FullName; Format must round-trip.
+    // Plain nested type (not IEvent) so the message-context generator doesn't try to register it.
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup([typeof(NestedSample)]);
+    var stored = TypeNameFormatter.Format(typeof(NestedSample));
+
+    // Act
+    var ok = EventTypeMatchingHelper.TryResolveType(lookup, stored, out var resolved);
+
+    // Assert
+    await Assert.That(ok).IsTrue();
+    await Assert.That(resolved).IsEqualTo(typeof(NestedSample));
+    await Assert.That(stored).Contains("+"); // confirms we exercised the nested-type path
+  }
+
+  [Test]
+  public async Task TryResolveType_WithUnknownType_ReturnsFalseAsync() {
+    // Arrange — a perspective only materializes its own candidate types; anything else is skipped.
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup([typeof(TestEvent)]);
+
+    // Act
+    var ok = EventTypeMatchingHelper.TryResolveType(lookup, "Some.Other.Event, OtherAssembly", out var resolved);
+
+    // Assert
+    await Assert.That(ok).IsFalse();
+    await Assert.That(resolved).IsNull();
+  }
+
+  [Test]
+  public async Task TryResolveType_WithNullOrEmptyStoredName_ReturnsFalseAsync() {
+    // Arrange
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup([typeof(TestEvent)]);
+
+    // Act & Assert
+    await Assert.That(EventTypeMatchingHelper.TryResolveType(lookup, null!, out _)).IsFalse();
+    await Assert.That(EventTypeMatchingHelper.TryResolveType(lookup, "", out _)).IsFalse();
+  }
+
+  [Test]
+  public async Task TryResolveType_WithMultipleCandidates_ResolvesCorrectOneAsync() {
+    // Arrange
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup([typeof(TestEvent), typeof(AnotherTestEvent)]);
+    var stored = TypeNameFormatter.Format(typeof(AnotherTestEvent));
+
+    // Act
+    var ok = EventTypeMatchingHelper.TryResolveType(lookup, stored, out var resolved);
+
+    // Assert
+    await Assert.That(ok).IsTrue();
+    await Assert.That(resolved).IsEqualTo(typeof(AnotherTestEvent));
+  }
+
   // Test types for event matching
   private sealed record TestEvent : IEvent;
   private sealed record AnotherTestEvent : IEvent;
+
+  // Plain nested type (deliberately NOT IEvent) to exercise the '+' nested-name path
+  // in TypeNameFormatter.Format without the message-context generator registering it.
+  private sealed record NestedSample;
 }
