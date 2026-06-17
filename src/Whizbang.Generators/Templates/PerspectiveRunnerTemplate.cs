@@ -1139,10 +1139,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   #region SNAPSHOT_SERIALIZATION
+  // Snapshot (de)serialization routes through the source-generated JSON type registry
+  // (AOT-safe, no reflection): the perspective model type is registered in the consumer's
+  // MessageJsonContext, and the registry's combined options also carry the WhizbangId
+  // converters — so id-bearing models round-trip faithfully instead of collapsing to {}.
+  // Lazily resolved so the registry is fully populated (via [ModuleInitializer]) on first use.
+  private static global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<__MODEL_TYPE_NAME__>? _snapshotModelTypeInfo;
+  private static global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<__MODEL_TYPE_NAME__> _SnapshotModelTypeInfo =>
+      _snapshotModelTypeInfo ??= (global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<__MODEL_TYPE_NAME__>)
+          global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(__MODEL_TYPE_NAME__));
+
   private static JsonDocument ToSnapshotJson(__MODEL_TYPE_NAME__ model) =>
-      JsonSerializer.SerializeToDocument(model);
+      JsonSerializer.SerializeToDocument(model, _SnapshotModelTypeInfo);
 
   private static __MODEL_TYPE_NAME__ FromSnapshotJson(JsonDocument doc) =>
-      JsonSerializer.Deserialize<__MODEL_TYPE_NAME__>(doc.RootElement.GetRawText())!;
+      JsonSerializer.Deserialize(doc.RootElement.GetRawText(), _SnapshotModelTypeInfo)!;
   #endregion
 }
