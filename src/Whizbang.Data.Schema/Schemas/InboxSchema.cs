@@ -31,6 +31,13 @@ public static class InboxSchema {
     public const string FAILURE_REASON = "failure_reason";
     public const string SCHEDULED_FOR = "scheduled_for";
     public const string PROCESSED_AT = "processed_at";
+    /// <summary>
+    /// Collective-events flag (Slice 2). Consumer side of the producer
+    /// stamp on <c>OutboxSchema</c> — preserved by the transport
+    /// consumer worker (Slice 3) so the projection runner can branch on
+    /// the flag without re-deserializing the payload to type-check it.
+    /// </summary>
+    public const string IS_COLLECTIVE = "is_collective";
     public const string RECEIVED_AT = "received_at";
   }
 
@@ -142,6 +149,12 @@ public static class InboxSchema {
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      new ColumnDefinition(
+        Name: Columns.IS_COLLECTIVE,
+        DataType: WhizbangDataType.BOOLEAN,
+        Nullable: false,
+        DefaultValue: DefaultValue.Boolean(false)
       )
     ),
     Indexes: ImmutableArray.Create(

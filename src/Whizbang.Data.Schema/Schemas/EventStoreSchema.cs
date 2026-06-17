@@ -24,6 +24,14 @@ public static class EventStoreSchema {
     public const string SCOPE = "scope";
     public const string VERSION = "version";
     public const string CREATED_AT = "created_at";
+    /// <summary>
+    /// Collective-events flag (Slice 2). True when this event is an
+    /// <c>ICollectiveEvent</c> applied to a set of streams via the
+    /// scope-aware projection runner, false for ordinary per-stream events.
+    /// The <c>MatchedStreamIds</c> snapshot lives inside the event payload
+    /// (<see cref="EVENT_DATA"/>) — no separate top-level column.
+    /// </summary>
+    public const string IS_COLLECTIVE = "is_collective";
   }
 
   /// <summary>
@@ -95,6 +103,12 @@ public static class EventStoreSchema {
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      new ColumnDefinition(
+        Name: Columns.IS_COLLECTIVE,
+        DataType: WhizbangDataType.BOOLEAN,
+        Nullable: false,
+        DefaultValue: DefaultValue.Boolean(false)
       )
     ),
     Indexes:
