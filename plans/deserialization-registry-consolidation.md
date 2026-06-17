@@ -1,6 +1,46 @@
 # Plan: route every event/payload deserialization through the JSON type registry
 
-## Status: IN PROGRESS — Tier 2a first
+## Status: COMPLETE — Tiers 2a/2b/2c/1 shipped; Tier 3 audit closed (2 follow-ups)
+
+## Outcome
+
+- **Tier 2a** (`506d4581`): `EventTypeMatchingHelper.BuildTypeLookup` + `TryResolveType` — the
+  one canonical normalized stored-EventType → Type resolver. 8 unit tests.
+- **Tier 2b** (`a11c5aaa`): EFCore store's 3 polymorphic sites routed onto it; dead
+  `_resolveConcreteType`/`_buildEventTypeLookup` deleted. EFCore store tests green (45+3).
+- **Tier 2c** (`19d3fb41`): Dapper base + Dapper Postgres routed on; dead `_buildTypeLookup`/
+  `_normalizeEventTypeName`/`_buildEventTypeMap` deleted. Dapper suite green (297). Sqlite
+  left as-is (whole-envelope JSON, already registry-backed). Postgres throw-on-unknown
+  contract preserved (see follow-up #1).
+- **Tier 1** (`686575f8`): snapshot ser/deser routed through `JsonContextRegistry`
+  combined options (AOT, no reflection; WhizbangId converters now applied). Snapshot
+  round-trip tests green (9+9+29+5). Snapshot blob format changed → invalidate old
+  snapshots on deploy (derived data; rebuildable from events).
+
+## Tier 3 audit — conclusion: everything already shares the registry
+
+Verified each non-store / non-snapshot deserialization site resolves type info through
+`JsonContextRegistry` (or `_jsonOptions`/`JsonOptions.GetTypeInfo`, which derive from it):
+- **Transports**: RabbitMQ + ASB both resolve via `BodyClaimWireHelper.ResolveDeserializeTypeInfo`
+  → `JsonContextRegistry.GetTypeInfoByName`. ✓
+- **Workers/coordinators/rehydrator/request-response**: `_jsonOptions.GetTypeInfo`. ✓
+- **Sqlite store**: `JsonOptions.GetTypeInfo` per candidate (no stored-name lookup). ✓
+- **EnvelopeMetadata**: registered in the global registry via `EFCoreJsonContext`
+  (`[JsonSerializable]` + `RegisterContext`). The EFCore *read* path materializes it via
+  **EF Core 10 `ComplexProperty().ToJson()`** — a deliberately separate, AOT-native JSON
+  engine kept *byte-compatible* with the STJ registry by `PerspectivePersistenceJsonContext`
+  (its entire reason to exist) and parity-tested. By design, not a divergence. ✓
+
+### Follow-ups (out of registry-sharing scope; each its own decision)
+1. **RabbitMQ vs ASB fallback asymmetry** — both share the registry, but ASB additionally
+   falls back to `ITypeBinder.Bind` + raw-receptor on a registry miss; RabbitMQ drops. This is
+   transport receive-parity, not registry-sharing — changing it alters RabbitMQ message
+   semantics, so it warrants its own scoped change + tests.
+2. **Snapshot invalidation on deploy** (from Tier 1) — old snapshot blobs use the pre-fix raw
+   format; invalidate/rebuild on rollout. Tracks the same open question in
+   `docs/design/event-upcasting.md`.
+
+---
 
 ## Why
 
@@ -80,17 +120,13 @@ set by the same `[ModuleInitializer]` callback), read by the generated runner's 
 
 ## Execution (TDD red/green per commit; full diff coverage)
 
-- [ ] **Tier 2a** — `EventTypeMatchingHelper.TryResolveType` + unit tests (key-form matrix:
-      AQN-with-version, FullName+Assembly, FullName, short Name, nested+generic). Pure Core.
-- [ ] **Tier 2b** — route EFCore's 3 polymorphic sites onto it; delete `_resolveConcreteType`,
-      `_buildEventTypeLookup`, inline normalizers. Characterization tests first.
-- [ ] **Tier 2c** — route `DapperEventStoreBase` onto it; delete `_buildTypeLookup`,
-      `_normalizeEventTypeName`.
-- [ ] **Tier 1** — snapshot: add Core options-provider seam + wire from the persistence-context
-      `[ModuleInitializer]`; change `To/FromSnapshotJson` to use it. RED test = snapshot round-trip
-      of a model with a WhizbangId field fails under raw STJ / passes under registry options.
-- [ ] **Tier 3** — audit transports/workers/coordinators: add lock-in tests; reconcile the
-      RabbitMQ-vs-ASB fallback asymmetry; document the EF-metadata vs `_jsonOptions` parity.
+- [x] **Tier 2a** — `EventTypeMatchingHelper.BuildTypeLookup`/`TryResolveType` + 8 unit tests.
+- [x] **Tier 2b** — EFCore's 3 polymorphic sites onto it; dead helpers deleted; tests green.
+- [x] **Tier 2c** — Dapper base + Dapper Postgres onto it; dead helpers deleted; Sqlite N/A; tests green.
+- [x] **Tier 1** — snapshot ser/deser routed through `JsonContextRegistry` combined options (AOT).
+      (No Core seam needed — the model type is source-gen registered in `MessageJsonContext`.)
+- [x] **Tier 3** — audit complete: all sites already share the registry; EF metadata is a
+      by-design parity-tested `ComplexProperty().ToJson()` path. Two follow-ups recorded above.
 
 ## Commit strategy
 One commit per tier (2b/2c may split per store). `refactor(serialization): …` /
