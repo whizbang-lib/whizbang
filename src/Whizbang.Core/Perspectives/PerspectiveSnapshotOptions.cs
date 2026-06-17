@@ -41,4 +41,13 @@ public class PerspectiveSnapshotOptions {
   /// behavior).
   /// </remarks>
   public int RewindSnapshotIntervalEvents { get; set; } = 10;
+
+  /// <summary>
+  /// What to do when a stored snapshot's serialization version does not match the current
+  /// <see cref="Whizbang.Core.Serialization.SerializationVersion.CURRENT"/> (e.g. after a snapshot
+  /// serialization-format change, or for legacy unversioned blobs).
+  /// Default: <see cref="SnapshotUpgradePolicy.RebuildFromEvents"/> — discard the stale snapshot and
+  /// replay from events, which is always correct since snapshots are a derived cache.
+  /// </summary>
+  public SnapshotUpgradePolicy UpgradePolicy { get; set; } = SnapshotUpgradePolicy.RebuildFromEvents;
 }
