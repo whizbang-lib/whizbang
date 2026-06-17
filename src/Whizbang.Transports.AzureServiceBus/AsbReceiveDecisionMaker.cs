@@ -71,21 +71,20 @@ internal sealed class AsbReceiveDecisionMaker {
       Whizbang.Core.Offloads.BodyOffloadPostSerializeHook.IS_CLAIM_METADATA_KEY,
       out var isClaimObj) ? isClaimObj?.ToString() : null;
 
-    JsonTypeInfo? typeInfo;
-    if (Whizbang.Core.Offloads.BodyClaimWireHelper.IsClaimHeader(isClaimHeader)) {
-      typeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<Whizbang.Core.Offloads.BodyClaimEnvelopePayload>));
-    } else {
-      typeInfo = getTypeInfoByName(envelopeTypeName, jsonOptions);
+    // Claim-detection + registry resolve via the shared BodyClaimWireHelper (same helper +
+    // flow point RabbitMQ uses), threading ASB's injected resolver through for testability.
+    var typeInfo = Whizbang.Core.Offloads.BodyClaimWireHelper.ResolveDeserializeTypeInfo(
+      envelopeTypeName, isClaimHeader, jsonOptions, getTypeInfoByName);
 
-      // Slice 4 — when the JsonContextRegistry lookup misses, fall back to the multi-pass
-      // type binder. If it resolves the envelope type, ask jsonOptions for a JsonTypeInfo —
-      // STJ default resolver can produce one for any type that's loadable, even if no
-      // [ModuleInitializer] registered it explicitly.
-      if (typeInfo == null && typeBinder != null) {
-        var bound = typeBinder.Bind(envelopeTypeName);
-        if (bound != null) {
-          typeInfo = jsonOptions.GetTypeInfo(bound);
-        }
+    // Slice 4 (ASB-specific) — on a registry miss for a non-claim message, fall back to the
+    // multi-pass type binder. STJ's resolver can produce a JsonTypeInfo for any loadable type,
+    // even if no [ModuleInitializer] registered it explicitly.
+    if (typeInfo == null
+        && !Whizbang.Core.Offloads.BodyClaimWireHelper.IsClaimHeader(isClaimHeader)
+        && typeBinder != null) {
+      var bound = typeBinder.Bind(envelopeTypeName);
+      if (bound != null) {
+        typeInfo = jsonOptions.GetTypeInfo(bound);
       }
     }
 
