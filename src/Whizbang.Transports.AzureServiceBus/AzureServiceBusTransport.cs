@@ -361,10 +361,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       if (preSerializedBytes is { } hint) {
         json = Encoding.UTF8.GetString(hint.Span);
       } else {
-        // Serialize envelope to JSON using AOT-compatible options from registry
+        // Serialize via the shared WireEnvelopeSerializer (one wire-serialization path). ASB
+        // consumes a string body, so decode the bytes — symmetric with the pre-serialized hint
+        // path above, which already GetStrings the hint bytes.
         var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
           ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
-        json = JsonSerializer.Serialize(envelope, typeInfo);
+        var serialized = Whizbang.Core.Serialization.WireEnvelopeSerializer.Serialize(
+          envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
+        json = Encoding.UTF8.GetString(serialized.Data.Span);
       }
 
       // DIAGNOSTIC: Log the first 500 chars of JSON to see if MessageId is in there
@@ -594,9 +598,12 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     if (item.PreSerializedBytes is { } hint) {
       json = Encoding.UTF8.GetString(hint.Span);
     } else {
+      // Shared wire-serialization path; ASB consumes a string body (symmetric with the hint above).
       var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
         ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
-      json = JsonSerializer.Serialize(envelope, typeInfo);
+      var serialized = Whizbang.Core.Serialization.WireEnvelopeSerializer.Serialize(
+        envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
+      json = Encoding.UTF8.GetString(serialized.Data.Span);
     }
 
     var message = new ServiceBusMessage(json) {

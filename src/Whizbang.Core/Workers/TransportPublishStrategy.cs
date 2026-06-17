@@ -573,8 +573,10 @@ public partial class TransportPublishStrategy(
       ?? throw new InvalidOperationException(
         $"No JsonTypeInfo found for {runtimeType.Name}. Register MessageEnvelope<T> via JsonContextRegistry before enabling post-serialize hooks.");
 
-    var json = JsonSerializer.Serialize(work.Envelope, typeInfo);
-    var originalBytes = System.Text.Encoding.UTF8.GetBytes(json);
+    // Single serialize-once pass. The body-path (inline vs offload) decision reads the size off
+    // this result; no re-serialization downstream.
+    var serialized = Whizbang.Core.Serialization.WireEnvelopeSerializer.Serialize(
+      work.Envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
 
     var envelopeTypeName = work.EnvelopeType
       ?? runtimeType.AssemblyQualifiedName
@@ -583,8 +585,8 @@ public partial class TransportPublishStrategy(
     var context = new Whizbang.Core.Offloads.PostSerializeContext(
       Envelope: work.Envelope,
       EnvelopeType: envelopeTypeName,
-      SerializedBytes: originalBytes,
-      ContentType: "application/json",
+      SerializedBytes: serialized.Data,
+      ContentType: serialized.ContentType,
       TransportMaxMessageSizeBytes: _transport.MaxMessageSizeBytes,
       JsonOptions: _jsonOptions,
       Destination: destination);
