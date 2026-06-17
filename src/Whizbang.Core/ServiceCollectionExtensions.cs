@@ -415,9 +415,16 @@ public static class ServiceCollectionExtensions {
       services.AddScoped<Messaging.IEventStore>(sp => {
         var holder = sp.GetRequiredService<InnerEventStoreHolder>();
 
-        // Layer 1: SecurityContext (innermost - propagates security context)
-        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(
-            (Messaging.IEventStore)holder.Instance);
+        // Layer 0: Upcasting (innermost - transforms stored events to their current shape on
+        // read, so every outer decorator and consumer sees upcasted events). Only wrapped when
+        // upcasters are registered, so non-upcasting consumers pay nothing.
+        var upcasterPipeline = sp.GetService<Messaging.EventUpcasterPipeline>();
+        var innerStore = upcasterPipeline is { HasAny: true }
+            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline)
+            : (Messaging.IEventStore)holder.Instance;
+
+        // Layer 1: SecurityContext (propagates security context)
+        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
 
         // Layer 2: SyncTracking (tracks events for perspective sync)
         var scopedTracker = sp.GetService<IScopedEventTracker>();
@@ -455,9 +462,16 @@ public static class ServiceCollectionExtensions {
       services.AddSingleton<Messaging.IEventStore>(sp => {
         var holder = sp.GetRequiredService<InnerEventStoreHolder>();
 
-        // Layer 1: SecurityContext (innermost - propagates security context)
-        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(
-            (Messaging.IEventStore)holder.Instance);
+        // Layer 0: Upcasting (innermost - transforms stored events to their current shape on
+        // read, so every outer decorator and consumer sees upcasted events). Only wrapped when
+        // upcasters are registered, so non-upcasting consumers pay nothing.
+        var upcasterPipeline = sp.GetService<Messaging.EventUpcasterPipeline>();
+        var innerStore = upcasterPipeline is { HasAny: true }
+            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline)
+            : (Messaging.IEventStore)holder.Instance;
+
+        // Layer 1: SecurityContext (propagates security context)
+        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
 
         // Layer 2: SyncTracking (tracks events for perspective sync)
         var syncEventTracker = sp.GetService<ISyncEventTracker>();
