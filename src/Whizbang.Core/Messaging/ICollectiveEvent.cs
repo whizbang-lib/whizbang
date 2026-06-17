@@ -62,4 +62,18 @@ public interface ICollectiveEvent : IMessage {
   /// affected.
   /// </summary>
   IReadOnlyList<Guid> MatchedStreamIds { get; }
+
+  /// <summary>
+  /// Defensive cap surfaced for the opt-in
+  /// <c>CollectiveEventExpander</c> (Slice 8): a consumer that asks for
+  /// per-stream expansion gets at most this many synthetic
+  /// per-stream events. Exceeding the cap throws
+  /// <c>CollectiveExpansionLimitExceededException</c> with no partial
+  /// yield, so a runaway matched-set can't silently blow out the
+  /// consumer's inbox. Defaults to 10_000 — matches
+  /// <see cref="ICompositeEvent.MaxInnerEventsAllowed"/> for parity.
+  /// Override on the concrete event type to raise/lower per use case.
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  int MaxExpandedInnersAllowed => 10_000;
 }
