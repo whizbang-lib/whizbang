@@ -1004,6 +1004,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     }
 
     var isComposite = payload is Whizbang.Core.Messaging.ICompositeEvent;
+    var isCollective = payload is Whizbang.Core.Messaging.ICollectiveEvent;
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
@@ -1012,6 +1013,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       StreamId = streamId,
       IsEvent = isEvent,
       IsComposite = isComposite,
+      IsCollective = isCollective,
       Scope = envelope.GetCurrentScope()?.Scope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
