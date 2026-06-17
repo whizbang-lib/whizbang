@@ -1,5 +1,8 @@
 # Design: First-Class Event Upcasting
 
+> **Using upcasting?** See the developer guide: [`docs/event-upcasting.md`](../event-upcasting.md).
+> This document is the design rationale / RFC.
+
 ## Status: IMPLEMENTED (core) — JDX upcasters + snapshot versioning pending
 
 > RFC authored against Whizbang 0.688. First customer driving the requirement:
