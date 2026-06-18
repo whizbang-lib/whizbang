@@ -212,4 +212,33 @@ public static class TypeNameFormatter {
     // No generic wrapper — fall back to regular namespace extraction
     return GetNamespace(envelopeType);
   }
+
+  /// <summary>
+  /// Extracts the payload type's full name (namespace + type, no assembly) from a generic envelope
+  /// type string. The transport delivers types like
+  /// <c>MessageEnvelope`1[[Payload.Type, Assembly]], Whizbang.Core</c>; this returns the inner
+  /// payload type's full name. Falls back to <see cref="GetFullName"/> of the whole string when no
+  /// generic parameter is present. Useful as a bounded metric dimension (e.g. <c>message.type</c>).
+  /// </summary>
+  /// <example>
+  /// "Whizbang...MessageEnvelope`1[[MyApp.Chat.MyEvent, MyApp]], Whizbang" → "MyApp.Chat.MyEvent"
+  /// "MyApp.Chat.MyEvent, MyApp" → "MyApp.Chat.MyEvent" (no generic wrapper — falls back)
+  /// </example>
+  public static string? GetPayloadFullName(string envelopeType) {
+    if (string.IsNullOrEmpty(envelopeType)) {
+      return null;
+    }
+
+    var openBracket = envelopeType.IndexOf("[[", StringComparison.Ordinal);
+    if (openBracket >= 0) {
+      var closeBracket = envelopeType.IndexOf("]]", openBracket, StringComparison.Ordinal);
+      if (closeBracket > openBracket) {
+        var innerType = envelopeType[(openBracket + 2)..closeBracket];
+        return GetFullName(innerType);
+      }
+    }
+
+    // No generic wrapper — fall back to regular full-name extraction.
+    return GetFullName(envelopeType);
+  }
 }
