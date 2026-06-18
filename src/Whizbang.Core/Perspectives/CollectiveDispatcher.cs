@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -22,7 +24,8 @@ namespace Whizbang.Core.Perspectives;
 ///   sp,
 ///   CollectiveApplyRegistry.Entries,
 ///   sp.GetServices&lt;ICollectiveScopeResolver&gt;().ToList(),
-///   sp.GetServices&lt;ICollectiveEventExecutor&gt;().ToList()));
+///   sp.GetServices&lt;ICollectiveEventExecutor&gt;().ToList(),
+///   sp.GetService&lt;EventCategoryMetrics&gt;()));
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
@@ -36,6 +39,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
   private readonly IReadOnlyList<CollectiveApplyEntry> _entries;
   private readonly IReadOnlyList<ICollectiveScopeResolver> _resolvers;
   private readonly IReadOnlyList<ICollectiveEventExecutor> _executors;
+  private readonly EventCategoryMetrics? _metrics;
 
   /// <summary>
   /// Creates a dispatcher.
@@ -44,11 +48,13 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
   /// <param name="entries">Compile-time registry from <c>CollectiveApplyRegistry.Entries</c>.</param>
   /// <param name="resolvers">All <see cref="ICollectiveScopeResolver"/> instances registered in DI.</param>
   /// <param name="executors">All <see cref="ICollectiveEventExecutor"/> instances registered in DI (one per <c>TModel</c>).</param>
+  /// <param name="metrics">Optional cross-cutting metrics. When null, recording is a no-op.</param>
   public CollectiveDispatcher(
       IServiceProvider services,
       IReadOnlyList<CollectiveApplyEntry> entries,
       IReadOnlyList<ICollectiveScopeResolver> resolvers,
-      IReadOnlyList<ICollectiveEventExecutor> executors) {
+      IReadOnlyList<ICollectiveEventExecutor> executors,
+      EventCategoryMetrics? metrics = null) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(entries);
     ArgumentNullException.ThrowIfNull(resolvers);
@@ -57,6 +63,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
     _entries = entries;
     _resolvers = resolvers;
     _executors = executors;
+    _metrics = metrics;
   }
 
   /// <inheritdoc />
@@ -69,24 +76,86 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
     ArgumentNullException.ThrowIfNull(dbContextOrSession);
 
     var eventType = evt.GetType();
+    var eventTypeName = eventType.FullName ?? eventType.Name;
+    var eventNamespace = eventType.Namespace ?? string.Empty;
+
     var matchingEntries = _entries.Where(e => e.EventType == eventType).ToList();
     if (matchingEntries.Count == 0) {
-      // No perspective subscribed — not an error.
+      // No perspective subscribed — not an error. Still increment the
+      // dispatched counter so dashboards see the producer activity even
+      // when consumers haven't caught up.
+      _metrics?.Dispatched.Add(1,
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_NAMESPACE, eventNamespace),
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.SCOPE_KIND, evt.Scope.ScopeKind));
       return new CollectiveDispatchResult(HandlerCount: 0, AffectedRowCount: 0);
     }
 
-    // Resolver lookup happens once per dispatch (every entry that
-    // matched the event type shares the event's scope kind).
-    var resolver = _resolveResolver(evt.Scope.ScopeKind);
+    var sw = _metrics is null ? null : Stopwatch.StartNew();
+
+    ICollectiveScopeResolver resolver;
+    try {
+      // Resolver lookup happens once per dispatch (every entry that
+      // matched the event type shares the event's scope kind).
+      resolver = _resolveResolver(evt.Scope.ScopeKind);
+    } catch (InvalidOperationException) {
+      _metrics?.Errors.Add(1,
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_NAMESPACE, eventNamespace),
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.ERROR_CLASS, EventCategoryMetrics.ErrorClasses.RESOLVER_MISSING));
+      throw;
+    }
+
+    _metrics?.Dispatched.Add(1,
+      new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
+      new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
+      new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_NAMESPACE, eventNamespace),
+      new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.SCOPE_KIND, evt.Scope.ScopeKind));
 
     var totalAffectedRows = 0;
-    foreach (var entry in matchingEntries) {
-      var executor = _resolveExecutor(entry.ModelType);
-      var handler = _services.GetRequiredService(entry.HandlerType);
-      var affected = await executor.ApplyAsync(
-        entry, handler, evt, resolver, dbContextOrSession, collectiveEventId, cancellationToken)
-        .ConfigureAwait(false);
-      totalAffectedRows += affected;
+    try {
+      foreach (var entry in matchingEntries) {
+        ICollectiveEventExecutor executor;
+        try {
+          executor = _resolveExecutor(entry.ModelType);
+        } catch (InvalidOperationException) {
+          _metrics?.Errors.Add(1,
+            new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
+            new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
+            new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_NAMESPACE, eventNamespace),
+            new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.ERROR_CLASS, EventCategoryMetrics.ErrorClasses.EXECUTOR_MISSING));
+          throw;
+        }
+
+        var handler = _services.GetRequiredService(entry.HandlerType);
+        var affected = await executor.ApplyAsync(
+          entry, handler, evt, resolver, dbContextOrSession, collectiveEventId, cancellationToken)
+          .ConfigureAwait(false);
+        totalAffectedRows += affected;
+
+        _metrics?.Fanout.Record(affected,
+          new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
+          new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
+          new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_NAMESPACE, eventNamespace),
+          new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.MODEL_TYPE, entry.ModelType.Name));
+      }
+    } catch (Exception ex) when (ex is not InvalidOperationException && ex is not OperationCanceledException) {
+      _metrics?.Errors.Add(1,
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_NAMESPACE, eventNamespace),
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.ERROR_CLASS, EventCategoryMetrics.ErrorClasses.SQL_EXCEPTION));
+      throw;
+    } finally {
+      if (sw is not null) {
+        sw.Stop();
+        _metrics?.DispatchDuration.Record(sw.Elapsed.TotalMilliseconds,
+          new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
+          new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
+          new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_NAMESPACE, eventNamespace));
+      }
     }
 
     return new CollectiveDispatchResult(
