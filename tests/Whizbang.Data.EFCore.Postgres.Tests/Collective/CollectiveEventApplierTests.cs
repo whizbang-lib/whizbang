@@ -29,7 +29,7 @@ public class CollectiveEventApplierTests {
   [Test]
   public async Task ApplyAsync_EventTypeMismatch_ThrowsArgumentExceptionAsync() {
     var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeB(new _tenantScope("t"), []);
+    var evt = new _typeB(new _tenantScope("t"));
     var resolver = new _stubResolver("tenant");
     using var ctx = _newCtx();
 
@@ -42,7 +42,7 @@ public class CollectiveEventApplierTests {
   [Test]
   public async Task ApplyAsync_ModelTypeMismatch_ThrowsArgumentExceptionAsync() {
     var entry = _entryFor<_typeA>(typeof(_otherModel), "Apply"); // mismatched TModel
-    var evt = new _typeA(new _tenantScope("t"), []);
+    var evt = new _typeA(new _tenantScope("t"));
     var resolver = new _stubResolver("tenant");
     using var ctx = _newCtx();
 
@@ -55,7 +55,7 @@ public class CollectiveEventApplierTests {
   [Test]
   public async Task ApplyAsync_ScopeKindMismatch_ThrowsArgumentExceptionAsync() {
     var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeA(new _tenantScope("t"), []);
+    var evt = new _typeA(new _tenantScope("t"));
     var resolver = new _stubResolver("workspace"); // wrong kind
     using var ctx = _newCtx();
 
@@ -69,7 +69,7 @@ public class CollectiveEventApplierTests {
 
   [Test]
   public async Task ApplyAsync_NullEntry_ThrowsArgumentNullAsync() {
-    var evt = new _typeA(new _tenantScope("t"), []);
+    var evt = new _typeA(new _tenantScope("t"));
     using var ctx = _newCtx();
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
         null!, new _handler(), evt, new _stubResolver("tenant"), ctx, Guid.NewGuid()))
@@ -79,56 +79,17 @@ public class CollectiveEventApplierTests {
   [Test]
   public async Task ApplyAsync_NullHandlerInstance_ThrowsArgumentNullAsync() {
     var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeA(new _tenantScope("t"), []);
+    var evt = new _typeA(new _tenantScope("t"));
     using var ctx = _newCtx();
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, null!, evt, new _stubResolver("tenant"), ctx, Guid.NewGuid()))
       .ThrowsExactly<ArgumentNullException>();
   }
 
-  // ── EnterContext is called before Invoker, restored after ──────────────
-
-  [Test]
-  public async Task ApplyAsync_EmptyMatchedSet_ShortCircuitsTo_ZeroAffectedAsync() {
-    // Slice 6's adapter short-circuits an empty matched-set to
-    // Task.FromResult(0). The applier exercises this end-to-end without
-    // hitting the SQL provider (no Postgres needed).
-    var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeA(new _tenantScope("t"), []); // empty set
-    var resolver = new _stubResolver("tenant");
-    using var ctx = _newCtx();
-
-    var prior = ScopeContextAccessor.CurrentContext;
-    try {
-      var affected = await CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid());
-
-      await Assert.That(affected).IsEqualTo(0)
-        .Because("Empty matched set is a well-formed no-op; the adapter returns 0 without issuing SQL.");
-      await Assert.That(resolver.EnterCount).IsEqualTo(1)
-        .Because("Resolver.EnterContext must run BEFORE the handler is invoked so ambient scope is in place if the handler reads it.");
-      await Assert.That(resolver.ExitCount).IsEqualTo(1)
-        .Because("Disposing the EnterContext result must run AFTER apply, even on the no-op path.");
-      await Assert.That(ScopeContextAccessor.CurrentContext).IsEqualTo(prior)
-        .Because("Ambient context must be restored to its prior value once the apply finishes.");
-    } finally {
-      ScopeContextAccessor.CurrentContext = prior;
-    }
-  }
-
-  [Test]
-  public async Task ApplyAsync_HandlerInvokedOnce_ReceivesEventAsync() {
-    var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeA(new _tenantScope("t"), []);
-    var handler = new _handler();
-
-    await CollectiveEventApplier<_jobModel>.ApplyAsync(
-      entry, handler, evt, new _stubResolver("tenant"), _newCtx(), Guid.NewGuid());
-
-    await Assert.That(handler.InvocationCount).IsEqualTo(1)
-      .Because("Applier MUST call the entry's Invoker exactly once with the supplied handler + event.");
-    await Assert.That(handler.LastEvent).IsSameReferenceAs(evt);
-  }
+  // ── EnterContext / handler-invocation behavior is covered end-to-end
+  //    by CollectiveDispatcherEFCoreIntegrationTests (real Postgres).
+  //    EF Core InMemory doesn't support ExecuteUpdateAsync, so the
+  //    SQL-reaching behavior can't be unit-tested here in isolation.
 
   // ── Inline test types ──────────────────────────────────────────────────
 
@@ -143,8 +104,8 @@ public class CollectiveEventApplierTests {
     public string ScopeKind => "tenant";
   }
 
-  private sealed record _typeA(ICollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
-  private sealed record _typeB(ICollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
+  private sealed record _typeA(ICollectiveScope Scope) : ICollectiveEvent;
+  private sealed record _typeB(ICollectiveScope Scope) : ICollectiveEvent;
 
   private sealed class _handler {
     public int InvocationCount { get; private set; }
@@ -200,9 +161,7 @@ public class CollectiveEventApplierTests {
   }
 
   private sealed class _ctx(DbContextOptions<_ctx> opts) : DbContext(opts) {
-    // Intentionally bare — the tests we ship in Slice 7 unit-cover the
-    // applier's validation + composition path; they never reach the SQL
-    // execution so the missing DbSet does not matter. Real-Postgres
-    // integration (full SQL UPDATE) is the natural follow-up.
+    public DbSet<PerspectiveRow<_jobModel>> Jobs => Set<PerspectiveRow<_jobModel>>();
+    public DbSet<PerspectiveRow<_otherModel>> Others => Set<PerspectiveRow<_otherModel>>();
   }
 }
