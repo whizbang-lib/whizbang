@@ -107,8 +107,6 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       dbContext,
       spec,
       scopeFilter,
-      evt.MatchedStreamIds,
-      collectiveEventId,
       cancellationToken).ConfigureAwait(false);
   }
 }

@@ -19,26 +19,21 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 
 /// <summary>
-/// End-to-end integration test for <see cref="CollectiveDispatcher"/>
-/// against a real Postgres testcontainer. Exercises the full Slice
-/// 7b-α composition:
-/// <c>ICollectiveDispatcher → ICollectiveEventExecutor → CollectiveEventApplier&lt;TModel&gt; → EFCoreCollectiveAdapter → ExecuteUpdateAsync</c>.
+/// End-to-end integration tests for the scope-only
+/// <see cref="CollectiveDispatcher"/> against a real Postgres
+/// testcontainer. The dispatched event carries ONLY a scope; the SQL
+/// UPDATE's <c>WHERE</c> is exactly the resolver's <c>ScopeFilter</c>
+/// — no captured matched-id set, no audit-pointer column write.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Verifies the locked design invariants land at the SQL layer:
+/// This file pins the central invariants of the scope-level
+/// determinism design:
 /// </para>
 /// <list type="bullet">
-///   <item><description>Scope filter actually restricts the update to the captured tenant (tenant B's rows must not be touched).</description></item>
-///   <item><description>Matched-set membership is enforced (out-of-set rows in the same tenant are not touched).</description></item>
-///   <item><description>Audit pointer (<c>last_collective_event_id</c>) lands on every affected row in the same UPDATE.</description></item>
-///   <item><description>Affected-row count surfaces in <see cref="CollectiveDispatchResult.AffectedRowCount"/>.</description></item>
+///   <item><description>The resolver's scope filter is the SOLE predicate (tenant B rows are entirely untouched on a tenant-A event).</description></item>
+///   <item><description>Predicate re-evaluates against the current projection state at apply time — rows materialized between original "what the producer saw" and apply time ARE included (the canonical late-arrival case the 11-stream replay scenario protects).</description></item>
 /// </list>
-/// <para>
-/// The test bypasses the inbox/outbox transport (Slice 3) — that flow
-/// is already covered by Slice 3's transport-roundtrip tests. The
-/// purpose here is to lock the dispatch-to-Postgres seam itself.
-/// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 [Category("Integration")]
@@ -54,13 +49,11 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   private _jobDbContext? _ctx;
   private string _connectionString = null!;
 
-  // ── End-to-end: tenant scope + matched set + audit pointer ────────────
+  // ── Scope-only WHERE: tenant filter restricts to scope ────────────────
 
   [Test]
-  public async Task DispatchAsync_TenantScoped_MutatesOnlyMatchedRowsInTenantAsync() {
+  public async Task DispatchAsync_TenantScoped_AffectsAllRowsInScopeOnlyAsync() {
     // Seed: two tenants × two jobs each = four rows.
-    //  t-A: jobA1 (matched), jobA2 (NOT matched — same tenant, excluded from set)
-    //  t-B: jobB1 (NOT matched — different tenant), jobB2 (NOT matched — different tenant)
     var jobA1 = Guid.NewGuid();
     var jobA2 = Guid.NewGuid();
     var jobB1 = Guid.NewGuid();
@@ -71,106 +64,86 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobAsync(jobB1, tenantId: "t-B", status: "Active");
     await _seedJobAsync(jobB2, tenantId: "t-B", status: "Active");
 
-    // Dispatch an archive event scoped to t-A, matching only jobA1.
-    var evtId = Guid.NewGuid();
-    var dispatcher = _buildDispatcher();
-    var result = await dispatcher.DispatchAsync(
+    var result = await _buildDispatcher().DispatchAsync(
       evt: new _archiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-A"),
-        MatchedStreamIds = [jobA1],
         OccurredAt = DateTimeOffset.UtcNow,
       },
-      collectiveEventId: evtId,
+      collectiveEventId: Guid.NewGuid(),
       dbContextOrSession: _ctx!,
       cancellationToken: default);
 
-    // Result aggregate
     await Assert.That(result.HandlerCount).IsEqualTo(1);
-    await Assert.That(result.AffectedRowCount).IsEqualTo(1)
-      .Because("Exactly one row (jobA1) intersected the tenant filter AND the matched-id set — the SQL UPDATE must report exactly that count.");
+    await Assert.That(result.AffectedRowCount).IsEqualTo(2)
+      .Because("Tenant A has two rows; both must be archived. The scope predicate is the SOLE filter — the event carries no subset enumeration.");
 
-    // Read back via raw SQL — the test exercises the SET-clause + WHERE
-    // path; verification doesn't need to go through EF's jsonb materialization.
-    var (statusA1, auditA1) = await _readJobAsync(jobA1);
-    var (statusA2, auditA2) = await _readJobAsync(jobA2);
-    var (statusB1, auditB1) = await _readJobAsync(jobB1);
-    var (statusB2, auditB2) = await _readJobAsync(jobB2);
-
-    await Assert.That(statusA1).IsEqualTo("Archived")
-      .Because("jobA1 was in the matched-set and matched the tenant scope — must be archived.");
-    await Assert.That(auditA1).IsEqualTo(evtId)
-      .Because("The audit pointer MUST land on every row the SQL UPDATE touched, in the same statement, so audit visibility is atomic with the mutation.");
-
-    await Assert.That(statusA2).IsEqualTo("Active")
-      .Because("jobA2 was in the same tenant but NOT in the matched-set — the membership clause must exclude it.");
-    await Assert.That(auditA2).IsNull()
-      .Because("If the audit pointer landed on jobA2 the matched-set membership wasn't actually enforced — that would be a silent over-mutation.");
-
-    await Assert.That(statusB1).IsEqualTo("Active");
-    await Assert.That(auditB1).IsNull();
-    await Assert.That(statusB2).IsEqualTo("Active");
-    await Assert.That(auditB2).IsNull()
-      .Because("Tenant B rows must be entirely untouched — the resolver's scope filter must restrict by row.scope.TenantId.");
+    await Assert.That(await _readStatusAsync(jobA1)).IsEqualTo("Archived");
+    await Assert.That(await _readStatusAsync(jobA2)).IsEqualTo("Archived");
+    await Assert.That(await _readStatusAsync(jobB1)).IsEqualTo("Active")
+      .Because("Tenant B rows must be entirely untouched — the resolver's scope filter restricts by row.Scope.TenantId.");
+    await Assert.That(await _readStatusAsync(jobB2)).IsEqualTo("Active");
   }
 
-  // ── Multi-row in same tenant ──────────────────────────────────────────
+  // ── Predicate re-evaluates at apply time (no snapshot) ────────────────
 
   [Test]
-  public async Task DispatchAsync_AllRowsInTenantMatched_UpdatesAllAsync() {
-    var job1 = Guid.NewGuid();
-    var job2 = Guid.NewGuid();
-    var job3 = Guid.NewGuid();
+  public async Task DispatchAsync_RowsMaterializedAfterEventEmitted_AreIncludedAsync() {
+    // Models the canonical scope-determinism case: a stream's CREATE
+    // event was emitted earlier in the event sequence but didn't
+    // materialize in the projection until AFTER the producer "would have
+    // seen" the matched set. Replay re-orders to log order; the
+    // collective event applies AFTER the create event; the late
+    // materialization is included.
+    //
+    // We simulate the apply-time projection state by seeding the
+    // late-materialized rows BEFORE calling DispatchAsync. The
+    // collective event has no captured set — it sees the projection
+    // state at dispatch time, period.
 
-    await _seedJobAsync(job1, tenantId: "t-multi", status: "Active");
-    await _seedJobAsync(job2, tenantId: "t-multi", status: "Active");
-    await _seedJobAsync(job3, tenantId: "t-multi", status: "Active");
+    // "Original" set: rows the producer saw at write time.
+    var earlyA = Guid.NewGuid();
+    var earlyB = Guid.NewGuid();
+    await _seedJobAsync(earlyA, tenantId: "t-late", status: "Active");
+    await _seedJobAsync(earlyB, tenantId: "t-late", status: "Active");
 
-    var evtId = Guid.NewGuid();
-    var dispatcher = _buildDispatcher();
-    var result = await dispatcher.DispatchAsync(
+    // "Late-arriving" rows: these would have been missed by a snapshot-
+    // determinism model (their stream events were emitted earlier in the
+    // log but their projection materialization came later in real time).
+    // In the scope-determinism model, replay puts events in log order,
+    // so by the time the collective applies, these rows EXIST and the
+    // predicate covers them.
+    var late1 = Guid.NewGuid();
+    var late2 = Guid.NewGuid();
+    var late3 = Guid.NewGuid();
+    await _seedJobAsync(late1, tenantId: "t-late", status: "Active");
+    await _seedJobAsync(late2, tenantId: "t-late", status: "Active");
+    await _seedJobAsync(late3, tenantId: "t-late", status: "Active");
+
+    var result = await _buildDispatcher().DispatchAsync(
       evt: new _archiveJobsCollectiveEvent {
-        Scope = new TenantCollectiveScope("t-multi"),
-        MatchedStreamIds = [job1, job2, job3],
+        Scope = new TenantCollectiveScope("t-late"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
-      collectiveEventId: evtId,
+      collectiveEventId: Guid.NewGuid(),
       dbContextOrSession: _ctx!,
       cancellationToken: default);
 
-    await Assert.That(result.AffectedRowCount).IsEqualTo(3)
-      .Because("All three matched-ids fall inside the tenant scope — all three must be updated in one SQL statement.");
+    await Assert.That(result.AffectedRowCount).IsEqualTo(5)
+      .Because("Scope-level determinism: the predicate evaluates against current projection state. The five rows visible at apply time are all affected, including the three that materialized after the original write-time enumeration. This IS the 11-stream replay invariant in miniature.");
 
-    foreach (var id in new[] { job1, job2, job3 }) {
-      var (status, audit) = await _readJobAsync(id);
-      await Assert.That(status).IsEqualTo("Archived");
-      await Assert.That(audit).IsEqualTo(evtId);
+    foreach (var id in new[] { earlyA, earlyB, late1, late2, late3 }) {
+      await Assert.That(await _readStatusAsync(id)).IsEqualTo("Archived")
+        .Because("Every tenant-A row at apply time gets archived, regardless of when it materialized relative to the producer's wall-clock view.");
     }
   }
 
-  private async Task<(string Status, Guid? AuditId)> _readJobAsync(Guid id) {
-    await using var conn = new NpgsqlConnection(_connectionString);
-    await conn.OpenAsync();
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT data->>'Status', last_collective_event_id FROM wh_per_collective_job WHERE id = @id;";
-    cmd.Parameters.AddWithValue("id", id);
-    await using var reader = await cmd.ExecuteReaderAsync();
-    if (!await reader.ReadAsync()) {
-      throw new InvalidOperationException($"No row found for id {id}");
-    }
-    var status = reader.GetString(0);
-    Guid? audit = reader.IsDBNull(1) ? null : reader.GetGuid(1);
-    return (status, audit);
-  }
-
-  // ── Empty matched-set short-circuit ───────────────────────────────────
+  // ── Scope with no rows: 0 affected, no error ──────────────────────────
 
   [Test]
-  public async Task DispatchAsync_EmptyMatchedSet_AffectsZeroRowsAndDoesNotErrorAsync() {
-    var dispatcher = _buildDispatcher();
-    var result = await dispatcher.DispatchAsync(
+  public async Task DispatchAsync_ScopeWithNoRows_AffectsZeroRowsAsync() {
+    var result = await _buildDispatcher().DispatchAsync(
       evt: new _archiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-empty"),
-        MatchedStreamIds = [], // captured-at-write-time empty set
         OccurredAt = DateTimeOffset.UtcNow,
       },
       collectiveEventId: Guid.NewGuid(),
@@ -178,12 +151,11 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       cancellationToken: default);
 
     await Assert.That(result.HandlerCount).IsEqualTo(1)
-      .Because("The handler still fires — the matched-set being empty is a valid producer outcome, not an absent subscriber.");
-    await Assert.That(result.AffectedRowCount).IsEqualTo(0)
-      .Because("Adapter short-circuits empty matched-sets to Task.FromResult(0) — no SQL round-trip, but the count surfaces cleanly.");
+      .Because("The handler still fires — zero affected rows is a valid outcome, not an absent subscriber.");
+    await Assert.That(result.AffectedRowCount).IsEqualTo(0);
   }
 
-  // ── Setup / teardown ──────────────────────────────────────────────────
+  // ── Setup / teardown / DbContext ──────────────────────────────────────
 
   [Before(Test)]
   public async Task SetupAsync() {
@@ -208,7 +180,6 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     _dataSource = dataSourceBuilder.Build();
 
     _ctx = _newContext();
-
     await _initSchemaAsync();
   }
 
@@ -243,8 +214,6 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     GC.SuppressFinalize(this);
   }
 
-  // ── DbContext + model ─────────────────────────────────────────────────
-
   internal sealed class _jobModel {
     public string Status { get; set; } = string.Empty;
     public DateTimeOffset? ArchivedAt { get; set; }
@@ -265,7 +234,6 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         e.Property(x => x.CreatedAt).HasColumnName("created_at");
         e.Property(x => x.UpdatedAt).HasColumnName("updated_at");
         e.Property(x => x.Version).HasColumnName("version");
-        e.Property(x => x.LastCollectiveEventId).HasColumnName("last_collective_event_id");
       });
     }
   }
@@ -289,8 +257,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
-        version INTEGER NOT NULL,
-        last_collective_event_id UUID NULL
+        version INTEGER NOT NULL
       );
       """);
   }
@@ -301,24 +268,30 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     var dataJson = JsonSerializer.Serialize(new _jobModel { Status = status });
     var scopeJson = JsonSerializer.Serialize(new PerspectiveScope { TenantId = tenantId });
-    var metadataJson = "{}";
 
     await conn.ExecuteAsync("""
       INSERT INTO wh_per_collective_job
         (id, data, metadata, scope, created_at, updated_at, version)
       VALUES
-        (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @createdAt, @updatedAt, 1);
+        (@id, @data::jsonb, '{}'::jsonb, @scope::jsonb, @createdAt, @updatedAt, 1);
       """, new {
       id,
       data = dataJson,
-      metadata = metadataJson,
       scope = scopeJson,
       createdAt = DateTime.UtcNow,
       updatedAt = DateTime.UtcNow,
     });
   }
 
-  // ── Dispatcher wiring ─────────────────────────────────────────────────
+  private async Task<string> _readStatusAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT data->>'Status' FROM wh_per_collective_job WHERE id = @id;";
+    cmd.Parameters.AddWithValue("id", id);
+    var result = await cmd.ExecuteScalarAsync();
+    return (string)result!;
+  }
 
   private CollectiveDispatcher _buildDispatcher() {
     var services = new ServiceCollection();
@@ -337,18 +310,12 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       ),
     };
 
-    var resolvers = new ICollectiveScopeResolver[] {
-      new TenantCollectiveScopeResolver(),
-    };
-
-    var executors = new ICollectiveEventExecutor[] {
-      new EFCoreCollectiveEventExecutor<_jobModel>(),
-    };
-
-    return new CollectiveDispatcher(services.BuildServiceProvider(), entries, resolvers, executors);
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      entries,
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<_jobModel>()]);
   }
-
-  // ── Test perspective + event ──────────────────────────────────────────
 
   internal sealed class _jobPerspective {
     public ICollectiveSpec<_jobModel> ArchiveJobs(_archiveJobsCollectiveEvent e) =>
@@ -362,7 +329,6 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
   internal sealed record _archiveJobsCollectiveEvent : ICollectiveEvent {
     public required ICollectiveScope Scope { get; init; }
-    public required IReadOnlyList<Guid> MatchedStreamIds { get; init; }
     public required DateTimeOffset OccurredAt { get; init; }
   }
 }
