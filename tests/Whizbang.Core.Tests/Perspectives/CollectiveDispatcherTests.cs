@@ -1,4 +1,5 @@
 #pragma warning disable CA1707
+#pragma warning disable CA1859 // tests assert against the interface return type, not the concrete record
 
 using System.Linq.Expressions;
 using Microsoft.Extensions.DependencyInjection;
@@ -115,11 +116,13 @@ public class CollectiveDispatcherTests {
       executors: [new _stubExecutor(typeof(_jobModel), 0)],
       handlers: [new _jobHandler()]);
 
-    await Assert.That(() => dispatcher.DispatchAsync(
+    await Assert.That(async () => {
+      _ = await dispatcher.DispatchAsync(
         evt: new _archive(new _tenantScope("t-1"), [Guid.NewGuid()]),
         collectiveEventId: Guid.NewGuid(),
         dbContextOrSession: new object(),
-        cancellationToken: default))
+        cancellationToken: default);
+    })
       .ThrowsExactly<InvalidOperationException>()
       .Because("Scope kinds are part of the contract — if a producer emits a 'tenant'-scoped event and the consumer registered no tenant resolver, that's a configuration bug and the runner must surface it loudly, not silently drop the event.");
   }
@@ -134,11 +137,13 @@ public class CollectiveDispatcherTests {
       executors: [new _stubExecutor(typeof(_profileModel), 0)], // wrong model
       handlers: [new _jobHandler()]);
 
-    await Assert.That(() => dispatcher.DispatchAsync(
+    await Assert.That(async () => {
+      _ = await dispatcher.DispatchAsync(
         evt: new _archive(new _tenantScope("t-1"), [Guid.NewGuid()]),
         collectiveEventId: Guid.NewGuid(),
         dbContextOrSession: new object(),
-        cancellationToken: default))
+        cancellationToken: default);
+    })
       .ThrowsExactly<InvalidOperationException>()
       .Because("Per-TModel executor registration is part of the contract; missing the executor for a registered handler is a wiring bug, not a domain condition.");
   }
@@ -148,22 +153,26 @@ public class CollectiveDispatcherTests {
   [Test]
   public async Task DispatchAsync_NullEvent_ThrowsArgumentNullAsync() {
     var dispatcher = _build([], [], [], []);
-    await Assert.That(() => dispatcher.DispatchAsync(
+    await Assert.That(async () => {
+      _ = await dispatcher.DispatchAsync(
         evt: null!,
         collectiveEventId: Guid.NewGuid(),
         dbContextOrSession: new object(),
-        cancellationToken: default))
+        cancellationToken: default);
+    })
       .ThrowsExactly<ArgumentNullException>();
   }
 
   [Test]
   public async Task DispatchAsync_NullDbContextOrSession_ThrowsArgumentNullAsync() {
     var dispatcher = _build([], [], [], []);
-    await Assert.That(() => dispatcher.DispatchAsync(
+    await Assert.That(async () => {
+      _ = await dispatcher.DispatchAsync(
         evt: new _archive(new _tenantScope("t-1"), []),
         collectiveEventId: Guid.NewGuid(),
         dbContextOrSession: null!,
-        cancellationToken: default))
+        cancellationToken: default);
+    })
       .ThrowsExactly<ArgumentNullException>();
   }
 
