@@ -118,21 +118,5 @@ public static class PerspectiveSchema {
       Nullable: true
     );
 
-    /// <summary>
-    /// Audit pointer to the last collective event that touched this row
-    /// (Slice 2 of the collective-events feature). Set by the projection
-    /// runner (Slice 7) whenever an <c>ICollectiveEvent</c>'s SQL UPDATE
-    /// affects the row; null on rows that have never been touched by a
-    /// collective event. Lets "why did this row change?" audit queries
-    /// resolve in one indexed lookup instead of scanning the event store.
-    /// </summary>
-    /// <docs>fundamentals/messaging/collective-events</docs>
-    /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/CollectiveEventColumnsTests.cs:PerspectiveCommonColumns_LastCollectiveEventId_IsNullableUuidAsync</tests>
-    /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/CollectiveEventColumnsTests.cs:PerspectiveCommonColumns_LastCollectiveEventId_StaticInstance_IsReusableAsync</tests>
-    public static readonly ColumnDefinition LastCollectiveEventId = new(
-      Name: "last_collective_event_id",
-      DataType: WhizbangDataType.UUID,
-      Nullable: true
-    );
   }
 }

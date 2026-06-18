@@ -25,13 +25,13 @@ public static class EventStoreSchema {
     public const string VERSION = "version";
     public const string CREATED_AT = "created_at";
     /// <summary>
-    /// Collective-events flag (Slice 2). True when this event is an
-    /// <c>ICollectiveEvent</c> applied to a set of streams via the
-    /// scope-aware projection runner, false for ordinary per-stream events.
-    /// The <c>MatchedStreamIds</c> snapshot lives inside the event payload
-    /// (<see cref="EVENT_DATA"/>) — no separate top-level column.
+    /// Event-categorization bitmask (Slice 2'). Stores
+    /// <c>Whizbang.Core.Messaging.EventFlags</c> as an INTEGER. Default
+    /// 0 (no flags = ordinary per-stream event). Collective events set
+    /// bit 0; composite events set bit 1. New categories ship by adding
+    /// flag values — no schema migration required.
     /// </summary>
-    public const string IS_COLLECTIVE = "is_collective";
+    public const string FLAGS = "flags";
   }
 
   /// <summary>
@@ -105,10 +105,10 @@ public static class EventStoreSchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
-        Name: Columns.IS_COLLECTIVE,
-        DataType: WhizbangDataType.BOOLEAN,
+        Name: Columns.FLAGS,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false,
-        DefaultValue: DefaultValue.Boolean(false)
+        DefaultValue: DefaultValue.Integer(0)
       )
     ),
     Indexes:

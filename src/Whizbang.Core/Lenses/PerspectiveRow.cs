@@ -105,24 +105,4 @@ public class PerspectiveRow<TModel> where TModel : class {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_MultipleEvents_IncrementsVersionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PerspectiveTable_ShouldHaveCorrectSchemaAsync</tests>
   public required int Version { get; set; }
-
-  /// <summary>
-  /// Audit pointer to the most recent <c>ICollectiveEvent</c> that mutated
-  /// this row. Null for rows that have never been touched by a collective
-  /// event (the steady-state value for the bulk of rows). Set by the
-  /// collective-event adapter as part of the same SQL UPDATE that
-  /// performs the mutation — audit visibility is therefore atomic with
-  /// the state change.
-  /// </summary>
-  /// <remarks>
-  /// Maps to the <c>last_collective_event_id uuid NULL</c> column added
-  /// by the Slice 2 migration. <c>set</c> accessor matches the rest of
-  /// the mutable fields so EF Core's <c>ExecuteUpdateAsync</c> can write
-  /// to it without tracking-entity churn.
-  /// </remarks>
-  /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lenses/PerspectiveRowCollectiveAuditTests.cs:PerspectiveRow_LastCollectiveEventId_DefaultsToNullAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Lenses/PerspectiveRowCollectiveAuditTests.cs:PerspectiveRow_LastCollectiveEventId_AcceptsGuidValueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Lenses/PerspectiveRowCollectiveAuditTests.cs:PerspectiveRow_LastCollectiveEventId_PropertyTypeIsNullableGuidAsync</tests>
-  public Guid? LastCollectiveEventId { get; set; }
 }

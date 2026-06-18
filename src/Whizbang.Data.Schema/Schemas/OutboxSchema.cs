@@ -130,10 +130,10 @@ public static class OutboxSchema {
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: Columns.IS_COLLECTIVE,
-        DataType: WhizbangDataType.BOOLEAN,
+        Name: Columns.FLAGS,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false,
-        DefaultValue: DefaultValue.Boolean(false)
+        DefaultValue: DefaultValue.Integer(0)
       )
     ),
     Indexes: ImmutableArray.Create(
@@ -204,12 +204,14 @@ public static class OutboxSchema {
     public const string PUBLISHED_AT = "published_at";
     public const string PROCESSED_AT = "processed_at";
     /// <summary>
-    /// Collective-events flag (Slice 2). Mirrors the existing
-    /// <c>is_composite</c> producer-stamps-consumer-preserves pattern
-    /// from W3 slice 9. The dispatcher sets this to true on the outbox
-    /// row when the payload implements <c>ICollectiveEvent</c>; the
-    /// transport consumer (Slice 3) preserves it onto the inbox row.
+    /// Event-categorization bitmask (Slice 2'). Stores
+    /// <c>Whizbang.Core.Messaging.EventFlags</c> as an INTEGER, mirroring
+    /// the existing producer-stamps-consumer-preserves pattern from
+    /// W3 slice 9. The dispatcher sets the matching flag bits on the
+    /// outbox row when the payload implements
+    /// <c>ICollectiveEvent</c> / <c>ICompositeEvent</c>; the transport
+    /// consumer (Slice 3') preserves the value onto the inbox row.
     /// </summary>
-    public const string IS_COLLECTIVE = "is_collective";
+    public const string FLAGS = "flags";
   }
 }
