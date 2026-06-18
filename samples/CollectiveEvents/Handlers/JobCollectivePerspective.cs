@@ -17,12 +17,11 @@ namespace CollectiveEvents.Sample.Handlers;
 /// <remarks>
 /// <para>
 /// Both handlers use <c>ScopeHandling = Framework</c> (the default), so
-/// the framework wraps each spec's SET clause with:
+/// the framework composes each spec's SET clause with the resolver's
+/// scope filter (<c>row.Scope.TenantId == scope.TenantId</c>) as the
+/// SQL UPDATE's WHERE — and ONLY that. No matched-id membership clause,
+/// no audit-pointer write. The event IS the descriptor.
 /// </para>
-/// <list type="number">
-///   <item><description>The tenant scope filter from <c>TenantCollectiveScopeResolver</c> (<c>row.Scope.TenantId == scope.TenantId</c>).</description></item>
-///   <item><description>The matched-id membership clause (<c>row.StreamId = ANY(MatchedStreamIds)</c>).</description></item>
-/// </list>
 /// <para>
 /// Neither handler touches <c>ScopeContextAccessor</c> — they only
 /// describe the mutation. That's what makes them safe by default: a
@@ -34,7 +33,7 @@ namespace CollectiveEvents.Sample.Handlers;
 public sealed class JobCollectivePerspective {
 
   /// <summary>
-  /// Archive all jobs in the matched set. Constant-value SetProperty —
+  /// Archive every job currently in scope. Constant-value SetProperty —
   /// the canonical "bulk state change" shape.
   /// </summary>
   [CollectiveApplyFor]
@@ -47,7 +46,7 @@ public sealed class JobCollectivePerspective {
   /// Increment view count and touch <c>LastViewedAt</c>. Computed-value
   /// SetProperty — shows the EF adapter handling
   /// <c>j =&gt; j.ViewCount + 1</c>. The Dapper adapter throws
-  /// <c>NotSupportedException</c> on this shape in the first cut; use the
+  /// <c>NotSupportedException</c> on this shape in v1.0; use the
   /// raw-SQL escape hatch if you're on Dapper.
   /// </summary>
   [CollectiveApplyFor]
