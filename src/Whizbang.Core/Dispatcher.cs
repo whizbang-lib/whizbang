@@ -3670,8 +3670,8 @@ public abstract partial class Dispatcher(
       EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
       StreamId = streamId,
       IsEvent = eventData is IEvent,
-      IsComposite = eventData is Whizbang.Core.Messaging.ICompositeEvent,
-      IsCollective = eventData is Whizbang.Core.Messaging.ICollectiveEvent,
+      Flags = (eventData is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
+            | (eventData is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None),
       Scope = _extractScope(jsonEnvelope),
       MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
     };
@@ -4791,8 +4791,8 @@ public abstract partial class Dispatcher(
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
       IsEvent = payload is IEvent,
-      IsComposite = payload is Whizbang.Core.Messaging.ICompositeEvent,
-      IsCollective = payload is Whizbang.Core.Messaging.ICollectiveEvent,
+      Flags = (payload is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
+            | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None),
       Scope = _extractScope(envelope),
       MessageType = serialized.MessageType
     };
