@@ -117,5 +117,6 @@ public static class PerspectiveSchema {
       DataType: WhizbangDataType.TIMESTAMP_TZ,
       Nullable: true
     );
+
   }
 }

@@ -1075,13 +1075,21 @@ public record OutboxMessage {
   /// type check.
   /// </summary>
   /// <remarks>
-  /// Composites flow through the same outbox/transport surface as ordinary
-  /// events — this flag is informational. The composite-events feature
-  /// (W3 slices 8–11) reads this flag at the receiver to decide whether
-  /// to enumerate <see cref="ICompositeEvent.InnerEvents"/> and append
-  /// each inner event to the event store individually.
+  /// Categorization bitmask combining all event categories the framework
+  /// understands at dispatch time:
+  /// <list type="bullet">
+  ///   <item><description><see cref="EventFlags.Composite"/> — wire-only fan-out bundle of inner events (W3 slice 9)</description></item>
+  ///   <item><description><see cref="EventFlags.Collective"/> — first-class persistable scope-mutation event (Slice 3' of the collective-events feature)</description></item>
+  /// </list>
+  /// Replaces the two separate boolean columns (<c>is_composite</c>,
+  /// <c>is_collective</c>) with one bitmask. New categories ship by
+  /// adding a flag value to <see cref="EventFlags"/>; no schema
+  /// migration required.
   /// </remarks>
-  public bool IsComposite { get; init; }
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_DefaultsToNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  public EventFlags Flags { get; init; }
 
   /// <summary>
   /// Multi-tenancy and security scope extracted from the envelope.
@@ -1137,14 +1145,17 @@ public record InboxMessage {
   public bool IsEvent { get; init; }
 
   /// <summary>
-  /// Whether this inbox row carries a composite event
-  /// (<see cref="Whizbang.Core.Messaging.ICompositeEvent"/>) that the
-  /// receiver should fan out into N inner events. Populated post-rehydrate
-  /// by the consumer worker; the composite-expansion path (slice 10) reads
-  /// this flag to trigger inner-event enumeration + batched event-store
-  /// append without re-running the payload type check.
+  /// Categorization bitmask preserved from the originating
+  /// <see cref="OutboxMessage.Flags"/>. The transport consumer worker
+  /// copies this value when storing the inbox row so the projection
+  /// runner can branch on individual flag bits
+  /// (<c>(Flags &amp; EventFlags.Collective) != 0</c>) without
+  /// re-running the payload type check.
   /// </summary>
-  public bool IsComposite { get; init; }
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_DefaultsToNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  public EventFlags Flags { get; init; }
 
   /// <summary>
   /// Multi-tenancy and security scope extracted from the envelope.
