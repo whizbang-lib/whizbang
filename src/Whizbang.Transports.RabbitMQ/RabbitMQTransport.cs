@@ -211,12 +211,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       if (preSerializedBytes is { } hint) {
         body = hint.ToArray();
       } else {
-        // Serialize envelope using AOT-compatible JsonContextRegistry
+        // Serialize envelope using AOT-compatible JsonContextRegistry, via the shared
+        // WireEnvelopeSerializer so all wire serialization goes through one path.
         var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
           ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
 
-        var json = JsonSerializer.Serialize(envelope, typeInfo);
-        body = Encoding.UTF8.GetBytes(json);
+        var serialized = Whizbang.Core.Serialization.WireEnvelopeSerializer.Serialize(
+          envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
+        body = serialized.Data.ToArray();
       }
 
       // Create message properties
@@ -367,8 +369,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     } else {
       var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
         ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}.");
-      var json = JsonSerializer.Serialize(envelope, typeInfo);
-      body = Encoding.UTF8.GetBytes(json);
+      var serialized = Whizbang.Core.Serialization.WireEnvelopeSerializer.Serialize(
+        envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
+      body = serialized.Data.ToArray();
     }
 
     var properties = new BasicProperties {

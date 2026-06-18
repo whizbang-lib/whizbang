@@ -31,6 +31,14 @@ public static class InboxSchema {
     public const string FAILURE_REASON = "failure_reason";
     public const string SCHEDULED_FOR = "scheduled_for";
     public const string PROCESSED_AT = "processed_at";
+    /// <summary>
+    /// Event-categorization bitmask (Slice 2'). Consumer side of the
+    /// producer stamp on <c>OutboxSchema</c> — preserved by the transport
+    /// consumer worker (Slice 3') so the projection runner can branch on
+    /// individual flag bits without re-deserializing the payload.
+    /// Stores <c>Whizbang.Core.Messaging.EventFlags</c> as an INTEGER.
+    /// </summary>
+    public const string FLAGS = "flags";
     public const string RECEIVED_AT = "received_at";
   }
 
@@ -142,6 +150,12 @@ public static class InboxSchema {
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      new ColumnDefinition(
+        Name: Columns.FLAGS,
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: false,
+        DefaultValue: DefaultValue.Integer(0)
       )
     ),
     Indexes: ImmutableArray.Create(

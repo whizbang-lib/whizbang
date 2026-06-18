@@ -8,6 +8,9 @@
     <Project Path="benchmarks/Whizbang.Benchmarks/Whizbang.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/samples/" />
+  <Folder Name="/samples/CollectiveEvents/">
+    <Project Path="samples/CollectiveEvents/CollectiveEvents.Sample.csproj" />
+  </Folder>
   <Folder Name="/samples/ECommerce/">
     <Project Path="samples/ECommerce/ECommerce.AppHost/ECommerce.AppHost.csproj" />
     <Project Path="samples/ECommerce/ECommerce.BFF.API/ECommerce.BFF.API.csproj" />

@@ -368,6 +368,33 @@ public class TypeNameFormatterTests {
     await Assert.That(result).IsNull();
   }
 
+  // ========================================
+  // GetPayloadFullName — extracts inner payload full name from generic envelope wrapper
+  // ========================================
+
+  [Test]
+  public async Task GetPayloadFullName_GenericEnvelope_ExtractsInnerFullNameAsync() {
+    var result = TypeNameFormatter.GetPayloadFullName(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, a consumer.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("a consumer.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent");
+  }
+
+  [Test]
+  public async Task GetPayloadFullName_SimpleType_FallsBackToGetFullNameAsync() {
+    var result = TypeNameFormatter.GetPayloadFullName("MyApp.Contracts.Chat.MyEvent, MyApp.Contracts");
+    await Assert.That(result).IsEqualTo("MyApp.Contracts.Chat.MyEvent");
+  }
+
+  [Test]
+  public async Task GetPayloadFullName_NullInput_ReturnsNullAsync() {
+    await Assert.That(TypeNameFormatter.GetPayloadFullName(null!)).IsNull();
+  }
+
+  [Test]
+  public async Task GetPayloadFullName_EmptyInput_ReturnsNullAsync() {
+    await Assert.That(TypeNameFormatter.GetPayloadFullName("")).IsNull();
+  }
+
   [Test]
   public async Task GetPayloadNamespace_RealWorldEnvelopeType_ExtractsCorrectlyAsync() {
     // This is the actual format from RabbitMQ transport in a consumer application

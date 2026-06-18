@@ -24,6 +24,14 @@ public static class EventStoreSchema {
     public const string SCOPE = "scope";
     public const string VERSION = "version";
     public const string CREATED_AT = "created_at";
+    /// <summary>
+    /// Event-categorization bitmask (Slice 2'). Stores
+    /// <c>Whizbang.Core.Messaging.EventFlags</c> as an INTEGER. Default
+    /// 0 (no flags = ordinary per-stream event). Collective events set
+    /// bit 0; composite events set bit 1. New categories ship by adding
+    /// flag values — no schema migration required.
+    /// </summary>
+    public const string FLAGS = "flags";
   }
 
   /// <summary>
@@ -95,6 +103,12 @@ public static class EventStoreSchema {
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      new ColumnDefinition(
+        Name: Columns.FLAGS,
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: false,
+        DefaultValue: DefaultValue.Integer(0)
       )
     ),
     Indexes:

@@ -40,6 +40,10 @@ public class TransportMetricsTests {
     await Assert.That(metrics.EventStoreQueryDuration).IsNotNull();
     await Assert.That(metrics.EventsStored).IsNotNull();
     await Assert.That(metrics.EventsQueried).IsNotNull();
+    await Assert.That(metrics.BodyOffloadCount).IsNotNull();
+    await Assert.That(metrics.BodyOffloadBytes).IsNotNull();
+    await Assert.That(metrics.BodyClaimRehydratedCount).IsNotNull();
+    await Assert.That(metrics.BodyClaimRehydratedBytes).IsNotNull();
   }
 
   [Test]

@@ -10,6 +10,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Offloads;
@@ -201,12 +202,44 @@ public class BodyClaimRehydratorTests {
     return (claim, typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!);
   }
 
-  private static ServiceProvider _buildProviderWithOptions(out InMemoryStoreImpl store, bool activeCleanup) {
+  [Test]
+  public async Task MaybeRehydrateAsync_Success_EmitsRehydratedMetricsWithBoundedTagsAsync() {
+    // Isolated meter via TestMeterFactory — parallel-safe metric capture.
+    using var factory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(factory));
+    var sp = _buildProviderWithOptions(out var store, activeCleanup: false, metrics);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+    var (claim, originalTypeName) = await _uploadSerializedEnvelopeAsync(store, _buildJsonOptions());
+    var claimEnvelope = _wrapInClaimEnvelope(claim, originalTypeName);
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsFalse();
+
+    var counts = helper.GetByName("whizbang.transport.body_claim.rehydrated.count");
+    await Assert.That(counts.Count).IsEqualTo(1);
+    await Assert.That(counts[0].Value).IsEqualTo(1d);
+
+    var bytes = helper.GetByName("whizbang.transport.body_claim.rehydrated.bytes");
+    await Assert.That(bytes.Count).IsEqualTo(1);
+    await Assert.That(bytes[0].Value).IsGreaterThan(0d)
+      .Because("Records the downloaded body size on the receive side.");
+
+    await Assert.That(counts[0].Tags.ContainsKey("message.type")).IsTrue();
+    await Assert.That(counts[0].Tags.ContainsKey("message.namespace")).IsTrue();
+  }
+
+  private static ServiceProvider _buildProviderWithOptions(out InMemoryStoreImpl store, bool activeCleanup, TransportMetrics? metrics = null) {
     var services = new ServiceCollection();
     var instance = new InMemoryStoreImpl("memory");
     store = instance;
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => instance);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(o => o.ActiveCleanup = activeCleanup);
+    // Only register metrics when a test supplies an isolated instance (parallel-safe metric capture).
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     return services.BuildServiceProvider();
   }
 

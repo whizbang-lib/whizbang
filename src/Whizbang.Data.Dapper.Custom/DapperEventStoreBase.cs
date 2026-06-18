@@ -184,7 +184,7 @@ public abstract class DapperEventStoreBase : IEventStore {
     var envelopes = new List<MessageEnvelope<IEvent>>();
 
     // Build type lookup dictionary for fast O(1) lookups (AOT-compatible)
-    var typeLookup = _buildTypeLookup(eventTypes);
+    var typeLookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
 
     foreach (var row in rows) {
       var envelope = _tryDeserializePolymorphicRow(row, typeLookup);
@@ -217,27 +217,18 @@ public abstract class DapperEventStoreBase : IEventStore {
   }
 
   /// <summary>
-  /// Normalizes an assembly-qualified type name to just the full type name (without assembly info).
-  /// </summary>
-  private static string _normalizeEventTypeName(string storedTypeName) {
-    var commaIndex = storedTypeName.IndexOf(',');
-    return commaIndex > 0 ? storedTypeName[..commaIndex].Trim() : storedTypeName;
-  }
-
-  /// <summary>
   /// Attempts to deserialize a single row into a polymorphic MessageEnvelope.
   /// Returns null if the event type is not in the type lookup (not relevant to this perspective).
   /// </summary>
   private MessageEnvelope<IEvent>? _tryDeserializePolymorphicRow(
       EventRow row,
-      Dictionary<string, JsonTypeInfo> typeLookup) {
-    var normalizedTypeName = _normalizeEventTypeName(row.EventType);
-
-    // Skip events that aren't in the perspective's list
-    if (!typeLookup.TryGetValue(normalizedTypeName, out var eventTypeInfo)) {
+      Dictionary<string, Type> typeMap) {
+    // Skip events that aren't in the perspective's list (canonical resolver).
+    if (!EventTypeMatchingHelper.TryResolveType(typeMap, row.EventType, out var concreteType)) {
       return null;
     }
 
+    var eventTypeInfo = JsonOptions.GetTypeInfo(concreteType);
     var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo)
       ?? throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
 
@@ -350,15 +341,6 @@ public abstract class DapperEventStoreBase : IEventStore {
     return scopeDict.TryGetValue(key, out var elem) && elem.HasValue && elem.Value.ValueKind != JsonValueKind.Null
       ? elem.Value.GetString()
       : null;
-  }
-
-  private Dictionary<string, JsonTypeInfo> _buildTypeLookup(IReadOnlyList<Type> eventTypes) {
-    var typeLookup = new Dictionary<string, JsonTypeInfo>(eventTypes.Count);
-    foreach (var type in eventTypes) {
-      var typeInfo = JsonOptions.GetTypeInfo(type);
-      typeLookup[type.FullName ?? type.Name] = typeInfo;
-    }
-    return typeLookup;
   }
 
   /// <summary>

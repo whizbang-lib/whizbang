@@ -2136,12 +2136,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
     sb.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
 
-    // Check if there are physical fields to add
     if (perspective.PhysicalFields.IsEmpty) {
       sb.AppendLine("  version INTEGER NOT NULL");
     } else {
       sb.AppendLine("  version INTEGER NOT NULL,");
-      // Add physical fields
       for (int i = 0; i < perspective.PhysicalFields.Length; i++) {
         var field = perspective.PhysicalFields[i];
         var columnType = _getPostgresColumnType(field);

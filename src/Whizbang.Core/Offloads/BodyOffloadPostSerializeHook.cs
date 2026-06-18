@@ -82,6 +82,15 @@ public sealed class BodyOffloadPostSerializeHook : IPostSerializeHook {
 
     var claim = await store.UploadAsync(context.SerializedBytes, context.ContentType, options: null, cancellationToken);
 
+    // Observe the offload (bounded dimensions: message type + namespace — never message IDs).
+    var metrics = _serviceProvider.GetService<TransportMetrics>();
+    if (metrics is not null) {
+      var typeTag = new KeyValuePair<string, object?>("message.type", Whizbang.Core.TypeNameFormatter.GetPayloadFullName(context.EnvelopeType));
+      var nsTag = new KeyValuePair<string, object?>("message.namespace", Whizbang.Core.TypeNameFormatter.GetPayloadNamespace(context.EnvelopeType));
+      metrics.BodyOffloadCount.Add(1, typeTag, nsTag);
+      metrics.BodyOffloadBytes.Record(size, typeTag, nsTag);
+    }
+
     var claimPayload = new BodyClaimEnvelopePayload(claim, context.ContentType, context.EnvelopeType);
     var claimEnvelope = _buildClaimEnvelope(context.Envelope, claimPayload);
     var claimEnvelopeType = claimEnvelope.GetType().AssemblyQualifiedName

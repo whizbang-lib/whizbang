@@ -113,6 +113,20 @@ public sealed class TransportMetrics {
   /// <summary>Event queries executed.</summary>
   public Counter<long> EventsQueried { get; }
 
+  // Body offload (claim-check)
+
+  /// <summary>Messages whose body was offloaded to a body store (claim-check tripped). Tagged by <c>message.type</c> + <c>message.namespace</c>.</summary>
+  public Counter<long> BodyOffloadCount { get; }
+
+  /// <summary>Original serialized size (bytes) that triggered an offload. Tagged by <c>message.type</c> + <c>message.namespace</c>.</summary>
+  public Histogram<long> BodyOffloadBytes { get; }
+
+  /// <summary>Claim envelopes rehydrated on the receive side. Tagged by <c>message.type</c> + <c>message.namespace</c>.</summary>
+  public Counter<long> BodyClaimRehydratedCount { get; }
+
+  /// <summary>Rehydrated body size (bytes) downloaded from the body store. Tagged by <c>message.type</c> + <c>message.namespace</c>.</summary>
+  public Histogram<long> BodyClaimRehydratedBytes { get; }
+
   /// <summary>Initializes a new instance of the <see cref="TransportMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public TransportMetrics(WhizbangMetrics whizbangMetrics) {
@@ -152,5 +166,10 @@ public sealed class TransportMetrics {
     EventStoreQueryDuration = meter.CreateHistogram<double>("whizbang.event_store.query.duration", "ms", "GetEventsBetweenPolymorphicAsync latency");
     EventsStored = meter.CreateCounter<long>("whizbang.event_store.events_stored", description: "Events appended");
     EventsQueried = meter.CreateCounter<long>("whizbang.event_store.events_queried", description: "Event queries executed");
+
+    BodyOffloadCount = meter.CreateCounter<long>("whizbang.transport.body_offload.count", description: "Messages whose body was offloaded (claim-check tripped); tagged by message.type + message.namespace");
+    BodyOffloadBytes = meter.CreateHistogram<long>("whizbang.transport.body_offload.bytes", "By", "Original serialized size that triggered an offload");
+    BodyClaimRehydratedCount = meter.CreateCounter<long>("whizbang.transport.body_claim.rehydrated.count", description: "Claim envelopes rehydrated on receive; tagged by message.type + message.namespace");
+    BodyClaimRehydratedBytes = meter.CreateHistogram<long>("whizbang.transport.body_claim.rehydrated.bytes", "By", "Rehydrated body size downloaded from the body store");
   }
 }

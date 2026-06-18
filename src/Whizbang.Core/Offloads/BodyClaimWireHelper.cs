@@ -28,14 +28,33 @@ public static class BodyClaimWireHelper {
   public static JsonTypeInfo? ResolveDeserializeTypeInfo(
       string envelopeTypeHeaderValue,
       string? isClaimHeaderValue,
-      JsonSerializerOptions jsonOptions) {
+      JsonSerializerOptions jsonOptions)
+    => ResolveDeserializeTypeInfo(envelopeTypeHeaderValue, isClaimHeaderValue, jsonOptions, typeInfoByName: null);
+
+  /// <summary>
+  /// Resolver-delegate overload of <see cref="ResolveDeserializeTypeInfo(string,string?,JsonSerializerOptions)"/>.
+  /// Lets a transport inject its own type-name → <see cref="JsonTypeInfo"/> resolver (e.g. for
+  /// testability) while still sharing the claim-detection + resolve flow. When
+  /// <paramref name="typeInfoByName"/> is null, falls back to
+  /// <c>JsonContextRegistry.GetTypeInfoByName</c> (identical to the 3-arg overload). The claim path
+  /// resolves <see cref="MessageEnvelope{T}"/> of <see cref="BodyClaimEnvelopePayload"/> from
+  /// <paramref name="jsonOptions"/> and never consults the resolver.
+  /// </summary>
+  /// <param name="typeInfoByName">Optional resolver from a CLR type name to a registered <see cref="JsonTypeInfo"/>.</param>
+  public static JsonTypeInfo? ResolveDeserializeTypeInfo(
+      string envelopeTypeHeaderValue,
+      string? isClaimHeaderValue,
+      JsonSerializerOptions jsonOptions,
+      Func<string, JsonSerializerOptions, JsonTypeInfo?>? typeInfoByName) {
     ArgumentException.ThrowIfNullOrWhiteSpace(envelopeTypeHeaderValue);
     ArgumentNullException.ThrowIfNull(jsonOptions);
 
     if (IsClaimHeader(isClaimHeaderValue)) {
       return jsonOptions.GetTypeInfo(typeof(MessageEnvelope<BodyClaimEnvelopePayload>));
     }
-    return Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeHeaderValue, jsonOptions);
+
+    var resolver = typeInfoByName ?? Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName;
+    return resolver(envelopeTypeHeaderValue, jsonOptions);
   }
 
   /// <summary>
