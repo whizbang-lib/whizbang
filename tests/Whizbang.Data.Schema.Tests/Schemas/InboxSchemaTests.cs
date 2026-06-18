@@ -27,7 +27,7 @@ public class InboxSchemaTests {
     var columns = InboxSchema.Table.Columns;
 
     // Assert - Verify column count
-    // 18 base columns + is_collective (Slice 2 of collective-events feature).
+    // 18 base columns + flags (Slice 2' — EventFlags bitmask for the collective-events feature).
     await Assert.That(columns).Count().IsEqualTo(19);
 
     // Verify each column definition
