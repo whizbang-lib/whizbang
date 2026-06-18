@@ -455,7 +455,7 @@ public partial class TransportConsumerWorker : BackgroundService {
         // fans out into N inbox rows, one per inner event. The composite type
         // itself is wire-only — it does NOT become an inbox row. Downstream
         // (event store, perspectives, receptors) sees only the inner events.
-        if (inboxMessage.IsComposite) {
+        if ((inboxMessage.Flags & Whizbang.Core.Messaging.EventFlags.Composite) != 0) {
           var expanded = _tryExpandCompositeToInboxMessages(msg, inboxMessage, scope.ServiceProvider);
           if (expanded is null) {
             // Cap exceeded or expansion failed — message dropped + logged
@@ -1003,8 +1003,8 @@ public partial class TransportConsumerWorker : BackgroundService {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox", messageTypeName);
     }
 
-    var isComposite = payload is Whizbang.Core.Messaging.ICompositeEvent;
-    var isCollective = payload is Whizbang.Core.Messaging.ICollectiveEvent;
+    var flags = (payload is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
+              | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None);
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
@@ -1012,8 +1012,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       EnvelopeType = envelopeTypeFromTransport,
       StreamId = streamId,
       IsEvent = isEvent,
-      IsComposite = isComposite,
-      IsCollective = isCollective,
+      Flags = flags,
       Scope = envelope.GetCurrentScope()?.Scope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
