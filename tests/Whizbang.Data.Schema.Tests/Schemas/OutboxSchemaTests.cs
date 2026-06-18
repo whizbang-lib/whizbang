@@ -26,8 +26,9 @@ public class OutboxSchemaTests {
     // Arrange & Act
     var columns = OutboxSchema.Table.Columns;
 
-    // Assert - Verify column count (20 columns total)
-    await Assert.That(columns).Count().IsEqualTo(20);
+    // Assert - Verify column count
+    // 20 base columns + flags (Slice 2' — EventFlags bitmask replaces the W3-slice-9 is_composite + Slice-2 is_collective booleans).
+    await Assert.That(columns).Count().IsEqualTo(21);
 
     // Verify each column definition
     var messageId = columns[0];
