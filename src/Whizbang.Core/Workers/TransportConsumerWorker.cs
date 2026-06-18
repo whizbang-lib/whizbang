@@ -51,6 +51,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly OrderedStreamProcessor _orderedProcessor;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly TransportMetrics? _metrics;
+  private readonly EventCategoryMetrics? _eventCategoryMetrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
   private readonly ConcurrentBag<Task> _detachedTasks = [];
@@ -141,7 +142,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     IWorkChannelWriter? workChannelWriter = null,
     Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null,
     IReceptorRegistryQuery? receptorRegistry = null,
-    IReceptorRegistry? runtimeReceptorRegistry = null
+    IReceptorRegistry? runtimeReceptorRegistry = null,
+    EventCategoryMetrics? eventCategoryMetrics = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -160,6 +162,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _orderedProcessor = orderedProcessor;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _metrics = metrics;
+    _eventCategoryMetrics = eventCategoryMetrics;
     _logger = logger;
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
@@ -455,7 +458,7 @@ public partial class TransportConsumerWorker : BackgroundService {
         // fans out into N inbox rows, one per inner event. The composite type
         // itself is wire-only — it does NOT become an inbox row. Downstream
         // (event store, perspectives, receptors) sees only the inner events.
-        if (inboxMessage.IsComposite) {
+        if ((inboxMessage.Flags & Whizbang.Core.Messaging.EventFlags.Composite) != 0) {
           var expanded = _tryExpandCompositeToInboxMessages(msg, inboxMessage, scope.ServiceProvider);
           if (expanded is null) {
             // Cap exceeded or expansion failed — message dropped + logged
@@ -527,8 +530,22 @@ public partial class TransportConsumerWorker : BackgroundService {
   private List<InboxMessage>? _tryExpandCompositeToInboxMessages(
       TransportMessage msg, InboxMessage compositeInbox, IServiceProvider scopedProvider) {
     var envelope = msg.Envelope;
+    var envelopeType = envelope.GetType();
+    var envelopeTypeName = envelopeType.FullName ?? "unknown";
+    var envelopeNamespace = envelopeType.Namespace ?? string.Empty;
     var messageTypeTag = new KeyValuePair<string, object?>(
-      "composite_type", envelope.GetType().FullName ?? "unknown");
+      "composite_type", envelopeTypeName);
+
+    // Cross-cutting EventCategoryMetrics tags — collective and composite
+    // share the same dashboards under a category dimension.
+    var categoryTag = new KeyValuePair<string, object?>(
+      EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COMPOSITE);
+    var eventTypeTag = new KeyValuePair<string, object?>(
+      EventCategoryMetrics.Tags.EVENT_TYPE, envelopeTypeName);
+    var eventNamespaceTag = new KeyValuePair<string, object?>(
+      EventCategoryMetrics.Tags.EVENT_NAMESPACE, envelopeNamespace);
+
+    var sw = _eventCategoryMetrics is null ? null : System.Diagnostics.Stopwatch.StartNew();
 
     try {
       // Expand each inner event into its own InboxMessage. The composite
@@ -543,6 +560,9 @@ public partial class TransportConsumerWorker : BackgroundService {
         expandedInbox.Add(innerInbox);
       }
       _metrics?.InboxMessagesReceived.Add(expandedInbox.Count - 1, messageTypeTag);
+
+      _eventCategoryMetrics?.Dispatched.Add(1, categoryTag, eventTypeTag, eventNamespaceTag);
+      _eventCategoryMetrics?.Fanout.Record(expandedInbox.Count, categoryTag, eventTypeTag, eventNamespaceTag);
       return expandedInbox;
     } catch (Whizbang.Core.Messaging.CompositeInnerEventLimitExceededException ex) {
       _logger.LogError(
@@ -550,13 +570,23 @@ public partial class TransportConsumerWorker : BackgroundService {
         ex.CompositeTypeName, ex.MaxInnerEventsAllowed, ex.ObservedAtLeast,
         MessageFailureReason.CompositeInnerEventLimitExceeded);
       _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
+      _eventCategoryMetrics?.Errors.Add(1, categoryTag, eventTypeTag, eventNamespaceTag,
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.ERROR_CLASS, EventCategoryMetrics.ErrorClasses.EXPANSION_LIMIT_EXCEEDED));
       return null;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _logger.LogError(ex,
         "Composite expansion failed for message {MessageId}; dropping. {Reason}",
         envelope.MessageId, MessageFailureReason.CompositeExpansionFailure);
       _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
+      _eventCategoryMetrics?.Errors.Add(1, categoryTag, eventTypeTag, eventNamespaceTag,
+        new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.ERROR_CLASS, EventCategoryMetrics.ErrorClasses.UNKNOWN));
       return null;
+    } finally {
+      if (sw is not null) {
+        sw.Stop();
+        _eventCategoryMetrics?.DispatchDuration.Record(sw.Elapsed.TotalMilliseconds,
+          categoryTag, eventTypeTag, eventNamespaceTag);
+      }
     }
   }
 
@@ -1003,7 +1033,8 @@ public partial class TransportConsumerWorker : BackgroundService {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox", messageTypeName);
     }
 
-    var isComposite = payload is Whizbang.Core.Messaging.ICompositeEvent;
+    var flags = (payload is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
+              | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None);
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
@@ -1011,7 +1042,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       EnvelopeType = envelopeTypeFromTransport,
       StreamId = streamId,
       IsEvent = isEvent,
-      IsComposite = isComposite,
+      Flags = flags,
       Scope = envelope.GetCurrentScope()?.Scope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,

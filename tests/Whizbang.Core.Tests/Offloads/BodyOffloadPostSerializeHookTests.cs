@@ -11,6 +11,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -126,16 +127,48 @@ public class BodyOffloadPostSerializeHookTests {
     await Assert.That(claim.DispatchContext).IsEqualTo(ctx.Envelope.DispatchContext);
   }
 
+  [Test]
+  public async Task RunAsync_AboveThreshold_EmitsOffloadMetricsWithBoundedTagsAsync() {
+    // Isolated meter via TestMeterFactory — parallel-safe (no shared-meter pollution from other
+    // tests' offloads, the cause of the earlier CI flake on this assertion).
+    using var factory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(factory));
+    var (hook, _) = _build(opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100; }, metrics);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+    var ctx = _buildContext(new byte[5_000]);
+
+    var result = await hook.RunAsync(ctx, CancellationToken.None);
+    await Assert.That(result.NewSerializedBytes).IsNotNull(); // confirms offload path ran
+
+    var counts = helper.GetByName("whizbang.transport.body_offload.count");
+    await Assert.That(counts.Count).IsEqualTo(1);
+    await Assert.That(counts[0].Value).IsEqualTo(1d);
+
+    var bytes = helper.GetByName("whizbang.transport.body_offload.bytes");
+    await Assert.That(bytes.Count).IsEqualTo(1);
+    await Assert.That(bytes[0].Value).IsEqualTo(5_000d)
+      .Because("Records the original serialized size that tripped the claim-check.");
+
+    // Bounded dimensions only — message type + namespace, never message IDs.
+    await Assert.That(counts[0].Tags.ContainsKey("message.type")).IsTrue();
+    await Assert.That(counts[0].Tags.ContainsKey("message.namespace")).IsTrue();
+  }
+
   // ============================================================
   // Helpers
   // ============================================================
 
   private static (BodyOffloadPostSerializeHook hook, _captureStore store) _build(
-      Action<MessageBodyOffloadOptions> configure) {
+      Action<MessageBodyOffloadOptions> configure, TransportMetrics? metrics = null) {
     var services = new ServiceCollection();
     var captureStore = new _captureStore("memory");
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => captureStore);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(configure);
+    // Only register metrics when a test supplies an isolated instance — keeps non-metric tests
+    // from emitting to a shared meter (which would pollute a parallel metric test's capture).
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     var sp = services.BuildServiceProvider();
     var hook = new BodyOffloadPostSerializeHook(sp, sp.GetRequiredService<IOptionsMonitor<MessageBodyOffloadOptions>>());
     return (hook, captureStore);

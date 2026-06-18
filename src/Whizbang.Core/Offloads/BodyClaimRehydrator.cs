@@ -90,6 +90,15 @@ public static class BodyClaimRehydrator {
         $"Deserialized rehydrated body but result is null or wrong shape; expected IMessageEnvelope.");
     }
 
+    // Observe the rehydration (bounded dimensions: message type + namespace — never message IDs).
+    var metrics = serviceProvider.GetService<TransportMetrics>();
+    if (metrics is not null) {
+      var typeTag = new KeyValuePair<string, object?>("message.type", TypeNameFormatter.GetPayloadFullName(claimPayload.OriginalTypeName));
+      var nsTag = new KeyValuePair<string, object?>("message.namespace", TypeNameFormatter.GetPayloadNamespace(claimPayload.OriginalTypeName));
+      metrics.BodyClaimRehydratedCount.Add(1, typeTag, nsTag);
+      metrics.BodyClaimRehydratedBytes.Record(downloaded.Length, typeTag, nsTag);
+    }
+
     // Active-cleanup option: when MessageBodyOffloadOptions.ActiveCleanup is true,
     // surface the claim so the receive-side worker can delete the body after the
     // inbox row commits. When false (default), receivers rely on the provider's

@@ -140,7 +140,7 @@ public class DapperPostgresEventStore(
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
-    var typeMap = _buildEventTypeMap(eventTypes);
+    var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
     var sql = _getReadByEventIdSql(fromEventId);
 
     var rows = await Executor.QueryAsync<EventRow>(
@@ -348,18 +348,6 @@ public class DapperPostgresEventStore(
   }
 
   /// <summary>
-  /// Builds a type lookup dictionary mapping event type keys to their CLR types.
-  /// </summary>
-  private static Dictionary<string, Type> _buildEventTypeMap(IReadOnlyList<Type> eventTypes) {
-    var typeMap = new Dictionary<string, Type>();
-    foreach (var type in eventTypes) {
-      var typeKey = $"{type.FullName}, {type.Assembly.GetName().Name}";
-      typeMap[typeKey] = type;
-    }
-    return typeMap;
-  }
-
-  /// <summary>
   /// Deserializes an EventRow into a typed MessageEnvelope using the JSONB adapter.
   /// </summary>
   private MessageEnvelope<TMessage> _deserializeRow<TMessage>(EventRow row) {
@@ -391,14 +379,16 @@ public class DapperPostgresEventStore(
   }
 
   /// <summary>
-  /// Resolves a stored event type string to its CLR Type using the type map.
+  /// Resolves a stored event type string to its CLR Type using the canonical resolver.
+  /// Unlike the EFCore/base read paths (which skip unknown types), this store throws on an
+  /// unrecognized type — preserving its historical fail-loud contract for direct stream reads.
   /// </summary>
   private static Type _resolveEventType(
     string eventType,
     Dictionary<string, Type> typeMap,
     Guid streamId) {
 
-    if (typeMap.TryGetValue(eventType, out var concreteType)) {
+    if (EventTypeMatchingHelper.TryResolveType(typeMap, eventType, out var concreteType)) {
       return concreteType;
     }
 
