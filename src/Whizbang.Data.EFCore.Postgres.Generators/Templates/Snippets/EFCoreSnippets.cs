@@ -60,6 +60,7 @@ public class EFCoreSnippets {
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
       entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
       entity.Property(e => e.Version).HasColumnName("version").IsRequired();
+      entity.Property(e => e.LastCollectiveEventId).HasColumnName("last_collective_event_id");
 
       // Indexes
       entity.HasIndex(e => e.CreatedAt);
@@ -119,6 +120,7 @@ __PHYSICAL_FIELD_CONFIGS__
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
       entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
       entity.Property(e => e.Version).HasColumnName("version").IsRequired();
+      entity.Property(e => e.LastCollectiveEventId).HasColumnName("last_collective_event_id");
 
       // Indexes
       entity.HasIndex(e => e.CreatedAt);

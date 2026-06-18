@@ -15,7 +15,10 @@ public class WhizbangMethodCallTranslatorPlugin : IMethodCallTranslatorPlugin {
       ?? throw new InvalidOperationException(
           "WhizbangMethodCallTranslatorPlugin requires Npgsql provider. " +
           $"Expected NpgsqlSqlExpressionFactory but got {sqlExpressionFactory.GetType().Name}");
-    Translators = [new JsonArrayContainsAnyTranslator(npgsqlFactory)];
+    Translators = [
+      new JsonArrayContainsAnyTranslator(npgsqlFactory),
+      new JsonbSetTranslator(npgsqlFactory),
+    ];
   }
 
   public IEnumerable<IMethodCallTranslator> Translators { get; }
