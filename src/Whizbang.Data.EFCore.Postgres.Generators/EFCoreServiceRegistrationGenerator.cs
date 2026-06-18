@@ -2136,12 +2136,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
     sb.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
 
-    // Check if there are physical fields to add
+    sb.AppendLine("  version INTEGER NOT NULL,");
+    // Audit pointer for the most-recent collective-event mutation
+    // applied to the row (Slice 7b). NULL until a collective event
+    // touches the row.
     if (perspective.PhysicalFields.IsEmpty) {
-      sb.AppendLine("  version INTEGER NOT NULL");
+      sb.AppendLine("  last_collective_event_id UUID");
     } else {
-      sb.AppendLine("  version INTEGER NOT NULL,");
-      // Add physical fields
+      sb.AppendLine("  last_collective_event_id UUID,");
       for (int i = 0; i < perspective.PhysicalFields.Length; i++) {
         var field = perspective.PhysicalFields[i];
         var columnType = _getPostgresColumnType(field);
@@ -2286,10 +2288,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     perspSql.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
     perspSql.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
 
+    perspSql.AppendLine("  version INTEGER NOT NULL,");
+    // Audit pointer for the most-recent collective-event mutation
+    // applied to the row (Slice 7b). NULL until a collective event
+    // touches the row.
     if (perspective.PhysicalFields.IsEmpty) {
-      perspSql.AppendLine("  version INTEGER NOT NULL");
+      perspSql.AppendLine("  last_collective_event_id UUID");
     } else {
-      perspSql.AppendLine("  version INTEGER NOT NULL,");
+      perspSql.AppendLine("  last_collective_event_id UUID,");
       for (int j = 0; j < perspective.PhysicalFields.Length; j++) {
         var field = perspective.PhysicalFields[j];
         var columnType = _getPostgresColumnType(field);

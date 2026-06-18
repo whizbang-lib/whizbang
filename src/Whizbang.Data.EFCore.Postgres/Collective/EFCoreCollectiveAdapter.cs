@@ -107,9 +107,9 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
   }
 
   /// <summary>
-  /// Composes the perspective's setters with the audit-pointer write so
-  /// every affected row's <c>LastCollectiveEventId</c> column is updated
-  /// in the same SQL statement.
+  /// Chains the audit-pointer write onto the perspective's setter
+  /// expression so every affected row's <see cref="PerspectiveRow{TModel}.LastCollectiveEventId"/>
+  /// column lands in the same SQL UPDATE statement.
   /// </summary>
   private static Expression<Action<Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder<PerspectiveRow<TModel>>>>
     _appendAuditWrite(
@@ -119,52 +119,34 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     var spcParam = existing.Parameters[0];
     var spcType = spcParam.Type;
 
-    // SetProperty<Guid?>(r => r.LastCollectiveEventId, collectiveEventId)
+    // SetProperty<Guid?>(r => r.LastCollectiveEventId, collectiveEventId).
+    // The Slice 7b-α step 1 commit guarantees the property exists.
     var rowParam = Expression.Parameter(typeof(PerspectiveRow<TModel>), "r");
-    var auditProperty = typeof(PerspectiveRow<TModel>).GetProperty("LastCollectiveEventId");
-    if (auditProperty is null) {
-      // Slice 2 added LastCollectiveEventId as a CommonColumn but the
-      // perspective row type itself may not expose it as a CLR property
-      // until the EFCore mapping is wired through (planned for Slice 7).
-      // For now, skip the audit-pointer step rather than crash — the
-      // SQL UPDATE still completes successfully.
-      return existing;
-    }
+    var auditProperty = typeof(PerspectiveRow<TModel>).GetProperty(nameof(PerspectiveRow<TModel>.LastCollectiveEventId))!;
 
-    var auditSelector = Expression.Lambda(
-      typeof(Func<,>).MakeGenericType(typeof(PerspectiveRow<TModel>), auditProperty.PropertyType),
+    var auditSelector = Expression.Lambda<Func<PerspectiveRow<TModel>, Guid?>>(
       Expression.Property(rowParam, auditProperty),
       rowParam);
 
-    // Find SetProperty<Guid?> on UpdateSettersBuilder<PerspectiveRow<TModel>>.
+    // Constant-value SetProperty<Guid?> overload.
     var setPropertyDef = spcType.GetMethods()
       .Where(m => m.Name == "SetProperty" && m.IsGenericMethodDefinition && m.GetParameters().Length == 2)
-      .FirstOrDefault(m => {
+      .First(m => {
         var ps = m.GetParameters();
         return !(ps[1].ParameterType.IsGenericType &&
                  ps[1].ParameterType.GetGenericTypeDefinition() == typeof(Expression<>));
-      });
-    if (setPropertyDef is null) {
-      return existing;
-    }
+      })
+      .MakeGenericMethod(typeof(Guid?));
 
-    var setProperty = setPropertyDef.MakeGenericMethod(auditProperty.PropertyType);
-
-    // Convert collectiveEventId to the property's nullable Guid type if needed.
-    Expression valueExpression = auditProperty.PropertyType == typeof(Guid)
-      ? Expression.Constant(collectiveEventId, typeof(Guid))
-      : Expression.Convert(Expression.Constant(collectiveEventId, typeof(Guid)), auditProperty.PropertyType);
-
+    // Chain the audit call onto the existing body so the resulting
+    // lambda reads `s => s.SetProperty(<existing>, <existing>).SetProperty(r => r.LastCollectiveEventId, eventId)`.
     var auditCall = Expression.Call(
-      spcParam,
-      setProperty,
+      existing.Body,
+      setPropertyDef,
       Expression.Quote(auditSelector),
-      valueExpression);
+      Expression.Constant((Guid?)collectiveEventId, typeof(Guid?)));
 
-    // Existing body is either a single MethodCall (s.SetProperty(...)) or a
-    // chain (s.SetProperty(...).SetProperty(...)). Chain the audit call after
-    // the existing body via a Block.
-    var block = Expression.Block(typeof(void), existing.Body, auditCall);
-    return Expression.Lambda<Action<Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder<PerspectiveRow<TModel>>>>(block, spcParam);
+    return Expression.Lambda<Action<Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder<PerspectiveRow<TModel>>>>(
+      auditCall, spcParam);
   }
 }

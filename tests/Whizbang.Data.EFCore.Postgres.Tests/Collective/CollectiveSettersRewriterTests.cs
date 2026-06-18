@@ -12,21 +12,26 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 
 /// <summary>
 /// Verifies <see cref="CollectiveSettersRewriter.Rewrite"/> translates
-/// the spec's model-level <c>SetProperty</c> calls into the row-level
-/// shape EF Core's <see cref="UpdateSettersBuilder{T}"/> expects. The
-/// adapter (Slice 6) feeds the result straight into
-/// <c>ExecuteUpdateAsync</c>; if the rewriting is wrong, the SQL UPDATE
-/// either fails to translate or updates the wrong column.
+/// the spec's model-level <c>SetProperty</c> calls into the column-level
+/// <c>SetProperty(r =&gt; r.Data, r =&gt; EF.Functions.JsonbSet(...))</c>
+/// shape EF Core 10's <see cref="UpdateSettersBuilder{T}"/> can hand to
+/// <c>ExecuteUpdateAsync</c>. EF 10 only supports top-level scalar
+/// updates via <c>SetProperty</c>, so the adapter funnels every model
+/// mutation through a single <c>data</c> column update with the
+/// individual <c>SetProperty(j =&gt; j.X, value)</c> calls folded into a
+/// chained <see cref="Functions.WhizbangJsonDbFunctions.JsonbSet{TData}"/>
+/// expression that the custom translator emits as
+/// <c>jsonb_set(...)</c> SQL.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
 [Category("Unit")]
 [Category("CollectiveEvents")]
 public class CollectiveSettersRewriterTests {
 
-  // ── Constant-value SetProperty ─────────────────────────────────────────
+  // ── Output shape: SetProperty(r => r.Data, r => ...) ──────────────────
 
   [Test]
-  public async Task Rewrite_ConstantValue_ProducesRowLevelSelectorAsync() {
+  public async Task Rewrite_ConstantValue_ProducesSetPropertyOnDataColumnAsync() {
     Expression<Action<ICollectiveSetters<_jobModel>>> source =
       s => s.SetProperty(j => j.Status, "Archived");
 
@@ -38,39 +43,22 @@ public class CollectiveSettersRewriterTests {
       .Because("EF Core's ExecuteUpdateAsync expects the setters delegate to take UpdateSettersBuilder<PerspectiveRow<TModel>> — anything else won't translate.");
 
     var text = rewritten.ToString();
-    await Assert.That(text).Contains("Data.Status")
-      .Because("Selector must navigate through .Data so EF Core resolves the column under PerspectiveRow's jsonb mapping.");
+    await Assert.That(text).Contains("SetProperty")
+      .Because("Result must be a SetProperty call on the UpdateSettersBuilder.");
+    await Assert.That(text).Contains("r.Data")
+      .Because("The LHS selector targets the Data jsonb column itself (r => r.Data), not r.Data.X — EF 10 rejects nested-path SetProperty.");
+    await Assert.That(text).Contains("JsonbSet")
+      .Because("The RHS uses EF.Functions.JsonbSet so the translator emits jsonb_set(...) SQL.");
+    await Assert.That(text).Contains("\"Status\"")
+      .Because("The constant property name is baked into the rewritten expression for the translator to render as the SQL path '{Status}'.");
     await Assert.That(text).Contains("Archived")
-      .Because("Constant value passed through to the rewritten call.");
+      .Because("The value is JSON-serialized into the constant string passed to JsonbSet — the SQL site casts it to jsonb. Exact ToString() formatting of the embedded quotes varies by .NET version; just verify the raw value appears.");
   }
 
-  // ── Computed-value SetProperty (increment) ─────────────────────────────
+  // ── Multiple chained SetProperty → nested JsonbSet ────────────────────
 
   [Test]
-  public async Task Rewrite_ComputedValue_ProducesRowLevelSelectorAndComputedAsync() {
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
-      s => s.SetProperty(j => j.ViewCount, j => j.ViewCount + 1);
-
-    var rewritten = CollectiveSettersRewriter.Rewrite(source);
-    var text = rewritten.ToString();
-
-    await Assert.That(text).Contains("Data.ViewCount")
-      .Because("Both the selector AND the computed expression must be rewritten through r.Data.");
-
-    // The computed side appears at least twice in the rewritten body:
-    // once as the selector path, once on the right-hand side of the
-    // increment expression. Loose check — exact ToString format varies
-    // by .NET runtime version, but the navigation through .Data must
-    // appear in BOTH the lhs and rhs of the assignment.
-    var occurrences = text.Split(_dataViewCount, StringSplitOptions.None).Length - 1;
-    await Assert.That(occurrences).IsGreaterThanOrEqualTo(2)
-      .Because("Computed side references the property too; both lhs and rhs must navigate through .Data.");
-  }
-
-  // ── Multiple SetProperty calls chained ─────────────────────────────────
-
-  [Test]
-  public async Task Rewrite_MultipleUpdateSettersBuilder_PreservesChainAsync() {
+  public async Task Rewrite_TwoChainedSetProperty_FoldsIntoNestedJsonbSetAsync() {
     Expression<Action<ICollectiveSetters<_jobModel>>> source =
       s => s.SetProperty(j => j.Status, "Archived")
            .SetProperty(j => j.ViewCount, 0);
@@ -78,9 +66,39 @@ public class CollectiveSettersRewriterTests {
     var rewritten = CollectiveSettersRewriter.Rewrite(source);
     var text = rewritten.ToString();
 
-    await Assert.That(text).Contains("Data.Status");
-    await Assert.That(text).Contains("Data.ViewCount");
-    await Assert.That(text).Contains("Archived");
+    // Both property names appear in the rewritten body.
+    await Assert.That(text).Contains("\"Status\"");
+    await Assert.That(text).Contains("\"ViewCount\"");
+
+    // Two JsonbSet calls fold into a nested chain.
+    var occurrences = text.Split("JsonbSet", StringSplitOptions.None).Length - 1;
+    await Assert.That(occurrences).IsEqualTo(2)
+      .Because("Two source SetProperty calls fold into TWO nested JsonbSet invocations on r.Data.");
+  }
+
+  // ── Computed-value SetProperty unsupported (matches Slice 9) ──────────
+
+  [Test]
+  public async Task Rewrite_ComputedValue_ThrowsNotSupportedAsync() {
+    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+      s => s.SetProperty(j => j.ViewCount, j => j.ViewCount + 1);
+
+    await Assert.That(() => CollectiveSettersRewriter.Rewrite(source))
+      .ThrowsExactly<NotSupportedException>()
+      .Because("Slice 6 v1.0 matches Slice 9 Dapper: constant-value SetProperty only. Computed expressions throw with a pointer to SpecKind = RawSql so the consumer is never silently surprised by an UPDATE that doesn't increment.");
+  }
+
+  // ── Empty spec rejection ──────────────────────────────────────────────
+
+  [Test]
+  public async Task Rewrite_EmptySpec_ThrowsInvalidOperationAsync() {
+    var sParam = Expression.Parameter(typeof(ICollectiveSetters<_jobModel>), "s");
+    var empty = Expression.Lambda<Action<ICollectiveSetters<_jobModel>>>(
+      Expression.Empty(), sParam);
+
+    await Assert.That(() => CollectiveSettersRewriter.Rewrite(empty))
+      .ThrowsExactly<InvalidOperationException>()
+      .Because("A spec that mutates zero properties translates to a SQL UPDATE with no SET clause — that's a malformed handler.");
   }
 
   // ── Null source defensive guard ────────────────────────────────────────
@@ -91,31 +109,7 @@ public class CollectiveSettersRewriterTests {
       .ThrowsExactly<ArgumentNullException>();
   }
 
-  // ── Parameter substitution invariant ───────────────────────────────────
-
-  [Test]
-  public async Task Rewrite_AllOriginalModelReferences_AreReplacedByRowDataAccessAsync() {
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
-      s => s.SetProperty(j => j.Status, "X");
-
-    var rewritten = CollectiveSettersRewriter.Rewrite(source);
-
-    // The rewritten body should NOT contain a free parameter referencing
-    // the original `j` model parameter. The visitor must replace every
-    // occurrence (including in the second-arg computed lambda when used).
-    var text = rewritten.ToString();
-
-    // Cheap negative check: the original parameter name "j" should not
-    // appear as a free identifier (vs being part of "Data" or another
-    // identifier). The rewritten selector should use "r" (the new
-    // parameter name).
-    await Assert.That(text).Contains("r.Data")
-      .Because("Property access must go through the new row parameter, not the original model parameter.");
-  }
-
   // ── Inline test types ──────────────────────────────────────────────────
-
-  private static readonly string[] _dataViewCount = ["Data.ViewCount"];
 
   private sealed class _jobModel {
     public string Status { get; set; } = string.Empty;

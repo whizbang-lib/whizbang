@@ -13,6 +13,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.EFCore.Postgres.Collective;
+using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
@@ -88,31 +89,28 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await Assert.That(result.AffectedRowCount).IsEqualTo(1)
       .Because("Exactly one row (jobA1) intersected the tenant filter AND the matched-id set — the SQL UPDATE must report exactly that count.");
 
-    // Direct DB readback (use a fresh context so EF doesn't return cached
-    // entities from the change tracker).
-    var fresh = _newContext();
-    var rowA1 = await fresh.Jobs.AsNoTracking().SingleAsync(r => r.Id == jobA1);
-    var rowA2 = await fresh.Jobs.AsNoTracking().SingleAsync(r => r.Id == jobA2);
-    var rowB1 = await fresh.Jobs.AsNoTracking().SingleAsync(r => r.Id == jobB1);
-    var rowB2 = await fresh.Jobs.AsNoTracking().SingleAsync(r => r.Id == jobB2);
+    // Read back via raw SQL — the test exercises the SET-clause + WHERE
+    // path; verification doesn't need to go through EF's jsonb materialization.
+    var (statusA1, auditA1) = await _readJobAsync(jobA1);
+    var (statusA2, auditA2) = await _readJobAsync(jobA2);
+    var (statusB1, auditB1) = await _readJobAsync(jobB1);
+    var (statusB2, auditB2) = await _readJobAsync(jobB2);
 
-    await Assert.That(rowA1.Data.Status).IsEqualTo("Archived")
+    await Assert.That(statusA1).IsEqualTo("Archived")
       .Because("jobA1 was in the matched-set and matched the tenant scope — must be archived.");
-    await Assert.That(rowA1.LastCollectiveEventId).IsEqualTo(evtId)
+    await Assert.That(auditA1).IsEqualTo(evtId)
       .Because("The audit pointer MUST land on every row the SQL UPDATE touched, in the same statement, so audit visibility is atomic with the mutation.");
 
-    await Assert.That(rowA2.Data.Status).IsEqualTo("Active")
+    await Assert.That(statusA2).IsEqualTo("Active")
       .Because("jobA2 was in the same tenant but NOT in the matched-set — the membership clause must exclude it.");
-    await Assert.That(rowA2.LastCollectiveEventId).IsNull()
+    await Assert.That(auditA2).IsNull()
       .Because("If the audit pointer landed on jobA2 the matched-set membership wasn't actually enforced — that would be a silent over-mutation.");
 
-    await Assert.That(rowB1.Data.Status).IsEqualTo("Active");
-    await Assert.That(rowB1.LastCollectiveEventId).IsNull();
-    await Assert.That(rowB2.Data.Status).IsEqualTo("Active");
-    await Assert.That(rowB2.LastCollectiveEventId).IsNull()
+    await Assert.That(statusB1).IsEqualTo("Active");
+    await Assert.That(auditB1).IsNull();
+    await Assert.That(statusB2).IsEqualTo("Active");
+    await Assert.That(auditB2).IsNull()
       .Because("Tenant B rows must be entirely untouched — the resolver's scope filter must restrict by row.scope.TenantId.");
-
-    await fresh.DisposeAsync();
   }
 
   // ── Multi-row in same tenant ──────────────────────────────────────────
@@ -142,13 +140,26 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await Assert.That(result.AffectedRowCount).IsEqualTo(3)
       .Because("All three matched-ids fall inside the tenant scope — all three must be updated in one SQL statement.");
 
-    var fresh = _newContext();
     foreach (var id in new[] { job1, job2, job3 }) {
-      var row = await fresh.Jobs.AsNoTracking().SingleAsync(r => r.Id == id);
-      await Assert.That(row.Data.Status).IsEqualTo("Archived");
-      await Assert.That(row.LastCollectiveEventId).IsEqualTo(evtId);
+      var (status, audit) = await _readJobAsync(id);
+      await Assert.That(status).IsEqualTo("Archived");
+      await Assert.That(audit).IsEqualTo(evtId);
     }
-    await fresh.DisposeAsync();
+  }
+
+  private async Task<(string Status, Guid? AuditId)> _readJobAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT data->>'Status', last_collective_event_id FROM wh_per_collective_job WHERE id = @id;";
+    cmd.Parameters.AddWithValue("id", id);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    if (!await reader.ReadAsync()) {
+      throw new InvalidOperationException($"No row found for id {id}");
+    }
+    var status = reader.GetString(0);
+    Guid? audit = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+    return (status, audit);
   }
 
   // ── Empty matched-set short-circuit ───────────────────────────────────
@@ -261,7 +272,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
   private _jobDbContext _newContext() {
     var optionsBuilder = new DbContextOptionsBuilder<_jobDbContext>();
-    optionsBuilder.UseNpgsql(_dataSource!)
+    optionsBuilder.UseNpgsql(_dataSource!, npg => npg.UseWhizbangFunctions())
       .ConfigureWarnings(w => w.Ignore(
         Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     return new _jobDbContext(optionsBuilder.Options);
