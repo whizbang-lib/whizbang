@@ -5,7 +5,7 @@ namespace Whizbang.Core.Offloads;
 /// Determines when a message body is uploaded to a body-store and replaced
 /// on the wire with a <see cref="MessageBodyClaim"/>.
 /// </summary>
-/// <docs>fundamentals/offloads/offload-options</docs>
+/// <docs>offloads</docs>
 public sealed class MessageBodyOffloadOptions {
   /// <summary>
   /// Provider name to use for offload. MUST match a registered

@@ -11,7 +11,7 @@ namespace Whizbang.Core.Offloads;
 /// <see cref="MessageBodyClaim.ProviderName"/> when a claim arrives on the
 /// wire.
 /// </summary>
-/// <docs>fundamentals/offloads/di-registration</docs>
+/// <docs>offloads</docs>
 public static class OffloadServiceCollectionExtensions {
 
   /// <summary>
