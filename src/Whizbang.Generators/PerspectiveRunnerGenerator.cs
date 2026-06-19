@@ -364,6 +364,22 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
+    // Generate the ResolveTargetStreamId switch body used by RunRebuildAsync. One arm per
+    // [StreamId]-bearing event type returns the event's post-upcast StreamId; the default keeps the
+    // event on the physical stream. When the perspective handles no [StreamId] events, the body is
+    // just the physical-stream fallback (so re-key never splits — identical to the old rebuild).
+    var resolveTargetStreamId = new StringBuilder();
+    if (perspective.EventStreamIds != null) {
+      resolveTargetStreamId.AppendLine("    return @event switch {");
+      foreach (var eventStreamId in perspective.EventStreamIds) {
+        resolveTargetStreamId.AppendLine($"      {eventStreamId.EventTypeName} e => e.{eventStreamId.StreamIdPropertyName},");
+      }
+      resolveTargetStreamId.AppendLine("      _ => physicalStreamId,");
+      resolveTargetStreamId.AppendLine("    };");
+    } else {
+      resolveTargetStreamId.AppendLine("    return physicalStreamId;");
+    }
+
     // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
     var upsertCode = _generateUpsertCode(perspective);
 
@@ -376,8 +392,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveRunnerGenerator).Assembly, result);
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "REPLAY_EVENT_TYPES", eventTypesArray.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "REBUILD_EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "RESOLVE_TARGET_STREAM_ID", resolveTargetStreamId.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
     result = TemplateUtilities.ReplaceRegion(result, "SCOPE_EVENT_HANDLING", scopeEventCode);
     result = TemplateUtilities.ReplaceRegion(

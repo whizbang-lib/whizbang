@@ -57,6 +57,31 @@ public interface IPerspectiveRunner {
   });
 
   /// <summary>
+  /// Replays a physical stream during a perspective REBUILD, honouring event upcasters that
+  /// re-key an event's <c>[StreamId]</c>. Reads the physical stream's events (upcasted), partitions
+  /// them by their post-upcast target stream id, and applies each partition onto its own row. The
+  /// common case — no upcaster re-keys — yields a single partition equal to <paramref name="physicalStreamId"/>,
+  /// so behaviour is identical to a single <see cref="RunAsync"/> call.
+  ///
+  /// <para>Returns one <see cref="PerspectiveCursorCompletion"/> per target stream so the rebuilder
+  /// records a cursor for each row that was materialised. Rebuild-only: the live drain paths
+  /// (<see cref="RunAsync"/>, <see cref="RunWithEventsAsync"/>) are unaffected.</para>
+  ///
+  /// <para>The default implementation delegates to <see cref="RunAsync"/> for a full replay and
+  /// wraps the single completion in a list — so legacy/hand-written runners keep today's behaviour
+  /// (no re-key). Generated runners override this with the partitioning implementation.</para>
+  /// </summary>
+  /// <param name="physicalStreamId">The stored stream whose events are replayed</param>
+  /// <param name="perspectiveName">Name of the perspective to run</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>One cursor completion per materialised target stream</returns>
+  async Task<IReadOnlyList<PerspectiveCursorCompletion>> RunRebuildAsync(
+    Guid physicalStreamId,
+    string perspectiveName,
+    CancellationToken cancellationToken = default
+  ) => [await RunAsync(physicalStreamId, perspectiveName, null, cancellationToken)];
+
+  /// <summary>
   /// Rewinds a perspective by restoring from the nearest snapshot before the triggering event,
   /// then replays all events from that point in order. If no qualifying snapshot exists,
   /// performs a full replay from event zero.
