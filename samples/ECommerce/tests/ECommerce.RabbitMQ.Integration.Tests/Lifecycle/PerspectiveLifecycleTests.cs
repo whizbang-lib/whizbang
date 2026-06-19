@@ -32,6 +32,12 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 [Category("Integration")]
 [Category("Lifecycle")]
 [NotInParallel("RabbitMQ")]
+// Eventual-consistency under RabbitMQ: the dispatch → outbox → RabbitMQ → inbox → perspective-claim
+// chain is shared-infrastructure-throughput bound on CI and occasionally exceeds the per-test
+// [Timeout] under parallel-module pressure (documented per-test below; PR #254 forensic). Matches the
+// established [Retry(2)] convention on the sibling RabbitMQ workflow suites (RestockInventory /
+// UpdateProduct) — a fast attempt almost always lands within the window. Not a test-logic race.
+[Retry(2)]
 public class PerspectiveLifecycleTests {
   private static RabbitMqIntegrationFixture? _fixture;
 

@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pipeline on every polymorphic read path (`ReadPolymorphicAsync`, `DeserializeStreamEvents`,
   `GetEventsBetweenPolymorphicAsync`) — one unified materialization seam. Zero-cost passthrough
   when no upcasters are registered. See `docs/design/event-upcasting.md` + `docs/event-upcasting.md`.
+- **Re-key upcasters re-route on rebuild** — a perspective rebuild now honours an upcaster that
+  changes an event's `[StreamId]`: `IPerspectiveRunner.RunRebuildAsync` (new, default-implemented)
+  reads a physical stream's events, partitions them by their post-upcast target stream id, and
+  projects each partition onto its own row. The generated runner gains a `ResolveTargetStreamId`
+  switch; the live drain hot path (`RunAsync`/`RunWithEventsAsync`) is unchanged. Without a re-key
+  upcaster the rebuild is a single partition — byte-for-byte the old behaviour. Validated by
+  `RekeyThroughRebuildTests` (Testcontainers). Enables the JDX per-item-saga-streams history
+  migration via a one-time projection rebuild.
 - **Framework-wide serialization versioning** — `SerializationVersion.CURRENT` (version of the
   JSON serialization logic), `VersionedJsonEnvelope` (stamp/read a version on any persisted JSON
   blob), `IVersionedJsonSerializer` + `IVersionedJsonSerializer<T>` and

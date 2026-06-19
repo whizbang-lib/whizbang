@@ -119,7 +119,8 @@ test, so the same stored event always projects to the same state.
 - **Backfill** — set fields added since the event was written (return same or new instance).
 - **Type change** — return a different concrete `IEvent`. The target type must be registered in
   the source-generated JSON context (it is, if it's a normal event).
-- **Re-key** — set the `[StreamId]`-marked property to land the event on a different stream.
+- **Re-key** — set the `[StreamId]`-marked property to land the event on a different stream. On a
+  perspective **rebuild** the runner re-routes the event onto the new stream's row (see below).
 
 ## Rules & constraints (AOT, purity)
 
@@ -135,10 +136,16 @@ test, so the same stored event always projects to the same state.
 - **Typed reads delegate unchanged.** `ReadAsync<TMessage>` / `GetEventsBetweenAsync<TMessage>`
   return a concrete `TMessage`, so a type-changing upcast can't be expressed there — and those
   are not projection-rebuild paths. Type-change/re-key apply on the polymorphic paths above.
-- **Re-key through the SQL-driven runner** is not yet validated end-to-end. The runner fetches
-  events by their stored `stream_id`; an upcaster that changes the `[StreamId]` property
-  transforms the event but the rebuild-routing implications are still being proven out (the JDX
-  per-item-streams payoff). Backfill and type-change work on all paths today.
+- **Re-key re-routes on rebuild, not on live drain.** During a perspective rebuild the generated
+  runner's `RunRebuildAsync` reads a physical stream's events (upcasted), partitions them by their
+  **post-upcast** `[StreamId]`, and projects each partition onto its own row — so a re-keyed
+  historical event lands on its new stream's row, not the stored one. The live drain path is
+  deliberately untouched: new events are already written to their correct stream, so only rebuild of
+  historically mis-keyed events needs re-routing. Validated end-to-end by
+  `RekeyThroughRebuildTests` (Testcontainers) and the JDX `SagaItemStreamUpcasterReplayTests`.
+- **Rebuild does not purge first**, so re-key-on-rebuild is a **run-once** history migration: run it
+  once per environment (a second rebuild is a no-op on already-materialised target rows). Backfill
+  and type-change work on all paths today.
 
 ## Snapshots
 

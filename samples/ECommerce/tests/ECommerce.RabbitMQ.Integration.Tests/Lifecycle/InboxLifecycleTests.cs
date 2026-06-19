@@ -30,6 +30,10 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 [Category("Integration")]
 [Category("Lifecycle")]
 [NotInParallel("RabbitMQ")]
+// Eventual-consistency under RabbitMQ — shared-infrastructure throughput on CI occasionally exceeds
+// the per-test [Timeout] under parallel-module pressure. Matches the established [Retry(2)] convention
+// on the sibling RabbitMQ workflow suites. Not a test-logic race.
+[Retry(2)]
 public class InboxLifecycleTests {
   private static RabbitMqIntegrationFixture? _fixture;
 
