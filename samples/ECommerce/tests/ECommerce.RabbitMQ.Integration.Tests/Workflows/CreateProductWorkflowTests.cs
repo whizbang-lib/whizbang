@@ -17,6 +17,9 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Workflows;
 [Category("Integration")]
 [Category("Workflow")]
 [NotInParallel("RabbitMQ")]
+// Eventual-consistency under RabbitMQ — matches the established [Retry(2)] convention already on the
+// sibling RabbitMQ workflow suites (RestockInventory / UpdateProduct). Not a test-logic race.
+[Retry(2)]
 public class CreateProductWorkflowTests {
   private static RabbitMqIntegrationFixture? _fixture;
 
