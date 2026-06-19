@@ -112,6 +112,69 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     return await RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, events, cancellationToken);
   }
 
+  /// <summary>
+  /// Rebuild-only replay that honours re-key upcasters. Reads the physical stream's events
+  /// (upcasted on the polymorphic read seam), partitions them by their post-upcast target stream
+  /// id, and applies each partition onto its own row via <see cref="RunWithEventsAsync"/>. Returns
+  /// one completion per target stream. When no upcaster re-keys, every event maps to
+  /// <paramref name="physicalStreamId"/> — a single partition that is byte-for-byte the old
+  /// rebuild path. The live drain (<see cref="RunAsync"/>/<see cref="RunWithEventsAsync"/>) is
+  /// never routed through here.
+  /// </summary>
+  public async Task<IReadOnlyList<PerspectiveCursorCompletion>> RunRebuildAsync(
+      Guid physicalStreamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) {
+
+    var eventTypes = new[] {
+      #region REBUILD_EVENT_TYPES
+      // Generated event type list goes here
+      #endregion
+    };
+
+    // Read + upcast the physical stream's events (the decorator applies upcasters on this seam).
+    var events = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+    await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
+        physicalStreamId, null, eventTypes, cancellationToken)) {
+      events.Add(envelope);
+    }
+
+    // Partition by post-upcast target stream id, preserving read order within each partition.
+    // Fast path: every event maps to physicalStreamId (no re-key) → one partition that behaves
+    // exactly like a single RunWithEventsAsync(physicalStreamId, ...) call.
+    var partitions = new Dictionary<Guid, List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>>();
+    var order = new List<Guid>();
+    foreach (var envelope in events) {
+      var target = ResolveTargetStreamId(envelope.Payload, physicalStreamId);
+      if (!partitions.TryGetValue(target, out var bucket)) {
+        bucket = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+        partitions[target] = bucket;
+        order.Add(target);
+      }
+      bucket.Add(envelope);
+    }
+
+    // No events: return a single no-op completion for the physical stream so the rebuilder's
+    // counters/cursor bookkeeping stay coherent with the one-completion-per-stream contract.
+    if (order.Count == 0) {
+      return new[] {
+        new PerspectiveCursorCompletion {
+          StreamId = physicalStreamId,
+          PerspectiveName = perspectiveName,
+          PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+          LastEventId = Guid.Empty,
+          Status = PerspectiveProcessingStatus.None
+        }
+      };
+    }
+
+    var completions = new List<PerspectiveCursorCompletion>(order.Count);
+    foreach (var target in order) {
+      completions.Add(await RunWithEventsAsync(target, perspectiveName, null, partitions[target], cancellationToken));
+    }
+    return completions;
+  }
+
   public async Task<PerspectiveCursorCompletion> RunWithEventsAsync(
       Guid streamId,
       string perspectiveName,
@@ -714,6 +777,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // Generated ExtractStreamId methods go here (one per event type)
   // These methods extract the stream ID from each event's [StreamId] property
   #endregion
+
+  /// <summary>
+  /// Resolves the target stream id an event belongs to AFTER upcasting, used by
+  /// <see cref="RunRebuildAsync"/> to route re-keyed events onto the correct row. Returns the
+  /// event's post-upcast <c>[StreamId]</c> for known event types; falls back to
+  /// <paramref name="physicalStreamId"/> for event types without a <c>[StreamId]</c> (they stay on
+  /// the physical stream). The generated switch contains one arm per <c>[StreamId]</c>-bearing
+  /// event type this perspective handles.
+  /// </summary>
+  private static Guid ResolveTargetStreamId(global::Whizbang.Core.IEvent @event, Guid physicalStreamId) {
+    #region RESOLVE_TARGET_STREAM_ID
+    return physicalStreamId;
+    #endregion
+  }
 
   /// <summary>
   /// Saves the model atomically.

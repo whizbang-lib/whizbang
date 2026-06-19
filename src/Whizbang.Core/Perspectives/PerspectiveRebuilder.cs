@@ -169,18 +169,25 @@ public sealed partial class PerspectiveRebuilder(
       CancellationToken ct) {
     var streamSw = Stopwatch.StartNew();
     try {
-      var completion = await runner.RunAsync(streamId, perspectiveName, null, ct);
+      // RunRebuildAsync replays the physical stream and returns one completion per TARGET stream.
+      // Without re-key upcasters this is a single completion equal to streamId (identical to the
+      // old RunAsync path); with a re-key upcaster, events fan out onto their target rows and a
+      // cursor is queued for each. streamsProcessed counts physical streams (one per call) so the
+      // rebuild result stays keyed to the resolved stream list.
+      var completions = await runner.RunRebuildAsync(streamId, perspectiveName, ct);
       streamSw.Stop();
       streamsProcessed++;
-      eventsReplayed++;
+      eventsReplayed += completions.Count;
 
-      LogStreamReplayed(logger, perspectiveName, streamId, completion.LastEventId,
-          completion.Status, streamSw.ElapsedMilliseconds, streamsProcessed, totalStreams);
+      foreach (var completion in completions) {
+        LogStreamReplayed(logger, perspectiveName, completion.StreamId, completion.LastEventId,
+            completion.Status, streamSw.ElapsedMilliseconds, streamsProcessed, totalStreams);
 
-      if (pendingCompletions != null) {
-        pendingCompletions.Add(completion);
-        if (pendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
-          await _flushPendingCompletionsAsync(completer, pendingCompletions, perspectiveName, streamsProcessed, totalStreams, ct);
+        if (pendingCompletions != null) {
+          pendingCompletions.Add(completion);
+          if (pendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
+            await _flushPendingCompletionsAsync(completer, pendingCompletions, perspectiveName, streamsProcessed, totalStreams, ct);
+          }
         }
       }
 
