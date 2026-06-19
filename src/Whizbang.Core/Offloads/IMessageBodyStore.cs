@@ -23,7 +23,7 @@ namespace Whizbang.Core.Offloads;
 /// the keys/fields they document; unknown <c>ProviderHints</c> are ignored.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/offloads/message-body-store</docs>
+/// <docs>offloads</docs>
 public interface IMessageBodyStore {
   /// <summary>
   /// Stable identifier for this provider registration. Sender and receiver
