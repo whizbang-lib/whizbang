@@ -31,14 +31,26 @@ public class RekeyTestModel {
   public string Marker { get; init; } = string.Empty;
 }
 
-public record RekeyTestEvent : IEvent {
+/// <summary>
+/// Base event carrying the <c>[StreamId]</c> property by INHERITANCE — mirrors JDX's
+/// <c>BaseSagaItemEvent</c>, where concrete saga-item events inherit their stream key. This is the
+/// regression shape: the generator must walk the inheritance chain to find <c>[StreamId]</c>,
+/// otherwise <c>ResolveTargetStreamId</c> can't route a re-keyed event onto its target row.
+/// </summary>
+public record RekeyTestEventBase {
   // Settable so the upcaster can re-key in place (mirrors BaseSagaItemEvent.StreamId in JDX).
+  // The [StreamId] lives on the base; only the derived type implements IEvent, so the generator
+  // must walk the inheritance chain to find it (the regression this test guards).
   [StreamId]
   public required Guid StreamId { get; set; }
+}
+
+public record RekeyTestEvent : RekeyTestEventBase, IEvent {
   public required string Marker { get; init; }
 
-  /// <summary>When non-empty and different from <see cref="StreamId"/>, the upcaster re-keys
-  /// the event onto this stream. <see cref="Guid.Empty"/> means "stay on the physical stream".</summary>
+  /// <summary>When non-empty and different from <see cref="RekeyTestEventBase.StreamId"/>, the
+  /// upcaster re-keys the event onto this stream. <see cref="Guid.Empty"/> means "stay on the
+  /// physical stream".</summary>
   public Guid TargetStreamId { get; init; }
 }
 

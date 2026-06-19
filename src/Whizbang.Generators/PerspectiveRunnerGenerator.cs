@@ -218,13 +218,20 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Returns the property name if exactly one [StreamId] is found, null otherwise.
   /// </summary>
   private static string? _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
-    foreach (var member in eventTypeSymbol.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamIdAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
+    // Walk the inheritance chain: the [StreamId]-marked property may be declared on a base type
+    // (e.g. JDX's BaseSagaItemEvent), and GetMembers() returns only declared members. Most-derived
+    // first so a re-declaration on the concrete type wins over the inherited one.
+    for (ITypeSymbol? type = eventTypeSymbol;
+        type != null && type.SpecialType != SpecialType.System_Object;
+        type = (type as INamedTypeSymbol)?.BaseType) {
+      foreach (var member in type.GetMembers()) {
+        if (member is IPropertySymbol property) {
+          var hasStreamIdAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamIdAttribute) {
-          return property.Name;
+          if (hasStreamIdAttribute) {
+            return property.Name;
+          }
         }
       }
     }
