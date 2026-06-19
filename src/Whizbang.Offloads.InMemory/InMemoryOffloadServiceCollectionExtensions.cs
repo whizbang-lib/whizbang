@@ -6,7 +6,7 @@ namespace Whizbang.Offloads.InMemory;
 /// <summary>
 /// DI registration for the in-memory body-store provider.
 /// </summary>
-/// <docs>fundamentals/offloads/providers/in-memory</docs>
+/// <docs>offloads</docs>
 public static class InMemoryOffloadServiceCollectionExtensions {
 
   /// <summary>
