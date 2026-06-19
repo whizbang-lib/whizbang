@@ -2,6 +2,20 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
+  <!--
+    NuGetAudit suppressions. Scoped to specific advisories with no available upstream fix, so the
+    build's TreatWarningsAsErrors does not block on unactionable transitive CVEs. Every other
+    advisory still fails the build. Revisit each when the upstream ships a patched release.
+  -->
+  <ItemGroup>
+    <!--
+      CVE-2025-6965 (GHSA-2m69-gcr7-jv3q) — SQLitePCLRaw.lib.e_sqlite3 <= 2.1.11 bundles a SQLite
+      older than 3.50.2. Transitive via Microsoft.Data.Sqlite; the latest published e_sqlite3 is
+      still 2.1.11, so there is no fixed version to bump to yet. Remove this suppression once
+      SQLitePCLRaw ships a build bundling SQLite >= 3.50.2.
+    -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+  </ItemGroup>
   <ItemGroup>
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.1.0" />
     <PackageVersion Include="Aspire.Hosting.Azure.ServiceBus" Version="13.1.0" />
