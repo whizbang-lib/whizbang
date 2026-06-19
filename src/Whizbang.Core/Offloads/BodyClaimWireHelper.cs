@@ -10,7 +10,7 @@ namespace Whizbang.Core.Offloads;
 /// transport-side claim handling DRY across RabbitMQ + Azure Service Bus
 /// + future wire transports.
 /// </summary>
-/// <docs>fundamentals/offloads/body-offload-receive</docs>
+/// <docs>offloads</docs>
 public static class BodyClaimWireHelper {
 
   /// <summary>

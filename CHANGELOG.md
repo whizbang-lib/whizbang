@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Config-driven offload registration** — `AddWhizbangAzureBlobOffloadsFromConfiguration(IConfiguration)`
+  (in `Whizbang.Offloads.AzureBlob`) is the one call a host needs: it scans every provider under
+  `Whizbang:Offloads:AzureBlob:<name>`, registers a blob store for each, enables the claim-check hook,
+  and binds the selector from `Whizbang:BodyOffload`. Options bind explicitly so `DefaultAccessTier`
+  (an Azure extensible-enum struct `ConfigurationBinder` can't convert) parses from its string form.
+  A no-op when no providers are configured, so offload is opt-in by config presence with zero
+  per-service code. New docs: `docs/offloads.md` (the previously-broken `<docs>` offload links now
+  resolve to it).
 - **Event upcasting** — first-class read-time event transformation. `IEventUpcaster`
   (re-key / type-change / field-backfill, pure & AOT-safe) + `EventUpcasterPipeline`
   (ordered, registration-order composition) + `AddEventUpcaster<T>()` registration +

@@ -17,7 +17,7 @@ namespace Whizbang.Core.Offloads;
 /// envelope so downstream code (inbox serialization, receptors, perspectives)
 /// processes the original message as if the claim wasn't there.
 /// </summary>
-/// <docs>fundamentals/offloads/body-offload-receive</docs>
+/// <docs>offloads</docs>
 public static class BodyClaimRehydrator {
 
   /// <summary>

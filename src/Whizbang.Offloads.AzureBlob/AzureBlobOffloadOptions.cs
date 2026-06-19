@@ -7,7 +7,7 @@ namespace Whizbang.Offloads.AzureBlob;
 /// instance is bound per registered provider name (via
 /// <see cref="AzureBlobOffloadServiceCollectionExtensions.AddWhizbangAzureBlobOffload"/>).
 /// </summary>
-/// <docs>fundamentals/offloads/providers/azure-blob</docs>
+/// <docs>offloads</docs>
 public sealed class AzureBlobOffloadOptions {
   /// <summary>
   /// Azure Storage connection string. Distinguishes emulator from live by

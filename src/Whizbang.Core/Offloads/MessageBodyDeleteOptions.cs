@@ -3,7 +3,7 @@ namespace Whizbang.Core.Offloads;
 /// <summary>
 /// Optional per-call knobs for <see cref="IMessageBodyStore.DeleteAsync"/>.
 /// </summary>
-/// <docs>fundamentals/offloads/delete-options</docs>
+/// <docs>offloads</docs>
 public sealed record MessageBodyDeleteOptions {
   /// <summary>
   /// If <c>true</c>, treat "body not found" as success — idempotent delete.

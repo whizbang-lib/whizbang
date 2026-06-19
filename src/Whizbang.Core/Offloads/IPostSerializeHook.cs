@@ -25,7 +25,7 @@ namespace Whizbang.Core.Offloads;
 /// <see cref="ITransport.PublishAsync"/>.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/offloads/post-serialize-hooks</docs>
+/// <docs>offloads</docs>
 public interface IPostSerializeHook {
   /// <summary>
   /// Lower runs first. Conventions:
