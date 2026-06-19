@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Perspective snapshot serialization now uses the source-generated JSON registry options instead
   of reflection-based `JsonSerializer` (AOT-correct; WhizbangId-bearing model fields no longer
   collapse to `{}`).
+- Perspective runner stream-id extraction now walks the event's inheritance chain, so a `[StreamId]`
+  declared on a base event type (e.g. a shared `BaseSagaItemEvent`) is detected. Previously only
+  directly-declared `[StreamId]` properties were found, which left the re-key-on-rebuild
+  `ResolveTargetStreamId` switch empty for inherited-key events (re-key silently fell back to the
+  physical stream). Regression: `RekeyThroughRebuildTests` now exercises an inherited `[StreamId]`.
 
 ## [0.1.0-alpha] - 2026-01-XX
 

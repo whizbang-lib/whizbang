@@ -31,6 +31,10 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 [Category("Lifecycle")]
 [NotInParallel("RabbitMQ")]
 [Timeout(120_000)]  // Fixture init (~60s) + test body (~25s) + margin
+// Eventual-consistency under RabbitMQ — shared-infrastructure throughput on CI occasionally exceeds
+// the per-test [Timeout] under parallel-module pressure. Matches the established [Retry(2)] convention
+// on the sibling RabbitMQ workflow suites. Not a test-logic race.
+[Retry(2)]
 public class OutboxLifecycleTests {
   private static RabbitMqIntegrationFixture? _fixture;
 
