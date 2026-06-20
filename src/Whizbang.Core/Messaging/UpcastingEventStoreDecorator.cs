@@ -65,10 +65,31 @@ public sealed class UpcastingEventStoreDecorator : IEventStore {
   public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
       Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    // Type-change upcasters consume foreign inputs (LegacyA → GenericB) that the caller's
+    // requested type set excludes — so the inner store would skip them before the upcaster runs.
+    // Include those source types in the read, then drop any upcast result that isn't one of the
+    // originally-requested types (a foreign input whose target wasn't asked for). Re-key / backfill
+    // upcasters declare no source types, so this is a no-op for them (the common case).
+    var extra = _pipeline.ExtraInputTypesFor(eventTypes);
+    if (extra.Count == 0) {
+      await foreach (var envelope in _inner
+          .ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)
+          .WithCancellation(cancellationToken)) {
+        yield return _upcast(envelope);
+      }
+      yield break;
+    }
+
+    var requested = new HashSet<Type>(eventTypes);
+    var readTypes = new List<Type>(eventTypes);
+    readTypes.AddRange(extra);
     await foreach (var envelope in _inner
-        .ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)
+        .ReadPolymorphicAsync(streamId, fromEventId, readTypes, cancellationToken)
         .WithCancellation(cancellationToken)) {
-      yield return _upcast(envelope);
+      var upcasted = _upcast(envelope);
+      if (requested.Contains(upcasted.Payload.GetType())) {
+        yield return upcasted;
+      }
     }
   }
 

@@ -132,12 +132,28 @@ public sealed partial class PerspectiveRebuilder(
     var relevantEventTypes = perspectiveInfo?.EventTypes;
 
     if (relevantEventTypes is { Count: > 0 }) {
+      // A type-change upcaster (LegacyA → GenericB) lets a stream that only carries the legacy
+      // input feed this perspective on rebuild — but such a stream has none of the perspective's
+      // own subscribed types, so the scoping below would skip it. Widen the scope with those
+      // upcasters' source-type names (scoped to upcasters whose target this perspective subscribes
+      // to). Empty for the common no-type-change case, so the query shape is unchanged there.
+      IReadOnlyList<string> effectiveEventTypes = relevantEventTypes;
+      var pipeline = sp.GetService<EventUpcasterPipeline>();
+      if (pipeline is not null) {
+        var extraNames = pipeline.ExtraInputTypeNamesFor(relevantEventTypes);
+        if (extraNames.Count > 0) {
+          var widened = new List<string>(relevantEventTypes);
+          widened.AddRange(extraNames);
+          effectiveEventTypes = widened;
+        }
+      }
+
       var streamIds = await eventStoreQuery.Query
-          .Where(e => relevantEventTypes.Contains(e.EventType))
+          .Where(e => effectiveEventTypes.Contains(e.EventType))
           .Select(e => e.StreamId)
           .Distinct()
           .ToListAsync(ct);
-      LogStreamScoping(logger, perspectiveName, streamIds.Count, relevantEventTypes.Count);
+      LogStreamScoping(logger, perspectiveName, streamIds.Count, effectiveEventTypes.Count);
       return streamIds;
     }
 
