@@ -1102,14 +1102,23 @@ public class TransportConsumerWorkerUncoveredPathsTests {
   }
 
   private sealed class UncoveredReceptorInvoker : IReceptorInvoker {
-    public int InvokeCallCount { get; private set; }
-    public List<LifecycleStage> InvokedStages { get; } = [];
+    // The fallback path fans the terminal stages out as concurrent detached tasks, so InvokeAsync
+    // is called from several threads at once. Guard the mutations: an unsynchronized List.Add /
+    // counter++ races and loses updates under parallelism (intermittent under-count in CI).
+    private readonly object _gate = new();
+    private readonly List<LifecycleStage> _invokedStages = [];
+    private int _invokeCallCount;
+
+    public int InvokeCallCount { get { lock (_gate) { return _invokeCallCount; } } }
+    public IReadOnlyList<LifecycleStage> InvokedStages { get { lock (_gate) { return _invokedStages.ToList(); } } }
 
     public ValueTask InvokeAsync(
         IMessageEnvelope envelope, LifecycleStage stage,
         ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
-      InvokeCallCount++;
-      InvokedStages.Add(stage);
+      lock (_gate) {
+        _invokeCallCount++;
+        _invokedStages.Add(stage);
+      }
       return ValueTask.CompletedTask;
     }
   }

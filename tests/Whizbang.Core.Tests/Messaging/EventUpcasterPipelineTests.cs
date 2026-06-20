@@ -90,6 +90,59 @@ public class EventUpcasterPipelineTests {
     await Assert.That(() => pipeline.Apply(null!)).Throws<ArgumentNullException>();
   }
 
+  // ── type-change input scoping (read-seam / rebuild stream-enumeration widening) ──
+
+  [Test]
+  public async Task HasTypeChanges_OnlyWhenAnUpcasterDeclaresSourceAndTargetAsync() {
+    await Assert.That(new EventUpcasterPipeline([]).HasTypeChanges).IsFalse();
+    // A type-change upcaster that declares nothing is NOT a contributor (back-compat).
+    await Assert.That(new EventUpcasterPipeline([new V1ToV2Upcaster()]).HasTypeChanges).IsFalse();
+    await Assert.That(new EventUpcasterPipeline([new DeclaringV1ToV2Upcaster()]).HasTypeChanges).IsTrue();
+  }
+
+  [Test]
+  public async Task ExtraInputTypesFor_TargetRequested_ReturnsSourceTypeAsync() {
+    var pipeline = new EventUpcasterPipeline([new DeclaringV1ToV2Upcaster()]);
+
+    var extra = pipeline.ExtraInputTypesFor([typeof(OrderV2Event)]);
+
+    await Assert.That(extra.Count).IsEqualTo(1);
+    await Assert.That(extra[0]).IsEqualTo(typeof(OrderV1Event));
+  }
+
+  [Test]
+  public async Task ExtraInputTypesFor_TargetNotRequested_ReturnsEmptyAsync() {
+    var pipeline = new EventUpcasterPipeline([new DeclaringV1ToV2Upcaster()]);
+
+    // OrderV3Event isn't this upcaster's target → its source isn't pulled in.
+    await Assert.That(pipeline.ExtraInputTypesFor([typeof(OrderV3Event)]).Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ExtraInputTypesFor_SourceAlreadyRequested_ReturnsEmptyAsync() {
+    var pipeline = new EventUpcasterPipeline([new DeclaringV1ToV2Upcaster()]);
+
+    // Both source and target requested → nothing extra to add.
+    await Assert.That(pipeline.ExtraInputTypesFor([typeof(OrderV1Event), typeof(OrderV2Event)]).Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ExtraInputTypeNamesFor_TargetRequested_ReturnsSourceNameAsync() {
+    var pipeline = new EventUpcasterPipeline([new DeclaringV1ToV2Upcaster()]);
+
+    var names = pipeline.ExtraInputTypeNamesFor([TypeNameFormatter.Format(typeof(OrderV2Event))]);
+
+    await Assert.That(names.Count).IsEqualTo(1);
+    await Assert.That(names[0]).IsEqualTo(TypeNameFormatter.Format(typeof(OrderV1Event)));
+  }
+
+  [Test]
+  public async Task ExtraInputTypesFor_NoTypeChangeUpcasters_ReturnsEmptyAsync() {
+    var pipeline = new EventUpcasterPipeline([new V1ToV2Upcaster(), new RekeyUpcaster()]);
+
+    await Assert.That(pipeline.ExtraInputTypesFor([typeof(OrderV2Event)]).Count).IsEqualTo(0);
+  }
+
   // ── test events (each carries [StreamId] to satisfy WHIZ009) ──
 #pragma warning disable WHIZ009
   public record OrderV1Event : IEvent {
@@ -121,6 +174,18 @@ public class EventUpcasterPipelineTests {
 
   // ── test upcasters ──
   private sealed class V1ToV2Upcaster : IEventUpcaster {
+    public bool CanUpcast(IEvent @event) => @event is OrderV1Event;
+    public IEvent Upcast(IEvent @event) {
+      var v1 = (OrderV1Event)@event;
+      return new OrderV2Event { StreamId = v1.StreamId, Data = v1.Data, Version = 2 };
+    }
+  }
+
+  // Same transform as V1ToV2Upcaster but DECLARES its source/target types, opting into the
+  // read-seam / stream-enumeration widening for foreign inputs.
+  private sealed class DeclaringV1ToV2Upcaster : IEventUpcaster {
+    public IReadOnlyList<Type> SourceTypes => [typeof(OrderV1Event)];
+    public IReadOnlyList<Type> TargetTypes => [typeof(OrderV2Event)];
     public bool CanUpcast(IEvent @event) => @event is OrderV1Event;
     public IEvent Upcast(IEvent @event) {
       var v1 = (OrderV1Event)@event;
