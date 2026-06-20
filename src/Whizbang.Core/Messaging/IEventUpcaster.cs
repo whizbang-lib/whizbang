@@ -38,6 +38,29 @@ public interface IEventUpcaster {
   bool CanUpcast(IEvent storedEvent);
 
   /// <summary>
+  /// The stored event types this upcaster consumes as <b>input</b> that are NOT otherwise part of a
+  /// rebuilt perspective's own subscription — i.e. the source types of a <i>type-change</i> upcast
+  /// (<c>LegacyA</c> → <c>GenericB</c>, where the perspective subscribes to <c>GenericB</c>, not <c>LegacyA</c>).
+  /// </summary>
+  /// <remarks>
+  /// Both the rebuild stream-enumeration and the polymorphic read are scoped to a perspective's
+  /// subscribed event types, so a foreign input that a type-change upcaster would transform is
+  /// otherwise filtered out <i>before</i> the upcaster runs. Declaring it here (paired with
+  /// <see cref="TargetTypes"/>) lets the read seam include these inputs when one of this upcaster's
+  /// targets is requested, then filter the upcasted results back to the requested set.
+  /// <para>Default empty: re-key and backfill upcasters keep the same type, which is already
+  /// subscribed, so they need declare nothing.</para>
+  /// </remarks>
+  IReadOnlyList<Type> SourceTypes => Array.Empty<Type>();
+
+  /// <summary>
+  /// The event types this upcaster <b>produces</b>. Paired with <see cref="SourceTypes"/> so the
+  /// read seam only pulls in this upcaster's foreign inputs when a rebuilt perspective actually
+  /// subscribes to one of these targets. Default empty (no type-change).
+  /// </summary>
+  IReadOnlyList<Type> TargetTypes => Array.Empty<Type>();
+
+  /// <summary>
   /// Transforms the event into its current shape. Only called when <see cref="CanUpcast"/>
   /// returned <c>true</c>. May return a new instance (type change) or the same instance mutated
   /// (re-key / backfill). MUST be deterministic.
