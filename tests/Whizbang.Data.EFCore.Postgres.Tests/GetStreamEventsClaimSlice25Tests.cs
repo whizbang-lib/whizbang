@@ -187,11 +187,16 @@ public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
   }
 
   private static async Task _insertEventAsync(NpgsqlConnection connection, Guid streamId, Guid eventId, string aggregateType) {
+    // Stamp commit_sequence at insert (via the real wh_commit_seq sequence). Mig 058 gates
+    // unstamped rows out of get_stream_events entirely, so these claim/lease invariant tests
+    // must seed stamped rows — which also matches production, where the stamper runs continuously
+    // and a row is almost always stamped before the drain claims it.
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = @"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version)
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, commit_sequence)
       VALUES (@event, @stream, @stream, @agg, 'TestEvent', '{}'::jsonb, '{}'::jsonb, NULL,
-              (SELECT COALESCE(MAX(version), 0) + 1 FROM wh_event_store WHERE stream_id = @stream))";
+              (SELECT COALESCE(MAX(version), 0) + 1 FROM wh_event_store WHERE stream_id = @stream),
+              nextval('wh_commit_seq'))";
     cmd.Parameters.AddWithValue("event", eventId);
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("agg", aggregateType);
