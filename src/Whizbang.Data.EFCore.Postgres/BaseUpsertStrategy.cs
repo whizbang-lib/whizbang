@@ -280,7 +280,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
           data = EXCLUDED.data,
           metadata = EXCLUDED.metadata,
           updated_at = EXCLUDED.updated_at,
-          version = {qualifiedTable}.version + 1{scopeUpdateClause}{pfUpdateClause}";
+          version = {qualifiedTable}.version + 1{scopeUpdateClause}{pfUpdateClause}
+        WHERE {qualifiedTable}.metadata->>'CommitSequence' IS NULL
+           OR EXCLUDED.metadata->>'CommitSequence' IS NULL
+           OR (EXCLUDED.metadata->>'CommitSequence')::bigint >= ({qualifiedTable}.metadata->>'CommitSequence')::bigint";
 
     var connection = context.Database.GetDbConnection();
     var openedHere = false;
@@ -401,6 +404,20 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
 
     PerspectiveRow<TModel> row;
     if (existingRow != null) {
+      // Cross-pod lost-update guard: refuse a write whose commit_sequence is strictly below the
+      // stored row's. A staler concurrent apply from a second instance (which loaded an empty/older
+      // row and never saw the fresher write) must not overwrite a newer apply — this is what reverted
+      // a per-item row from Completed to Running and stranded slot-3 saga 019ee73d. A NULL on either
+      // side can't be ordered, so it falls through to the stream-ownership guarantee in the claim path.
+      if (existingRow.Metadata?.CommitSequence is long storedCommitSequence
+          && metadata.CommitSequence is long incomingCommitSequence
+          && incomingCommitSequence < storedCommitSequence) {
+        if (ClearChangeTrackerAfterSave) {
+          context.ChangeTracker.Clear();
+        }
+        return;
+      }
+
       // Create updated row with new complex type instances.
       // We use Update() to attach as Modified, which will update all columns.
       row = new PerspectiveRow<TModel> {
