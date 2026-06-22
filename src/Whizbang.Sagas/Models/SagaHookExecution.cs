@@ -36,6 +36,9 @@ public class SagaHookExecution {
   /// <summary>Optional structured error details.</summary>
   public string? ErrorDetails { get; set; }
 
+  /// <summary>Wall-clock timestamp when the row was first declared.</summary>
+  public DateTimeOffset CreatedAt { get; set; }
+
   /// <summary>True once the hook is in a terminal state.</summary>
   public bool IsTerminal => Status is SagaItemState.Completed or SagaItemState.Failed or SagaItemState.Skipped;
 }
