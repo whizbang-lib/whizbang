@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Observability;
 using Whizbang.Sagas.Observability;
+using Whizbang.Sagas.Services;
 
 namespace Whizbang.Sagas;
 
@@ -35,6 +36,7 @@ public static class SagaServiceCollectionExtensions {
 
     services.AddSingleton(opts);
     services.AddSingleton<SagaMetrics>(sp => new SagaMetrics(sp.GetRequiredService<WhizbangMetrics>()));
+    services.AddScoped<ISagaEventEmitter, DispatcherSagaEventEmitter>();
 
     return services;
   }
