@@ -13,6 +13,7 @@ namespace Whizbang.Sagas.Tests;
 /// </summary>
 [Category("Unit")]
 [Category("Saga")]
+[NotInParallel("AppDefaultNamespace")]
 public class SagaItemStreamsTests {
 
   // ── Determinism: same inputs, same outputs ───────────────────────────
