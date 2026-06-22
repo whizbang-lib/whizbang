@@ -389,6 +389,49 @@ public interface IDispatcher {
   Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options);
 
   /// <summary>
+  /// Publishes an event at most once per <paramref name="claimKey"/> across all
+  /// concurrent callers. The first caller to claim the key proceeds with
+  /// <see cref="PublishAsync{TEvent}(TEvent)"/> and the method returns <c>true</c>;
+  /// concurrent callers with the same key intentionally no-op and return <c>false</c>.
+  /// </summary>
+  /// <typeparam name="TEvent">The event type.</typeparam>
+  /// <param name="claimKey">
+  /// Caller-chosen idempotency key, unique within the caller's domain. Opaque
+  /// to the framework. For sagas the conventional value is the saga id; for
+  /// other domains use whatever string uniquely identifies "this emission".
+  /// </param>
+  /// <param name="eventData">The event to publish if the claim is won.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// <c>true</c> if this caller won the claim and the event was published;
+  /// <c>false</c> if another caller already won the claim for this key.
+  /// </returns>
+  /// <remarks>
+  /// <para>
+  /// Use this in preference to a read-then-check pattern (<c>SELECT … WHERE
+  /// already_emitted</c> followed by <c>PublishAsync</c>) when two or more
+  /// concurrent callers may attempt the same logical emission. Atomicity is
+  /// enforced at the storage layer through <see cref="IClaimedEmissionStore"/>
+  /// — no SELECT-then-INSERT window exists.
+  /// </para>
+  /// <para>
+  /// When the caller is inside an ambient transaction, the claim INSERT
+  /// participates in that transaction (provided the underlying store joins
+  /// the same connection / DbContext). A rollback of the outer scope releases
+  /// the claim, preserving the invariant <em>claim taken iff emission
+  /// committed</em>.
+  /// </para>
+  /// <para>
+  /// Requires an <see cref="IClaimedEmissionStore"/> registration in the
+  /// service provider. Throws <see cref="InvalidOperationException"/> if
+  /// none is registered.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs</tests>
+  /// <docs>fundamentals/dispatcher/publish-once</docs>
+  Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Cascades a message (event or command) with explicit routing mode.
   /// Called by <see cref="IEventCascader"/> after resolving routing from wrappers and attributes.
   /// </summary>
