@@ -42,6 +42,37 @@ public class DispatcherMetricsTests {
     await Assert.That(metrics.Errors).IsNotNull();
     await Assert.That(metrics.CascadeEventCount).IsNotNull();
     await Assert.That(metrics.SendManyBatchSize).IsNotNull();
+    await Assert.That(metrics.PublishOnceClaimsWon).IsNotNull();
+    await Assert.That(metrics.PublishOnceClaimsLost).IsNotNull();
+  }
+
+  [Test]
+  public async Task DispatcherMetrics_PublishOnceClaimsWon_RecordedWithEventTypeTagAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new DispatcherMetrics(new WhizbangMetrics(factory));
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    metrics.PublishOnceClaimsWon.Add(1, new KeyValuePair<string, object?>("message_type", "SagaCompletedEvent"));
+
+    var measurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won");
+    await Assert.That(measurements).Count().IsEqualTo(1);
+    await Assert.That(measurements[0].Value).IsEqualTo(1);
+    await Assert.That(measurements[0].Tags["message_type"]).IsEqualTo("SagaCompletedEvent")
+      .Because("The event_type tag lets ops slice the claim-lost rate by event type — concentrated losses on a single event type point at a specific race source.");
+  }
+
+  [Test]
+  public async Task DispatcherMetrics_PublishOnceClaimsLost_RecordedWithEventTypeTagAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new DispatcherMetrics(new WhizbangMetrics(factory));
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    metrics.PublishOnceClaimsLost.Add(1, new KeyValuePair<string, object?>("message_type", "SagaCompletedEvent"));
+
+    var measurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost");
+    await Assert.That(measurements).Count().IsEqualTo(1);
+    await Assert.That(measurements[0].Value).IsEqualTo(1);
+    await Assert.That(measurements[0].Tags["message_type"]).IsEqualTo("SagaCompletedEvent");
   }
 
   [Test]

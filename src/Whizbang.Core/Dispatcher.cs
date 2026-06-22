@@ -3156,11 +3156,17 @@ public abstract partial class Dispatcher(
       ?? throw new InvalidOperationException(
         "IClaimedEmissionStore is not registered. Call AddWhizbangClaimedEmissionStore() (Postgres driver) or register an implementation before using PublishOnceAsync.");
 
+    var eventTypeName = eventData.GetType().Name;
+
     var claimed = await claimStore.TryClaimAsync(claimKey, TrackedGuid.NewMedo(), cancellationToken).ConfigureAwait(false);
     if (!claimed) {
+      _dispatcherMetrics?.PublishOnceClaimsLost.Add(1,
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName));
       return false;
     }
 
+    _dispatcherMetrics?.PublishOnceClaimsWon.Add(1,
+      new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName));
     await PublishAsync(eventData).ConfigureAwait(false);
     return true;
   }
