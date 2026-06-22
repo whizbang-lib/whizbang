@@ -39,19 +39,40 @@ namespace Whizbang.Sagas;
 public static class SagaItemStreams {
 
   /// <summary>
-  /// Default namespace UUID used by <see cref="Of(Guid, string)"/> when no
-  /// override is supplied. Fresh consumers can use this without further
-  /// thought; only consumers with pre-existing per-item streams need to
-  /// override it with their historical namespace value.
+  /// Whizbang's stable factory-default namespace UUID. Used when neither
+  /// <see cref="AppDefaultNamespace"/> has been configured nor an explicit
+  /// override has been passed to <see cref="Of(Guid, Guid, string)"/>.
+  /// <strong>Never change this value</strong> — every fresh consumer's
+  /// persisted stream ids derive from it.
   /// </summary>
   public static readonly Guid DefaultNamespace = Guid.Parse("acb2e0cf-92d5-4f1b-8c5e-2d7f4a5e8b3a");
 
+  private static Guid _appDefaultNamespace = DefaultNamespace;
+
+  /// <summary>
+  /// The namespace UUID currently in effect for the
+  /// <see cref="Of(Guid, string)"/> no-override path. Settable once at
+  /// app startup via <c>SagaOptions.PerItemStreamNamespace</c>; defaults
+  /// to <see cref="DefaultNamespace"/> if never set.
+  /// </summary>
+  /// <remarks>
+  /// <strong>Configure before any saga operation runs.</strong> Changing
+  /// this value at runtime re-derives every per-item stream id and
+  /// orphans existing projection rows.
+  /// </remarks>
+  public static Guid AppDefaultNamespace {
+    get => _appDefaultNamespace;
+    internal set => _appDefaultNamespace = value;
+  }
+
   /// <summary>
   /// Derives the per-item stream id for <paramref name="sagaId"/> /
-  /// <paramref name="itemIdentifier"/> using <see cref="DefaultNamespace"/>.
+  /// <paramref name="itemIdentifier"/> using <see cref="AppDefaultNamespace"/>
+  /// (which equals <see cref="DefaultNamespace"/> unless overridden via
+  /// <c>AddWhizbangSagas(opts =&gt; opts.PerItemStreamNamespace = …)</c>).
   /// </summary>
   public static Guid Of(Guid sagaId, string itemIdentifier) =>
-    Of(DefaultNamespace, sagaId, itemIdentifier);
+    Of(_appDefaultNamespace, sagaId, itemIdentifier);
 
   /// <summary>
   /// Derives the per-item stream id for <paramref name="sagaId"/> /
