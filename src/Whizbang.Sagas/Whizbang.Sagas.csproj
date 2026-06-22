@@ -14,4 +14,8 @@
     <ProjectReference Include="..\Whizbang.Sagas.Contracts\Whizbang.Sagas.Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Whizbang.Sagas.Tests" />
+  </ItemGroup>
+
 </Project>
