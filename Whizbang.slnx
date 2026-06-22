@@ -56,6 +56,7 @@
     <Project Path="src/Whizbang.Hosting.RabbitMQ/Whizbang.Hosting.RabbitMQ.csproj" />
     <Project Path="src/Whizbang.Observability/Whizbang.Observability.csproj" />
     <Project Path="src/Whizbang.Sagas.Contracts/Whizbang.Sagas.Contracts.csproj" />
+    <Project Path="src/Whizbang.Sagas/Whizbang.Sagas.csproj" />
     <Project Path="src/Whizbang.SignalR/Whizbang.SignalR.csproj" />
     <Project Path="src/Whizbang.Testing/Whizbang.Testing.csproj" />
     <Project Path="src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
