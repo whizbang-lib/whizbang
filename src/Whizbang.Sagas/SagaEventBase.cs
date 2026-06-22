@@ -36,4 +36,12 @@ public class SagaEventBase : IEvent {
 
   /// <summary>Optional id of the command/event whose handler emitted this event.</summary>
   public Guid? CausationId { get; set; }
+
+  /// <summary>
+  /// Optional human-meaningful name of the operation that produced this
+  /// event (e.g. <c>"import-bulk-jobs-prod-2026-06-22"</c>). Surfaces in
+  /// telemetry dashboards so an operator can filter "all events from this
+  /// specific run" without each consumer wiring its own field.
+  /// </summary>
+  public string? OperationName { get; set; }
 }
