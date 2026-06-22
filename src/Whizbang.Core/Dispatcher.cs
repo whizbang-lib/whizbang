@@ -3127,6 +3127,45 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
+  /// Publishes an event at most once per claim key. Composes
+  /// <see cref="IClaimedEmissionStore.TryClaimAsync"/> with
+  /// <see cref="PublishAsync{TEvent}(TEvent)"/>: the first caller to claim the
+  /// key emits the event and returns <c>true</c>; concurrent callers with the
+  /// same key no-op and return <c>false</c>.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/publish-once</docs>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(claimKey);
+#pragma warning disable S2955 // Generic parameters not constrained to reference types should not be compared to 'null'
+    if (eventData == null) {
+      throw new ArgumentNullException(nameof(eventData));
+    }
+#pragma warning restore S2955
+
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // Resolve the claim store from a per-call scope. IClaimedEmissionStore is
+    // typically scoped (e.g. EFCoreClaimedEmissionStore holds a DbContext); a
+    // singleton Dispatcher must not capture a scoped instance.
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    var claimStore = scope.ServiceProvider.GetService<IClaimedEmissionStore>()
+      ?? throw new InvalidOperationException(
+        "IClaimedEmissionStore is not registered. Call AddWhizbangClaimedEmissionStore() (Postgres driver) or register an implementation before using PublishOnceAsync.");
+
+    var claimed = await claimStore.TryClaimAsync(claimKey, TrackedGuid.NewMedo(), cancellationToken).ConfigureAwait(false);
+    if (!claimed) {
+      return false;
+    }
+
+    await PublishAsync(eventData).ConfigureAwait(false);
+    return true;
+  }
+
+  /// <summary>
   /// Cascades a message with explicit routing mode.
   /// Called by IEventCascader after resolving routing from wrappers and attributes.
   /// </summary>
