@@ -6,6 +6,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Generated;
+using Whizbang.Core.Tests.Observability;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -173,7 +174,48 @@ public class DispatcherPublishOnceTests {
       .ThrowsExactly<OperationCanceledException>();
   }
 
-  // ── Helper ───────────────────────────────────────────────────────────
+  // ── Telemetry: claim outcomes recorded as counters ───────────────────
+
+  [Test]
+  public async Task PublishOnceAsync_EmitsClaimsWonMetricOnWinAsync() {
+    using var factory = new TestMeterFactory();
+    var (dispatcher, _) = _createDispatcherWithMetrics(new InMemoryClaimedEmissionStore(), factory);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    var won = await dispatcher.PublishOnceAsync("once:metric-win", new PublishOnceTestEvent(Guid.NewGuid()), CancellationToken.None);
+    await Assert.That(won).IsTrue();
+
+    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won");
+    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost");
+
+    await Assert.That(winMeasurements).Count().IsEqualTo(1)
+      .Because("Winning the claim records exactly one win measurement; ops dashboards count this to compute the won-vs-lost race rate.");
+    await Assert.That(winMeasurements[0].Tags["message_type"]).IsEqualTo(nameof(PublishOnceTestEvent));
+    await Assert.That(lostMeasurements).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PublishOnceAsync_EmitsClaimsLostMetricOnLossAsync() {
+    using var factory = new TestMeterFactory();
+    var store = new InMemoryClaimedEmissionStore();
+    var (dispatcher, _) = _createDispatcherWithMetrics(store, factory);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    await dispatcher.PublishOnceAsync("once:metric-loss", new PublishOnceTestEvent(Guid.NewGuid()), CancellationToken.None);
+    var second = await dispatcher.PublishOnceAsync("once:metric-loss", new PublishOnceTestEvent(Guid.NewGuid()), CancellationToken.None);
+    await Assert.That(second).IsFalse();
+
+    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won");
+    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost");
+
+    await Assert.That(winMeasurements).Count().IsEqualTo(1)
+      .Because("First call wins; only one win recorded.");
+    await Assert.That(lostMeasurements).Count().IsEqualTo(1)
+      .Because("Second call's silent no-op MUST surface as a metric — otherwise an ops dashboard can't distinguish 'no concurrency happening' from 'metric never wired'.");
+    await Assert.That(lostMeasurements[0].Tags["message_type"]).IsEqualTo(nameof(PublishOnceTestEvent));
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────
 
   private static IDispatcher _createDispatcher(IClaimedEmissionStore? claimStore) {
     var services = new ServiceCollection();
@@ -184,5 +226,21 @@ public class DispatcherPublishOnceTests {
       services.AddSingleton(claimStore);
     }
     return services.BuildServiceProvider().GetRequiredService<IDispatcher>();
+  }
+
+  private static (IDispatcher Dispatcher, DispatcherMetrics Metrics) _createDispatcherWithMetrics(
+      IClaimedEmissionStore claimStore,
+      TestMeterFactory factory) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+    services.AddSingleton(claimStore);
+    var whizbangMetrics = new WhizbangMetrics(factory);
+    var dispatcherMetrics = new DispatcherMetrics(whizbangMetrics);
+    services.AddSingleton(whizbangMetrics);
+    services.AddSingleton(dispatcherMetrics);
+    var sp = services.BuildServiceProvider();
+    return (sp.GetRequiredService<IDispatcher>(), dispatcherMetrics);
   }
 }
