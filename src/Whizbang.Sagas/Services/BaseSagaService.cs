@@ -47,6 +47,30 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   private readonly ISagaEventEmitter _emitter;
   private readonly ILogger _logger;
 
+  // ── Framework-owned completion tracking (in-memory fast path) ────────
+  //
+  // When InitiateSagaAsync is called the framework records the saga's expected total.
+  // As UpdateItemAsync(Completed) / FailItemAsync fire, the counters advance. When the
+  // sum reaches the total the framework auto-emits SagaCompletedEvent via PublishOnceAsync
+  // — exactly-once thanks to the claim-key dedup, so even in multi-pod scenarios where
+  // each instance has its own in-memory view, only one emission lands.
+  //
+  // This is the "single-pod fast path." For multi-pod recovery (a per-item terminal event
+  // dropped before the right pod saw it) the watchdog tick fires, the orchestrator loads
+  // the consumer's saga projection through ISagaProjectionLoader, runs the event-store
+  // reconciler, and emits SagaCompletedEvent from the watchdog path. The watchdog is the
+  // safety net; the in-memory path keeps the common case fast and dependency-free.
+  private readonly Lock _completionLock = new();
+  private readonly Dictionary<Guid, _SagaCompletionTracker> _completionTrackers = [];
+
+  private sealed class _SagaCompletionTracker {
+    public Guid EntityId;
+    public int Total;
+    public int Completed;
+    public int Failed;
+    public bool DispatchedCompletion;
+  }
+
   /// <summary>The saga name this service emits events for — matches the value supplied to <c>[Saga("Name")]</c>.</summary>
   protected string SagaName => _sagaName;
 
@@ -74,6 +98,15 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   public async Task InitiateSagaAsync(SagaContext ctx, IReadOnlyList<string> itemIdentifiers, IReadOnlyList<string>? hookNames, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(itemIdentifiers);
     cancellationToken.ThrowIfCancellationRequested();
+
+    // Register the saga with the in-memory completion tracker before any item events fire.
+    lock (_completionLock) {
+      _completionTrackers[ctx.SagaId] = new _SagaCompletionTracker {
+        EntityId = ctx.EntityId,
+        Total = itemIdentifiers.Count
+      };
+    }
+
     var evt = BuildInitiatedEvent(ctx, itemIdentifiers, hookNames, DateTimeOffset.UtcNow);
     await _emitter.PublishAsync(evt).ConfigureAwait(false);
 
@@ -112,6 +145,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
         break;
       case SagaItemState.Completed:
         await _emitter.PublishAsync(BuildItemCompletedEvent(ctx, itemIdentifier, displayName, now)).ConfigureAwait(false);
+        await _tryAutoCompleteAsync(ctx, itemIdentifier, failed: false, cancellationToken).ConfigureAwait(false);
         break;
       case SagaItemState.Failed:
         throw new InvalidOperationException(
@@ -128,6 +162,49 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     cancellationToken.ThrowIfCancellationRequested();
     await _emitter.PublishAsync(
       BuildItemFailedEvent(ctx, itemIdentifier, errorMessage, errorDetails, displayName, DateTimeOffset.UtcNow))
+      .ConfigureAwait(false);
+    await _tryAutoCompleteAsync(ctx, itemIdentifier, failed: true, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Framework-owned completion fast path. Called after every per-item terminal event
+  /// (<see cref="UpdateItemAsync"/>(Completed), <see cref="FailItemAsync"/>) — advances
+  /// the in-memory tracker; when (Completed + Failed) reaches the InitiateSagaAsync-supplied
+  /// total, emits the SagaCompletedEvent via <see cref="CompleteSagaAsync"/>. Exactly-once
+  /// across racing instances is guaranteed by <see cref="CompleteSagaAsync"/>'s
+  /// PublishOnceAsync claim key, so the in-memory view doesn't have to be globally
+  /// consistent — only the first emission lands.
+  /// </summary>
+  private async Task _tryAutoCompleteAsync(
+      SagaContext ctx,
+      string triggeringItemIdentifier,
+      bool failed,
+      CancellationToken cancellationToken) {
+    int total, completed, failedCount;
+    bool shouldEmit;
+    lock (_completionLock) {
+      if (!_completionTrackers.TryGetValue(ctx.SagaId, out var tracker) || tracker.DispatchedCompletion) {
+        return;
+      }
+      if (failed) {
+        tracker.Failed++;
+      } else {
+        tracker.Completed++;
+      }
+      total = tracker.Total;
+      completed = tracker.Completed;
+      failedCount = tracker.Failed;
+      shouldEmit = total > 0 && completed + failedCount >= total;
+      if (shouldEmit) {
+        tracker.DispatchedCompletion = true;
+      }
+    }
+    if (!shouldEmit) {
+      return;
+    }
+    var finalStatus = failedCount > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
+    await CompleteSagaAsync(
+      ctx, finalStatus, triggeringItemIdentifier, completed, failedCount, total, cancellationToken)
       .ConfigureAwait(false);
   }
 
