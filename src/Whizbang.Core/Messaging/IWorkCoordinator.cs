@@ -1102,6 +1102,27 @@ public record OutboxMessage {
   /// Used for deserialization and stored in the event_type database column.
   /// </summary>
   public required string MessageType { get; init; }
+
+  /// <summary>
+  /// Optional UTC instant when the message becomes eligible for delivery. Carried from
+  /// <see cref="Whizbang.Core.Dispatch.DispatchOptions.ScheduledFor"/> through the dispatcher
+  /// chain into <c>store_outbox_messages</c>, which writes it to <c>wh_outbox.scheduled_for</c>.
+  /// The pickup query (<c>FetchOutboxInboxBatch</c>, migration 040) and the NOTIFY-based
+  /// wake (<c>NotifyScheduledRetryDue</c>, migration 049) gate visibility on
+  /// <c>scheduled_for IS NULL OR scheduled_for &lt;= NOW()</c> already.
+  /// </summary>
+  /// <remarks>
+  /// <para>Null (default) means immediate delivery — the row is publishable as soon as the
+  /// outbox publisher next claims it. Non-null defers the row until the timestamp elapses,
+  /// then the NOTIFY-based wake-up (mig 049) signals the owning instance to pick it up
+  /// without paying the polling tax.</para>
+  /// <para>This is the producer-side surface for the same column the retry-backoff SQL
+  /// paths (migrations 017/018/019) write internally. The two are orthogonal: a failed
+  /// scheduled-delivery retries with backoff on top of its original schedule.</para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OutboxMessageScheduledForTests.cs:OutboxMessage_ScheduledFor_PropertyExistsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OutboxMessageScheduledForTests.cs:OutboxMessage_ScheduledFor_DefaultIsNullAsync</tests>
+  public DateTimeOffset? ScheduledFor { get; init; }
 }
 
 /// <summary>
