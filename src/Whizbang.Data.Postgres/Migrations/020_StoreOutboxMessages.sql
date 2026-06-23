@@ -45,7 +45,13 @@ BEGIN
       elem->'Metadata' as metadata,
       elem->'Scope' as scope,
       (elem->>'StreamId')::UUID as stream_id,
-      (elem->>'IsEvent')::BOOLEAN as is_event
+      (elem->>'IsEvent')::BOOLEAN as is_event,
+      -- Optional forward-scheduled delivery. When set, mig 040 FetchOutboxInboxBatch
+      -- gates the row's visibility on (scheduled_for IS NULL OR scheduled_for <= NOW())
+      -- and mig 049 NotifyScheduledRetryDue wakes the owning instance once the time
+      -- has elapsed. NULL preserves the immediate-dispatch path used by every caller
+      -- that didn't opt in via DispatchOptions.ScheduledFor.
+      NULLIF(elem->>'ScheduledFor', '')::TIMESTAMPTZ as scheduled_for
     FROM jsonb_array_elements(p_messages) as elem
     -- Sort by stream_id so the UPSERT on wh_active_streams below acquires row locks in
     -- a canonical order across all concurrent callers — prevents A→B vs B→A deadlock
@@ -76,7 +82,8 @@ BEGIN
       attempts,
       created_at,
       instance_id,
-      lease_expiry
+      lease_expiry,
+      scheduled_for
     ) VALUES (
       v_msg.msg_id,
       v_msg.destination,
@@ -92,7 +99,8 @@ BEGIN
       0,  -- Initial attempts
       p_now,
       p_instance_id,  -- Immediate lease
-      p_lease_expiry
+      p_lease_expiry,
+      v_msg.scheduled_for  -- NULL for immediate dispatch; populated when caller opted in via DispatchOptions.ScheduledFor
     )
     ON CONFLICT ON CONSTRAINT wh_outbox_pkey DO NOTHING;
 
