@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Description>Multi-stream saga coordination on Whizbang.Core: BaseSagaModel, SagaItemModel, per-item stream routing, completion reconciliation, and SagaCompletionGuard backed by IDispatcher.PublishOnceAsync. Pair with Whizbang.Sagas.Generators for the [Saga&lt;TBase&gt;("Name")] attribute and zero-boilerplate event generation.</Description>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\Whizbang.Sagas.Contracts\Whizbang.Sagas.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Whizbang.Sagas.Tests" />
+  </ItemGroup>
+
+</Project>

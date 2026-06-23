@@ -74,6 +74,21 @@ public sealed class DispatcherMetrics {
   /// <summary>Dispatch-level errors.</summary>
   public Counter<long> Errors { get; }
 
+  /// <summary>
+  /// PublishOnceAsync calls that won the claim and proceeded to PublishAsync.
+  /// Pairs with <see cref="PublishOnceClaimsLost"/>; <c>lost / (won + lost)</c>
+  /// is the observed race rate for the gated emission.
+  /// </summary>
+  public Counter<long> PublishOnceClaimsWon { get; }
+
+  /// <summary>
+  /// PublishOnceAsync calls that lost the claim and intentionally no-opped.
+  /// A persistently nonzero value indicates concurrent emitters competing for
+  /// the same claim key — expected for saga completion under N concurrent
+  /// terminal handlers; investigate if the rate suddenly spikes.
+  /// </summary>
+  public Counter<long> PublishOnceClaimsLost { get; }
+
   // Batch metrics
 
   /// <summary>Events extracted per cascade.</summary>
@@ -107,6 +122,8 @@ public sealed class DispatcherMetrics {
     DuplicatesDetected = meter.CreateCounter<long>("whizbang.dispatcher.duplicates_detected", description: "Inbox dedup rejections");
     PerspectiveSyncTimeouts = meter.CreateCounter<long>("whizbang.dispatcher.perspective_sync_timeouts", description: "Perspective sync wait timeouts");
     Errors = meter.CreateCounter<long>("whizbang.dispatcher.errors", description: "Dispatch-level errors");
+    PublishOnceClaimsWon = meter.CreateCounter<long>("whizbang.dispatcher.publish_once.claims_won", description: "PublishOnceAsync calls that won the claim and emitted the event");
+    PublishOnceClaimsLost = meter.CreateCounter<long>("whizbang.dispatcher.publish_once.claims_lost", description: "PublishOnceAsync calls that lost the claim and intentionally no-opped");
 
     CascadeEventCount = meter.CreateHistogram<int>("whizbang.dispatcher.cascade.event_count", description: "Events extracted per cascade");
     SendManyBatchSize = meter.CreateHistogram<int>("whizbang.dispatcher.send_many.batch_size", description: "Messages per SendMany call");

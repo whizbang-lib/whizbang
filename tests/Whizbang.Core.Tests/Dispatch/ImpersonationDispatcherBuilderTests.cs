@@ -344,6 +344,9 @@ public class ImpersonationDispatcherBuilderTests {
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
         Task.FromResult(_emptyReceipt);
 
+    public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) =>
+        Task.FromResult(true);
+
     // CascadeMessageAsync
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
