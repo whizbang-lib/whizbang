@@ -40,6 +40,7 @@ public partial class PerspectiveWorker(
   IPerspectiveSnapshotStore? snapshotStore = null,
   IPerspectiveStreamLocker? streamLocker = null,
   IOptions<PerspectiveStreamLockOptions>? streamLockOptions = null,
+  IOptions<PerspectiveStreamAffinityOptions>? streamAffinityOptions = null,
   IProcessedEventCacheObserver? processedEventCacheObserver = null,
   TimeProvider? timeProvider = null,
   LifecycleCoordinatorMetrics? coordinatorMetrics = null,
@@ -96,6 +97,41 @@ public partial class PerspectiveWorker(
     ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
   private readonly IPerspectiveStreamLocker? _streamLocker = streamLocker;
   private readonly PerspectiveStreamLockOptions _streamLockOptions = streamLockOptions?.Value ?? new PerspectiveStreamLockOptions();
+
+  // ── Intra-pod stream-affinity gate (closes the production strand race) ───
+  //
+  // Closes the same-pod, same-stream concurrency hole documented in
+  // plans/perspective-worker-stream-affinity.md. wh_active_streams pins each
+  // stream to one pod cross-pod; this dictionary keys a SemaphoreSlim per
+  // stream_id so the parallel groups inside ProcessChannelBatchAsync (and any
+  // concurrent _runChannelConsumerLoopAsync invocation) serialize their
+  // perspective writes for the same stream. Cross-stream parallelism is
+  // unchanged — different streams take different semaphores and run in
+  // parallel exactly as today.
+  //
+  // Memory bound via activity-triggered eviction (no background timer).
+  // Every gate release stamps the entry's LastActivityTicks; if at least
+  // PerspectiveStreamAffinityOptions.SweepInterval has elapsed since the
+  // previous sweep, the same release walks the dictionary and drops
+  // entries idle for longer than IdleEvictionWindow whose semaphore is
+  // currently free. The sweep cost is amortized over real work — no thread
+  // is ever woken just to GC the dictionary.
+  private readonly ConcurrentDictionary<Guid, _StreamAffinityGateEntry> _streamAffinityGates = new();
+  private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions?.Value ?? new PerspectiveStreamAffinityOptions();
+  private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
+
+  /// <summary>
+  /// Per-stream semaphore plus a wall-clock activity timestamp so the
+  /// activity-triggered sweep can identify idle entries. Class (not struct)
+  /// so concurrent updates to <see cref="LastActivityTicks"/> land on the
+  /// same instance retrieved from
+  /// <see cref="ConcurrentDictionary{TKey,TValue}.GetOrAdd(TKey,Func{TKey,TValue})"/>.
+  /// </summary>
+  private sealed class _StreamAffinityGateEntry : IDisposable {
+    public readonly SemaphoreSlim Semaphore = new(1, 1);
+    public long LastActivityTicks = DateTimeOffset.UtcNow.Ticks;
+    public void Dispose() => Semaphore.Dispose();
+  }
 
   // Perspective event completions (WorkIds to delete from wh_perspective_events)
   private readonly System.Collections.Concurrent.ConcurrentQueue<PerspectiveEventCompletion> _pendingEventCompletions = new();
@@ -814,125 +850,140 @@ public partial class PerspectiveWorker(
       async (group, ct) => {
         var streamId = group.Key.StreamId;
         var perspectiveName = group.Key.PerspectiveName;
-        await using var groupScope = _scopeFactory.CreateAsyncScope();
-        var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-        var groupReceptorInvoker = groupScope.ServiceProvider.GetService<IReceptorInvoker>();
-        var groupLifecycleCoordinator = groupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
-        var (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext) =
-          await _resolveDependenciesAndLoadEventsAsync(
-            groupScope, groupWorkCoordinator, groupReceptorInvoker, streamId, perspectiveName,
-            batchActivity, effectiveParent, ct);
-
-        if (runner is null) {
-          return;
-        }
-
-        var lastProcessedEventId = checkpoint?.LastEventId;
-        var enablePerspectiveSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Perspectives) ?? false;
-        using var perspectiveActivity = enablePerspectiveSpans
-          ? WhizbangActivitySource.Tracing.StartActivity(
-              $"Perspective {perspectiveName}",
-              ActivityKind.Internal,
-              parentContext: perspectiveParentContext)
-          : null;
-        _tagPerspectiveActivity(perspectiveActivity, perspectiveName, streamId, upcomingEvents, perspectiveParentContext);
-
-        var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-        var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
-
+        // Intra-pod stream-affinity gate — serializes all perspective application for
+        // this stream across consumer loops AND across batches within the same pod.
+        // wh_active_streams pins streams to a single pod cross-pod; this gate closes
+        // the same-pod hole that caused the production strand race. See
+        // plans/perspective-worker-stream-affinity.md.
+        var gateEntry = _streamAffinityGates.GetOrAdd(streamId, static _ => new _StreamAffinityGateEntry());
+        Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+        await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
         try {
-          await _invokePrePerspectiveLifecycleAsync(
-            upcomingEvents, enableLifecycleSpans, groupLifecycleCoordinator, groupReceptorInvoker,
-            streamCtx, runner, ct);
+          await using var groupScope = _scopeFactory.CreateAsyncScope();
+          var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+          var groupReceptorInvoker = groupScope.ServiceProvider.GetService<IReceptorInvoker>();
+          var groupLifecycleCoordinator = groupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
-          var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
-            group, runner, checkpoint, streamCtx, enablePerspectiveSpans, ct);
+          var (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext) =
+            await _resolveDependenciesAndLoadEventsAsync(
+              groupScope, groupWorkCoordinator, groupReceptorInvoker, streamId, perspectiveName,
+              batchActivity, effectiveParent, ct);
 
-          if (rewindLockSkipped) {
+          if (runner is null) {
             return;
           }
 
-          var processedEvents = await _loadAndLogProcessedEventsAsync(
-            groupReceptorInvoker, eventStore, result, streamId, perspectiveName,
-            lastProcessedEventId, ct);
+          var lastProcessedEventId = checkpoint?.LastEventId;
+          var enablePerspectiveSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Perspectives) ?? false;
+          using var perspectiveActivity = enablePerspectiveSpans
+            ? WhizbangActivitySource.Tracing.StartActivity(
+                $"Perspective {perspectiveName}",
+                ActivityKind.Internal,
+                parentContext: perspectiveParentContext)
+            : null;
+          _tagPerspectiveActivity(perspectiveActivity, perspectiveName, streamId, upcomingEvents, perspectiveParentContext);
 
-          // Rewind path: the range-based load above covers events above the pre-rewind
-          // cursor. Events below the cursor (the rewind trigger AND any other late arrivals
-          // that accumulated during the rewind window) live in the perspective work queue —
-          // IPerspectiveReplayReader is the authoritative source for that "is_new" set.
-          // When registered, we use it to pull every pending event the rewind should fire
-          // handlers for. When not registered, we fall back to the narrow trigger-only
-          // lookup so existing deployments keep working.
-          if (processingMode == ProcessingMode.Replay) {
-            var replayReader = groupScope.ServiceProvider.GetService<Whizbang.Core.Perspectives.IPerspectiveReplayReader>();
-            if (replayReader is not null && _eventTypeProvider is not null) {
-              var eventTypes = _eventTypeProvider.GetEventTypes();
-              var seen = processedEvents.Select(e => e.MessageId.Value).ToHashSet();
-              await foreach (var annotated in replayReader.ReadReplayEventsAsync(
-                  streamId, perspectiveName, fromVersionExclusive: 0, eventTypes, ct)) {
-                if (annotated.IsNew && seen.Add(annotated.Envelope.MessageId.Value)) {
-                  processedEvents.Insert(0, annotated.Envelope);
+          var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+          var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
+
+          try {
+            await _invokePrePerspectiveLifecycleAsync(
+              upcomingEvents, enableLifecycleSpans, groupLifecycleCoordinator, groupReceptorInvoker,
+              streamCtx, runner, ct);
+
+            var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
+              group, runner, checkpoint, streamCtx, enablePerspectiveSpans, ct);
+
+            if (rewindLockSkipped) {
+              return;
+            }
+
+            var processedEvents = await _loadAndLogProcessedEventsAsync(
+              groupReceptorInvoker, eventStore, result, streamId, perspectiveName,
+              lastProcessedEventId, ct);
+
+            // Rewind path: the range-based load above covers events above the pre-rewind
+            // cursor. Events below the cursor (the rewind trigger AND any other late arrivals
+            // that accumulated during the rewind window) live in the perspective work queue —
+            // IPerspectiveReplayReader is the authoritative source for that "is_new" set.
+            // When registered, we use it to pull every pending event the rewind should fire
+            // handlers for. When not registered, we fall back to the narrow trigger-only
+            // lookup so existing deployments keep working.
+            if (processingMode == ProcessingMode.Replay) {
+              var replayReader = groupScope.ServiceProvider.GetService<Whizbang.Core.Perspectives.IPerspectiveReplayReader>();
+              if (replayReader is not null && _eventTypeProvider is not null) {
+                var eventTypes = _eventTypeProvider.GetEventTypes();
+                var seen = processedEvents.Select(e => e.MessageId.Value).ToHashSet();
+                await foreach (var annotated in replayReader.ReadReplayEventsAsync(
+                    streamId, perspectiveName, fromVersionExclusive: 0, eventTypes, ct)) {
+                  if (annotated.IsNew && seen.Add(annotated.Envelope.MessageId.Value)) {
+                    processedEvents.Insert(0, annotated.Envelope);
+                  }
+                }
+              } else if (checkpoint?.RewindTriggerEventId is { } triggerId
+                         && eventStore is not null
+                         && _eventTypeProvider is not null
+                         && !processedEvents.Any(e => e.MessageId.Value == triggerId)) {
+                var envelopesUpToTrigger = await eventStore.GetEventsBetweenPolymorphicAsync(
+                  streamId,
+                  afterEventId: null,
+                  upToEventId: triggerId,
+                  _eventTypeProvider.GetEventTypes(),
+                  ct);
+                var triggerEnvelope = envelopesUpToTrigger
+                  .FirstOrDefault(e => e.MessageId.Value == triggerId);
+                if (triggerEnvelope is not null) {
+                  processedEvents.Insert(0, triggerEnvelope);
                 }
               }
-            } else if (checkpoint?.RewindTriggerEventId is { } triggerId
-                       && eventStore is not null
-                       && _eventTypeProvider is not null
-                       && !processedEvents.Any(e => e.MessageId.Value == triggerId)) {
-              var envelopesUpToTrigger = await eventStore.GetEventsBetweenPolymorphicAsync(
-                streamId,
-                afterEventId: null,
-                upToEventId: triggerId,
-                _eventTypeProvider.GetEventTypes(),
-                ct);
-              var triggerEnvelope = envelopesUpToTrigger
-                .FirstOrDefault(e => e.MessageId.Value == triggerId);
-              if (triggerEnvelope is not null) {
-                processedEvents.Insert(0, triggerEnvelope);
-              }
             }
-          }
 
-          foreach (var envelope in processedEvents) {
-            var id = envelope.MessageId.Value;
-            batchProcessedEvents.TryAdd(id, (envelope, streamId));
-            batchIsNewByEventId.AddOrUpdate(id, true, (_, existing) => existing || true);
-          }
+            foreach (var envelope in processedEvents) {
+              var id = envelope.MessageId.Value;
+              batchProcessedEvents.TryAdd(id, (envelope, streamId));
+              batchIsNewByEventId.AddOrUpdate(id, true, (_, existing) => existing || true);
+            }
 
-          await _reportCompletionAndSignalSyncAsync(
-            result, processedEvents, groupWorkCoordinator, streamId, perspectiveName, ct);
-          await _invokePostPerspectiveLifecycleAsync(
-            processedEvents, groupReceptorInvoker, streamCtx, result,
-            new PostPerspectiveLifecycleOptions(enableLifecycleSpans, processingMode, IsNewByEventId: null), ct);
-          _bufferCompletionsAndUpdateCache(group, processedEvents, groupLifecycleCoordinator, perspectiveName);
+            await _reportCompletionAndSignalSyncAsync(
+              result, processedEvents, groupWorkCoordinator, streamId, perspectiveName, ct);
+            await _invokePostPerspectiveLifecycleAsync(
+              processedEvents, groupReceptorInvoker, streamCtx, result,
+              new PostPerspectiveLifecycleOptions(enableLifecycleSpans, processingMode, IsNewByEventId: null), ct);
+            _bufferCompletionsAndUpdateCache(group, processedEvents, groupLifecycleCoordinator, perspectiveName);
 
-          if (processedEvents.Count > 0) {
-            OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
-              PerspectiveName = perspectiveName,
+            if (processedEvents.Count > 0) {
+              OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
+                PerspectiveName = perspectiveName,
+                StreamId = streamId,
+                EventCount = processedEvents.Count
+              });
+            }
+            _metrics?.StreamsUpdated.Add(1);
+            if (processedEvents.Count > 0) {
+              _metrics?.EventsProcessed.Add(processedEvents.Count);
+            }
+          } catch (Exception ex) when (ex is not OperationCanceledException) {
+            LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
+            _metrics?.Errors.Add(1);
+            if (_syncEventTracker is not null && upcomingEvents is { Count: > 0 }) {
+              var failedEventIds = upcomingEvents.Select(e => e.MessageId.Value).ToList();
+              _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
+            }
+            var failure = new PerspectiveCursorFailure {
               StreamId = streamId,
-              EventCount = processedEvents.Count
-            });
+              PerspectiveName = perspectiveName,
+              LastEventId = Guid.Empty,
+              Status = PerspectiveProcessingStatus.Failed,
+              Error = ex.Message
+            };
+            await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
+            throw;
           }
-          _metrics?.StreamsUpdated.Add(1);
-          if (processedEvents.Count > 0) {
-            _metrics?.EventsProcessed.Add(processedEvents.Count);
-          }
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
-          _metrics?.Errors.Add(1);
-          if (_syncEventTracker is not null && upcomingEvents is { Count: > 0 }) {
-            var failedEventIds = upcomingEvents.Select(e => e.MessageId.Value).ToList();
-            _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
-          }
-          var failure = new PerspectiveCursorFailure {
-            StreamId = streamId,
-            PerspectiveName = perspectiveName,
-            LastEventId = Guid.Empty,
-            Status = PerspectiveProcessingStatus.Failed,
-            Error = ex.Message
-          };
-          await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
-          throw;
+        } finally {
+          Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+          gateEntry.Semaphore.Release();
+          _sweepIdleStreamAffinityGatesIfDue();
         }
       });
 
@@ -966,6 +1017,59 @@ public partial class PerspectiveWorker(
       LogDrainCycleComplete(_logger, !_isIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
     }
     OnBatchCycleComplete?.Invoke();
+  }
+
+  /// <summary>
+  /// Activity-triggered sweep of <see cref="_streamAffinityGates"/>. Called from every
+  /// gate release; throttled to run at most once per
+  /// <see cref="PerspectiveStreamAffinityOptions.SweepInterval"/> via a single CAS so a
+  /// hot release path doesn't pay for a dictionary walk on every event.
+  /// </summary>
+  /// <remarks>
+  /// An entry is eligible for eviction when:
+  /// <list type="bullet">
+  ///   <item><description>Its <c>LastActivityTicks</c> is older than now − <see cref="PerspectiveStreamAffinityOptions.IdleEvictionWindow"/>, AND</description></item>
+  ///   <item><description>Its semaphore is currently free (<c>CurrentCount == 1</c>) — i.e., no waiter is parked and no holder is active.</description></item>
+  /// </list>
+  /// Removal uses the key+value overload of <see cref="ConcurrentDictionary{TKey,TValue}.TryRemove(System.Collections.Generic.KeyValuePair{TKey,TValue})"/>
+  /// so a racing acquire that just touched the same entry can't be evicted under it —
+  /// the racing path adds a fresh entry via <c>GetOrAdd</c> and proceeds.
+  /// </remarks>
+  private void _sweepIdleStreamAffinityGatesIfDue() {
+    var nowTicks = DateTimeOffset.UtcNow.Ticks;
+    var prevSweepTicks = Interlocked.Read(ref _lastStreamAffinitySweepTicks);
+    var sweepIntervalTicks = _streamAffinityOptions.SweepInterval.Ticks;
+    if (nowTicks - prevSweepTicks < sweepIntervalTicks) {
+      return;
+    }
+    // Single CAS so only one releaser performs the sweep this cycle; all others observe the
+    // updated timestamp and short-circuit on their next release.
+    if (Interlocked.CompareExchange(ref _lastStreamAffinitySweepTicks, nowTicks, prevSweepTicks) != prevSweepTicks) {
+      return;
+    }
+    var idleCutoffTicks = nowTicks - _streamAffinityOptions.IdleEvictionWindow.Ticks;
+    foreach (var (key, entry) in _streamAffinityGates) {
+      var lastActivity = Interlocked.Read(ref entry.LastActivityTicks);
+      if (lastActivity > idleCutoffTicks) {
+        continue;
+      }
+      if (entry.Semaphore.CurrentCount != 1) {
+        continue;
+      }
+      // KeyValuePair-overload TryRemove: a concurrent acquirer that re-stamped LastActivity
+      // will have replaced the entry via GetOrAdd? No — GetOrAdd uses the same instance.
+      // To prevent racing eviction, we re-check LastActivity once more *after* the candidate
+      // selection and use the KVP overload so only the exact (key, entry) pair we identified
+      // is removed. Any concurrent activity that re-touched the same entry will still be
+      // visible to subsequent acquirers because they get a fresh entry from GetOrAdd if this
+      // one is gone.
+      if (Interlocked.Read(ref entry.LastActivityTicks) > idleCutoffTicks) {
+        continue;
+      }
+      if (_streamAffinityGates.TryRemove(new KeyValuePair<Guid, _StreamAffinityGateEntry>(key, entry))) {
+        entry.Dispose();
+      }
+    }
   }
 
   /// <summary>
