@@ -28,12 +28,15 @@ public class BaseSagaServiceTests {
 
     await svc.InitiateSagaAsync(new SagaContext(_sagaId, _entityId), itemIdentifiers: ["a", "b", "c"], hookNames: null, CancellationToken.None);
 
-    await Assert.That(emitter.Published.Count).IsEqualTo(1);
+    // Initiated event + framework-armed watchdog tick (the second emission, see
+    // CompletionOrchestrationGapTests.InitiateSagaAsync_AutoArmsWatchdogTickAsync).
+    await Assert.That(emitter.Published.Count).IsEqualTo(2);
     var evt = (TestInitiatedEvent)emitter.Published[0];
     await Assert.That(evt.SagaName).IsEqualTo(SAGA_NAME);
     await Assert.That(evt.EntityId).IsEqualTo(_entityId);
     await Assert.That(evt.ItemIdentifiers.Count).IsEqualTo(3);
     await Assert.That(evt.TotalItems).IsEqualTo(3);
+    await Assert.That(emitter.Published[1]).IsTypeOf<SagaCompletionWatchdogTickEvent>();
   }
 
   [Test]

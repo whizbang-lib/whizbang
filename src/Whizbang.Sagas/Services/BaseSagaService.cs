@@ -76,6 +76,24 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     cancellationToken.ThrowIfCancellationRequested();
     var evt = BuildInitiatedEvent(ctx, itemIdentifiers, hookNames, DateTimeOffset.UtcNow);
     await _emitter.PublishAsync(evt).ConfigureAwait(false);
+
+    // Framework-managed completion: arm a watchdog tick so the saga has a guaranteed
+    // wake-up even if every per-item terminal event is silently dropped or strands the
+    // projection. The orchestrator receptor that handles this event runs the
+    // reconciler and emits SagaCompletedEvent via PublishOnceAsync when the saga has
+    // reached terminal state — or re-arms the watchdog with exponential backoff if not.
+    //
+    // Note: this emission lacks the ScheduledFor budget today. The orchestrator
+    // currently exits the loop immediately when the saga isn't terminal; once the
+    // DispatchOptions plumbing reaches BaseSagaService through ISagaEventEmitter, the
+    // tick will be scheduled for "expected completion + slack" so wakes are paced.
+    var watchdog = new SagaCompletionWatchdogTickEvent {
+      SagaName = _sagaName,
+      EntityId = ctx.EntityId,
+      StreamId = ctx.SagaId,
+      RescheduleCount = 0
+    };
+    await _emitter.PublishAsync(watchdog).ConfigureAwait(false);
   }
 
   public async Task ItemsDispatchedAsync(SagaContext ctx, int totalItems, int successfullyDispatched, int failedToDispatch, CancellationToken cancellationToken) {
