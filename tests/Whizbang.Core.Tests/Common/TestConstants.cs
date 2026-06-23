@@ -64,7 +64,11 @@ public static class TestConstants {
   /// <para>- 2 receptors from OrphanInboxJanitorExtensionsTests.cs
   ///     (FakeVoidReceptor, FakeResultReceptor — fixtures for janitor auto-wire test)</para>
   ///
-  /// <para>Total: 117 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 1 receptor from DispatcherPublishOnceTests.cs
+  ///     (PublishOnceTestEventReceptor — verifies winning the claim proceeds to PublishAsync,
+  ///     which invokes the in-process receptor, in the saga-completion race fix lock-in)</para>
+  ///
+  /// <para>Total: 118 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 117;
+  public const int EXPECTED_RECEPTOR_COUNT = 118;
 }
