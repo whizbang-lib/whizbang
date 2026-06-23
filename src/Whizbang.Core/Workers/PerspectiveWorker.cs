@@ -100,14 +100,20 @@ public partial class PerspectiveWorker(
 
   // ── Intra-pod stream-affinity gate (closes the production strand race) ───
   //
-  // Closes the same-pod, same-stream concurrency hole documented in
-  // plans/perspective-worker-stream-affinity.md. wh_active_streams pins each
-  // stream to one pod cross-pod; this dictionary keys a SemaphoreSlim per
-  // stream_id so the parallel groups inside ProcessChannelBatchAsync (and any
-  // concurrent _runChannelConsumerLoopAsync invocation) serialize their
-  // perspective writes for the same stream. Cross-stream parallelism is
-  // unchanged — different streams take different semaphores and run in
-  // parallel exactly as today.
+  // Closes the same-pod, same-stream, same-perspective concurrency hole
+  // documented in plans/perspective-worker-stream-affinity.md. wh_active_streams
+  // pins each stream to one pod cross-pod; this dictionary keys a SemaphoreSlim
+  // per (stream_id, perspective_name) so parallel groups inside
+  // ProcessChannelBatchAsync (and any concurrent _runChannelConsumerLoopAsync
+  // invocation) serialize their perspective writes for the same (stream,
+  // perspective) tuple — exactly the granularity the strand race exists at:
+  // two threads applying the same per-item projection (e.g.
+  // SagaItemProjection.Apply against wh_per_saga_item) from stale loaded state.
+  //
+  // Cross-perspective parallelism on the SAME stream is preserved (different
+  // perspectives write to different tables and don't race), as is cross-stream
+  // parallelism — both take different semaphores and run in parallel exactly
+  // as today.
   //
   // Memory bound via activity-triggered eviction (no background timer).
   // Every gate release stamps the entry's LastActivityTicks; if at least
@@ -116,7 +122,7 @@ public partial class PerspectiveWorker(
   // entries idle for longer than IdleEvictionWindow whose semaphore is
   // currently free. The sweep cost is amortized over real work — no thread
   // is ever woken just to GC the dictionary.
-  private readonly ConcurrentDictionary<Guid, _StreamAffinityGateEntry> _streamAffinityGates = new();
+  private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), _StreamAffinityGateEntry> _streamAffinityGates = new();
   private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions?.Value ?? new PerspectiveStreamAffinityOptions();
   private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
   // Tracks whether the PerspectiveCursorCache eviction subscription has been wired. The
@@ -867,7 +873,7 @@ public partial class PerspectiveWorker(
         // the same-pod hole that caused the production strand race. See
         // plans/perspective-worker-stream-affinity.md.
         _ensureCursorCacheEvictionSubscribed();
-        var gateEntry = _streamAffinityGates.GetOrAdd(streamId, static _ => new _StreamAffinityGateEntry());
+        var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new _StreamAffinityGateEntry());
         Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
         await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
         try {
@@ -1045,16 +1051,28 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// Handler for <see cref="PerspectiveCursorCache.OnStreamsEvicted"/> — drops the affinity-
-  /// gate entries for the same stream ids. Each removal disposes the semaphore so finalizers
-  /// don't accumulate handles. Removal uses the key-only overload (not key+value) because the
-  /// notification means the cache is sure these streams are quiescent — a racing acquirer on
-  /// the worker side would have re-stamped the cache's activity tick first, which would have
-  /// disqualified the stream from this very eviction pass.
+  /// Handler for <see cref="PerspectiveCursorCache.OnStreamsEvicted"/> — drops every
+  /// affinity-gate entry whose key.StreamId matches a stream id in the eviction list.
+  /// Multiple perspectives share a stream id, so a single eviction can clear several
+  /// dictionary entries. Each removal disposes the semaphore so finalizers don't
+  /// accumulate handles. Uses the key-only overload because the cursor cache only emits
+  /// the hook after activity on those streams has lapsed — a racing acquirer would have
+  /// re-stamped the cache's per-stream activity tick first, which would have disqualified
+  /// the stream from this very eviction pass.
   /// </summary>
   private void _onCursorCacheStreamsEvicted(IReadOnlyList<Guid> evictedStreams) {
-    for (var i = 0; i < evictedStreams.Count; i++) {
-      if (_streamAffinityGates.TryRemove(evictedStreams[i], out var entry)) {
+    if (evictedStreams.Count == 0) {
+      return;
+    }
+    var evictedSet = new HashSet<Guid>(evictedStreams);
+    // Snapshot keys so removal during iteration doesn't mutate the live collection. The gate
+    // dictionary is small enough (bounded by active (stream, perspective) pairs) that a key
+    // snapshot is cheap and avoids racing-removal weirdness.
+    foreach (var key in _streamAffinityGates.Keys) {
+      if (!evictedSet.Contains(key.StreamId)) {
+        continue;
+      }
+      if (_streamAffinityGates.TryRemove(key, out var entry)) {
         entry.Dispose();
       }
     }
@@ -1107,7 +1125,7 @@ public partial class PerspectiveWorker(
       if (Interlocked.Read(ref entry.LastActivityTicks) > idleCutoffTicks) {
         continue;
       }
-      if (_streamAffinityGates.TryRemove(new KeyValuePair<Guid, _StreamAffinityGateEntry>(key, entry))) {
+      if (_streamAffinityGates.TryRemove(new KeyValuePair<(Guid StreamId, string PerspectiveName), _StreamAffinityGateEntry>(key, entry))) {
         entry.Dispose();
       }
     }
