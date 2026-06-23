@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Sagas.Models;
 using Whizbang.Sagas.Services;
 
 namespace Whizbang.Sagas.Tests;
@@ -150,11 +151,23 @@ public class CompletionOrchestrationGapTests {
     await svc.UpdateItemAsync(ctx, "a", SagaItemState.Completed, displayName: null, CancellationToken.None);
     await svc.UpdateItemAsync(ctx, "c", SagaItemState.Completed, displayName: null, CancellationToken.None);
 
-    // Simulate the watchdog wake-up. The framework must route this to its own orchestrator,
-    // detect that the projection thinks 2/3 items terminal but the event store says 3/3,
-    // and emit the SagaCompletedEvent. We invoke the recovery surface that the framework
-    // is supposed to expose. Today there is no such surface — the test fails on the
-    // missing API; after v0.740 it goes green.
+    // Wire a projection loader that returns the saga in its actual, durable, terminal state —
+    // the authoritative truth that the in-memory tracker can't reach because "b" was dropped.
+    // In production this is the consumer's saga repository / lens query; the test fakes it so
+    // the recovery code path runs end-to-end without standing up a real projection store.
+    svc.FakeProjection = new BaseSagaModel {
+      Id = _sagaId,
+      SagaName = SAGA_NAME,
+      EntityId = _entityId,
+      Status = SagaStatus.Running,
+      TotalItems = 3,
+      CompletedItems = 3,
+      FailedItems = 0,
+      CompletionEventDispatched = false
+    };
+
+    // Fire the watchdog. The framework's recovery path checks in-memory (sees 2/3, not terminal),
+    // falls through to the projection (sees 3/3, terminal), and emits the SagaCompletedEvent.
     var recoveryDriven = await RecoveryHelpers.TryFireWatchdogAsync(svc, ctx);
     await Assert.That(recoveryDriven)
       .IsTrue()
@@ -278,6 +291,12 @@ public class CompletionOrchestrationGapTests {
     : BaseSagaService<GapInitiatedEvent, GapItemsDispatchedEvent, GapItemStartedEvent, GapItemCompletedEvent,
                       GapItemFailedEvent, GapCompletedEvent, GapResetEvent, GapHookStartedEvent, GapHookCompletedEvent>(
         SAGA_NAME, emitter, NullLogger<GapTestSagaService>.Instance) {
+
+    /// <summary>Fake projection the test sets to drive the watchdog recovery slow path.</summary>
+    internal BaseSagaModel? FakeProjection { get; set; }
+
+    protected override Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken) =>
+      Task.FromResult(FakeProjection);
 
     protected override GapInitiatedEvent BuildInitiatedEvent(SagaContext ctx, IReadOnlyList<string> itemIdentifiers, IReadOnlyList<string>? hookNames, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, ItemIdentifiers = itemIdentifiers, TotalItems = itemIdentifiers.Count, HookNames = hookNames };

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Whizbang.Sagas.Helpers;
+using Whizbang.Sagas.Models;
 
 namespace Whizbang.Sagas.Services;
 
@@ -206,6 +207,92 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     await CompleteSagaAsync(
       ctx, finalStatus, triggeringItemIdentifier, completed, failedCount, total, cancellationToken)
       .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Consumer-overridden hook used by the framework's watchdog recovery path to read the saga's
+  /// authoritative state from the durable projection. Override and return the saga projection
+  /// (typically loaded through the consumer's repository). The default returns <c>null</c>,
+  /// which limits recovery to the in-memory fast path — useful for unit fixtures that don't
+  /// need a real projection store.
+  /// </summary>
+  /// <remarks>
+  /// In production this is wired to the consumer's <see cref="ILensQuery{T}"/>-backed saga
+  /// repository so the watchdog can see what every pod's perspective worker has applied —
+  /// the only source of truth resilient to single-instance in-memory loss (pod restart,
+  /// per-item terminal events that landed on a different pod's tracker, …).
+  /// </remarks>
+  protected virtual Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken) {
+    return Task.FromResult<BaseSagaModel?>(null);
+  }
+
+  /// <summary>
+  /// Framework recovery surface invoked when a watchdog tick fires. First tries the in-memory
+  /// completion tracker (fast path — same path the per-item terminal events use); if the
+  /// in-memory view doesn't show terminal but the consumer has wired a projection loader via
+  /// <see cref="LoadProjectionAsync"/>, falls back to the projection — which catches the case
+  /// where a per-item terminal event was dropped before the right pod's tracker saw it.
+  /// </summary>
+  /// <returns>
+  /// <c>true</c> if recovery drove an emission attempt (regardless of whether THIS caller's
+  /// <see cref="ISagaEventEmitter.PublishOnceAsync"/> won the claim — multiple watchdog ticks
+  /// across pods can race, the claim dedups). <c>false</c> when no recovery was attempted
+  /// (saga not registered, already terminal, projection unavailable, or projection counts
+  /// not yet at terminal).
+  /// </returns>
+  public virtual async Task<bool> TryRecoverViaWatchdogAsync(SagaContext ctx, CancellationToken cancellationToken) {
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // Fast path — re-check the in-memory tracker. If a per-item terminal event came in
+    // between the watchdog being armed and now, the in-memory state already reflects it.
+    int total, completed, failedCount;
+    bool inMemoryTerminal;
+    lock (_completionLock) {
+      if (!_completionTrackers.TryGetValue(ctx.SagaId, out var tracker) || tracker.DispatchedCompletion) {
+        // Tracker missing (e.g. process restart since InitiateSaga) or already emitted — fall through to projection.
+        total = 0;
+        completed = 0;
+        failedCount = 0;
+        inMemoryTerminal = false;
+      } else {
+        total = tracker.Total;
+        completed = tracker.Completed;
+        failedCount = tracker.Failed;
+        inMemoryTerminal = total > 0 && completed + failedCount >= total;
+        if (inMemoryTerminal) {
+          tracker.DispatchedCompletion = true;
+        }
+      }
+    }
+    if (inMemoryTerminal) {
+      var status = failedCount > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
+      await CompleteSagaAsync(
+        ctx, status, completedByItemIdentifier: "watchdog", completed, failedCount, total, cancellationToken)
+        .ConfigureAwait(false);
+      return true;
+    }
+
+    // Slow path — load the projection. Consumer-overridden LoadProjectionAsync returns the
+    // authoritative state when wired; default returns null.
+    var saga = await LoadProjectionAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
+    if (saga is null) {
+      return false;
+    }
+    if (saga.CompletionEventDispatched) {
+      return false;
+    }
+    if (saga.TotalItems <= 0) {
+      return false;
+    }
+    if (saga.CompletedItems + saga.FailedItems < saga.TotalItems) {
+      return false;
+    }
+    var finalStatus = saga.FailedItems > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
+    await CompleteSagaAsync(
+      ctx, finalStatus, completedByItemIdentifier: "watchdog",
+      saga.CompletedItems, saga.FailedItems, saga.TotalItems, cancellationToken)
+      .ConfigureAwait(false);
+    return true;
   }
 
   /// <summary>
