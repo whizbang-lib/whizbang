@@ -780,6 +780,31 @@ public partial class PerspectiveWorker(
       }
     }
 
+    // ⚠️ INTRA-POD STREAM-AFFINITY GAP — see plans/perspective-worker-stream-affinity.md
+    //
+    // This Parallel.ForEachAsync groups by (StreamId, PerspectiveName) and processes
+    // each group in its own parallel task. Within a SINGLE invocation of this method,
+    // one stream's events go to one task — correct in isolation.
+    //
+    // But PerspectiveWorker runs MULTIPLE _runChannelConsumerLoopAsync tasks in parallel
+    // (see line ~328). Each consumer loop independently reads from the shared work channel
+    // and calls ProcessChannelBatchAsync. Two consumer loops can each pick up events for
+    // the same stream X — consumer A runs its Parallel.ForEachAsync for X, consumer B
+    // runs its Parallel.ForEachAsync for X concurrently. Both load the projection row
+    // from possibly-stale state, both Apply against their in-memory current, both UPSERT.
+    // Last writer wins — and that "winner" may be a logically earlier event that just
+    // committed later. This is the cross-pod stale-read race that stranded saga 019ee73d
+    // (2026-06-20) and 019ef473 (2026-06-23) — see CrossPodStaleReadRegressionRaceTests.
+    //
+    // The cross-pod half of the invariant (only one pod owns a stream at a time) is
+    // handled by wh_active_streams ownership rows (mig 007). The intra-pod half (only
+    // one thread inside the owning pod processes a stream at a time) is the missing piece.
+    //
+    // Fix: wire PerStreamSerializer (already used by ServiceBusConsumerWorker, line 62)
+    // as a shared instance field on PerspectiveWorker so enqueues across consumer loops
+    // funnel through the same per-stream channel + worker. Cross-stream parallelism is
+    // preserved exactly as today (different streams → different per-stream workers); only
+    // same-stream concurrency is serialized.
     await Parallel.ForEachAsync(
       groupedWork,
       new ParallelOptions {
