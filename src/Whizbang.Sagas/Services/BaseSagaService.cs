@@ -113,21 +113,34 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
 
     // Framework-managed completion: arm a watchdog tick so the saga has a guaranteed
     // wake-up even if every per-item terminal event is silently dropped or strands the
-    // projection. The orchestrator receptor that handles this event runs the
-    // reconciler and emits SagaCompletedEvent via PublishOnceAsync when the saga has
-    // reached terminal state — or re-arms the watchdog with exponential backoff if not.
+    // projection. The orchestrator that handles this event runs the reconciler and
+    // emits SagaCompletedEvent via PublishOnceAsync when the saga has reached terminal
+    // state — or re-arms the watchdog with exponential backoff if not.
     //
-    // Note: this emission lacks the ScheduledFor budget today. The orchestrator
-    // currently exits the loop immediately when the saga isn't terminal; once the
-    // DispatchOptions plumbing reaches BaseSagaService through ISagaEventEmitter, the
-    // tick will be scheduled for "expected completion + slack" so wakes are paced.
+    // ScheduledFor budget: "expected completion + slack" computed from item count. A
+    // saga with N items typically finishes in O(N) — the heuristic budgets a small
+    // base + per-item allowance so the first tick fires after the optimistic case
+    // SHOULD have completed. Recovery loops (re-arms) layer their own exponential
+    // backoff on top of this (30s → 2m → 8m → 30m → abandon).
     var watchdog = new SagaCompletionWatchdogTickEvent {
       SagaName = _sagaName,
       EntityId = ctx.EntityId,
       StreamId = ctx.SagaId,
       RescheduleCount = 0
     };
-    await _emitter.PublishAsync(watchdog).ConfigureAwait(false);
+    var watchdogBudget = ComputeInitialWatchdogBudget(itemIdentifiers.Count);
+    await _emitter.PublishAsync(watchdog, DateTimeOffset.UtcNow + watchdogBudget).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Initial watchdog delay heuristic. Returns the time-from-now the first watchdog tick
+  /// should fire at, given the saga's item count. <c>30s + (TotalItems * 100ms)</c> is a
+  /// deliberate over-estimate — better to be late and let the per-item terminal events
+  /// finish driving completion via the fast path than fire early and uselessly re-arm.
+  /// Consumers that want a different budget override this method on their subclass.
+  /// </summary>
+  protected virtual TimeSpan ComputeInitialWatchdogBudget(int totalItems) {
+    return TimeSpan.FromSeconds(30) + TimeSpan.FromMilliseconds(100L * totalItems);
   }
 
   public async Task ItemsDispatchedAsync(SagaContext ctx, int totalItems, int successfullyDispatched, int failedToDispatch, CancellationToken cancellationToken) {
