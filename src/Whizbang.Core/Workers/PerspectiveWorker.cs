@@ -119,6 +119,11 @@ public partial class PerspectiveWorker(
   private readonly ConcurrentDictionary<Guid, _StreamAffinityGateEntry> _streamAffinityGates = new();
   private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions?.Value ?? new PerspectiveStreamAffinityOptions();
   private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
+  // Tracks whether the PerspectiveCursorCache eviction subscription has been wired. The
+  // subscription is established lazily on first use of the affinity gates so injection
+  // ordering doesn't matter — _cursorCache is initialized as a field but the options
+  // instance must be threaded through it before the hook is meaningful.
+  private int _cursorCacheEvictionSubscribed;
 
   /// <summary>
   /// Per-stream semaphore plus a wall-clock activity timestamp so the
@@ -195,7 +200,12 @@ public partial class PerspectiveWorker(
 
 
   // Cursor position cache for drain mode — eliminates redundant GetPerspectiveCursorAsync DB calls
-  private readonly PerspectiveCursorCache _cursorCache = new();
+  // Shares the PerspectiveStreamAffinityOptions instance so the cursor cache + the affinity
+  // gate dictionary honor the same IdleEvictionWindow / SweepInterval. Subscription to
+  // OnStreamsEvicted is established lazily on first gate access (see
+  // _ensureCursorCacheEvictionSubscribed) so subscriber wiring doesn't depend on the field
+  // initialization order between _cursorCache and _streamAffinityGates.
+  private readonly PerspectiveCursorCache _cursorCache = new(streamAffinityOptions?.Value ?? new PerspectiveStreamAffinityOptions());
 
   /// <summary>
   /// Per-batch accumulators + lookups that drain-mode helpers thread through together.
@@ -856,6 +866,7 @@ public partial class PerspectiveWorker(
         // wh_active_streams pins streams to a single pod cross-pod; this gate closes
         // the same-pod hole that caused the production strand race. See
         // plans/perspective-worker-stream-affinity.md.
+        _ensureCursorCacheEvictionSubscribed();
         var gateEntry = _streamAffinityGates.GetOrAdd(streamId, static _ => new _StreamAffinityGateEntry());
         Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
         await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
@@ -1017,6 +1028,36 @@ public partial class PerspectiveWorker(
       LogDrainCycleComplete(_logger, !_isIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
     }
     OnBatchCycleComplete?.Invoke();
+  }
+
+  /// <summary>
+  /// Subscribes to <see cref="PerspectiveCursorCache.OnStreamsEvicted"/> exactly once across
+  /// the worker's lifetime so the cursor cache's eviction decisions cascade into the
+  /// affinity-gate dictionary — when the cursor cache drops a stream, the gate for that
+  /// stream goes with it, ensuring both caches stay in sync without each running its own
+  /// time-based sweep against the same streams.
+  /// </summary>
+  private void _ensureCursorCacheEvictionSubscribed() {
+    if (Interlocked.CompareExchange(ref _cursorCacheEvictionSubscribed, 1, 0) != 0) {
+      return;
+    }
+    _cursorCache.OnStreamsEvicted += _onCursorCacheStreamsEvicted;
+  }
+
+  /// <summary>
+  /// Handler for <see cref="PerspectiveCursorCache.OnStreamsEvicted"/> — drops the affinity-
+  /// gate entries for the same stream ids. Each removal disposes the semaphore so finalizers
+  /// don't accumulate handles. Removal uses the key-only overload (not key+value) because the
+  /// notification means the cache is sure these streams are quiescent — a racing acquirer on
+  /// the worker side would have re-stamped the cache's activity tick first, which would have
+  /// disqualified the stream from this very eviction pass.
+  /// </summary>
+  private void _onCursorCacheStreamsEvicted(IReadOnlyList<Guid> evictedStreams) {
+    for (var i = 0; i < evictedStreams.Count; i++) {
+      if (_streamAffinityGates.TryRemove(evictedStreams[i], out var entry)) {
+        entry.Dispose();
+      }
+    }
   }
 
   /// <summary>
