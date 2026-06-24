@@ -47,6 +47,38 @@ public class SagasJsonContextTests {
   }
 
   [Test]
+  public async Task SagasJsonContext_ResolvesStronglyTypedMessageEnvelopeAsync() {
+    // The transport-consumer side (Service Bus, RabbitMQ) deserializes the wire
+    // bytes as MessageEnvelope<SagaCompletionWatchdogTickEvent>. Without an
+    // explicit [JsonSerializable] for the concrete generic envelope, STJ throws
+    // `JsonTypeInfo metadata for type
+    // 'Whizbang.Core.Observability.MessageEnvelope`1[Whizbang.Sagas.SagaCompletionWatchdogTickEvent]'
+    // was not provided` (production dev 2026-06-24 second-strike).
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var envelopeTypeInfo = options.GetTypeInfo(typeof(Whizbang.Core.Observability.MessageEnvelope<SagaCompletionWatchdogTickEvent>));
+
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    await Assert.That(envelopeTypeInfo!.Type)
+      .IsEqualTo(typeof(Whizbang.Core.Observability.MessageEnvelope<SagaCompletionWatchdogTickEvent>));
+  }
+
+  [Test]
+  public async Task SagasJsonContext_RegistersTypeNameForEnvelopeAsync() {
+    // The publisher resolves envelope-type strings (assembly-qualified, wire-side)
+    // to concrete generic types via JsonContextRegistry.GetTypeInfoByName. Without
+    // an explicit RegisterTypeName for the envelope, the dispatcher throws
+    // `Failed to resolve message type ... assembly containing this type is loaded
+    // and registered via [ModuleInitializer]` on the first watchdog tick.
+    var envelopeTypeName =
+      "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Sagas.SagaCompletionWatchdogTickEvent, Whizbang.Sagas]], Whizbang.Core";
+
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, options);
+
+    await Assert.That(typeInfo).IsNotNull();
+  }
+
+  [Test]
   public async Task SagasJsonContext_RoundTripsSagaCompletionWatchdogTickEventAsync() {
     var options = JsonContextRegistry.CreateCombinedOptions();
     var original = new SagaCompletionWatchdogTickEvent {
