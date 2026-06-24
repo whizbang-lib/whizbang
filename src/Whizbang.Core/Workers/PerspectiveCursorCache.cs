@@ -39,7 +39,8 @@ public sealed class PerspectiveCursorCache {
   private readonly ConcurrentDictionary<Guid, long> _streamLastActivityTicks = new();
 
   private readonly PerspectiveStreamAffinityOptions _options;
-  private long _lastSweepTicks = DateTimeOffset.UtcNow.Ticks;
+  private readonly TimeProvider _timeProvider;
+  private long _lastSweepTicks;
 
   /// <summary>
   /// Raised after a sweep evicts entries for one or more streams. The list contains every
@@ -53,16 +54,27 @@ public sealed class PerspectiveCursorCache {
   /// Default constructor — wire defaults for <see cref="PerspectiveStreamAffinityOptions"/>.
   /// Preserves the historical no-arg construction used by <see cref="PerspectiveWorker"/>.
   /// </summary>
-  public PerspectiveCursorCache() : this(new PerspectiveStreamAffinityOptions()) { }
+  public PerspectiveCursorCache() : this(new PerspectiveStreamAffinityOptions(), TimeProvider.System) { }
 
   /// <summary>
   /// Constructor accepting a shared <see cref="PerspectiveStreamAffinityOptions"/> instance.
   /// The intent is one options instance per PerspectiveWorker, shared between the cursor
   /// cache and the affinity-gate dict so both honor the same idle/sweep tuning.
   /// </summary>
-  public PerspectiveCursorCache(PerspectiveStreamAffinityOptions options) {
+  public PerspectiveCursorCache(PerspectiveStreamAffinityOptions options) : this(options, TimeProvider.System) { }
+
+  /// <summary>
+  /// Test-friendly constructor accepting a <see cref="TimeProvider"/>. Production callers
+  /// use the parameterless or options-only overloads above (both wire
+  /// <see cref="TimeProvider.System"/>); tests inject a fake time provider so eviction
+  /// behavior can be exercised deterministically without wall-clock <c>Task.Delay</c>.
+  /// </summary>
+  public PerspectiveCursorCache(PerspectiveStreamAffinityOptions options, TimeProvider timeProvider) {
     ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(timeProvider);
     _options = options;
+    _timeProvider = timeProvider;
+    _lastSweepTicks = _timeProvider.GetUtcNow().Ticks;
   }
 
   /// <summary>Number of cached cursor entries.</summary>
@@ -185,7 +197,7 @@ public sealed class PerspectiveCursorCache {
   /// previous one.
   /// </summary>
   private void _touch(Guid streamId) {
-    var nowTicks = DateTimeOffset.UtcNow.Ticks;
+    var nowTicks = _timeProvider.GetUtcNow().Ticks;
     _streamLastActivityTicks[streamId] = nowTicks;
     _sweepIfDue(nowTicks);
   }
@@ -211,7 +223,7 @@ public sealed class PerspectiveCursorCache {
   /// Returns the deduplicated set of evicted stream ids.
   /// </summary>
   private List<Guid> _sweepCore() {
-    var nowTicks = DateTimeOffset.UtcNow.Ticks;
+    var nowTicks = _timeProvider.GetUtcNow().Ticks;
     var idleCutoffTicks = nowTicks - _options.IdleEvictionWindow.Ticks;
     var evictedStreams = new List<Guid>();
     foreach (var (streamId, lastActivity) in _streamLastActivityTicks) {

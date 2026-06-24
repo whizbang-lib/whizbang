@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -10,19 +11,24 @@ namespace Whizbang.Core.Tests.Workers;
 /// hook semantics added in v0.740.0-alpha.1. The hook is how paired caches (notably
 /// PerspectiveWorker's intra-pod stream-affinity gate dictionary) stay in sync without each
 /// running their own time-based sweep over the same stream ids.
+///
+/// <para>Deterministic time: every test uses <see cref="FakeTimeProvider"/> and advances time
+/// explicitly via <c>Advance</c>. No <c>Task.Delay</c>, no wall-clock dependency — the tests
+/// pass identically on any runner regardless of speed.</para>
 /// </summary>
 [Category("Unit")]
 [Category("Workers")]
 public class PerspectiveCursorCacheEvictionHookTests {
 
-  private static PerspectiveStreamAffinityOptions _aggressiveSweepOptions() => new() {
-    IdleEvictionWindow = TimeSpan.FromMilliseconds(1),
-    SweepInterval = TimeSpan.FromMilliseconds(1)
+  private static PerspectiveStreamAffinityOptions _testOptions() => new() {
+    IdleEvictionWindow = TimeSpan.FromMinutes(15),
+    SweepInterval = TimeSpan.FromMinutes(1)
   };
 
   [Test]
   public async Task RunSweepNowForTests_IdleStreamEvicted_RaisesEventWithStreamIdAsync() {
-    var cache = new PerspectiveCursorCache(_aggressiveSweepOptions());
+    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var cache = new PerspectiveCursorCache(_testOptions(), clock);
     var streamA = Guid.NewGuid();
     var streamB = Guid.NewGuid();
 
@@ -32,9 +38,8 @@ public class PerspectiveCursorCacheEvictionHookTests {
     var evictedReports = new List<IReadOnlyList<Guid>>();
     cache.OnStreamsEvicted += list => evictedReports.Add(list);
 
-    // Wait past the idle window so both streams are eligible. Using TUnit's wall-clock here
-    // is acceptable because the idle window is in milliseconds — pinned by the test options.
-    await Task.Delay(50);
+    // Advance past IdleEvictionWindow (15 min). Both streams are now eligible.
+    clock.Advance(TimeSpan.FromMinutes(16));
 
     var evicted = cache.RunSweepNowForTests();
 
@@ -44,14 +49,14 @@ public class PerspectiveCursorCacheEvictionHookTests {
     await Assert.That(evicted).Contains(streamB);
 
     // Hook is NOT called by RunSweepNowForTests — that's the test path, returns the list directly.
-    // The activity-triggered path raises the event; verify next.
     await Assert.That(evictedReports.Count).IsEqualTo(0)
       .Because("RunSweepNowForTests intentionally bypasses the hook so tests can decide when to wire subscribers.");
   }
 
   [Test]
   public async Task ActivityTriggeredSweep_FiresOnStreamsEvictedHook_WithEvictedIdsAsync() {
-    var cache = new PerspectiveCursorCache(_aggressiveSweepOptions());
+    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var cache = new PerspectiveCursorCache(_testOptions(), clock);
     var streamA = Guid.NewGuid();
     var streamB = Guid.NewGuid();
 
@@ -61,8 +66,9 @@ public class PerspectiveCursorCacheEvictionHookTests {
     cache.Set(streamA, "TestPerspective", Guid.NewGuid());
     cache.Set(streamB, "TestPerspective", Guid.NewGuid());
 
-    // Idle past the window, then trigger a new activity — the touch path runs the sweep.
-    await Task.Delay(50);
+    // Advance past IdleEvictionWindow AND SweepInterval, then trigger a new activity — the
+    // touch path runs the sweep.
+    clock.Advance(TimeSpan.FromMinutes(16));
 
     var streamC = Guid.NewGuid();
     cache.Set(streamC, "TestPerspective", Guid.NewGuid());
@@ -81,19 +87,20 @@ public class PerspectiveCursorCacheEvictionHookTests {
 
   [Test]
   public async Task RecentActivity_ProtectsStreamFromEvictionAsync() {
-    var cache = new PerspectiveCursorCache(new PerspectiveStreamAffinityOptions {
-      IdleEvictionWindow = TimeSpan.FromMilliseconds(100),
-      SweepInterval = TimeSpan.FromMilliseconds(1)
-    });
+    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var cache = new PerspectiveCursorCache(_testOptions(), clock);
     var streamHot = Guid.NewGuid();
     var streamCold = Guid.NewGuid();
 
     cache.Set(streamHot, "TestPerspective", Guid.NewGuid());
     cache.Set(streamCold, "TestPerspective", Guid.NewGuid());
 
-    await Task.Delay(60);
-    cache.Set(streamHot, "TestPerspective", Guid.NewGuid()); // keep hot
-    await Task.Delay(60); // streamCold is now > 100ms idle, streamHot is ~60ms
+    // Advance 10 min — neither stream is yet idle past the 15-min window.
+    clock.Advance(TimeSpan.FromMinutes(10));
+    cache.Set(streamHot, "TestPerspective", Guid.NewGuid()); // keep hot — re-touched at t=10m
+    // Advance another 10 min — streamCold's last activity is at t=0 (now 20m old, past window);
+    // streamHot's last activity is at t=10m (10m old, fresh).
+    clock.Advance(TimeSpan.FromMinutes(10));
 
     var evicted = cache.RunSweepNowForTests();
 
@@ -105,7 +112,8 @@ public class PerspectiveCursorCacheEvictionHookTests {
 
   [Test]
   public async Task SubscriberThrows_OtherSubscribersStillInvokedAsync() {
-    var cache = new PerspectiveCursorCache(_aggressiveSweepOptions());
+    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var cache = new PerspectiveCursorCache(_testOptions(), clock);
     var streamA = Guid.NewGuid();
     cache.Set(streamA, "TestPerspective", Guid.NewGuid());
 
@@ -113,7 +121,7 @@ public class PerspectiveCursorCacheEvictionHookTests {
     cache.OnStreamsEvicted += _ => throw new InvalidOperationException("intentional");
     cache.OnStreamsEvicted += _ => goodSubscriberCalled = true;
 
-    await Task.Delay(50);
+    clock.Advance(TimeSpan.FromMinutes(16));
     cache.Set(Guid.NewGuid(), "TestPerspective", Guid.NewGuid()); // trigger sweep
 
     await Assert.That(goodSubscriberCalled)
@@ -124,23 +132,19 @@ public class PerspectiveCursorCacheEvictionHookTests {
 
   [Test]
   public async Task InvalidateStream_AlsoRemovesActivityTrackerEntryAsync() {
-    var cache = new PerspectiveCursorCache(_aggressiveSweepOptions());
+    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var cache = new PerspectiveCursorCache(_testOptions(), clock);
     var streamId = Guid.NewGuid();
     cache.Set(streamId, "TestPerspective", Guid.NewGuid());
 
     cache.InvalidateStream(streamId);
 
-    // After InvalidateStream the stream is gone; touch a different stream to drive a sweep
-    // and confirm the invalidated stream is NOT in the evicted-reports list (because there's
-    // nothing left to evict for it).
     var evictedReports = new List<IReadOnlyList<Guid>>();
     cache.OnStreamsEvicted += list => evictedReports.Add(list);
 
-    await Task.Delay(50);
+    clock.Advance(TimeSpan.FromMinutes(16));
     cache.Set(Guid.NewGuid(), "TestPerspective", Guid.NewGuid());
 
-    // The sweep may fire and find nothing to evict, or fire with the just-set stream once
-    // it ages out — either way the invalidated stream should never appear in any report.
     foreach (var report in evictedReports) {
       await Assert.That(report).DoesNotContain(streamId)
         .Because("InvalidateStream removes the activity-tracker entry, so the sweep can't surface it.");
