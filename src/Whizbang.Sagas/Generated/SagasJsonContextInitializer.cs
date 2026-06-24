@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 
 namespace Whizbang.Sagas.Generated;
@@ -27,5 +28,16 @@ public static class SagasJsonContextInitializer {
 #pragma warning restore CA2255
   public static void Initialize() {
     JsonContextRegistry.RegisterContext(SagasJsonContext.Default);
+
+    // Register the assembly-qualified type-name mapping for the strongly-typed
+    // envelope. The transport consumer's _extractMessageTypeFromEnvelopeType +
+    // GetTypeInfoByName path resolves wire-side envelope-type strings to their
+    // concrete generic types; without this entry it falls back to reflection
+    // (AOT-broken) and emits `Failed to resolve message type
+    // 'Whizbang.Sagas.SagaCompletionWatchdogTickEvent, Whizbang.Sagas...'`.
+    JsonContextRegistry.RegisterTypeName(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Sagas.SagaCompletionWatchdogTickEvent, Whizbang.Sagas]], Whizbang.Core",
+      typeof(MessageEnvelope<SagaCompletionWatchdogTickEvent>),
+      SagasJsonContext.Default);
   }
 }

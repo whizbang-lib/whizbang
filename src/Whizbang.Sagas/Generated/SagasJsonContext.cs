@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Sagas.Generated;
 
@@ -22,7 +23,15 @@ namespace Whizbang.Sagas.Generated;
 /// consumers to register framework-internal types in their own contexts.
 /// </remarks>
 /// <docs>fundamentals/sagas/completion-orchestration</docs>
+// Bare event type — required for the saga emitter's PublishAsync<T> path.
 [JsonSerializable(typeof(SagaCompletionWatchdogTickEvent))]
+// Strongly-typed envelope wrapper — required for the transport consumer side
+// (Service Bus / RabbitMQ) which receives `MessageEnvelope<T>` JSON and resolves
+// the concrete generic via JsonTypeInfo. Without this entry, every consumer of
+// Whizbang.Sagas hits a `JsonTypeInfo metadata for type
+// 'Whizbang.Core.Observability.MessageEnvelope`1[Whizbang.Sagas.SagaCompletionWatchdogTickEvent]'
+// was not provided` failure at watchdog-tick receive time (production dev 2026-06-24).
+[JsonSerializable(typeof(MessageEnvelope<SagaCompletionWatchdogTickEvent>))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class SagasJsonContext : JsonSerializerContext;
