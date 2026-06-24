@@ -62,9 +62,9 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   // reconciler, and emits SagaCompletedEvent from the watchdog path. The watchdog is the
   // safety net; the in-memory path keeps the common case fast and dependency-free.
   private readonly Lock _completionLock = new();
-  private readonly Dictionary<Guid, _SagaCompletionTracker> _completionTrackers = [];
+  private readonly Dictionary<Guid, SagaCompletionTracker> _completionTrackers = [];
 
-  private sealed class _SagaCompletionTracker {
+  private sealed class SagaCompletionTracker {
     public Guid EntityId;
     public int Total;
     public int Completed;
@@ -102,7 +102,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
 
     // Register the saga with the in-memory completion tracker before any item events fire.
     lock (_completionLock) {
-      _completionTrackers[ctx.SagaId] = new _SagaCompletionTracker {
+      _completionTrackers[ctx.SagaId] = new SagaCompletionTracker {
         EntityId = ctx.EntityId,
         Total = itemIdentifiers.Count
       };

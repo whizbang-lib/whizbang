@@ -41,11 +41,9 @@ public class OutboxMessageScheduledForTests {
     // `record` with init-only properties; an unset ScheduledFor must default to null so unchanged
     // call sites keep their "immediate dispatch" semantics unchanged.
     var prop = typeof(OutboxMessage).GetProperty("ScheduledFor",
-      BindingFlags.Public | BindingFlags.Instance);
-    if (prop is null) {
-      throw new InvalidOperationException(
+      BindingFlags.Public | BindingFlags.Instance)
+      ?? throw new InvalidOperationException(
         "ScheduledFor property does not yet exist on OutboxMessage — see OutboxMessage_ScheduledFor_PropertyExistsAsync for the gap rationale.");
-    }
 
     // Build a minimal OutboxMessage via the required init members. Use object initializer through
     // reflection-less construction so we exercise the actual record-init contract.

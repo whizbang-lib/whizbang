@@ -122,7 +122,7 @@ public partial class PerspectiveWorker(
   // entries idle for longer than IdleEvictionWindow whose semaphore is
   // currently free. The sweep cost is amortized over real work — no thread
   // is ever woken just to GC the dictionary.
-  private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), _StreamAffinityGateEntry> _streamAffinityGates = new();
+  private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), StreamAffinityGateEntry> _streamAffinityGates = new();
   private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions?.Value ?? new PerspectiveStreamAffinityOptions();
   private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
   // Tracks whether the PerspectiveCursorCache eviction subscription has been wired. The
@@ -138,7 +138,7 @@ public partial class PerspectiveWorker(
   /// same instance retrieved from
   /// <see cref="ConcurrentDictionary{TKey,TValue}.GetOrAdd(TKey,Func{TKey,TValue})"/>.
   /// </summary>
-  private sealed class _StreamAffinityGateEntry : IDisposable {
+  private sealed class StreamAffinityGateEntry : IDisposable {
     public readonly SemaphoreSlim Semaphore = new(1, 1);
     public long LastActivityTicks = DateTimeOffset.UtcNow.Ticks;
     public void Dispose() => Semaphore.Dispose();
@@ -873,7 +873,7 @@ public partial class PerspectiveWorker(
         // the same-pod hole that caused the production strand race. See
         // plans/perspective-worker-stream-affinity.md.
         _ensureCursorCacheEvictionSubscribed();
-        var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new _StreamAffinityGateEntry());
+        var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
         Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
         await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
         try {
@@ -1125,7 +1125,7 @@ public partial class PerspectiveWorker(
       if (Interlocked.Read(ref entry.LastActivityTicks) > idleCutoffTicks) {
         continue;
       }
-      if (_streamAffinityGates.TryRemove(new KeyValuePair<(Guid StreamId, string PerspectiveName), _StreamAffinityGateEntry>(key, entry))) {
+      if (_streamAffinityGates.TryRemove(new KeyValuePair<(Guid StreamId, string PerspectiveName), StreamAffinityGateEntry>(key, entry))) {
         entry.Dispose();
       }
     }

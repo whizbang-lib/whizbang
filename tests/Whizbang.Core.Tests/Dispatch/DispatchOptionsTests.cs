@@ -290,13 +290,11 @@ public class DispatchOptionsTests {
   [Test]
   public async Task ScheduledFor_DefaultIsNullAsync() {
     var options = new DispatchOptions();
+    // Both REDs (this one and ScheduledFor_PropertyExistsAsync) fail until the property ships;
+    // surface the gap here too so the failure inventory is complete.
     var prop = typeof(DispatchOptions).GetProperty("ScheduledFor",
-      System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-    if (prop is null) {
-      // Both REDs (this one and ScheduledFor_PropertyExistsAsync) fail until the property ships;
-      // surface the gap here too so the failure inventory is complete.
-      throw new InvalidOperationException("ScheduledFor property does not yet exist — see ScheduledFor_PropertyExistsAsync for the gap rationale.");
-    }
+      System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+      ?? throw new InvalidOperationException("ScheduledFor property does not yet exist — see ScheduledFor_PropertyExistsAsync for the gap rationale.");
     var value = prop.GetValue(options);
     await Assert.That(value)
       .IsNull()
