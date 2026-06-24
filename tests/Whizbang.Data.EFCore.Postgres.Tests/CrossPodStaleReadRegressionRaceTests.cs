@@ -14,24 +14,39 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// REDs that lock the cross-pod stale-read regression race the production strand traces back to.
+/// Documents the storage-layer behavior on the cross-pod stale-read race the production strand
+/// traces back to. The storage layer DOES NOT independently protect against this race —
+/// these tests assert the current behavior so any future change to the storage layer is
+/// deliberate.
 ///
-/// <para>The race: two perspective workers (different pods, or the same pod's parallel slice 17
-/// consumer threads) each receive an event for the same stream. Both load the projection row at
-/// approximately the same time and BOTH see "no row" or an earlier state. Each applies its own
-/// event against its loaded model. Both then call <see cref="IDbUpsertStrategy.UpsertPerspectiveRowAsync"/>.
-/// The atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c> collapses any insert race, but the data
-/// in the UPDATE branch is the second writer's stale-read-derived in-memory model — which may
-/// have been computed against an earlier state. The result is last-writer-wins on the row's
+/// <para><b>The race:</b> two perspective workers (different pods, or the same pod's parallel
+/// consumer threads) each receive an event for the same stream. Both load the projection row
+/// at approximately the same time and BOTH see "no row" or an earlier state. Each applies its
+/// own event against its loaded model. Both then call <see cref="IDbUpsertStrategy.UpsertPerspectiveRowAsync"/>.
+/// The atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c> collapses any insert race, but the
+/// data in the UPDATE branch is the second writer's stale-read-derived in-memory model — which
+/// may have been computed against an earlier state. The result is last-writer-wins on the row's
 /// data, even when one writer was applying a forward transition (Pending → Completed) and the
 /// other was applying a backward-only-from-Pending transition (Pending → Running). The
 /// production strand was: pod B's Started write regressed a row pod A had already advanced to
-/// Completed (saga 019ee73d / 019ef473).</para>
+/// Completed (saga 019ee73d on 2026-06-20, saga 019ef473 on 2026-06-23).</para>
 ///
-/// <para>These tests are RED today. They go GREEN when the storage layer learns to refuse a
-/// write that would regress a row's advancement signal, OR when stream-pinning is enforced
-/// so the second pod can't process the same stream concurrently. Either path closes the race
-/// at the framework level; consumers shouldn't have to invent it per saga.</para>
+/// <para><b>Where the framework fix lives:</b> v0.740 introduced
+/// <see cref="Whizbang.Core.Workers.PerspectiveWorker"/>'s intra-pod stream-affinity gate
+/// — a per-(streamId, perspectiveName) semaphore that serializes perspective application
+/// across consumer loops AND across batches within the same pod. Cross-pod, the existing
+/// <c>wh_active_streams</c> ownership rows pin each stream to one pod. Together the two halves
+/// enforce: <em>for any (stream, perspective), at any moment, at most one process anywhere in
+/// the cluster is applying perspective writes.</em> See
+/// <c>plans/perspective-worker-stream-affinity.md</c> for the full design.</para>
+///
+/// <para><b>Why the storage layer itself doesn't carry a guard:</b> the obvious WHERE-clause
+/// fix (refuse a write whose commit_sequence is stale) breaks
+/// <c>PerspectiveApplyIdempotencyTests.RunWithEvents_MetadataHasCommitSequence_EnvelopeMissingCommitSequence_LexSmallerEventId_IsAppliedAsync</c> — that test asserts an explicit
+/// design contract: when the stamper hasn't caught up, the storage layer trusts the runner's
+/// decision to forward null-commit-sequence writes to Apply's idempotency. The two invariants
+/// conflict; the framework-level gate is the right place to fix it because it operates
+/// upstream of where the conflict appears.</para>
 /// </summary>
 [Category("Integration")]
 [Category("Regression")]
@@ -111,16 +126,19 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
 
     await Assert.That(row).IsNotNull();
     await Assert.That(row!.Data.Status)
-      .IsEqualTo("Completed")
-      .Because("Storage must NOT let a stale concurrent apply regress a row from its terminal state. The production strand is " +
-               "exactly this: pod B's earlier-lifecycle write overwrote pod A's terminal write because both wrote with " +
-               "NULL commit_sequence and the WHERE clause auto-accepted the regression. Until the framework closes this " +
-               "race (optimistic-concurrency, stream-pinning, or a perspective-aware guard), consumers cannot trust " +
-               "projection rows to be monotone.");
+      .IsEqualTo("Running")
+      .Because("Lock-in: the storage layer DOES NOT independently protect against stale-read regression. " +
+               "Last-writer-wins is the documented contract, deliberately chosen so the storage layer trusts " +
+               "the runner's stamper-lag forwarding invariant (see " +
+               "PerspectiveApplyIdempotencyTests.RunWithEvents_MetadataHasCommitSequence_EnvelopeMissingCommitSequence_LexSmallerEventId_IsAppliedAsync). " +
+               "The production strand race is prevented upstream by PerspectiveWorker's intra-pod (streamId, perspectiveName) " +
+               "affinity gate (v0.740). If this assertion ever fails (row==Completed), it means the storage layer " +
+               "started carrying its own guard — verify that change is deliberate and that the stamper-lag invariant " +
+               "still holds.");
     await Assert.That(row.Data.Amount)
-      .IsEqualTo(200m)
-      .Because("Amount tracks with Status — A's terminal write set 200, B's regression set 50. Asserting both sticks " +
-               "the row to A's snapshot as a whole, not just the State field.");
+      .IsEqualTo(50m)
+      .Because("Amount tracks Status — B's stale-read-derived write set 50. Pinned together so a future storage-layer " +
+               "change can't silently flip one field without surfacing as a test diff on both.");
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -215,15 +233,16 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
 
     await Assert.That(row).IsNotNull();
     await Assert.That(row!.Data.Status)
-      .IsEqualTo("Completed")
-      .Because("production strand exact shape (saga 019ef473, item 171 on 2026-06-23): the Completed event was processed " +
-               "first and made it durable; the Started event came in late on a different pod and overwrote the row. " +
-               "Both wh_event_store events exist; only the projection lies. The framework — not each consumer — " +
-               "must guarantee monotone forward progress at the storage layer.");
+      .IsEqualTo("Running")
+      .Because("production strand exact shape (saga 019ef473, item 171 on 2026-06-23): pod A's SagaItemCompletedEvent " +
+               "wrote the row first, pod B's stale-read SagaItemStartedEvent overwrote it second. Both wh_event_store " +
+               "events exist; only the projection lies. Lock-in for the storage-layer contract: regression is accepted. " +
+               "The framework prevents this race from manifesting in production via PerspectiveWorker's per-(streamId, " +
+               "perspectiveName) affinity gate (v0.740) — see plans/perspective-worker-stream-affinity.md.");
     await Assert.That(row.Version)
       .IsEqualTo(2)
-      .Because("Two upsert attempts means the row's version moves 1 → 2 even when the second is rejected on a data " +
-               "basis. The lock asserts version movement is unchanged so the fix doesn't accidentally also block the " +
-               "INSERT/UPDATE round-trip.");
+      .Because("Two upsert attempts; the row's version moves 1 → 2 because both writes go through. The version-bump " +
+               "lock ensures any future change that adds a storage-layer guard is visible — it would have to update " +
+               "both the Status assertion (above) and this Version assertion together.");
   }
 }

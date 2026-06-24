@@ -305,6 +305,17 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       ctx, finalStatus, completedByItemIdentifier: "watchdog",
       saga.CompletedItems, saga.FailedItems, saga.TotalItems, cancellationToken)
       .ConfigureAwait(false);
+
+    // Defense in depth: now that the slow path has won the SagaCompletedEvent claim, mark the
+    // in-memory tracker so a late per-item terminal arriving on this instance after this
+    // recovery can't drive a duplicate auto-complete attempt. PublishOnceAsync's claim key
+    // already dedups at the dispatcher layer; this just avoids the wasted PublishOnceAsync
+    // round-trip and keeps the in-memory view consistent with the projection.
+    lock (_completionLock) {
+      if (_completionTrackers.TryGetValue(ctx.SagaId, out var tracker)) {
+        tracker.DispatchedCompletion = true;
+      }
+    }
     return true;
   }
 
