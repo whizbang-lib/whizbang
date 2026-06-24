@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Whizbang.Sagas.Helpers;
+using Whizbang.Sagas.Models;
 
 namespace Whizbang.Sagas.Services;
 
@@ -47,6 +48,30 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   private readonly ISagaEventEmitter _emitter;
   private readonly ILogger _logger;
 
+  // ── Framework-owned completion tracking (in-memory fast path) ────────
+  //
+  // When InitiateSagaAsync is called the framework records the saga's expected total.
+  // As UpdateItemAsync(Completed) / FailItemAsync fire, the counters advance. When the
+  // sum reaches the total the framework auto-emits SagaCompletedEvent via PublishOnceAsync
+  // — exactly-once thanks to the claim-key dedup, so even in multi-pod scenarios where
+  // each instance has its own in-memory view, only one emission lands.
+  //
+  // This is the "single-pod fast path." For multi-pod recovery (a per-item terminal event
+  // dropped before the right pod saw it) the watchdog tick fires, the orchestrator loads
+  // the consumer's saga projection through ISagaProjectionLoader, runs the event-store
+  // reconciler, and emits SagaCompletedEvent from the watchdog path. The watchdog is the
+  // safety net; the in-memory path keeps the common case fast and dependency-free.
+  private readonly Lock _completionLock = new();
+  private readonly Dictionary<Guid, SagaCompletionTracker> _completionTrackers = [];
+
+  private sealed class SagaCompletionTracker {
+    public Guid EntityId;
+    public int Total;
+    public int Completed;
+    public int Failed;
+    public bool DispatchedCompletion;
+  }
+
   /// <summary>The saga name this service emits events for — matches the value supplied to <c>[Saga("Name")]</c>.</summary>
   protected string SagaName => _sagaName;
 
@@ -74,8 +99,48 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   public async Task InitiateSagaAsync(SagaContext ctx, IReadOnlyList<string> itemIdentifiers, IReadOnlyList<string>? hookNames, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(itemIdentifiers);
     cancellationToken.ThrowIfCancellationRequested();
+
+    // Register the saga with the in-memory completion tracker before any item events fire.
+    lock (_completionLock) {
+      _completionTrackers[ctx.SagaId] = new SagaCompletionTracker {
+        EntityId = ctx.EntityId,
+        Total = itemIdentifiers.Count
+      };
+    }
+
     var evt = BuildInitiatedEvent(ctx, itemIdentifiers, hookNames, DateTimeOffset.UtcNow);
     await _emitter.PublishAsync(evt).ConfigureAwait(false);
+
+    // Framework-managed completion: arm a watchdog tick so the saga has a guaranteed
+    // wake-up even if every per-item terminal event is silently dropped or strands the
+    // projection. The orchestrator that handles this event runs the reconciler and
+    // emits SagaCompletedEvent via PublishOnceAsync when the saga has reached terminal
+    // state — or re-arms the watchdog with exponential backoff if not.
+    //
+    // ScheduledFor budget: "expected completion + slack" computed from item count. A
+    // saga with N items typically finishes in O(N) — the heuristic budgets a small
+    // base + per-item allowance so the first tick fires after the optimistic case
+    // SHOULD have completed. Recovery loops (re-arms) layer their own exponential
+    // backoff on top of this (30s → 2m → 8m → 30m → abandon).
+    var watchdog = new SagaCompletionWatchdogTickEvent {
+      SagaName = _sagaName,
+      EntityId = ctx.EntityId,
+      StreamId = ctx.SagaId,
+      RescheduleCount = 0
+    };
+    var watchdogBudget = ComputeInitialWatchdogBudget(itemIdentifiers.Count);
+    await _emitter.PublishAsync(watchdog, DateTimeOffset.UtcNow + watchdogBudget).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Initial watchdog delay heuristic. Returns the time-from-now the first watchdog tick
+  /// should fire at, given the saga's item count. <c>30s + (TotalItems * 100ms)</c> is a
+  /// deliberate over-estimate — better to be late and let the per-item terminal events
+  /// finish driving completion via the fast path than fire early and uselessly re-arm.
+  /// Consumers that want a different budget override this method on their subclass.
+  /// </summary>
+  protected virtual TimeSpan ComputeInitialWatchdogBudget(int totalItems) {
+    return TimeSpan.FromSeconds(30) + TimeSpan.FromMilliseconds(100L * totalItems);
   }
 
   public async Task ItemsDispatchedAsync(SagaContext ctx, int totalItems, int successfullyDispatched, int failedToDispatch, CancellationToken cancellationToken) {
@@ -94,6 +159,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
         break;
       case SagaItemState.Completed:
         await _emitter.PublishAsync(BuildItemCompletedEvent(ctx, itemIdentifier, displayName, now)).ConfigureAwait(false);
+        await _tryAutoCompleteAsync(ctx, itemIdentifier, failed: false, cancellationToken).ConfigureAwait(false);
         break;
       case SagaItemState.Failed:
         throw new InvalidOperationException(
@@ -111,6 +177,146 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     await _emitter.PublishAsync(
       BuildItemFailedEvent(ctx, itemIdentifier, errorMessage, errorDetails, displayName, DateTimeOffset.UtcNow))
       .ConfigureAwait(false);
+    await _tryAutoCompleteAsync(ctx, itemIdentifier, failed: true, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Framework-owned completion fast path. Called after every per-item terminal event
+  /// (<see cref="UpdateItemAsync"/>(Completed), <see cref="FailItemAsync"/>) — advances
+  /// the in-memory tracker; when (Completed + Failed) reaches the InitiateSagaAsync-supplied
+  /// total, emits the SagaCompletedEvent via <see cref="CompleteSagaAsync"/>. Exactly-once
+  /// across racing instances is guaranteed by <see cref="CompleteSagaAsync"/>'s
+  /// PublishOnceAsync claim key, so the in-memory view doesn't have to be globally
+  /// consistent — only the first emission lands.
+  /// </summary>
+  private async Task _tryAutoCompleteAsync(
+      SagaContext ctx,
+      string triggeringItemIdentifier,
+      bool failed,
+      CancellationToken cancellationToken) {
+    int total, completed, failedCount;
+    bool shouldEmit;
+    lock (_completionLock) {
+      if (!_completionTrackers.TryGetValue(ctx.SagaId, out var tracker) || tracker.DispatchedCompletion) {
+        return;
+      }
+      if (failed) {
+        tracker.Failed++;
+      } else {
+        tracker.Completed++;
+      }
+      total = tracker.Total;
+      completed = tracker.Completed;
+      failedCount = tracker.Failed;
+      shouldEmit = total > 0 && completed + failedCount >= total;
+      if (shouldEmit) {
+        tracker.DispatchedCompletion = true;
+      }
+    }
+    if (!shouldEmit) {
+      return;
+    }
+    var finalStatus = failedCount > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
+    await CompleteSagaAsync(
+      ctx, finalStatus, triggeringItemIdentifier, completed, failedCount, total, cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Consumer-overridden hook used by the framework's watchdog recovery path to read the saga's
+  /// authoritative state from the durable projection. Override and return the saga projection
+  /// (typically loaded through the consumer's repository). The default returns <c>null</c>,
+  /// which limits recovery to the in-memory fast path — useful for unit fixtures that don't
+  /// need a real projection store.
+  /// </summary>
+  /// <remarks>
+  /// In production this is wired to the consumer's <see cref="ILensQuery{T}"/>-backed saga
+  /// repository so the watchdog can see what every pod's perspective worker has applied —
+  /// the only source of truth resilient to single-instance in-memory loss (pod restart,
+  /// per-item terminal events that landed on a different pod's tracker, …).
+  /// </remarks>
+  protected virtual Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken) {
+    return Task.FromResult<BaseSagaModel?>(null);
+  }
+
+  /// <summary>
+  /// Framework recovery surface invoked when a watchdog tick fires. First tries the in-memory
+  /// completion tracker (fast path — same path the per-item terminal events use); if the
+  /// in-memory view doesn't show terminal but the consumer has wired a projection loader via
+  /// <see cref="LoadProjectionAsync"/>, falls back to the projection — which catches the case
+  /// where a per-item terminal event was dropped before the right pod's tracker saw it.
+  /// </summary>
+  /// <returns>
+  /// <c>true</c> if recovery drove an emission attempt (regardless of whether THIS caller's
+  /// <see cref="ISagaEventEmitter.PublishOnceAsync"/> won the claim — multiple watchdog ticks
+  /// across pods can race, the claim dedups). <c>false</c> when no recovery was attempted
+  /// (saga not registered, already terminal, projection unavailable, or projection counts
+  /// not yet at terminal).
+  /// </returns>
+  public virtual async Task<bool> TryRecoverViaWatchdogAsync(SagaContext ctx, CancellationToken cancellationToken) {
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // Fast path — re-check the in-memory tracker. If a per-item terminal event came in
+    // between the watchdog being armed and now, the in-memory state already reflects it.
+    int total, completed, failedCount;
+    bool inMemoryTerminal;
+    lock (_completionLock) {
+      if (!_completionTrackers.TryGetValue(ctx.SagaId, out var tracker) || tracker.DispatchedCompletion) {
+        // Tracker missing (e.g. process restart since InitiateSaga) or already emitted — fall through to projection.
+        total = 0;
+        completed = 0;
+        failedCount = 0;
+        inMemoryTerminal = false;
+      } else {
+        total = tracker.Total;
+        completed = tracker.Completed;
+        failedCount = tracker.Failed;
+        inMemoryTerminal = total > 0 && completed + failedCount >= total;
+        if (inMemoryTerminal) {
+          tracker.DispatchedCompletion = true;
+        }
+      }
+    }
+    if (inMemoryTerminal) {
+      var status = failedCount > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
+      await CompleteSagaAsync(
+        ctx, status, completedByItemIdentifier: "watchdog", completed, failedCount, total, cancellationToken)
+        .ConfigureAwait(false);
+      return true;
+    }
+
+    // Slow path — load the projection. Consumer-overridden LoadProjectionAsync returns the
+    // authoritative state when wired; default returns null.
+    var saga = await LoadProjectionAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
+    if (saga is null) {
+      return false;
+    }
+    if (saga.CompletionEventDispatched) {
+      return false;
+    }
+    if (saga.TotalItems <= 0) {
+      return false;
+    }
+    if (saga.CompletedItems + saga.FailedItems < saga.TotalItems) {
+      return false;
+    }
+    var finalStatus = saga.FailedItems > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
+    await CompleteSagaAsync(
+      ctx, finalStatus, completedByItemIdentifier: "watchdog",
+      saga.CompletedItems, saga.FailedItems, saga.TotalItems, cancellationToken)
+      .ConfigureAwait(false);
+
+    // Defense in depth: now that the slow path has won the SagaCompletedEvent claim, mark the
+    // in-memory tracker so a late per-item terminal arriving on this instance after this
+    // recovery can't drive a duplicate auto-complete attempt. PublishOnceAsync's claim key
+    // already dedups at the dispatcher layer; this just avoids the wasted PublishOnceAsync
+    // round-trip and keeps the in-memory view consistent with the projection.
+    lock (_completionLock) {
+      if (_completionTrackers.TryGetValue(ctx.SagaId, out var tracker)) {
+        tracker.DispatchedCompletion = true;
+      }
+    }
+    return true;
   }
 
   /// <summary>

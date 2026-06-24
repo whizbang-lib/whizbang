@@ -142,4 +142,50 @@ public sealed class DispatchOptions {
     }
     return this;
   }
+
+  /// <summary>
+  /// UTC instant at which the dispatched message should become eligible for delivery.
+  /// Null (default) means "deliver immediately". When set on an outbox-backed dispatch,
+  /// the producer writes the value into <c>wh_outbox.scheduled_for</c>; the pickup
+  /// queries (<c>FetchOutboxInboxBatch</c>, migration 040) and the NOTIFY-based wake
+  /// (<c>NotifyScheduledRetryDue</c>, migration 049) gate visibility on
+  /// <c>scheduled_for IS NULL OR scheduled_for &lt;= NOW()</c> already.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this for forward-scheduled deliveries that the framework itself drives:
+  /// Whizbang.Sagas' completion watchdog (auto-armed from <c>InitiateSagaAsync</c>),
+  /// consumer-requested deferred follow-ups, or any pattern that needs "fire this
+  /// receptor at time T" guarantees without polling.
+  /// </para>
+  /// <para>
+  /// Retry backoff already uses <c>scheduled_for</c> internally via the
+  /// <c>ProcessOutboxFailures</c> / <c>ProcessInboxFailures</c> SQL functions
+  /// (migrations 017, 018, 019) — this property is the producer-side surface for
+  /// the same column. The two paths are orthogonal: a failed scheduled-delivery
+  /// retries with backoff on top of its original schedule.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// // Fire the watchdog 5 minutes from now
+  /// var options = new DispatchOptions()
+  ///     .WithScheduledFor(DateTimeOffset.UtcNow.AddMinutes(5));
+  /// await dispatcher.PublishAsync(watchdogTick, options);
+  /// </code>
+  /// </example>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:ScheduledFor_PropertyExistsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:ScheduledFor_DefaultIsNullAsync</tests>
+  public DateTimeOffset? ScheduledFor { get; set; }
+
+  /// <summary>
+  /// Sets <see cref="ScheduledFor"/> to <paramref name="scheduledFor"/> for fluent chaining.
+  /// </summary>
+  /// <param name="scheduledFor">UTC instant when the message becomes eligible for delivery.</param>
+  /// <returns>This options instance for fluent chaining.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithScheduledFor_FluentMethodExistsAndChainsAsync</tests>
+  public DispatchOptions WithScheduledFor(DateTimeOffset scheduledFor) {
+    ScheduledFor = scheduledFor;
+    return this;
+  }
 }

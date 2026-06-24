@@ -3086,8 +3086,10 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
 
-      // Start outbox concurrently with receptor (see other overload for rationale)
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
+      // Start outbox concurrently with receptor (see other overload for rationale).
+      // options.ScheduledFor flows through to the outbox row's scheduled_for column so
+      // wh_outbox's pickup query (mig 040) gates publication until the time elapses.
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, scheduledFor: options.ScheduledFor);
       try {
         await publisher(eventData);
       } catch {
@@ -3358,7 +3360,7 @@ public abstract partial class Dispatcher(
   /// </remarks>
   /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
-  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
+  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, DateTimeOffset? scheduledFor = null) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var eventTypeName = eventType.Name;
@@ -3411,7 +3413,7 @@ public abstract partial class Dispatcher(
       var envelope = _createOutboxEnvelopeWithHop(eventData, eventType, messageId, sourceEnvelope, destination);
 
       // Serialize, queue, and flush
-      await _serializeQueueAndFlushAsync(envelope, eventData!, eventType, destination, messageId, strategy);
+      await _serializeQueueAndFlushAsync(envelope, eventData!, eventType, destination, messageId, strategy, scheduledFor);
     } finally {
       // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
       if (scope is IAsyncDisposable asyncDisposable) {
@@ -3526,9 +3528,9 @@ public abstract partial class Dispatcher(
   /// Serializes the envelope to an outbox message, queues it on the strategy, and flushes.
   /// Guards against ObjectDisposedException during shutdown.
   /// </summary>
-  private async Task _serializeQueueAndFlushAsync<TEvent>(MessageEnvelope<TEvent> envelope, TEvent eventData, Type eventType, string? destination, MessageId messageId, IWorkCoordinatorStrategy strategy) {
+  private async Task _serializeQueueAndFlushAsync<TEvent>(MessageEnvelope<TEvent> envelope, TEvent eventData, Type eventType, string? destination, MessageId messageId, IWorkCoordinatorStrategy strategy, DateTimeOffset? scheduledFor = null) {
     // Serialize envelope to OutboxMessage
-    var newOutboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination);
+    var newOutboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination, scheduledFor);
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var newMsgId = newOutboxMessage.MessageId;
@@ -4783,7 +4785,8 @@ public abstract partial class Dispatcher(
     IMessageEnvelope<TMessage> envelope,
     TMessage payload,
     Type payloadType,
-    string? destination
+    string? destination,
+    DateTimeOffset? scheduledFor = null
   ) {
     // DIAGNOSTIC: Check if TMess age is JsonElement BEFORE calling serializer
     if (typeof(TMessage) == typeof(JsonElement)) {
@@ -4839,7 +4842,8 @@ public abstract partial class Dispatcher(
       Flags = (payload is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
             | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None),
       Scope = _extractScope(envelope),
-      MessageType = serialized.MessageType
+      MessageType = serialized.MessageType,
+      ScheduledFor = scheduledFor
     };
 
     // FINAL CHECK: Throw if ANY type string contains JsonElement

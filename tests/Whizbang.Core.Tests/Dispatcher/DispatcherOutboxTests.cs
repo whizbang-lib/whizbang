@@ -997,4 +997,61 @@ public class DispatcherOutboxTests {
     var serviceProvider = services.BuildServiceProvider();
     return serviceProvider.GetRequiredService<IDispatcher>();
   }
+
+  // ════════════════════════════════════════════════════════════════════
+  //   ScheduledFor end-to-end through the dispatcher → outbox path
+  //   (closes the threading the watchdog tick needs to actually be
+  //    scheduled rather than fire immediately)
+  // ════════════════════════════════════════════════════════════════════
+
+  [Test]
+  public async Task PublishAsync_WithScheduledFor_PopulatesOutboxMessageScheduledForAsync() {
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+    var fireAt = DateTimeOffset.UtcNow.AddMinutes(5);
+
+    await dispatcher.PublishAsync(@event, new DispatchOptions().WithScheduledFor(fireAt));
+
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].ScheduledFor)
+      .IsEqualTo((DateTimeOffset?)fireAt)
+      .Because("DispatchOptions.ScheduledFor must thread through PublishAsync → PublishToOutboxAsync → " +
+               "_serializeToNewOutboxMessage and land on OutboxMessage.ScheduledFor. Otherwise the outbox " +
+               "row's scheduled_for column ends up NULL and mig 040's pickup query treats the row as " +
+               "immediately publishable — the watchdog tick fires instantly instead of waiting for " +
+               "expected-completion + slack.");
+  }
+
+  [Test]
+  public async Task PublishAsync_NoScheduledFor_LeavesOutboxMessageScheduledForNullAsync() {
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+
+    // Default DispatchOptions has ScheduledFor = null — immediate dispatch semantics.
+    await dispatcher.PublishAsync(@event, new DispatchOptions());
+
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].ScheduledFor)
+      .IsNull()
+      .Because("Default DispatchOptions == immediate dispatch. Null must flow through the chain so the " +
+               "wh_outbox row gets scheduled_for=NULL (the pickup query treats NULL as immediately publishable).");
+  }
+
+  [Test]
+  public async Task PublishAsync_NoOptions_OutboxMessageScheduledForIsNullAsync() {
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+
+    // The no-options overload — preserves the pre-v0.740 immediate-dispatch behavior verbatim.
+    await dispatcher.PublishAsync(@event);
+
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].ScheduledFor)
+      .IsNull()
+      .Because("The no-options PublishAsync overload existed before ScheduledFor was introduced. Its " +
+               "outbox path must remain immediate-dispatch by default — null on the resulting OutboxMessage.");
+  }
 }
