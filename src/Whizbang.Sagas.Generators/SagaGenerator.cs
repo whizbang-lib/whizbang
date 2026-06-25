@@ -138,6 +138,7 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
     if (info.GenerateService) {
       _emitService(sb, info);
+      _emitRecoveryReceptors(sb);
     }
 
     sb.AppendLine("}");
@@ -300,6 +301,51 @@ public sealed class SagaGenerator : IIncrementalGenerator {
       sb.AppendLine("    protected override HookCompletedEvent BuildHookCompletedEvent(global::Whizbang.Sagas.SagaContext ctx, string hookName, global::Whizbang.Sagas.SagaItemState status, string? errorMessage, string? errorDetails, global::System.DateTimeOffset sentAt) =>");
       sb.AppendLine("      throw new global::System.InvalidOperationException(\"This saga was generated with IncludeHooks = false.\");");
     }
+    sb.AppendLine("  }");
+  }
+
+  /// <summary>
+  /// Emits the three recovery receptors that bridge per-item terminal events
+  /// and the auto-armed watchdog tick to the framework-owned recovery path
+  /// (<c>BaseSagaService.TryRecoverViaWatchdogAsync</c> + the
+  /// <c>TryRecoverViaWatchdogTickAsync</c> re-arm-or-abandon lifecycle). Under
+  /// multi-pod fan-out the framework's in-memory completion tracker is per-pod
+  /// sharded and can never reach Total alone; the per-item terminal handlers
+  /// nudge recovery on every terminal event so the last item across all pods
+  /// drives <c>SagaCompletedEvent</c> via <c>PublishOnceAsync</c>. The watchdog
+  /// tick handler is the safety net the framework re-arms with backoff (and
+  /// eventually abandons via <c>SagaCompletionAbandonedEvent</c>).
+  /// </summary>
+  private static void _emitRecoveryReceptors(StringBuilder sb) {
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>Bridges every per-item completed terminal to the framework's recovery path so the last completing item drives SagaCompletedEvent under multi-pod fan-out.</summary>");
+    sb.AppendLine("  [global::Whizbang.Core.Messaging.FireAt(global::Whizbang.Core.Messaging.LifecycleStage.PostAllPerspectivesInline)]");
+    sb.AppendLine("  public sealed class SagaItemCompletedRecoveryHandler(Service _svc) : global::Whizbang.Core.IReceptor<ItemCompletedEvent> {");
+    sb.AppendLine("    public async global::System.Threading.Tasks.ValueTask HandleAsync(ItemCompletedEvent @event, global::System.Threading.CancellationToken ct) {");
+    sb.AppendLine("      if (@event.SagaName != SagaName) return;");
+    sb.AppendLine("      var ctx = new global::Whizbang.Sagas.SagaContext(@event.SagaId, @event.EntityId);");
+    sb.AppendLine("      await _svc.TryRecoverViaWatchdogAsync(ctx, ct).ConfigureAwait(false);");
+    sb.AppendLine("    }");
+    sb.AppendLine("  }");
+
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>Bridges every per-item failed terminal to the framework's recovery path; mirrors <see cref=\"SagaItemCompletedRecoveryHandler\"/> for failed items.</summary>");
+    sb.AppendLine("  [global::Whizbang.Core.Messaging.FireAt(global::Whizbang.Core.Messaging.LifecycleStage.PostAllPerspectivesInline)]");
+    sb.AppendLine("  public sealed class SagaItemFailedRecoveryHandler(Service _svc) : global::Whizbang.Core.IReceptor<ItemFailedEvent> {");
+    sb.AppendLine("    public async global::System.Threading.Tasks.ValueTask HandleAsync(ItemFailedEvent @event, global::System.Threading.CancellationToken ct) {");
+    sb.AppendLine("      if (@event.SagaName != SagaName) return;");
+    sb.AppendLine("      var ctx = new global::Whizbang.Sagas.SagaContext(@event.SagaId, @event.EntityId);");
+    sb.AppendLine("      await _svc.TryRecoverViaWatchdogAsync(ctx, ct).ConfigureAwait(false);");
+    sb.AppendLine("    }");
+    sb.AppendLine("  }");
+
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>Drives the auto-armed watchdog tick through its re-arm / abandon lifecycle via <see cref=\"global::Whizbang.Sagas.Services.BaseSagaService{TInit,TItemsDispatched,TItemStarted,TItemCompleted,TItemFailed,TCompleted,TReset,THookStarted,THookCompleted}.TryRecoverViaWatchdogTickAsync\"/>.</summary>");
+    sb.AppendLine("  public sealed class SagaCompletionWatchdogTickHandler(Service _svc) : global::Whizbang.Core.IReceptor<global::Whizbang.Sagas.SagaCompletionWatchdogTickEvent> {");
+    sb.AppendLine("    public async global::System.Threading.Tasks.ValueTask HandleAsync(global::Whizbang.Sagas.SagaCompletionWatchdogTickEvent @event, global::System.Threading.CancellationToken ct) {");
+    sb.AppendLine("      if (@event.SagaName != SagaName) return;");
+    sb.AppendLine("      await _svc.TryRecoverViaWatchdogTickAsync(@event, ct).ConfigureAwait(false);");
+    sb.AppendLine("    }");
     sb.AppendLine("  }");
   }
 

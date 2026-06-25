@@ -27,11 +27,16 @@ namespace Whizbang.Sagas.Generated;
 [JsonSerializable(typeof(SagaCompletionWatchdogTickEvent))]
 // Strongly-typed envelope wrapper — required for the transport consumer side
 // (Service Bus / RabbitMQ) which receives `MessageEnvelope<T>` JSON and resolves
-// the concrete generic via JsonTypeInfo. Without this entry, every consumer of
-// Whizbang.Sagas hits a `JsonTypeInfo metadata for type
-// 'Whizbang.Core.Observability.MessageEnvelope`1[Whizbang.Sagas.SagaCompletionWatchdogTickEvent]'
-// was not provided` failure at watchdog-tick receive time (production dev 2026-06-24).
+// the concrete generic via JsonTypeInfo. Without it, transport consumers throw
+// `JsonTypeInfo metadata for type 'Whizbang.Core.Observability.MessageEnvelope`1[…]'
+// was not provided` at watchdog-tick receive time.
 [JsonSerializable(typeof(MessageEnvelope<SagaCompletionWatchdogTickEvent>))]
+// SagaCompletionAbandonedEvent — bare + envelope. Emitted by
+// BaseSagaService.TryRecoverViaWatchdogTickAsync when the WatchdogBackoff
+// schedule exhausts. Same publish path as the watchdog tick, so the same
+// pair of registrations is needed for publish + transport-consume.
+[JsonSerializable(typeof(SagaCompletionAbandonedEvent))]
+[JsonSerializable(typeof(MessageEnvelope<SagaCompletionAbandonedEvent>))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class SagasJsonContext : JsonSerializerContext;

@@ -87,6 +87,59 @@ public class SagaGeneratorSmokeTests {
       .Because("[Saga<FakeProjectEventBase>(\"Name\")] must emit event classes inheriting from FakeProjectEventBase — that's the whole point of the generic attribute form (preserves consumer event hierarchy).");
   }
 
+  // ── Generator-emitted recovery receptors (Component 3) ──────────────
+
+  [Test]
+  public async Task RecoveryReceptors_AreEmittedForEachSagaAsync() {
+    // Component 3 of plans/sagas-framework-owns-completion.md: the generator
+    // must emit three receptor classes per [Saga("Name")] so consumers don't
+    // hand-roll the boilerplate that bridges per-item terminal events ↔
+    // BaseSagaService.TryRecoverViaWatchdogAsync (the only completion path
+    // that works under cross-pod fan-out).
+    var sagaItemCompleted = typeof(GeneratorTestDefaultSaga).GetNestedType("SagaItemCompletedRecoveryHandler");
+    var sagaItemFailed = typeof(GeneratorTestDefaultSaga).GetNestedType("SagaItemFailedRecoveryHandler");
+    var watchdogTick = typeof(GeneratorTestDefaultSaga).GetNestedType("SagaCompletionWatchdogTickHandler");
+
+    await Assert.That(sagaItemCompleted).IsNotNull()
+      .Because("the generator must emit SagaItemCompletedRecoveryHandler so per-item completion bridges to BaseSagaService.TryRecoverViaWatchdogAsync without consumer-written boilerplate");
+    await Assert.That(sagaItemFailed).IsNotNull()
+      .Because("the generator must emit SagaItemFailedRecoveryHandler with the same recovery-driven semantics for failed items");
+    await Assert.That(watchdogTick).IsNotNull()
+      .Because("the generator must emit SagaCompletionWatchdogTickHandler so the auto-armed watchdog tick re-arm/abandon lifecycle runs without consumer-written boilerplate");
+  }
+
+  [Test]
+  public async Task SagaItemCompletedRecoveryHandler_ImplementsIReceptorOfItemCompletedAsync() {
+    var receptorType = typeof(GeneratorTestDefaultSaga).GetNestedType("SagaItemCompletedRecoveryHandler")!;
+    var expectedInterface = typeof(global::Whizbang.Core.IReceptor<>).MakeGenericType(typeof(GeneratorTestDefaultSaga.ItemCompletedEvent));
+
+    var implements = receptorType.GetInterfaces().Any(i => i == expectedInterface);
+
+    await Assert.That(implements).IsTrue()
+      .Because("the generated recovery handler must be the receptor for the saga's own ItemCompletedEvent type — that's how Whizbang.Generators routes the per-item terminal to the recovery path");
+  }
+
+  [Test]
+  public async Task SagaItemFailedRecoveryHandler_ImplementsIReceptorOfItemFailedAsync() {
+    var receptorType = typeof(GeneratorTestDefaultSaga).GetNestedType("SagaItemFailedRecoveryHandler")!;
+    var expectedInterface = typeof(global::Whizbang.Core.IReceptor<>).MakeGenericType(typeof(GeneratorTestDefaultSaga.ItemFailedEvent));
+
+    var implements = receptorType.GetInterfaces().Any(i => i == expectedInterface);
+
+    await Assert.That(implements).IsTrue();
+  }
+
+  [Test]
+  public async Task SagaCompletionWatchdogTickHandler_ImplementsIReceptorOfWatchdogTickAsync() {
+    var receptorType = typeof(GeneratorTestDefaultSaga).GetNestedType("SagaCompletionWatchdogTickHandler")!;
+    var expectedInterface = typeof(global::Whizbang.Core.IReceptor<global::Whizbang.Sagas.SagaCompletionWatchdogTickEvent>);
+
+    var implements = receptorType.GetInterfaces().Any(i => i == expectedInterface);
+
+    await Assert.That(implements).IsTrue()
+      .Because("the watchdog handler receives the framework-emitted SagaCompletionWatchdogTickEvent (NOT a per-saga generated type) so all sagas share the same tick event shape");
+  }
+
   // ── Recording emitter (reused) ───────────────────────────────────────
 
   private sealed class RecordingEmitter : ISagaEventEmitter {

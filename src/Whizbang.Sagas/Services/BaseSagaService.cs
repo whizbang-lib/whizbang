@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Whizbang.Sagas.Helpers;
 using Whizbang.Sagas.Models;
+using Whizbang.Sagas.Repositories;
 
 namespace Whizbang.Sagas.Services;
 
@@ -46,6 +47,9 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
 
   private readonly string _sagaName;
   private readonly ISagaEventEmitter _emitter;
+  private readonly ISagaItemRepository? _itemRepository;
+  private readonly ISagaItemTerminalReader? _terminalReader;
+  private readonly SagaOptions _options;
   private readonly ILogger _logger;
 
   // ── Framework-owned completion tracking (in-memory fast path) ────────
@@ -75,10 +79,54 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// <summary>The saga name this service emits events for — matches the value supplied to <c>[Saga("Name")]</c>.</summary>
   protected string SagaName => _sagaName;
 
-  protected BaseSagaService(string sagaName, ISagaEventEmitter emitter, ILogger logger) {
+  /// <summary>
+  /// Backwards-compatible constructor that wires only the emitter + logger.
+  /// <c>TryRecoverViaWatchdogAsync</c>'s slow path falls back to
+  /// <c>LoadProjectionAsync</c>'s <c>CompletedItems</c>/<c>FailedItems</c> directly —
+  /// suitable for sagas whose consumer projection accurately tracks per-item terminal
+  /// counts (i.e., the projection's <c>Apply</c> chain receives per-item events).
+  /// </summary>
+  protected BaseSagaService(string sagaName, ISagaEventEmitter emitter, ILogger logger)
+    : this(sagaName, emitter, itemRepository: null, terminalReader: null, options: null, logger) {
+  }
+
+  /// <summary>
+  /// Constructor that wires the per-item aggregate primitives.
+  /// <c>TryRecoverViaWatchdogAsync</c>'s slow path consults
+  /// <see cref="SagaItemCompletionReconciler.ResolveCompletionCountsAsync"/> over
+  /// <paramref name="itemRepository"/> + <paramref name="terminalReader"/> to derive
+  /// authoritative completion counts — required when the consumer's saga projection
+  /// doesn't see per-item terminal events on its <c>Apply</c> chain (the
+  /// per-item-stream design), as is the case under multi-pod fan-out.
+  /// </summary>
+  protected BaseSagaService(
+      string sagaName,
+      ISagaEventEmitter emitter,
+      ISagaItemRepository? itemRepository,
+      ISagaItemTerminalReader? terminalReader,
+      ILogger logger)
+    : this(sagaName, emitter, itemRepository, terminalReader, options: null, logger) {
+  }
+
+  /// <summary>
+  /// Full constructor — adds <see cref="SagaOptions"/> for tunable knobs (chiefly
+  /// the watchdog re-arm <see cref="SagaOptions.WatchdogBackoff"/> schedule used by
+  /// <c>TryRecoverViaWatchdogTickAsync</c>). Pass <c>null</c> to fall back to
+  /// framework defaults.
+  /// </summary>
+  protected BaseSagaService(
+      string sagaName,
+      ISagaEventEmitter emitter,
+      ISagaItemRepository? itemRepository,
+      ISagaItemTerminalReader? terminalReader,
+      SagaOptions? options,
+      ILogger logger) {
     ArgumentException.ThrowIfNullOrWhiteSpace(sagaName);
     _sagaName = sagaName;
     _emitter = emitter ?? throw new ArgumentNullException(nameof(emitter));
+    _itemRepository = itemRepository;
+    _terminalReader = terminalReader;
+    _options = options ?? new SagaOptions();
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   }
 
@@ -285,8 +333,12 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       return true;
     }
 
-    // Slow path — load the projection. Consumer-overridden LoadProjectionAsync returns the
-    // authoritative state when wired; default returns null.
+    // Slow path — load the projection for TotalItems + CompletionEventDispatched (both come
+    // from the saga's own stream so the consumer projection tracks them reliably). Counts
+    // (CompletedItems / FailedItems) are NOT trusted from the projection when the per-item
+    // aggregate primitives are wired: per-item terminal events ride per-item streams and
+    // never reach the saga projection's Apply chain, so its CompletedItems can be stale 0
+    // even when every item is terminal in the durable event store.
     var saga = await LoadProjectionAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
     if (saga is null) {
       return false;
@@ -297,13 +349,36 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     if (saga.TotalItems <= 0) {
       return false;
     }
-    if (saga.CompletedItems + saga.FailedItems < saga.TotalItems) {
-      return false;
+
+    int authoritativeCompleted, authoritativeFailed;
+    if (_itemRepository is not null && _terminalReader is not null) {
+      // Framework-owned per-item aggregate: cheap GROUP BY on the projection table, with
+      // event-store reconciliation for cross-pod-stranded rows. ResolveCompletionCountsAsync
+      // returns null when the saga is genuinely still in progress — fall through to "no
+      // recovery yet" without ever consulting the consumer projection's count fields.
+      var agg = await _itemRepository.GetAggregateForSagaAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
+      var reconciled = await SagaItemCompletionReconciler.ResolveCompletionCountsAsync(
+          ctx.SagaId, saga.TotalItems, agg,
+          ct => _itemRepository.GetItemsAsync(ctx.SagaId, ct),
+          _terminalReader, cancellationToken).ConfigureAwait(false);
+      if (reconciled is not { } counts) {
+        return false;
+      }
+      authoritativeCompleted = counts.Completed;
+      authoritativeFailed = counts.Failed;
+    } else {
+      // Backwards-compatible path: trust the consumer projection's counts directly.
+      if (saga.CompletedItems + saga.FailedItems < saga.TotalItems) {
+        return false;
+      }
+      authoritativeCompleted = saga.CompletedItems;
+      authoritativeFailed = saga.FailedItems;
     }
-    var finalStatus = saga.FailedItems > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
+
+    var finalStatus = authoritativeFailed > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
     await CompleteSagaAsync(
       ctx, finalStatus, completedByItemIdentifier: "watchdog",
-      saga.CompletedItems, saga.FailedItems, saga.TotalItems, cancellationToken)
+      authoritativeCompleted, authoritativeFailed, saga.TotalItems, cancellationToken)
       .ConfigureAwait(false);
 
     // Defense in depth: now that the slow path has won the SagaCompletedEvent claim, mark the
@@ -317,6 +392,77 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       }
     }
     return true;
+  }
+
+  /// <summary>
+  /// Watchdog-tick entry point used by the framework's tick receptor (or by a
+  /// consumer-written receptor on <see cref="SagaCompletionWatchdogTickEvent"/>).
+  /// Calls <see cref="TryRecoverViaWatchdogAsync"/> and, on
+  /// <c>recovered == false</c>, either re-arms the next tick on the configured
+  /// <see cref="SagaOptions.WatchdogBackoff"/> schedule or — when the schedule
+  /// is exhausted — publishes <see cref="SagaCompletionAbandonedEvent"/> so
+  /// operators can triage the stuck saga.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Separating this from <see cref="TryRecoverViaWatchdogAsync"/> keeps the
+  /// "just check completion" surface available for callers that don't want to
+  /// drive the re-arm lifecycle (e.g., a per-item terminal receptor nudging
+  /// recovery on every terminal event — Component 3 of the
+  /// <c>sagas-framework-owns-completion</c> plan).
+  /// </para>
+  /// <para>
+  /// The next-tick payload preserves <c>StreamId</c>, <c>SagaName</c>, and
+  /// <c>EntityId</c> so the existing message-registry routing and
+  /// <c>notify_instance_owners</c> wake delivery keep working without a
+  /// special case. The new tick is emitted via
+  /// <see cref="ISagaEventEmitter.PublishAsync{TEvent}(TEvent, DateTimeOffset?)"/>
+  /// with <c>scheduledFor</c> populated so <c>wh_outbox.scheduled_for</c> is
+  /// set as designed.
+  /// </para>
+  /// </remarks>
+  /// <returns>
+  /// <c>RecoveredOrAbandoned.Recovered</c> when the slow path emitted
+  /// completion; <c>RecoveredOrAbandoned.ReArmed</c> when a next tick was
+  /// scheduled; <c>RecoveredOrAbandoned.Abandoned</c> when the schedule
+  /// exhausted and the abandon event was published.
+  /// </returns>
+  public virtual async Task<WatchdogTickOutcome> TryRecoverViaWatchdogTickAsync(
+      SagaCompletionWatchdogTickEvent tick,
+      CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(tick);
+    cancellationToken.ThrowIfCancellationRequested();
+
+    var ctx = new SagaContext(tick.StreamId, tick.EntityId);
+    var recovered = await TryRecoverViaWatchdogAsync(ctx, cancellationToken).ConfigureAwait(false);
+    if (recovered) {
+      return WatchdogTickOutcome.Recovered;
+    }
+
+    var schedule = _options.WatchdogBackoff;
+    var nextCount = tick.RescheduleCount + 1;
+    if (schedule.Length == 0 || nextCount > schedule.Length) {
+      // Schedule exhausted (or disabled with empty schedule) — abandon.
+      var abandoned = new SagaCompletionAbandonedEvent {
+        StreamId = tick.StreamId,
+        SagaName = tick.SagaName,
+        EntityId = tick.EntityId,
+        RescheduleCount = tick.RescheduleCount,
+      };
+      await _emitter.PublishAsync(abandoned).ConfigureAwait(false);
+      return WatchdogTickOutcome.Abandoned;
+    }
+
+    // Re-arm at schedule[currentRescheduleCount] — 0-indexed: count=0 → schedule[0]
+    var delay = schedule[tick.RescheduleCount];
+    var next = new SagaCompletionWatchdogTickEvent {
+      StreamId = tick.StreamId,
+      SagaName = tick.SagaName,
+      EntityId = tick.EntityId,
+      RescheduleCount = nextCount,
+    };
+    await _emitter.PublishAsync(next, DateTimeOffset.UtcNow + delay).ConfigureAwait(false);
+    return WatchdogTickOutcome.ReArmed;
   }
 
   /// <summary>
