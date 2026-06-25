@@ -1,29 +1,34 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Sagas;
 
 namespace Whizbang.Sagas.Tests.Generated;
 
 /// <summary>
-/// Locks Whizbang.Sagas's <c>SagasJsonContext</c> + <c>[ModuleInitializer]</c>
-/// auto-registration with the cross-assembly <see cref="JsonContextRegistry"/>.
+/// Full lock-in of Whizbang.Sagas's framework-owned JSON registration. The framework
+/// publishes exactly one runtime type itself (<see cref="SagaCompletionWatchdogTickEvent"/>,
+/// emitted by <c>BaseSagaService.InitiateSagaAsync</c> via
+/// <see cref="Services.ISagaEventEmitter.PublishAsync{T}"/>). For a consumer-side
+/// transport-backed round-trip to succeed, FOUR registrations are required — the same
+/// pattern <c>Whizbang.Generators.MessageJsonContextGenerator</c> emits per event in
+/// the consumer's MessageJsonContext:
 ///
-/// <para>The runtime event types Whizbang.Sagas itself publishes —
-/// e.g. <see cref="SagaCompletionWatchdogTickEvent"/> emitted by
-/// <c>BaseSagaService.InitiateSagaAsync</c> — are never referenced from the
-/// consumer's source, so the per-consumer <c>MessageJsonContextGenerator</c>
-/// can't see them. Without a framework-owned context, every consumer of
-/// Whizbang.Sagas hits a <c>JsonTypeInfo metadata for type ... was not
-/// provided</c> failure the first time <c>InitiateSagaAsync</c> publishes
-/// the watchdog tick (production dev 2026-06-24).</para>
+/// <list type="number">
+///   <item><c>[JsonSerializable(typeof(TEvent))]</c> — bare JsonTypeInfo</item>
+///   <item><c>[JsonSerializable(typeof(MessageEnvelope&lt;TEvent&gt;))]</c> — wire envelope JsonTypeInfo</item>
+///   <item><c>RegisterTypeName("Full.Name, Asm", typeof(TEvent), Ctx)</c> — wire-name lookup
+///     (used by Dispatcher, TransportConsumer, ServiceBus, Lifecycle, EnvelopeSerializer)</item>
+///   <item><c>RegisterDerivedType&lt;IEvent, TEvent&gt;</c> + <c>RegisterDerivedType&lt;IMessage, TEvent&gt;</c>
+///     — polymorphic dispatch for envelope reads of base interfaces</item>
+/// </list>
 ///
-/// <para>These tests prove the framework's own JsonContext is registered on
-/// load and that <see cref="JsonContextRegistry.CreateCombinedOptions"/>
-/// resolves <see cref="SagaCompletionWatchdogTickEvent"/> without throwing
-/// — locking the architectural invariant that Whizbang framework packages
-/// own their own JSON contexts.</para>
+/// <para>Each test locks one layer. production dev exposed gaps #2/#3/#4 in successive deploys
+/// (2026-06-24) because earlier "surgical" patches only addressed one path at a time.
+/// This suite is the comprehensive lock so we don't fix-and-rediscover again.</para>
 /// </summary>
 [Category("Unit")]
 [Category("Saga")]
@@ -31,15 +36,8 @@ namespace Whizbang.Sagas.Tests.Generated;
 public class SagasJsonContextTests {
 
   [Test]
-  public async Task SagasJsonContext_RegistersOnModuleLoad_ResolvesSagaCompletionWatchdogTickEventAsync() {
-    // [ModuleInitializer] in SagasJsonContextInitializer must have already run as
-    // a side effect of Whizbang.Sagas assembly load.
+  public async Task SagasJsonContext_ResolvesBareTickEventViaGetTypeInfoAsync() {
     var options = JsonContextRegistry.CreateCombinedOptions();
-
-    // Without the framework-owned context this throws NotSupportedException with
-    // "JsonTypeInfo metadata for type 'Whizbang.Sagas.SagaCompletionWatchdogTickEvent'
-    // was not provided by TypeInfoResolver". With it, the resolver chain returns a
-    // strongly-typed JsonTypeInfo<SagaCompletionWatchdogTickEvent>.
     var typeInfo = options.GetTypeInfo(typeof(SagaCompletionWatchdogTickEvent));
 
     await Assert.That(typeInfo).IsNotNull();
@@ -47,35 +45,57 @@ public class SagasJsonContextTests {
   }
 
   [Test]
-  public async Task SagasJsonContext_ResolvesStronglyTypedMessageEnvelopeAsync() {
-    // The transport-consumer side (Service Bus, RabbitMQ) deserializes the wire
-    // bytes as MessageEnvelope<SagaCompletionWatchdogTickEvent>. Without an
-    // explicit [JsonSerializable] for the concrete generic envelope, STJ throws
-    // `JsonTypeInfo metadata for type
-    // 'Whizbang.Core.Observability.MessageEnvelope`1[Whizbang.Sagas.SagaCompletionWatchdogTickEvent]'
-    // was not provided` (production dev 2026-06-24 second-strike).
+  public async Task SagasJsonContext_ResolvesMessageEnvelopeWrapperViaGetTypeInfoAsync() {
     var options = JsonContextRegistry.CreateCombinedOptions();
-    var envelopeTypeInfo = options.GetTypeInfo(typeof(Whizbang.Core.Observability.MessageEnvelope<SagaCompletionWatchdogTickEvent>));
+    var typeInfo = options.GetTypeInfo(typeof(MessageEnvelope<SagaCompletionWatchdogTickEvent>));
 
-    await Assert.That(envelopeTypeInfo).IsNotNull();
-    await Assert.That(envelopeTypeInfo!.Type)
-      .IsEqualTo(typeof(Whizbang.Core.Observability.MessageEnvelope<SagaCompletionWatchdogTickEvent>));
+    await Assert.That(typeInfo).IsNotNull();
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(MessageEnvelope<SagaCompletionWatchdogTickEvent>));
   }
 
   [Test]
-  public async Task SagasJsonContext_RegistersTypeNameForEnvelopeAsync() {
-    // The publisher resolves envelope-type strings (assembly-qualified, wire-side)
-    // to concrete generic types via JsonContextRegistry.GetTypeInfoByName. Without
-    // an explicit RegisterTypeName for the envelope, the dispatcher throws
-    // `Failed to resolve message type ... assembly containing this type is loaded
-    // and registered via [ModuleInitializer]` on the first watchdog tick.
-    var envelopeTypeName =
-      "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Sagas.SagaCompletionWatchdogTickEvent, Whizbang.Sagas]], Whizbang.Core";
-
+  public async Task SagasJsonContext_ResolvesBareTickEventViaGetTypeInfoByNameAsync() {
+    // The wire-name form that wh_outbox.message_type stores (no Version/Culture/PublicKeyToken).
+    var name = "Whizbang.Sagas.SagaCompletionWatchdogTickEvent, Whizbang.Sagas";
     var options = JsonContextRegistry.CreateCombinedOptions();
-    var typeInfo = JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, options);
 
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(name, options);
     await Assert.That(typeInfo).IsNotNull();
+  }
+
+  [Test]
+  public async Task SagasJsonContext_ResolvesBareTickEventViaGetTypeInfoByName_FullAssemblyQualifiedFormAsync() {
+    // The exact form Dispatcher._serializeToJsonEnvelope passes (eventType.AssemblyQualifiedName)
+    // and the lifecycle hooks read from wh_outbox.message_type at publish time. Includes
+    // Version/Culture/PublicKeyToken — must round-trip through NormalizeTypeName to the
+    // short-form registration. Without this layer, production dev's lifecycle hooks logged
+    // "Failed to resolve message type 'Whizbang.Sagas.SagaCompletionWatchdogTickEvent,
+    // Whizbang.Sagas, Version=0.742.2.0, Culture=neutral, PublicKeyToken=null'" on every
+    // outbox batch (caught 2026-06-25 01:34).
+    var fullName = typeof(SagaCompletionWatchdogTickEvent).AssemblyQualifiedName!;
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(fullName, options);
+    await Assert.That(typeInfo).IsNotNull();
+  }
+
+  [Test]
+  public async Task SagasJsonContext_RegistersTickEventAsDerivedOfIEventAsync() {
+    // The polymorphic dispatch path (GetPolymorphicTypeInfo<IEvent>) needs the framework's
+    // own event to appear in the discovered derived-types set — otherwise reads of
+    // MessageEnvelope<IEvent> from event store can't deserialize tick instances.
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<IEvent>().ToList();
+
+    await Assert.That(derivedTypes).Contains(typeof(SagaCompletionWatchdogTickEvent));
+  }
+
+  [Test]
+  public async Task SagasJsonContext_RegistersTickEventAsDerivedOfIMessageAsync() {
+    // Mirror of the IEvent registration — every consumer-side event registers under
+    // both bases, so the framework's own event must too.
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<IMessage>().ToList();
+
+    await Assert.That(derivedTypes).Contains(typeof(SagaCompletionWatchdogTickEvent));
   }
 
   [Test]
