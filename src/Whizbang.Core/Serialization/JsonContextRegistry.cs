@@ -445,12 +445,43 @@ public static class JsonContextRegistry {
       if (!seenDiscriminators.Add(discriminator)) {
         continue;
       }
+      // Skip derived types that no registered context can provide a JsonTypeInfo for. STJ finalizes a
+      // polymorphic typeinfo by resolving ALL its derived types, so an unresolvable one would throw
+      // NotSupportedException for the whole base (not just that type). This mirrors the forcing
+      // builder's skip — but the check is RESOLUTION-FREE: it asks each source-gen context for the
+      // type's pre-built metadata, which does NOT resolve the type's nested members, so it never
+      // recurses into a same-base member (the composite-contains-IMessage cycle) and never makes the
+      // in-progress base typeinfo read-only.
+      if (!_isResolvableByRegisteredContext(derivedType, options)) {
+        continue;
+      }
       // No forcing here — adding a JsonDerivedType does not resolve the derived type's typeinfo, so
       // this cannot recurse into nested same-base members. STJ resolves it lazily on first use.
       jsonTypeInfo.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(derivedType, discriminator));
     }
 
     return jsonTypeInfo;
+  }
+
+  /// <summary>
+  /// Returns true if THIS options' resolver chain provides a <see cref="JsonTypeInfo"/> for
+  /// <paramref name="type"/>. Checks <c>options.TypeInfoResolver</c> (the snapshot the options was
+  /// built with) rather than the live <c>_resolvers</c> queue — they can diverge under concurrent
+  /// registration, and a type "resolvable" only in the live queue (but absent from this options'
+  /// snapshot) would be added and then throw when STJ finalizes the polymorphic typeinfo.
+  ///
+  /// <para>Resolution-free with respect to the type's members: for a concrete derived type the base
+  /// resolver returns null immediately and the source-gen context returns the pre-built metadata
+  /// object without resolving nested property typeinfos — so this never re-enters the polymorphic
+  /// base resolver (no recursion) and never finalizes the in-progress base typeinfo (no read-only
+  /// races).</para>
+  /// </summary>
+  private static bool _isResolvableByRegisteredContext(Type type, JsonSerializerOptions options) {
+    try {
+      return options.TypeInfoResolver?.GetTypeInfo(type, options) is not null;
+    } catch (NotSupportedException) {
+      return false;
+    }
   }
 
   /// <summary>

@@ -446,6 +446,35 @@ public partial class JsonContextRegistryTests {
   internal sealed partial class CompositeRoundTripJsonContext : JsonSerializerContext {
   }
 
+  /// <summary>Plain (non-composite) event carrying a polymorphic IMessage collection.</summary>
+  internal sealed record TestEventWithMessageList(Guid Id, List<IMessage> Items) : IEvent;
+
+  /// <summary>Plain event carrying a polymorphic IEvent collection (exercises the IEvent resolver branch).</summary>
+  internal sealed record TestEventWithEventList(Guid Id, List<IEvent> Events) : IEvent;
+
+  /// <summary>Plain event carrying a polymorphic ICommand collection (exercises the ICommand resolver branch).</summary>
+  internal sealed record TestEventWithCommandList(Guid Id, List<ICommand> Commands) : IEvent;
+
+  /// <summary>
+  /// Comprehensive context for the polymorphic-collection round-trip tests: the composite, the three
+  /// collection-carrying events, the inner event/command types, the IMessage-payload envelope, and the
+  /// closed interface-list types.
+  /// </summary>
+  [JsonSerializable(typeof(TestBulkImportComposite))]
+  [JsonSerializable(typeof(TestEventWithMessageList))]
+  [JsonSerializable(typeof(TestEventWithEventList))]
+  [JsonSerializable(typeof(TestEventWithCommandList))]
+  [JsonSerializable(typeof(TestOrderPlacedEvent))]
+  [JsonSerializable(typeof(TestOrderShippedEvent))]
+  [JsonSerializable(typeof(TestCreateOrderCommand))]
+  [JsonSerializable(typeof(MessageEnvelope<IMessage>))]
+  [JsonSerializable(typeof(List<IMessage>))]
+  [JsonSerializable(typeof(List<IEvent>))]
+  [JsonSerializable(typeof(List<ICommand>))]
+  internal sealed partial class PolymorphicCollectionTestJsonContext : JsonSerializerContext {
+  }
+
+
   [Test]
   public async Task MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync() {
     // End-to-end "serialization works" gate for the turnkey composite feature: a composite serializes
@@ -480,6 +509,138 @@ public partial class JsonContextRegistryTests {
     await Assert.That(innerList.Count).IsEqualTo(1);
     await Assert.That(innerList[0]).IsTypeOf<TestOrderPlacedEvent>();
     await Assert.That(((TestOrderPlacedEvent)innerList[0]).OrderId).IsEqualTo(orderId);
+  }
+
+  [Test]
+  public async Task MessageEnvelope_CompositeContainingComposite_RoundTripsCycleSafeAsync() {
+    // Cycle-safety proof: a composite's inner list contains ANOTHER composite (a composite is itself
+    // an IMessage that contains IMessage). The lazy base resolver must build the IMessage typeinfo
+    // without recursing/stack-overflowing. Both nesting levels must return as concrete types.
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestBulkImportComposite>("TestBulkImportComposite");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(CompositeRoundTripJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var orderId = Guid.NewGuid();
+    var leaf = new TestOrderPlacedEvent(orderId, "Nested Customer");
+    var innerComposite = new TestBulkImportComposite([leaf]);
+    var outerComposite = new TestBulkImportComposite([innerComposite]);
+    var messageId = MessageId.New();
+    var envelope = new MessageEnvelope<IMessage>(messageId, outerComposite, []);
+
+    var envelopeTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(envelope, envelopeTypeInfo!);
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, envelopeTypeInfo!);
+
+    // Outer composite -> inner composite -> leaf event, all concrete.
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Payload).IsTypeOf<TestBulkImportComposite>();
+    var outerInner = ((TestBulkImportComposite)deserialized.Payload).InnerEvents.ToList();
+    await Assert.That(outerInner.Count).IsEqualTo(1);
+    await Assert.That(outerInner[0]).IsTypeOf<TestBulkImportComposite>();
+    var leafList = ((TestBulkImportComposite)outerInner[0]).InnerEvents.ToList();
+    await Assert.That(leafList.Count).IsEqualTo(1);
+    await Assert.That(leafList[0]).IsTypeOf<TestOrderPlacedEvent>();
+    await Assert.That(((TestOrderPlacedEvent)leafList[0]).OrderId).IsEqualTo(orderId);
+  }
+
+  [Test]
+  public async Task PlainEventWithPolymorphicMessageList_RoundTripsAsync() {
+    // "Events with collections": a non-composite IEvent carrying a polymorphic IMessage list now
+    // round-trips — previously the nested IMessage wasn't polymorphic and failed to deserialize.
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestEventWithMessageList>("TestEventWithMessageList");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var ev = new TestEventWithMessageList(Guid.NewGuid(), [new TestOrderPlacedEvent(Guid.NewGuid(), "Child")]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), ev, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<TestEventWithMessageList>();
+    var items = ((TestEventWithMessageList)back.Payload).Items;
+    await Assert.That(items.Count).IsEqualTo(1);
+    await Assert.That(items[0]).IsTypeOf<TestOrderPlacedEvent>();
+  }
+
+  [Test]
+  public async Task NestedEventList_ExercisesIEventResolverBranch_RoundTripsAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestEventWithEventList>("TestEventWithEventList");
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var ev = new TestEventWithEventList(Guid.NewGuid(), [new TestOrderPlacedEvent(Guid.NewGuid(), "E")]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), ev, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<TestEventWithEventList>();
+    var events = ((TestEventWithEventList)back.Payload).Events;
+    await Assert.That(events.Count).IsEqualTo(1);
+    await Assert.That(events[0]).IsTypeOf<TestOrderPlacedEvent>();
+  }
+
+  [Test]
+  public async Task NestedCommandList_ExercisesICommandResolverBranch_RoundTripsAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestEventWithCommandList>("TestEventWithCommandList");
+    JsonContextRegistry.RegisterDerivedType<ICommand, TestCreateOrderCommand>("TestCreateOrderCommand");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var ev = new TestEventWithCommandList(Guid.NewGuid(), [new TestCreateOrderCommand("C", 9.99m)]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), ev, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<TestEventWithCommandList>();
+    var cmds = ((TestEventWithCommandList)back.Payload).Commands;
+    await Assert.That(cmds.Count).IsEqualTo(1);
+    await Assert.That(cmds[0]).IsTypeOf<TestCreateOrderCommand>();
+  }
+
+  [Test]
+  public async Task Composite_MultipleMixedInnerTypes_PreservesOrderAndTypesAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestBulkImportComposite>("TestBulkImportComposite");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderShippedEvent>("TestOrderShippedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var placed = new TestOrderPlacedEvent(Guid.NewGuid(), "P");
+    var shipped = new TestOrderShippedEvent(Guid.NewGuid(), "TRACK");
+    var composite = new TestBulkImportComposite([placed, shipped]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), composite, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    var inner = ((TestBulkImportComposite)back!.Payload).InnerEvents.ToList();
+    await Assert.That(inner.Count).IsEqualTo(2);
+    await Assert.That(inner[0]).IsTypeOf<TestOrderPlacedEvent>();   // producer-yielded order preserved
+    await Assert.That(inner[1]).IsTypeOf<TestOrderShippedEvent>();
+    await Assert.That(((TestOrderShippedEvent)inner[1]).TrackingNumber).IsEqualTo("TRACK");
+  }
+
+  [Test]
+  public async Task Composite_EmptyInnerEvents_RoundTripsAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestBulkImportComposite>("TestBulkImportComposite");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var composite = new TestBulkImportComposite([]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), composite, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<TestBulkImportComposite>();
+    await Assert.That(((TestBulkImportComposite)back.Payload).InnerEvents.ToList().Count).IsEqualTo(0);
   }
 
   [Test]

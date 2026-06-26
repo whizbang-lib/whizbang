@@ -134,6 +134,18 @@ sees only inner events).
         building the base typeinfo never re-enters resolution for a nested same-base member; STJ
         resolves derived types lazily against the cached base typeinfo. Round-trip test now GREEN;
         full `Whizbang.Core` suite **8115/0**, no regressions.
+  - [x] **T1.P1c — edge-case + branch coverage, and skip-unresolvable robustness. DONE.** Added 6
+        tests: composite-in-composite (cycle-safety PROVEN, not just argued), plain event with a
+        polymorphic `IMessage` collection ("events with collections"), nested `IEvent`/`ICommand`
+        collections (cover those resolver branches), multiple mixed inner types (order preserved),
+        empty inner list. This surfaced a real robustness gap: the lazy builder must SKIP derived
+        types the options can't resolve (STJ finalizes a polymorphic typeinfo by resolving ALL its
+        derived types, so one unresolvable type throws for the whole base). Fixed with
+        `_isResolvableByRegisteredContext`, which checks `options.TypeInfoResolver` (the options'
+        snapshot — NOT the live `_resolvers`, which diverges under concurrent registration) and is
+        resolution-free (no recursion / no read-only race). Full `Whizbang.Core` 8120 pass; the lone
+        failure is a pre-existing parallel flake in `MetricAssertionHelper` (passes in isolation),
+        unrelated to serialization.
   - [ ] (belt-and-suspenders, deferred/low-pri) `Composite`-flag guard on producer Phase 4.5A append —
         moot while the generator keeps composites IMessage-only (`IsEvent=false` already skips them);
         only needed if a consumer hand-rolls a composite that also implements `IEvent`.
