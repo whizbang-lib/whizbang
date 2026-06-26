@@ -6,10 +6,12 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.Dispatch;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -110,10 +112,66 @@ public class PostgresDriverExtensionsTests {
     await Assert.That(fallback).IsTypeOf<DbContextNotificationConnectionStringFallback>();
   }
 
+  // ── Turnkey IClaimedEmissionStore registration ────────────────────────────────
+
+  [Test]
+  public async Task Postgres_RegistersIClaimedEmissionStore_ScopedAsync() {
+    // The Postgres driver routes saga completion through PublishOnceAsync, which requires
+    // IClaimedEmissionStore. Before this turnkey wiring, every Postgres consumer had to
+    // register EFCoreClaimedEmissionStore manually — a consumer had to add the registration in
+    // both Program.cs and the integration fixture to avoid PublishOnceAsync throwing at
+    // saga completion (production saga 019f000e regression). With this in place, .WithDriver.Postgres
+    // is genuinely turnkey for the dispatcher's exactly-once primitive.
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    var builder = new WhizbangPerspectiveBuilder(services);
+    _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var store = scope.ServiceProvider.GetService<IClaimedEmissionStore>();
+
+    await Assert.That(store).IsNotNull()
+      .Because(".WithDriver.Postgres MUST turnkey-register IClaimedEmissionStore so consumers " +
+               "don't have to wire it manually; PublishOnceAsync throws without it.");
+    await Assert.That(store).IsTypeOf<EFCoreClaimedEmissionStore>();
+
+    var descriptor = services.First(sd => sd.ServiceType == typeof(IClaimedEmissionStore));
+    await Assert.That(descriptor.Lifetime).IsEqualTo(ServiceLifetime.Scoped)
+      .Because("EFCoreClaimedEmissionStore holds a DbContext; lifetime must match the DbContext " +
+               "scope so the same transaction sees the claim row.");
+  }
+
+  [Test]
+  public async Task Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async() {
+    // Locks the TryAdd semantics: consumers who already supply an IClaimedEmissionStore
+    // (e.g. a Dapper-backed override) keep their implementation when .WithDriver.Postgres
+    // runs. Otherwise upgrading Whizbang versions would silently replace consumer overrides.
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+    services.AddScoped<IClaimedEmissionStore, NoOpClaimedEmissionStore>();
+
+    var builder = new WhizbangPerspectiveBuilder(services);
+    _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var store = scope.ServiceProvider.GetService<IClaimedEmissionStore>();
+
+    await Assert.That(store).IsTypeOf<NoOpClaimedEmissionStore>()
+      .Because("TryAdd semantics: consumer-supplied override MUST win over the driver's default.");
+  }
+
   /// <summary>
   /// Fake implementation of IDriverOptions for testing error handling.
   /// </summary>
   private sealed class FakeDriverOptions(IServiceCollection services) : IDriverOptions {
     public IServiceCollection Services { get; } = services;
+  }
+
+  private sealed class NoOpClaimedEmissionStore : IClaimedEmissionStore {
+    public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken)
+      => Task.FromResult(true);
   }
 }

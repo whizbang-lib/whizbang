@@ -273,6 +273,26 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       ? args.TableName
       : $"\"{schema}\".{args.TableName}";
 
+    // Opt-in via IVersionedApplyTarget: a model that implements the marker gets a stricter
+    // WHERE clause that adds a UUIDv7 EventId tie-breaker on top of the legacy CommitSequence
+    // comparison. The legacy permissive contract (null-CommitSeq lets the write through
+    // unconditionally) remains the default — see
+    // CrossPodStaleReadRegressionRaceTests.StaleSecondWriter_RegressesTerminalRowToEarlierState_StoreFailsToProtectAsync
+    // — so existing consumers that depend on stamper-lag forwarding keep working.
+    // Models that need strand prevention beyond the v0.740 stream-affinity gate (the first
+    // is SagaItemModel) opt in by implementing IVersionedApplyTarget. production saga 019f03cd
+    // (2026-06-26) showed 2 of 350 per-item rows survived the affinity gate and reverted to
+    // State=Running — this marker closes that gap at the storage layer.
+    var isVersionedTarget = typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel));
+    var whereClause = isVersionedTarget
+      ? $@"
+        WHERE {qualifiedTable}.metadata->>'EventId' IS NULL
+           OR EXCLUDED.metadata->>'EventId' > {qualifiedTable}.metadata->>'EventId'"
+      : $@"
+        WHERE {qualifiedTable}.metadata->>'CommitSequence' IS NULL
+           OR EXCLUDED.metadata->>'CommitSequence' IS NULL
+           OR (EXCLUDED.metadata->>'CommitSequence')::bigint >= ({qualifiedTable}.metadata->>'CommitSequence')::bigint";
+
     var sql = $@"
         INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, version{pfColumnsClause})
         VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @now, @now, 1{pfValuesClause})
@@ -280,10 +300,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
           data = EXCLUDED.data,
           metadata = EXCLUDED.metadata,
           updated_at = EXCLUDED.updated_at,
-          version = {qualifiedTable}.version + 1{scopeUpdateClause}{pfUpdateClause}
-        WHERE {qualifiedTable}.metadata->>'CommitSequence' IS NULL
-           OR EXCLUDED.metadata->>'CommitSequence' IS NULL
-           OR (EXCLUDED.metadata->>'CommitSequence')::bigint >= ({qualifiedTable}.metadata->>'CommitSequence')::bigint";
+          version = {qualifiedTable}.version + 1{scopeUpdateClause}{pfUpdateClause}{whereClause}";
 
     var connection = context.Database.GetDbConnection();
     var openedHere = false;
