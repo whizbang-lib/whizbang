@@ -4,10 +4,12 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.Dispatch;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
 
@@ -43,6 +45,8 @@ public static class PostgresDriverExtensions {
     /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync</tests>
     /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_ReturnedBuilder_HasSameServicesAsync</tests>
     /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync</tests>
+    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_RegistersIClaimedEmissionStore_ScopedAsync</tests>
+    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async</tests>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension property - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
     public WhizbangPerspectiveBuilder Postgres {
@@ -82,6 +86,17 @@ public static class PostgresDriverExtensions {
             new EFCorePostgresPerspectiveCheckpointCompleter(
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
                 sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
+
+        // TURNKEY: Register IClaimedEmissionStore so PublishOnceAsync (saga completion via
+        // SagaCompletionGuard.EmitOnceAsync, idempotent receptor emissions, etc.) doesn't
+        // throw at runtime. EFCoreClaimedEmissionStore writes ON CONFLICT DO NOTHING against
+        // wh_unique_emission_claims through the consumer's DbContext. Without this, every
+        // Postgres consumer had to wire it manually — observed on a consumer production where saga
+        // 019f000e couldn't dispatch SagaCompletedEvent until the registration was added
+        // (CompletionEventDispatched stayed false despite items being durably terminal).
+        selector.Services.TryAddScoped<IClaimedEmissionStore>(sp =>
+            new EFCoreClaimedEmissionStore(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType)));
 
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand

@@ -1,4 +1,5 @@
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Sagas.Models;
 
@@ -10,7 +11,7 @@ namespace Whizbang.Sagas.Models;
 /// these rows rather than a mutable tally on the saga row, which is
 /// what removes the cross-pod lost-update race.
 /// </summary>
-public class SagaItemModel : ISagaItem {
+public class SagaItemModel : ISagaItem, IVersionedApplyTarget {
 
   /// <summary>Per-item stream id — derived from <c>(SagaId, ItemIdentifier)</c>.</summary>
   [StreamId]
