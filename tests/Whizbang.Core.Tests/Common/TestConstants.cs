@@ -68,7 +68,12 @@ public static class TestConstants {
   ///     (PublishOnceTestEventReceptor — verifies winning the claim proceeds to PublishAsync,
   ///     which invokes the in-process receptor, in the saga-completion race fix lock-in)</para>
   ///
-  /// <para>Total: 118 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 1 receptor from DispatcherScheduledForLocalReceptorTests.cs
+  ///     (ScheduledForCascadeProbeReceptor — proves PublishAsync(event, options.ScheduledFor)
+  ///     gates local-receptor invocation on scheduled time, fixing the production saga watchdog
+  ///     cascade-abandon)</para>
+  ///
+  /// <para>Total: 119 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 118;
+  public const int EXPECTED_RECEPTOR_COUNT = 119;
 }

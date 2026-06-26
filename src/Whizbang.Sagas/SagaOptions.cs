@@ -13,6 +13,7 @@ namespace Whizbang.Sagas;
 /// rows. Configure once at startup, never at runtime.
 /// </para>
 /// </remarks>
+/// <docs>fundamentals/sagas/completion-orchestration</docs>
 public sealed class SagaOptions {
 
   /// <summary>
@@ -26,25 +27,50 @@ public sealed class SagaOptions {
   public Guid PerItemStreamNamespace { get; set; } = SagaItemStreams.DefaultNamespace;
 
   /// <summary>
-  /// Exponential backoff schedule for the watchdog-tick re-arm path. When
-  /// <c>BaseSagaService.TryRecoverViaWatchdogTickAsync</c> finds the saga
-  /// is still not terminal, it re-arms <see cref="SagaCompletionWatchdogTickEvent"/>
-  /// with the delay at index <c>RescheduleCount</c>. Once
-  /// <c>RescheduleCount</c> reaches the length of this array the framework
-  /// emits <see cref="SagaCompletionAbandonedEvent"/> instead of another
-  /// re-arm — the saga is operationally stuck and needs human triage.
+  /// Floor for the watchdog tick's next-fire delay. The adaptive scheduler
+  /// in <c>BaseSagaService.TryRecoverViaWatchdogTickAsync</c> clamps the
+  /// computed delay against this minimum so a very high observed completion
+  /// rate (e.g. a burst of in-flight items completing between ticks) can't
+  /// trigger a tight re-arm loop.
   /// </summary>
-  /// <remarks>
-  /// Defaults to <c>[30s, 2m, 8m, 30m]</c> — four re-arm attempts spanning
-  /// ~40 minutes before abandon, biased toward burst-mode load (back off
-  /// quickly while items might still be in flight, then widen) rather than
-  /// slow-trickle workloads. Consumers with very large fan-outs (10k+ items)
-  /// should override with a longer first delay or an extra abandon-tier.
-  /// </remarks>
-  public TimeSpan[] WatchdogBackoff { get; set; } = [
-    TimeSpan.FromSeconds(30),
-    TimeSpan.FromMinutes(2),
-    TimeSpan.FromMinutes(8),
-    TimeSpan.FromMinutes(30),
-  ];
+  public TimeSpan MinWatchdogDelay { get; set; } = TimeSpan.FromSeconds(30);
+
+  /// <summary>
+  /// Ceiling for the watchdog tick's next-fire delay. The adaptive scheduler
+  /// clamps the computed delay against this maximum so a stalled saga still
+  /// gets re-checked on a finite cadence and a near-zero completion rate
+  /// (one trailing item taking minutes) doesn't push the next tick far into
+  /// the future.
+  /// </summary>
+  public TimeSpan MaxWatchdogDelay { get; set; } = TimeSpan.FromMinutes(30);
+
+  /// <summary>
+  /// Extra slack added on top of the ETA-based next-tick delay when progress
+  /// has been observed since the previous tick. The ETA is computed as
+  /// <c>remaining_items / observed_rate</c>; without this margin the tick
+  /// would fire at the projected completion moment and almost always still
+  /// see one or two items in flight. Defaults to 30s — short enough that
+  /// stuck sagas surface quickly, long enough that healthy sagas finish by
+  /// the next tick.
+  /// </summary>
+  public TimeSpan WatchdogSafetyMargin { get; set; } = TimeSpan.FromSeconds(30);
+
+  /// <summary>
+  /// Number of consecutive ticks observing zero progress (no new terminal
+  /// events since the previous tick) before the framework abandons the saga
+  /// and emits <see cref="SagaCompletionAbandonedEvent"/>. Progress between
+  /// ticks resets the counter — slow sagas don't trigger abandon, only stuck
+  /// ones do. Defaults to 4 stalls; combined with the multiplier the abandon
+  /// horizon lands ~30 minutes past the last observed progress.
+  /// </summary>
+  public int MaxConsecutiveStalls { get; set; } = 4;
+
+  /// <summary>
+  /// Exponential factor applied to the next-tick delay when the previous
+  /// tick observed zero progress. Each stalled tick widens the next interval
+  /// by <c>MinWatchdogDelay * Multiplier^stallCount</c>, then the result is
+  /// clamped against <see cref="MaxWatchdogDelay"/>. Defaults to 2 — doubling
+  /// (30s → 60s → 120s → 240s → 480s) before the ceiling kicks in.
+  /// </summary>
+  public double StallBackoffMultiplier { get; set; } = 2.0;
 }

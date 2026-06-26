@@ -398,10 +398,11 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// Watchdog-tick entry point used by the framework's tick receptor (or by a
   /// consumer-written receptor on <see cref="SagaCompletionWatchdogTickEvent"/>).
   /// Calls <see cref="TryRecoverViaWatchdogAsync"/> and, on
-  /// <c>recovered == false</c>, either re-arms the next tick on the configured
-  /// <see cref="SagaOptions.WatchdogBackoff"/> schedule or — when the schedule
-  /// is exhausted — publishes <see cref="SagaCompletionAbandonedEvent"/> so
-  /// operators can triage the stuck saga.
+  /// <c>recovered == false</c>, computes an adaptive next-tick delay from the
+  /// observed completion rate (see <c>_computeAdaptiveNextDelay</c>) — or, when
+  /// <see cref="SagaOptions.MaxConsecutiveStalls"/> is reached, publishes
+  /// <see cref="SagaCompletionAbandonedEvent"/> so operators can triage the
+  /// stuck saga.
   /// </summary>
   /// <remarks>
   /// <para>
@@ -427,6 +428,13 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// scheduled; <c>RecoveredOrAbandoned.Abandoned</c> when the schedule
   /// exhausted and the abandon event was published.
   /// </returns>
+  /// <docs>fundamentals/sagas/completion-orchestration</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:FirstReArm_NoSnapshot_UsesInitialBudgetAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:ProgressBetweenTicks_NextDelayIsEtaBasedAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NoProgressBetweenTicks_StallCounterIncrementsAndBacksOffAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonsAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:ProgressAfterStalls_ResetsStallCounterAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NextDelay_ClampedAtMaxAsync</tests>
   public virtual async Task<WatchdogTickOutcome> TryRecoverViaWatchdogTickAsync(
       SagaCompletionWatchdogTickEvent tick,
       CancellationToken cancellationToken) {
@@ -439,10 +447,16 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       return WatchdogTickOutcome.Recovered;
     }
 
-    var schedule = _options.WatchdogBackoff;
-    var nextCount = tick.RescheduleCount + 1;
-    if (schedule.Length == 0 || nextCount > schedule.Length) {
-      // Schedule exhausted (or disabled with empty schedule) — abandon.
+    // Read the current per-item snapshot up front so the next-delay computation and the
+    // event payload that carries the snapshot forward see identical numbers.
+    SagaItemAggregate? currentAgg = null;
+    if (_itemRepository is not null) {
+      currentAgg = await _itemRepository.GetAggregateForSagaAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
+    }
+    var now = DateTimeOffset.UtcNow;
+
+    var (nextDelay, nextStallCount, shouldAbandon) = _computeAdaptiveNextDelay(tick, currentAgg, now);
+    if (shouldAbandon) {
       var abandoned = new SagaCompletionAbandonedEvent {
         StreamId = tick.StreamId,
         SagaName = tick.SagaName,
@@ -453,17 +467,85 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       return WatchdogTickOutcome.Abandoned;
     }
 
-    // Re-arm at schedule[currentRescheduleCount] — 0-indexed: count=0 → schedule[0]
-    var delay = schedule[tick.RescheduleCount];
     var next = new SagaCompletionWatchdogTickEvent {
       StreamId = tick.StreamId,
       SagaName = tick.SagaName,
       EntityId = tick.EntityId,
-      RescheduleCount = nextCount,
+      RescheduleCount = tick.RescheduleCount + 1,
+      LastObservedAt = now,
+      LastObservedCompleted = currentAgg?.Completed ?? 0,
+      LastObservedFailed = currentAgg?.Failed ?? 0,
+      ConsecutiveStallCount = nextStallCount,
     };
-    await _emitter.PublishAsync(next, DateTimeOffset.UtcNow + delay).ConfigureAwait(false);
+    await _emitter.PublishAsync(next, now + nextDelay).ConfigureAwait(false);
     return WatchdogTickOutcome.ReArmed;
   }
+
+  /// <summary>
+  /// Adaptive next-tick delay computation. Three branches:
+  /// <list type="bullet">
+  /// <item><description><b>First tick (no snapshot):</b> use <see cref="ComputeInitialWatchdogBudget"/>
+  ///   over the current item total — the same "expected completion + slack" heuristic the
+  ///   initial post-Initiate tick uses. Stall count stays at 0 because we haven't yet measured a
+  ///   delta to compare against.</description></item>
+  /// <item><description><b>Progress observed (delta &gt; 0):</b> compute items-per-second from
+  ///   <c>delta / elapsed</c>, project remaining work to an ETA, add the configured safety margin.
+  ///   Stall count resets to 0 — a saga that's moving doesn't trigger the abandon counter even
+  ///   if it's moving slowly.</description></item>
+  ///   <item><description><b>No progress (delta == 0):</b> increment stall count. If it reaches
+  ///   <see cref="SagaOptions.MaxConsecutiveStalls"/> return <c>shouldAbandon=true</c>. Otherwise
+  ///   widen the next interval by <c>MinWatchdogDelay * Multiplier^stallCount</c> — only stuck
+  ///   sagas back off exponentially.</description></item>
+  /// </list>
+  /// The returned delay is always clamped to
+  /// <c>[MinWatchdogDelay, MaxWatchdogDelay]</c> so a very fast burst or a near-zero rate
+  /// can't produce an unbounded interval.
+  /// </summary>
+  private (TimeSpan delay, int nextStallCount, bool shouldAbandon) _computeAdaptiveNextDelay(
+      SagaCompletionWatchdogTickEvent tick,
+      SagaItemAggregate? agg,
+      DateTimeOffset now) {
+    var min = _options.MinWatchdogDelay;
+    var max = _options.MaxWatchdogDelay;
+
+    // Branch 1: no prior measurement (the post-Initiate tick was the first; this is its re-arm).
+    if (tick.LastObservedAt is not { } lastAt) {
+      var initial = ComputeInitialWatchdogBudget(agg?.Total ?? 0);
+      return (_clamp(initial, min, max), 0, false);
+    }
+
+    var previousTerminal = tick.LastObservedCompleted + tick.LastObservedFailed;
+    var currentTerminal = (agg?.Completed ?? 0) + (agg?.Failed ?? 0);
+    var delta = currentTerminal - previousTerminal;
+
+    // Branch 2: progress made — ETA-based.
+    if (delta > 0 && agg is not null) {
+      var elapsed = now - lastAt;
+      if (elapsed > TimeSpan.Zero) {
+        var rate = delta / elapsed.TotalSeconds;
+        var remaining = agg.Total - currentTerminal;
+        if (rate > 0 && remaining > 0) {
+          var eta = TimeSpan.FromSeconds(remaining / rate) + _options.WatchdogSafetyMargin;
+          return (_clamp(eta, min, max), 0, false);
+        }
+      }
+      // Degenerate rate (clock skew, instantaneous burst): fall through to "everything's done"
+      // semantics — use the floor so the next tick double-checks completion quickly.
+      return (min, 0, false);
+    }
+
+    // Branch 3: stall — no terminal events landed between ticks.
+    var nextStallCount = tick.ConsecutiveStallCount + 1;
+    if (nextStallCount >= _options.MaxConsecutiveStalls) {
+      return (TimeSpan.Zero, nextStallCount, shouldAbandon: true);
+    }
+    var multiplier = Math.Pow(_options.StallBackoffMultiplier, nextStallCount);
+    var stalledDelay = TimeSpan.FromTicks((long)(min.Ticks * multiplier));
+    return (_clamp(stalledDelay, min, max), nextStallCount, false);
+  }
+
+  private static TimeSpan _clamp(TimeSpan value, TimeSpan min, TimeSpan max) =>
+    value < min ? min : value > max ? max : value;
 
   /// <summary>
   /// Emits the saga's terminal completion event exactly once — routes

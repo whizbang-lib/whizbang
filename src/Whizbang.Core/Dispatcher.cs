@@ -3057,9 +3057,17 @@ public abstract partial class Dispatcher(
 
   /// <summary>
   /// Publishes an event to all registered handlers with dispatch options.
+  /// Future <see cref="DispatchOptions.ScheduledFor"/> gates the in-process
+  /// local receptor the same way <c>wh_outbox.scheduled_for</c> (mig 040)
+  /// gates cross-pod delivery — the saga watchdog re-arm path relies on this
+  /// to avoid the cascade-abandon failure mode.
   /// </summary>
+  /// <docs>fundamentals/sagas/completion-orchestration</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithDispatchOptions_CompletesAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInFuture_DoesNotInvokeLocalReceptorInlineAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithoutScheduledFor_InvokesLocalReceptorInlineAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInPast_InvokesLocalReceptorInlineAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
@@ -3082,7 +3090,6 @@ public abstract partial class Dispatcher(
       _autoGenerateStreamIdIfNeeded(eventData!, eventType);
 
       var messageId = MessageId.New();
-      var publisher = GetReceptorPublisher(eventData, eventType);
 
       options.CancellationToken.ThrowIfCancellationRequested();
 
@@ -3090,15 +3097,26 @@ public abstract partial class Dispatcher(
       // options.ScheduledFor flows through to the outbox row's scheduled_for column so
       // wh_outbox's pickup query (mig 040) gates publication until the time elapses.
       var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, scheduledFor: options.ScheduledFor);
-      try {
-        await publisher(eventData);
-      } catch {
-        try { await outboxTask; } catch { /* outbox exception is secondary */ }
-        throw;
-      }
 
-      // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(eventData, eventType);
+      // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
+      // the outbox-pickup query. Without this branch the local receptor fires inline despite the
+      // scheduled time being in the future — observed in production saga 019f000e-… (2026-06-25):
+      // the watchdog re-arm cascaded 5 ticks + SagaCompletionAbandonedEvent in 86 ms because the
+      // local SagaCompletionWatchdogTickEvent receptor re-armed synchronously each re-publish.
+      // Past or null ScheduledFor preserves the historical immediate-dispatch semantics.
+      var deferLocal = options.ScheduledFor is DateTimeOffset scheduledAt && scheduledAt > DateTimeOffset.UtcNow;
+      if (!deferLocal) {
+        var publisher = GetReceptorPublisher(eventData, eventType);
+        try {
+          await publisher(eventData);
+        } catch {
+          try { await outboxTask; } catch { /* outbox exception is secondary */ }
+          throw;
+        }
+
+        // Process tags after successful receptor completion
+        await _processTagsIfEnabledAsync(eventData, eventType);
+      }
 
       await outboxTask;
 

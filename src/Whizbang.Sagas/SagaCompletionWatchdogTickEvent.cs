@@ -44,8 +44,44 @@ public class SagaCompletionWatchdogTickEvent : SagaEventBase, ISagaCompletionWat
 
   /// <summary>
   /// How many times this watchdog has re-armed for the saga without finding a
-  /// terminal state. Drives the receptor's exponential backoff schedule
-  /// (30s → 2m → 8m → 30m → abandon-and-alert).
+  /// terminal state. Retained primarily for observability — the adaptive
+  /// scheduler keys abandon on <see cref="ConsecutiveStallCount"/>, not this
+  /// counter.
   /// </summary>
   public int RescheduleCount { get; set; }
+
+  /// <summary>
+  /// Wall-clock time when the producing receptor observed the
+  /// <see cref="LastObservedCompleted"/> / <see cref="LastObservedFailed"/>
+  /// counts. <c>null</c> on the very first watchdog tick (no prior measurement
+  /// has been taken yet — the framework treats it as the baseline). The
+  /// adaptive scheduler uses <c>now - LastObservedAt</c> as the denominator
+  /// for the items-per-second rate that drives the next-tick ETA.
+  /// </summary>
+  public DateTimeOffset? LastObservedAt { get; set; }
+
+  /// <summary>
+  /// Per-item aggregate <c>Completed</c> count captured by the previous tick.
+  /// Used by the next tick to compute progress delta (current − last) and
+  /// derive the items-per-second completion rate. Zero on the very first tick.
+  /// </summary>
+  public int LastObservedCompleted { get; set; }
+
+  /// <summary>
+  /// Per-item aggregate <c>Failed</c> count captured by the previous tick.
+  /// Combined with <see cref="LastObservedCompleted"/> the framework computes
+  /// the terminal-event delta between ticks; positive delta resets the stall
+  /// counter, zero delta increments it.
+  /// </summary>
+  public int LastObservedFailed { get; set; }
+
+  /// <summary>
+  /// Number of consecutive watchdog ticks that have observed zero progress
+  /// (no new terminal events) since the previous tick. Once this reaches
+  /// <see cref="Whizbang.Sagas.SagaOptions.MaxConsecutiveStalls"/> the
+  /// framework emits <see cref="Whizbang.Sagas.SagaCompletionAbandonedEvent"/>
+  /// instead of re-arming. Progress resets it to zero — slow sagas don't
+  /// trigger abandon, only stuck ones.
+  /// </summary>
+  public int ConsecutiveStallCount { get; set; }
 }
