@@ -447,13 +447,6 @@ public partial class JsonContextRegistryTests {
   }
 
   [Test]
-  [Skip("Pending T1.P1b (plans/composite-events-turnkey.md): a composite's nested IMessage list " +
-        "(InnerEvents) does not deserialize — STJ throws 'Deserialization of interface or abstract " +
-        "types is not supported. Type IMessage. Path: $.Payload.Items[0]'. Polymorphism is only " +
-        "applied via the explicit GetPolymorphic*TypeInfo helpers, not baked into the combined " +
-        "options resolver, so nested IMessage members are not polymorphic. The turnkey fix (resolver-" +
-        "supplied polymorphic IMessage typeinfo) must be cycle-safe because a composite is itself an " +
-        "IMessage that contains IMessage. This test is the RED for that fix.")]
   public async Task MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync() {
     // End-to-end "serialization works" gate for the turnkey composite feature: a composite serializes
     // and deserializes as an IMessage-polymorphic envelope payload, and its inner events survive the

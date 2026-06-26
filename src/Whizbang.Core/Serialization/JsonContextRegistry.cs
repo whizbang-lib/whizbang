@@ -88,8 +88,14 @@ public static class JsonContextRegistry {
         "Ensure Whizbang.Core and application assemblies are loaded before calling CreateCombinedOptions().");
     }
 
+    // The polymorphic-base resolver goes FIRST so nested interface-typed members (e.g. a composite's
+    // inner-event IMessage list) resolve to a polymorphic typeinfo. Source-gen contexts never emit a
+    // typeinfo for the interface bases themselves, so without this any nested IMessage/IEvent/ICommand
+    // member fails to (de)serialize. The base resolvers handle every concrete type.
+    var combinedResolver = JsonTypeInfoResolver.Combine(
+      [new _polymorphicBaseTypeInfoResolver(), .. _resolvers.ToArray()]);
     var options = new JsonSerializerOptions {
-      TypeInfoResolver = JsonTypeInfoResolver.Combine(_resolvers.ToArray()),
+      TypeInfoResolver = combinedResolver,
       DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
@@ -181,6 +187,14 @@ public static class JsonContextRegistry {
   /// Key is a tuple of (baseType, optionsHashCode) to support multiple options instances.
   /// </summary>
   private static readonly ConcurrentDictionary<(Type baseType, int optionsHash), object> _polymorphicTypeInfoCache = new();
+
+  /// <summary>
+  /// Cache for the resolver-supplied (lazy, cycle-safe) polymorphic base typeinfos. Kept separate
+  /// from <see cref="_polymorphicTypeInfoCache"/> (which holds the eager/forcing typeinfos built by
+  /// the explicit <c>GetPolymorphic*TypeInfo</c> helpers) because the resolver path must NOT force
+  /// derived-type resolution — see <see cref="_createPolymorphicTypeInfoLazy{TBase}"/>.
+  /// </summary>
+  private static readonly ConcurrentDictionary<(Type baseType, int optionsHash), JsonTypeInfo> _resolverPolymorphicCache = new();
 
   /// <summary>
   /// Registers a derived type for polymorphic serialization.
@@ -350,6 +364,90 @@ public static class JsonContextRegistry {
         // Skip types that can't be resolved (e.g., have unsupported property types)
         // This is expected in test assemblies where not all types have complete metadata
       }
+    }
+
+    return jsonTypeInfo;
+  }
+
+  /// <summary>
+  /// Resolver that supplies a polymorphic <see cref="JsonTypeInfo"/> for the registered base
+  /// interfaces (<c>IMessage</c>, <c>IEvent</c>, <c>ICommand</c>) through the options' resolver chain,
+  /// so that NESTED interface-typed members round-trip — e.g. a composite event's inner-event
+  /// <c>IMessage</c> list (<c>InnerEvents</c>), not only the explicit envelope payload handled by
+  /// <see cref="GetPolymorphicEnvelopeTypeInfo{TBase}"/>.
+  ///
+  /// <para>Cycle-safe: the typeinfo is built WITHOUT forcing derived-type resolution
+  /// (<see cref="_createPolymorphicTypeInfoLazy{TBase}"/>). The eager/forcing builder recurses on
+  /// composites — a composite is itself an <c>IMessage</c> that contains <c>IMessage</c>, so forcing
+  /// the composite's properties re-enters base resolution before the base typeinfo finishes building.
+  /// The lazy builder adds derived types as <see cref="JsonDerivedType"/> without resolving them; STJ
+  /// resolves each lazily at serialize time against the already-cached base typeinfo.</para>
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync</tests>
+  private sealed class _polymorphicBaseTypeInfoResolver : IJsonTypeInfoResolver {
+    public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
+      // Explicit generic dispatch over the three known polymorphic base interfaces keeps this
+      // AOT-safe (no MakeGenericMethod / reflection).
+      if (type == typeof(global::Whizbang.Core.IMessage)) {
+        return _getLazyPolymorphicTypeInfo<global::Whizbang.Core.IMessage>(options);
+      }
+      if (type == typeof(global::Whizbang.Core.IEvent)) {
+        return _getLazyPolymorphicTypeInfo<global::Whizbang.Core.IEvent>(options);
+      }
+      if (type == typeof(global::Whizbang.Core.ICommand)) {
+        return _getLazyPolymorphicTypeInfo<global::Whizbang.Core.ICommand>(options);
+      }
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Gets (cached) the lazy, cycle-safe polymorphic typeinfo for a registered base interface, or null
+  /// if nothing is registered for it.
+  /// </summary>
+  private static JsonTypeInfo? _getLazyPolymorphicTypeInfo<TBase>(JsonSerializerOptions options)
+    where TBase : notnull {
+    if (!_derivedTypes.TryGetValue(typeof(TBase), out var bag) || bag.IsEmpty) {
+      return null;
+    }
+    var cacheKey = (typeof(TBase), options.GetHashCode());
+    return _resolverPolymorphicCache.GetOrAdd(cacheKey, _ => _createPolymorphicTypeInfoLazy<TBase>(options, bag));
+  }
+
+  /// <summary>
+  /// Builds a polymorphic typeinfo for an interface base WITHOUT forcing derived-type resolution.
+  /// This is the cycle-safe counterpart to <see cref="_createPolymorphicTypeInfo{TBase}"/>: it does
+  /// not call <c>options.GetTypeInfo(derivedType)</c> / <c>MakeReadOnly</c> / <c>Properties</c> during
+  /// construction, so building the base typeinfo never re-enters resolution for a nested member of the
+  /// same base (the composite-contains-IMessage cycle). STJ resolves each derived type lazily when it
+  /// first encounters that discriminator. AOT-safe — pure metadata, no reflection.
+  /// </summary>
+  private static JsonTypeInfo<TBase> _createPolymorphicTypeInfoLazy<TBase>(
+    JsonSerializerOptions options,
+    ConcurrentBag<(Type derivedType, string discriminator)> derivedTypes)
+    where TBase : notnull {
+    var objectInfo = new JsonObjectInfoValues<TBase> {
+      ObjectCreator = null,
+      ObjectWithParameterizedConstructorCreator = null,
+      PropertyMetadataInitializer = _ => [],
+      SerializeHandler = null
+    };
+
+    var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo<TBase>(options, objectInfo);
+    jsonTypeInfo.PolymorphismOptions = new JsonPolymorphismOptions {
+      TypeDiscriminatorPropertyName = "$type",
+      UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FallBackToNearestAncestor,
+      IgnoreUnrecognizedTypeDiscriminators = true
+    };
+
+    var seenDiscriminators = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var (derivedType, discriminator) in derivedTypes.Distinct()) {
+      if (!seenDiscriminators.Add(discriminator)) {
+        continue;
+      }
+      // No forcing here — adding a JsonDerivedType does not resolve the derived type's typeinfo, so
+      // this cannot recurse into nested same-base members. STJ resolves it lazily on first use.
+      jsonTypeInfo.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(derivedType, discriminator));
     }
 
     return jsonTypeInfo;

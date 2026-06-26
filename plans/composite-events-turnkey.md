@@ -118,7 +118,7 @@ sees only inner events).
 
 ## Status
 
-- [~] T1.P1 serialization/registration (RED→GREEN)
+- [x] T1.P1 serialization/registration (RED→GREEN) — registration + nested-polymorphism both done
   - [x] Generator discovers `ICompositeEvent` → emits `JsonTypeInfo` + `RegisterDerivedType<IMessage,…>`,
         NOT as IEvent. RED→GREEN (`Generator_WithCompositeEvent_RegistersAsIMessage_NotAsEventAsync`);
         full generator suite 1219/0.
@@ -126,16 +126,17 @@ sees only inner events).
         — **found a real gap (RED, currently `[Skip]`):** the composite serializes, but its nested
         `IMessage` list (`InnerEvents`) fails to deserialize — STJ: *"Deserialization of interface or
         abstract types is not supported. Type 'IMessage'. Path: $.Payload.Items[0]"*.
-  - [ ] **T1.P1b — nested IMessage polymorphism (the real fix).** Polymorphism is applied only via the
-        explicit `GetPolymorphic*TypeInfo` helpers (`JsonContextRegistry.cs:285,304`), NOT baked into
-        the combined `options` resolver — so nested `IMessage` members aren't polymorphic. Turnkey fix:
-        have `CreateCombinedOptions` supply a polymorphic `IMessage`/`IEvent`/`ICommand` typeinfo via a
-        resolver so any nested member round-trips. **Must be cycle-safe**: a composite is itself an
-        `IMessage` that *contains* `IMessage`, so the naive resolver recurses during typeinfo
-        construction (the `_polymorphicTypeInfoCache.GetOrAdd` + `MakeReadOnly`/`Properties` validation
-        loop re-enters for the same key). Needs deliberate design (cache the in-progress typeinfo /
-        break the cycle / lazy derived-type validation). RED = the skipped round-trip test.
-  - [ ] (belt-and-suspenders) `Composite`-flag guard on producer Phase 4.5A append.
+  - [x] **T1.P1b — nested IMessage polymorphism (cycle-safe fix). DONE.** `CreateCombinedOptions` now
+        prepends a `_polymorphicBaseTypeInfoResolver` that supplies a polymorphic typeinfo for the
+        registered base interfaces (`IMessage`/`IEvent`/`ICommand`) via explicit generic dispatch
+        (AOT-safe). Cycle-safety comes from a **lazy** builder (`_createPolymorphicTypeInfoLazy`) that
+        adds `JsonDerivedType` entries WITHOUT forcing resolution (`MakeReadOnly`/`Properties`) — so
+        building the base typeinfo never re-enters resolution for a nested same-base member; STJ
+        resolves derived types lazily against the cached base typeinfo. Round-trip test now GREEN;
+        full `Whizbang.Core` suite **8115/0**, no regressions.
+  - [ ] (belt-and-suspenders, deferred/low-pri) `Composite`-flag guard on producer Phase 4.5A append —
+        moot while the generator keeps composites IMessage-only (`IsEvent=false` already skips them);
+        only needed if a consumer hand-rolls a composite that also implements `IEvent`.
 - [ ] T1.P2 `CompositeEventBase` helper
 - [ ] T1.P3 DLQ failure routing
 - [ ] T1 release + a consumer bump
