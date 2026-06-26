@@ -426,6 +426,69 @@ public partial class JsonContextRegistryTests {
   internal sealed partial class PolymorphicTestJsonContext : JsonSerializerContext {
   }
 
+  /// <summary>
+  /// Test composite event — bundles inner events that all inherit the composite's stream at the
+  /// receiver. A composite implements ICompositeEvent (IMessage), never IEvent.
+  /// </summary>
+  internal sealed record TestBulkImportComposite(List<IMessage> Items) : ICompositeEvent {
+    public IEnumerable<IMessage> InnerEvents => Items;
+  }
+
+  /// <summary>
+  /// Test JsonSerializerContext for composite round-trip: the composite, its inner event, the
+  /// IMessage-payload envelope, and the inner-event list (mirrors what MessageJsonContextGenerator
+  /// now emits for ICompositeEvent types).
+  /// </summary>
+  [JsonSerializable(typeof(TestBulkImportComposite))]
+  [JsonSerializable(typeof(TestOrderPlacedEvent))]
+  [JsonSerializable(typeof(MessageEnvelope<IMessage>))]
+  [JsonSerializable(typeof(List<IMessage>))]
+  internal sealed partial class CompositeRoundTripJsonContext : JsonSerializerContext {
+  }
+
+  [Test]
+  [Skip("Pending T1.P1b (plans/composite-events-turnkey.md): a composite's nested IMessage list " +
+        "(InnerEvents) does not deserialize — STJ throws 'Deserialization of interface or abstract " +
+        "types is not supported. Type IMessage. Path: $.Payload.Items[0]'. Polymorphism is only " +
+        "applied via the explicit GetPolymorphic*TypeInfo helpers, not baked into the combined " +
+        "options resolver, so nested IMessage members are not polymorphic. The turnkey fix (resolver-" +
+        "supplied polymorphic IMessage typeinfo) must be cycle-safe because a composite is itself an " +
+        "IMessage that contains IMessage. This test is the RED for that fix.")]
+  public async Task MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync() {
+    // End-to-end "serialization works" gate for the turnkey composite feature: a composite serializes
+    // and deserializes as an IMessage-polymorphic envelope payload, and its inner events survive the
+    // round-trip as their concrete types. The composite registers ONLY as IMessage (never IEvent),
+    // exactly as MessageJsonContextGenerator now emits.
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestBulkImportComposite>("TestBulkImportComposite");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(CompositeRoundTripJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var orderId = Guid.NewGuid();
+    var inner = new TestOrderPlacedEvent(orderId, "Composite Customer");
+    var composite = new TestBulkImportComposite([inner]);
+    var messageId = MessageId.New();
+    var envelope = new MessageEnvelope<IMessage>(messageId, composite, []);
+
+    // Serialize
+    var envelopeTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(envelope, envelopeTypeInfo!);
+
+    // Act - deserialize the wire payload polymorphically
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, envelopeTypeInfo!);
+
+    // Assert - composite returns as the concrete type with its inner event intact
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.MessageId).IsEqualTo(messageId);
+    await Assert.That(deserialized.Payload).IsTypeOf<TestBulkImportComposite>();
+    var roundTripped = (TestBulkImportComposite)deserialized.Payload;
+    var innerList = roundTripped.InnerEvents.ToList();
+    await Assert.That(innerList.Count).IsEqualTo(1);
+    await Assert.That(innerList[0]).IsTypeOf<TestOrderPlacedEvent>();
+    await Assert.That(((TestOrderPlacedEvent)innerList[0]).OrderId).IsEqualTo(orderId);
+  }
+
   [Test]
   public async Task RegisterDerivedType_WithEventType_AddsToRegistryAsync() {
     // Act

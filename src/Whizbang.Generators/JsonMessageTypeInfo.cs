@@ -10,6 +10,7 @@ namespace Whizbang.Generators;
 /// <param name="IsCommand">True if type implements ICommand</param>
 /// <param name="IsEvent">True if type implements IEvent</param>
 /// <param name="IsSerializable">True if type is marked with [WhizbangSerializable] attribute</param>
+/// <param name="IsComposite">True if type implements ICompositeEvent (wire-only; registered as IMessage but NOT IEvent, so it is never persisted)</param>
 /// <param name="Properties">Array of property information (name and fully qualified type)</param>
 /// <param name="HasParameterizedConstructor">True if type has a public parameterized constructor matching properties</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
@@ -20,6 +21,7 @@ internal sealed record JsonMessageTypeInfo(
     bool IsCommand,
     bool IsEvent,
     bool IsSerializable,
+    bool IsComposite,
     PropertyInfo[] Properties,
     bool HasParameterizedConstructor
 ) {
