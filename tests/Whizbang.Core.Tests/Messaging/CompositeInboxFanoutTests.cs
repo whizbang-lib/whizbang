@@ -94,6 +94,29 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
+  public async Task TryExpand_ChildrenCarryCompositeLineage_CausationIsCompositeMessageIdAsync() {
+    // Each child's creation hop must point back to the parent composite so "these events came from
+    // composite X" is queryable off the event-store rows (Hops[0].CausationId / CausationType).
+    var composite = new _testComposite(new _innerEvent("J-1"), new _innerEvent("J-2"));
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    foreach (var child in result.Children) {
+      var hop0 = child.Metadata!.Hops[0];
+      await Assert.That(hop0.CausationId).IsEqualTo(source.MessageId)
+        .Because("the child's creation hop is caused by the composite — CausationId is the composite's MessageId.");
+      await Assert.That(hop0.CausationType).IsEqualTo(nameof(_testComposite))
+        .Because("CausationType records that the cause was this composite type.");
+    }
+    // All children of one composite share the same causation → groupable as one batch.
+    await Assert.That(result.Children[0].Metadata!.Hops[0].CausationId)
+      .IsEqualTo(result.Children[1].Metadata!.Hops[0].CausationId);
+  }
+
+  [Test]
   public async Task TryExpand_ChildrenCarryNoRebroadcastFlagAsync() {
     var composite = new _testComposite(new _innerEvent("J-1"), new _innerEvent("J-2"));
     var source = _sourceEnvelope(Guid.NewGuid());

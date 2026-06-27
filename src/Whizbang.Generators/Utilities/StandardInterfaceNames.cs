@@ -20,6 +20,13 @@ internal static class StandardInterfaceNames {
   public const string I_EVENT = "global::Whizbang.Core.IEvent";
   public const string I_MESSAGE = "global::Whizbang.Core.IMessage";
 
+  /// <summary>
+  /// Composite event marker — IMessage-not-IEvent. Carries [StreamId] (via CompositeEventBase) so its
+  /// fanned-out inner events inherit the composite's stream. Resolved through the object-typed
+  /// TryResolveAsGuid path (TRY_RESOLVE_OTHER_DISPATCH), since it is not an IEvent/ICommand.
+  /// </summary>
+  public const string I_COMPOSITE_EVENT = "global::Whizbang.Core.Messaging.ICompositeEvent";
+
   // Dispatcher interface — used by MessageRegistryGenerator to filter SendAsync /
   // PublishAsync invocations to genuine dispatcher calls. Without this filter the
   // generator picks up identically-named methods on unrelated types (e.g. Rocks-

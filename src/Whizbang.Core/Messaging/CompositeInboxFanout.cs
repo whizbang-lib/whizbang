@@ -83,6 +83,11 @@ public static class CompositeInboxFanout {
     var inners = replacementInner ?? composite.InnerEvents;
     var atomic = composite.Atomicity == FanoutAtomicity.Atomic;
     var max = composite.MaxInnerEventsAllowed;
+    // Shared composite-lineage hop chain for every child: a creation hop pointing back to the composite
+    // (CausationId = composite MessageId, CausationType = composite type) so "these events came from
+    // composite X" is queryable, followed by the composite's own journey. Built once and shared by
+    // reference across all children — same causation for the whole batch, no per-child allocation.
+    var childHops = _buildLineageHops(composite, source);
     var children = new List<InboxMessage>();
     var count = 0;
 
@@ -106,7 +111,7 @@ public static class CompositeInboxFanout {
         continue; // Independent: drop the bad child, keep the batch.
       }
       try {
-        children.Add(_buildChildInbox(inner, source, serializer, eventTypeProvider));
+        children.Add(_buildChildInbox(inner, source, childHops, serializer, eventTypeProvider));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         if (atomic) {
           return new FanoutResult(
@@ -130,6 +135,7 @@ public static class CompositeInboxFanout {
   private static InboxMessage _buildChildInbox(
       IMessage inner,
       IMessageEnvelope source,
+      List<MessageHop> childHops,
       IEnvelopeSerializer serializer,
       IEventTypeProvider? eventTypeProvider) {
     var childEnvelope = new MessageEnvelope<IMessage> {
@@ -137,9 +143,9 @@ public static class CompositeInboxFanout {
       DispatchContext = source.DispatchContext,
       MessageId = MessageId.New(),
       Payload = inner,
-      // Hops shared by reference — composites are received and audited together. Source identity
-      // flows so the receiver's per-source cursor logic is uniform across fan-out and ordinary delivery.
-      Hops = source.Hops ?? [],
+      // Composite-lineage hop chain (shared by reference across the batch): the creation hop traces
+      // each child back to the parent composite; the composite's own journey follows for audit.
+      Hops = childHops,
       SourceServiceId = source.SourceServiceId,
       SourceCommitSequence = source.SourceCommitSequence,
       CausedByServiceId = source.CausedByServiceId,
@@ -186,6 +192,33 @@ public static class CompositeInboxFanout {
       SourceServiceId = source.SourceServiceId,
       SourceCommitSequence = source.SourceCommitSequence,
     };
+  }
+
+  /// <summary>
+  /// Builds the hop chain every fan-out child shares: a fresh creation hop whose <c>CausationId</c> is
+  /// the composite's MessageId and <c>CausationType</c> is the composite type name (so all children of
+  /// one composite group under, and trace back to, that composite), carrying the composite's
+  /// correlation and stream metadata; the composite's own hops follow as journey/audit history.
+  /// </summary>
+  private static List<MessageHop> _buildLineageHops(ICompositeEvent composite, IMessageEnvelope source) {
+    var sourceFirstHop = source.Hops?.FirstOrDefault();
+    var lineageHop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = sourceFirstHop?.ServiceInstance ?? ServiceInstanceInfo.Unknown,
+      Timestamp = DateTimeOffset.UtcNow,
+      CausationId = source.MessageId,
+      CausationType = composite.GetType().Name,
+      CorrelationId = source.GetCorrelationId() ?? CorrelationId.New(),
+      // Carry the composite's stream metadata (AggregateId) + scope so the child's hop chain is
+      // self-consistent for stream resolution and security extraction.
+      Metadata = sourceFirstHop?.Metadata,
+      Scope = sourceFirstHop?.Scope,
+    };
+    var hops = new List<MessageHop>(1 + (source.Hops?.Count ?? 0)) { lineageHop };
+    if (source.Hops is { Count: > 0 }) {
+      hops.AddRange(source.Hops);
+    }
+    return hops;
   }
 
   /// <summary>
