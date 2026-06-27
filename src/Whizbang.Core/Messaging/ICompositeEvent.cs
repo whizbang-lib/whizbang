@@ -3,13 +3,13 @@ using System.Collections.Generic;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Marker for an event that fans out into multiple inner events at the
-/// receiver. A composite is a wire-only optimization: producers emit a
-/// single envelope carrying N inner messages; the receiver expands it
-/// before invoking receptors and writing the event store. Composite types
-/// are NEVER recorded in the event store — only the expanded inner events
-/// are persisted, so replay reads inner events back as-if no composite
-/// existed.
+/// Marker for an event that fans out into multiple inner events at the receiver. A composite is a
+/// wire-only optimization: producers emit a single envelope carrying N inner messages; the receiver
+/// fans it out at the <strong>dispatch seam</strong> — as an ordinary inbox row, inside the durable
+/// retry/DLQ envelope — into per-inner-event inbox rows. Composite types are NEVER recorded in the
+/// event store — only the expanded inner events are persisted, so replay reads inner events back as-if
+/// no composite existed. See <c>docs/fundamentals/messaging/composite-events.md</c> for the full
+/// lifecycle, the pre-fanout hook, fan-out control, and the no-rebroadcast invariant.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,11 +31,11 @@ namespace Whizbang.Core.Messaging;
 /// Resolved design decisions (W3 notes, 2026-06-09):
 /// </para>
 /// <list type="bullet">
-///   <item><description><strong>Failure atomicity:</strong> all-or-nothing. If any inner event fails during receiver expansion or event-store append, the whole composite rolls back. Per-inner retry is future work.</description></item>
+///   <item><description><strong>Failure atomicity:</strong> configurable via <see cref="Atomicity"/> — <c>Independent</c> (default; a bad child is dropped, the rest fan out) or <c>Atomic</c> (any child failure dead-letters the whole composite). A cap breach always dead-letters the whole composite.</description></item>
 ///   <item><description><strong>Inner-event StreamId:</strong> all inner events inherit the composite's StreamId. Producers needing per-inner StreamIds emit separate envelopes (no composite).</description></item>
 ///   <item><description><strong>Ordering:</strong> inner events are processed in producer-yielded order (the order <see cref="InnerEvents"/> enumerates them). Matches single-row outbox storage semantics.</description></item>
 ///   <item><description><strong>Event-store replay:</strong> composite envelopes NEVER reach the replay path — only expanded inner events. Producers can stop emitting a composite type at any time without affecting historical replay.</description></item>
-///   <item><description><strong>Lifecycle hooks:</strong> PreInbox / PostInbox / etc. fire per-inner-event, consistent with "composite is wire-only" — the lifecycle never sees the composite.</description></item>
+///   <item><description><strong>Dispatchable + hookable:</strong> the composite is a real message at the surface — a pre-fanout <c>IReceptor&lt;TComposite&gt;</c> fires before fan-out (its inline emissions commit atomically with the children). After fan-out, the per-inner-event lifecycle runs normally; downstream sees only children.</description></item>
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events</docs>

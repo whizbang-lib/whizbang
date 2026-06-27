@@ -1,6 +1,6 @@
 # Composite Events
 
-**Status**: Phase A implemented — dispatch-time fan-out (v0.758+)
+**Status**: Implemented — dispatch-time fan-out, pre-fanout hook, fan-out control, no-rebroadcast guard (v0.758+)
 **Namespace**: `Whizbang.Core.Messaging`
 **Design / plan**: [`plans/composite-events-turnkey.md`](../../../plans/composite-events-turnkey.md)
 
