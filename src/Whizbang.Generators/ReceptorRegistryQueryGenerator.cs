@@ -310,9 +310,14 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
         anyConsumerTypes.Add(taggedType);
       }
     }
+    // Composites are BOTH any-consumers (so the drop-gate keeps them alive to fan out) AND tracked in a
+    // dedicated set (so the receive boundary can recognize an owned composite and exempt it from echo-
+    // discard — it must reach the dispatch seam at every destination, including its own service).
+    var compositeTypeSet = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
     foreach (var compositeType in compositeTypes) {
       if (compositeType is not null) {
         anyConsumerTypes.Add(compositeType);
+        compositeTypeSet.Add(compositeType);
       }
     }
 
@@ -368,6 +373,11 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     sb.AppendLine("      },");
     sb.AppendLine("      InboxHandlerTypes = new string[] {");
     foreach (var type in inboxHandlerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
+      sb.AppendLine($"        \"{type}\",");
+    }
+    sb.AppendLine("      },");
+    sb.AppendLine("      CompositeTypes = new string[] {");
+    foreach (var type in compositeTypeSet.OrderBy(s => s, System.StringComparer.Ordinal)) {
       sb.AppendLine($"        \"{type}\",");
     }
     sb.AppendLine("      },");

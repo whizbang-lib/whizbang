@@ -235,6 +235,37 @@ public record BulkImportComposite : ICompositeEvent {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_WithCompositeEvent_RegistersInCompositeTypesAsync() {
+    // The composite must also land in the dedicated CompositeTypes set (not just AnyConsumerTypes), so the
+    // receive boundary can recognize it and exempt it from echo-discard — it has no publish-time event
+    // store and must survive the self-loop to fan out. A plain event in the same compilation must NOT.
+    const string source = @"
+using System.Collections.Generic;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp;
+
+public record InnerCreated : IEvent { public string Id { get; init; } = string.Empty; }
+
+public record BulkImportComposite : ICompositeEvent {
+  public IEnumerable<IMessage> InnerEvents => new IMessage[0];
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var compositeRegion = _extractRegion(generated!, "CompositeTypes");
+    await Assert.That(compositeRegion).Contains("MyApp.BulkImportComposite")
+      .Because("Concrete composites must register in CompositeTypes so the echo-gate exempts them.");
+    await Assert.That(compositeRegion).DoesNotContain("MyApp.InnerCreated")
+      .Because("A plain event is not a composite — exempting it from echo-discard would resurrect owned-event echoes.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_AbstractCompositeBase_NotRegisteredAsConsumerAsync() {
     // The abstract CompositeEventBase is never dispatched — only concrete derived composites are.
     // It must be skipped so it doesn't pollute AnyConsumerTypes with a type that can never arrive.
