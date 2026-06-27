@@ -3019,6 +3019,15 @@ public abstract partial class Dispatcher(
       // ensures FIFO order: the original event enters the outbox before any cascaded events
       // produced by the receptor.
       var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
+
+      // Owned composite: fan out locally so the publishing service persists the inner events. The
+      // composite itself is never event-stored (IMessage-not-IEvent) and is echo-suppressed on
+      // self-receive, so without this the local event store never sees the children. The composite
+      // still outboxes above for cross-service delivery.
+      if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
+        await _fanOutOwnedCompositeLocallyAsync(eventData!, eventType, messageId);
+      }
+
       try {
         await publisher(eventData);
       } catch {
@@ -3097,6 +3106,12 @@ public abstract partial class Dispatcher(
       // options.ScheduledFor flows through to the outbox row's scheduled_for column so
       // wh_outbox's pickup query (mig 040) gates publication until the time elapses.
       var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, scheduledFor: options.ScheduledFor);
+
+      // Owned composite: fan out locally so the publishing service persists the inner events (see the
+      // other PublishAsync overload for rationale).
+      if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
+        await _fanOutOwnedCompositeLocallyAsync(eventData!, eventType, messageId);
+      }
 
       // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
       // the outbox-pickup query. Without this branch the local receptor fires inline despite the
@@ -3514,6 +3529,51 @@ public abstract partial class Dispatcher(
   /// Creates a MessageEnvelope with hop metadata for outbox publishing.
   /// Includes scope propagation from ambient context or source envelope.
   /// </summary>
+  /// <summary>
+  /// Producer-side local fan-out for an owned composite. A composite is <c>IMessage</c>-not-<c>IEvent</c>,
+  /// so it gets no local event-store append on publish, and it is echo-suppressed when it self-loops back
+  /// to the publishing service's inbox — so without this, a service that publishes a composite in its own
+  /// domain would never persist the inner events locally. This expands the composite into child inbox rows
+  /// (carrying composite lineage + <c>NoRebroadcast</c>) and stores them on the local inbox, so the
+  /// children flow through the normal claim → event-store → perspective pipeline exactly as if received.
+  /// The composite is still outboxed by the caller for cross-service delivery (where the receiver fans it
+  /// out); the self-looped copy at this service is echo-suppressed, so there is no double fan-out.
+  /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#producer-side-fanout</docs>
+  private async Task _fanOutOwnedCompositeLocallyAsync(object composite, Type compositeType, MessageId messageId) {
+    if (composite is not ICompositeEvent comp) {
+      return;
+    }
+    var scope = _scopeFactory.CreateScope();
+    try {
+      var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (coordinator is null) {
+        return; // No coordinator (e.g. in-memory unit tests) — nothing to persist locally.
+      }
+      // Source envelope carrying the composite's MessageId + AggregateId hop so children route to the
+      // composite's stream and inherit composite lineage (CausationId = the composite's MessageId).
+      var sourceEnvelope = _createOutboxEnvelopeWithHop(comp, compositeType, messageId, sourceEnvelope: null, destination: null);
+      var result = CompositeInboxFanout.TryExpand(comp, sourceEnvelope, scope.ServiceProvider);
+      if (result.Outcome != CompositeInboxFanout.FanoutOutcome.Expanded) {
+        throw new InvalidOperationException(
+          $"Local fan-out of composite '{compositeType.Name}' failed ({result.Outcome}): {result.Detail ?? "(none)"}");
+      }
+      if (result.Children.Count == 0) {
+        return;
+      }
+      var partitionCount = scope.ServiceProvider
+          .GetService<Microsoft.Extensions.Options.IOptions<Workers.ClaimWorkerOptions>>()?.Value?.PartitionCount
+        ?? new Workers.ClaimWorkerOptions().PartitionCount;
+      await coordinator.StoreInboxMessagesAsync([.. result.Children], partitionCount).ConfigureAwait(false);
+    } finally {
+      if (scope is IAsyncDisposable asyncDisposable) {
+        await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+      } else {
+        scope.Dispose();
+      }
+    }
+  }
+
   private MessageEnvelope<TEvent> _createOutboxEnvelopeWithHop<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope, string? destination) {
     var envelope = new MessageEnvelope<TEvent> {
       MessageId = messageId,
