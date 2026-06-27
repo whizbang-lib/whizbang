@@ -378,6 +378,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // payload — lifecycle invocation then no-ops as before.
       var typedEnvelope = _resolveTypedEnvelope(work);
 
+      // Composite fan-out (plans/composite-events-turnkey.md, Phase A): a composite arrives as an
+      // ordinary inbox row. At the dispatch seam — inside the retry/DLQ envelope — it expands into N
+      // child inbox rows, committed atomically with the composite row's deletion (EventStored bit ⇒
+      // process_inbox_completions DELETEs it). The composite is never event-stored, only its children.
+      // Returning early skips the composite's own lifecycle stages — those fire per-child instead.
+      if (typedEnvelope?.Payload is ICompositeEvent composite) {
+        await _fanoutCompositeAsync(work, composite, scope.ServiceProvider, ct);
+        return;
+      }
+
       await InvokeInboxLifecycleStageAsync(
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
         "PreInbox", ct, detachedCancellationToken: stoppingToken);
@@ -432,7 +442,57 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
   }
 
-  private HandlerCommitRequest _buildCommitRequest(InboxWork work, int status)
+  /// <summary>
+  /// Fans a composite inbox row out into N child inbox rows at the dispatch seam. On success, a single
+  /// <see cref="HandlerCommitRequest"/> carries the children and marks the composite row
+  /// <see cref="MessageProcessingStatus.EventStored"/> so <c>process_inbox_completions</c> stores the
+  /// children and DELETEs the composite atomically. On cap-exceeded / expansion failure, the composite
+  /// row is dead-lettered via the same path as max-attempts (forensic snapshot + SQL delete), or — when
+  /// no <see cref="IDeadLetterStore"/> is wired — terminated via the legacy mark-Published completion.
+  /// </summary>
+  private async Task _fanoutCompositeAsync(
+      InboxWork work, ICompositeEvent composite, IServiceProvider scopeProvider, CancellationToken ct) {
+    var result = CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider);
+    if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
+      var commitRequest = _buildCommitRequest(
+        work, status: (int)MessageProcessingStatus.EventStored, newInboxMessages: result.Children);
+      await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
+      return;
+    }
+
+    // CapExceeded / Failed: the composite is an inbox row that failed → dead-letter it (Phase 3 free).
+    var reason = result.Outcome == CompositeInboxFanout.FanoutOutcome.CapExceeded
+      ? Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded
+      : Whizbang.Core.Messaging.MessageFailureReason.CompositeExpansionFailure;
+    LogCompositeFanoutFailed(_logger, work.MessageId, reason.ToString(), result.Detail ?? "(none)");
+
+    if (_deadLetterStore is not null && _generationProvider is not null) {
+      try {
+        await _deadLetterStore.MoveAsync(
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+          sourceTable: DeadLetterSourceTable.INBOX,
+          sourceId: work.MessageId,
+          failureReason: reason,
+          errorText: result.Detail,
+          instanceId: _instanceProvider.InstanceId,
+          generation: _generationProvider.GetGeneration(),
+          ct: ct).ConfigureAwait(false);
+        _dlqMetrics?.Added.Add(1,
+          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>("reason", reason.ToString()));
+        return;
+      } catch (Exception ex) {
+        // DLQ move is best-effort — fall back to the legacy terminal completion so the row never
+        // re-claims. Mirrors the max-attempts branch.
+        LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
+      }
+    }
+    var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
+    await _handlerCommitChannel.EnqueueAsync(terminalRequest, ct);
+  }
+
+  private HandlerCommitRequest _buildCommitRequest(
+      InboxWork work, int status, IReadOnlyList<InboxMessage>? newInboxMessages = null)
     => new(
       HandlerId: work.MessageId,
       InstanceId: _instanceProvider.InstanceId,
@@ -442,7 +502,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       PartitionCount: _options.PartitionCount,
       InboxCompletion: new HandlerInboxCompletion(work.MessageId, status),
       NewOutboxMessages: null,
-      NewInboxMessages: null,
+      NewInboxMessages: newInboxMessages,
       DebugMode: _coordinatorOptions.DebugMode);
 
   // ============================================================
@@ -647,6 +707,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  [LoggerMessage(EventId = 26, Level = LogLevel.Warning, Message = "InboxDispatchWorker composite fan-out failed for message {MessageId}: {Reason} — {Detail}; dead-lettering composite row")]
+  static partial void LogCompositeFanoutFailed(ILogger logger, Guid messageId, string reason, string detail);
 
   // Dispatch-checkpoint diagnostics for the "inbox rows never advance past
   // status=Stored with zero exception logs" failure class. At Debug so

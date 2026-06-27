@@ -89,9 +89,147 @@ public class InboxDispatchWorkerTests {
     };
   }
 
+  // Returns a fixed composite from DeserializeFromJsonElement so _resolveTypedEnvelope yields a
+  // typed ICompositeEvent payload at the dispatch seam.
+  private sealed class FakeCompositeDeserializer(ICompositeEvent composite) : ILifecycleMessageDeserializer {
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => composite;
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => composite;
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => composite;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => composite;
+  }
+
+  // Minimal serializer: records the inner payload's runtime AQN. Real JSON is covered elsewhere.
+  private sealed class FakeEnvelopeSerializer : IEnvelopeSerializer {
+    public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
+      var aqn = envelope.Payload!.GetType().AssemblyQualifiedName!;
+      var jsonEnv = new MessageEnvelope<JsonElement> {
+        DispatchContext = envelope.DispatchContext,
+        MessageId = envelope.MessageId,
+        Payload = JsonDocument.Parse("{}").RootElement,
+        Hops = envelope.Hops?.ToList() ?? [],
+      };
+      return new SerializedEnvelope(jsonEnv, $"Whizbang.Core.Observability.MessageEnvelope`1[[{aqn}]], Whizbang.Core", aqn);
+    }
+    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) =>
+      throw new NotSupportedException();
+  }
+
+  private sealed record _innerImportEvent(string Id) : IEvent;
+
+  private sealed class _bulkComposite(params _innerImportEvent[] inner) : ICompositeEvent {
+    public int MaxInnerEventsAllowed => 10_000;
+    public IEnumerable<IMessage> InnerEvents => inner;
+  }
+
   // ============================================================
   // Tests
   // ============================================================
+
+  [Test]
+  public async Task CompositeMessage_FansOutToChildInboxRowsAndDeletesCompositeAsync() {
+    // A composite inbox row must fan out at the dispatch seam: the commit request carries one child
+    // inbox message per inner event, and the composite row is marked EventStored (bit 2) so
+    // process_inbox_completions DELETEs it. The composite itself is never persisted.
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var composite = new _bulkComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"), new _innerImportEvent("J-3"));
+    var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 7 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork();
+    await inbox.WriteAsync(work, cts.Token);
+
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(routed.InboxCompletion.MessageId).IsEqualTo(work.MessageId);
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)MessageProcessingStatus.EventStored)
+      .Because("EventStored (bit 2) drives process_inbox_completions to DELETE the composite row in the same tx that stores the children.");
+    await Assert.That(routed.NewInboxMessages).IsNotNull();
+    await Assert.That(routed.NewInboxMessages!.Count).IsEqualTo(3)
+      .Because("One child inbox message per inner event.");
+    await Assert.That(routed.NewInboxMessages!.All(m => m.MessageType.Contains("_innerImportEvent", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(failure.All).IsEmpty();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  private sealed class FakeDeadLetterStore : IDeadLetterStore {
+    public TaskCompletionSource<(Guid sourceId, MessageFailureReason reason)> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
+        MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation, CancellationToken ct = default) {
+      First.TrySetResult((sourceId, failureReason));
+      return Task.FromResult<Guid?>(deadLetterId);
+    }
+  }
+
+  private sealed class FakeGenerationProvider : IGenerationProvider {
+    public string GetGeneration() => "test-generation";
+  }
+
+  private sealed class _overCapComposite(int count) : ICompositeEvent {
+    public int MaxInnerEventsAllowed => 1;
+    public IEnumerable<IMessage> InnerEvents => Enumerable.Range(0, count).Select(i => (IMessage)new _innerImportEvent($"J-{i}"));
+  }
+
+  [Test]
+  public async Task CompositeOverCap_DeadLettersCompositeRowAsync() {
+    // A composite that yields more inner events than its cap must NOT partially fan out — it is an
+    // inbox row that failed, so it dead-letters via the existing MoveAsync(wh_inbox) path (Phase 3 free).
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var dlq = new FakeDeadLetterStore();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var composite = new _overCapComposite(5); // cap = 1
+    var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
+      deadLetterStore: dlq,
+      generationProvider: new FakeGenerationProvider());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork();
+    await inbox.WriteAsync(work, cts.Token);
+
+    var (sourceId, reason) = await dlq.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(sourceId).IsEqualTo(work.MessageId);
+    await Assert.That(reason).IsEqualTo(MessageFailureReason.CompositeInnerEventLimitExceeded);
+    // No children committed — cap breach is all-or-nothing.
+    await Assert.That(handlerCommit.All.Any(r => r.NewInboxMessages is { Count: > 0 })).IsFalse();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
 
   [Test]
   public async Task HappyPath_RoutesEventStoredCompletionToHandlerCommitChannelAsync() {

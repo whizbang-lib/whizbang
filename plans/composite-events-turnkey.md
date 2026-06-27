@@ -100,16 +100,24 @@ StreamIds). Defended in depth:
 
 ### REMAINING — the new spine (each phase RED→GREEN, 100% cov, AOT, docs)
 
-- [ ] **Phase A — composite as a dispatchable inbox message; fan-out moves to dispatch.**
-  - Make composite types **dispatchable** (receptor registry + generator includes them).
-  - Transport consumer: **stop expanding** — store the composite as an ordinary inbox row. Remove the
-    `EventFlags.Composite` branch + `_tryExpandCompositeToInboxMessages` from `TransportConsumerWorker`.
-  - Dispatch seam (work-batch processor): recognize `ICompositeEvent`, **auto-fan-out** into child
-    inbox rows (reusing `CompositeEventExpander` mechanics), atomic insert + delete-composite in the
-    dispatch tx.
-  - RED→GREEN: composite over (test) transport → becomes inbox row → fanned out at dispatch → children
-    processed; fan-out failure → inbox retry → **DLQ via existing `MoveAsync(wh_inbox)`** (this is
-    Phase 3, now free — assert a `wh_dead_letters` row, no new infra).
+- [x] **Phase A — composite as a dispatchable inbox message; fan-out moves to dispatch. DONE.**
+  - Increment 1 — `ReceptorRegistryQueryGenerator` now discovers concrete `ICompositeEvent` types and
+    unions them into `AnyConsumerTypes`, so the receive-boundary drop-gate keeps composites alive to
+    the dispatch seam. Tests: `ReceptorRegistryQueryGeneratorTests.Generator_WithCompositeEvent_*` /
+    `_AbstractCompositeBase_NotRegistered*`. Generator suite 1221/0.
+  - Increment 2 — `CompositeInboxFanout.TryExpand` (new, AOT-clean: builds `MessageEnvelope<IMessage>`
+    children + `SerializeEnvelope<IMessage>` runtime-typed; **zero reflection** vs the legacy expander's
+    `Activator.CreateInstance` + `MakeGenericMethod`). Wired into `InboxDispatchWorker.ProcessOneInnerAsync`
+    after `_resolveTypedEnvelope`: a typed `ICompositeEvent` payload fans out into child inbox rows via
+    one `HandlerCommitRequest { NewInboxMessages = children, InboxCompletion.Status = EventStored }` —
+    `process_inbox_completions` stores the children and DELETEs the composite atomically. Cap-exceeded /
+    expansion failure → `_deadLetterStore.MoveAsync(wh_inbox, …)` (Phase 3, free). Tests:
+    `CompositeInboxFanoutTests` (7), `InboxDispatchWorkerTests.CompositeMessage_FansOut*` +
+    `CompositeOverCap_DeadLetters*`.
+  - Increment 3 — removed the transport-edge expansion (`EventFlags.Composite` branch +
+    `_tryExpandCompositeToInboxMessages` + the now-dead `eventCategoryMetrics` ctor param) from
+    `TransportConsumerWorker`; composites are stored as a single ordinary inbox row. Test:
+    `TransportConsumerWorkerCompositeNoExpandTests`.
 - [ ] **Phase B — pre-fanout hook + post-fanout children.**
   - `IReceptor<TComposite>` fires pre-fanout, in the dispatch tx, before any child exists.
   - Children dispatch normally post-fanout. Lock the ordering (pre → fanout → commit → children) and

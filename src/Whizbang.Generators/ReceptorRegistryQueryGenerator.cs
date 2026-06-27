@@ -35,6 +35,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private const string ISYNCRECEPTOR_PREFIX = "global::Whizbang.Core.ISyncReceptor";
   private const string IPERSPECTIVE_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string IPERSPECTIVE_WITH_ACTIONS_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
+  private const string ICOMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICompositeEvent";
   private const string FIREAT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
   private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
@@ -67,15 +68,27 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractTaggedMessageEntry(ctx, ct)
     ).Where(static name => name is not null);
 
+    // Composite events are consumed by the dispatch-time fan-out seam (no receptor / perspective /
+    // tag needed). They must register as consumers so the receive-boundary drop-gate keeps them
+    // alive long enough to fan out. See plans/composite-events-turnkey.md, Phase A.
+    var compositeTypes = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) =>
+          node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 }
+          || node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => _extractCompositeEntry(ctx, ct)
+    ).Where(static name => name is not null);
+
     var combined = receptors.Collect()
       .Combine(perspectives.Collect())
-      .Combine(taggedTypes.Collect());
+      .Combine(taggedTypes.Collect())
+      .Combine(compositeTypes.Collect());
 
     context.RegisterSourceOutput(combined, static (ctx, data) => {
-      var receptorEntries = data.Left.Left;
-      var perspectiveEntries = data.Left.Right;
-      var taggedEntries = data.Right;
-      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries);
+      var receptorEntries = data.Left.Left.Left;
+      var perspectiveEntries = data.Left.Left.Right;
+      var taggedEntries = data.Left.Right;
+      var compositeEntries = data.Right;
+      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries);
     });
   }
 
@@ -209,6 +222,30 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     return symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "");
   }
 
+  // ===== Discovery: composite events =====
+
+  /// <summary>
+  /// Type names of concrete (non-abstract) message types implementing <c>ICompositeEvent</c>.
+  /// A composite is consumed by the dispatch-time fan-out seam — it has no receptor / perspective /
+  /// tag of its own, so without this it would be dropped at the receive-boundary drop-gate before
+  /// it could fan out. The abstract <c>CompositeEventBase</c> itself is skipped (never dispatched).
+  /// </summary>
+  private static string? _extractCompositeEntry(
+      GeneratorSyntaxContext context,
+      System.Threading.CancellationToken ct) {
+    var typeDecl = context.Node;
+    var symbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) as INamedTypeSymbol;
+    if (symbol is null || symbol.IsAbstract) {
+      return null;
+    }
+    var implementsComposite = symbol.AllInterfaces.Any(i =>
+      i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == ICOMPOSITE_EVENT_INTERFACE);
+    if (!implementsComposite) {
+      return null;
+    }
+    return symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "");
+  }
+
   // ===== Emission =====
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Generator emission walks every (receptor, perspective) pair and renders the routing branches inline; splitting would require building intermediate models for each branch shape, which costs incremental-cache parity.")]
@@ -216,7 +253,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       ImmutableArray<ReceptorRegistryEntry?> receptors,
       ImmutableArray<PerspectiveRegistryEntry[]?> perspectives,
-      ImmutableArray<string?> taggedTypes) {
+      ImmutableArray<string?> taggedTypes,
+      ImmutableArray<string?> compositeTypes) {
 
     // Per-stage type sets (Pre/PostInbox only — those are what the receive boundary gates on)
     var stageTypes = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>>(System.StringComparer.Ordinal);
@@ -270,6 +308,11 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     foreach (var taggedType in taggedTypes) {
       if (taggedType is not null) {
         anyConsumerTypes.Add(taggedType);
+      }
+    }
+    foreach (var compositeType in compositeTypes) {
+      if (compositeType is not null) {
+        anyConsumerTypes.Add(compositeType);
       }
     }
 

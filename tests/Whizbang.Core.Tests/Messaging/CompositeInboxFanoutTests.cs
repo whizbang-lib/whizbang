@@ -1,0 +1,199 @@
+#pragma warning disable CA1707
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Core.Tests.Messaging;
+
+/// <summary>
+/// Locks the dispatch-time fan-out contract (<see cref="CompositeInboxFanout"/>): a composite event
+/// arriving as an inbox row expands into N child inbox messages, each carrying the inner event,
+/// inheriting the composite's identity context, with a fresh MessageId. Cap / expansion failures are
+/// returned (not thrown) so the dispatch worker can dead-letter the composite row. The real JSON
+/// serialization is covered by EnvelopeSerializerTests + JsonContextRegistryTests; here a fake
+/// serializer isolates the fan-out orchestration logic.
+/// </summary>
+/// <docs>fundamentals/messaging/composite-events#dispatch-fanout</docs>
+[Category("Messaging")]
+public class CompositeInboxFanoutTests {
+
+  [Test]
+  public async Task TryExpand_NonComposite_ReturnsNotCompositeAsync() {
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite: null, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.NotComposite);
+    await Assert.That(result.Children).IsEmpty();
+  }
+
+  [Test]
+  public async Task TryExpand_YieldsOneChildInboxMessagePerInnerAsync() {
+    var streamId = Guid.NewGuid();
+    var composite = new _testComposite(new _innerEvent("J-001"), new _innerEvent("J-002"), new _innerEvent("J-003"));
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(3);
+    // Each child's MessageType is the concrete inner event's assembly-qualified name.
+    await Assert.That(result.Children.All(c => c.MessageType.Contains("_innerEvent", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task TryExpand_ChildrenInheritCompositeStreamIdFromHopsAsync() {
+    var streamId = Guid.NewGuid();
+    var composite = new _testComposite(new _innerEvent("X"));
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    var child = result.Children.Single();
+    await Assert.That(child.StreamId).IsEqualTo(streamId)
+      .Because("Inner events inherit the composite's stream — the first hop's AggregateId is the composite StreamId.");
+  }
+
+  [Test]
+  public async Task TryExpand_AssignsFreshDistinctMessageIdsPerChildAsync() {
+    var composite = new _testComposite(new _innerEvent("A"), new _innerEvent("B"));
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Children[0].MessageId).IsNotEqualTo(result.Children[1].MessageId);
+    await Assert.That(result.Children[0].MessageId).IsNotEqualTo(source.MessageId.Value)
+      .Because("Children must not collide with the composite's MessageId or each other — inbox dedup keeps them distinct.");
+  }
+
+  [Test]
+  public async Task TryExpand_ChildrenAreMarkedAsEventsAsync() {
+    var composite = new _testComposite(new _innerEvent("E"));
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Children.Single().IsEvent).IsTrue()
+      .Because("The inner events implement IEvent, so the child inbox rows persist to the event store.");
+  }
+
+  [Test]
+  public async Task TryExpand_OverCap_ReturnsCapExceededAsync() {
+    var inners = Enumerable.Range(0, 11).Select(i => new _innerEvent($"i-{i}")).ToArray();
+    var composite = new _testComposite(inners) { MaxInnerEventsAllowedOverride = 10 };
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.CapExceeded);
+    await Assert.That(result.Children).IsEmpty()
+      .Because("No partial fan-out — a cap breach dead-letters the whole composite.");
+    await Assert.That(result.CompositeTypeName).IsNotNull();
+  }
+
+  [Test]
+  public async Task TryExpand_NullInner_ReturnsFailedAsync() {
+    var composite = new _nullYieldingComposite();
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Children).IsEmpty();
+  }
+
+  // ============================================================
+  // Fakes + helpers
+  // ============================================================
+
+  private static ServiceProvider _provider() =>
+    new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new _fakeSerializer())
+      .BuildServiceProvider();
+
+  /// <summary>
+  /// A source inbox envelope whose first hop carries the composite's StreamId as AggregateId — the
+  /// shape <c>_extractStreamId</c> reads to inherit the stream onto each child.
+  /// </summary>
+  private static MessageEnvelope<JsonElement> _sourceEnvelope(Guid streamId) {
+    var aggregateMeta = new Dictionary<string, JsonElement> {
+      ["AggregateId"] = JsonSerializer.SerializeToElement(streamId.ToString()),
+    };
+    return new MessageEnvelope<JsonElement> {
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      MessageId = MessageId.New(),
+      Payload = JsonSerializer.SerializeToElement(new { }),
+      Hops = [new MessageHop {
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+        Metadata = aggregateMeta,
+      }],
+      SourceServiceId = Guid.Parse("00000000-0000-0000-0000-000000000001"),
+      SourceCommitSequence = 42,
+    };
+  }
+
+  /// <summary>
+  /// Minimal serializer: records the payload's runtime AQN as MessageType and produces a JsonElement
+  /// envelope. The real serializer is tested elsewhere — this isolates fan-out orchestration.
+  /// </summary>
+  private sealed class _fakeSerializer : IEnvelopeSerializer {
+    public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
+      var payloadType = envelope.Payload!.GetType();
+      var aqn = payloadType.AssemblyQualifiedName!;
+      var jsonEnv = new MessageEnvelope<JsonElement> {
+        DispatchContext = envelope.DispatchContext,
+        MessageId = envelope.MessageId,
+        Payload = JsonSerializer.SerializeToElement(new { }),
+        Hops = envelope.Hops?.ToList() ?? [],
+      };
+      return new SerializedEnvelope(
+        JsonEnvelope: jsonEnv,
+        EnvelopeType: $"Whizbang.Core.Observability.MessageEnvelope`1[[{aqn}]], Whizbang.Core",
+        MessageType: aqn);
+    }
+
+    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) =>
+      throw new NotSupportedException();
+  }
+
+  private sealed record _innerEvent(string Id) : IEvent;
+
+  private sealed class _nullYieldingComposite : ICompositeEvent {
+    public int MaxInnerEventsAllowed => 10;
+    public IEnumerable<IMessage> InnerEvents {
+      get {
+        yield return null!;
+      }
+    }
+  }
+
+  private sealed class _testComposite : ICompositeEvent {
+    public _testComposite(params _innerEvent[] inner) {
+      _inner = inner;
+    }
+    private readonly _innerEvent[] _inner;
+    public int? MaxInnerEventsAllowedOverride { get; init; }
+    public int MaxInnerEventsAllowed => MaxInnerEventsAllowedOverride ?? 10_000;
+    public IEnumerable<IMessage> InnerEvents => _inner;
+  }
+}
