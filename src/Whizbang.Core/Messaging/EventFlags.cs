@@ -52,5 +52,14 @@ public enum EventFlags {
   /// </summary>
   Composite = 1 << 1,
 
+  /// <summary>
+  /// Per-instance marker on a fan-out child: this message is confined to the inbox → event-store →
+  /// local-processing path and MUST NOT be re-broadcast. Composite fan-out stamps every child with this
+  /// flag; the outbox-enqueue boundary hard-checks it and drops any flagged message, turning "children
+  /// never outbox" into an enforced invariant on top of hop-based echo suppression (defense-in-depth).
+  /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#no-rebroadcast</docs>
+  NoRebroadcast = 1 << 2,
+
   // Future flags add new values here without requiring schema migrations.
 }

@@ -133,10 +133,16 @@ public sealed class OrderBulkImportComposite : CompositeEventBase {
 > inbox → event-store → local-processing path. Children never outbox.
 
 Correct by construction — fan-out writes children to the **inbox/received** path, never `PublishAsync`;
-the composite was already delivered to every subscriber of its topic. In Phase A the active defense is
-**hop-based echo suppression**: children inherit the composite's `Hops` by reference, so the owned-echo
-suppressor treats them as received-from-upstream and won't re-publish them. (Phase D adds an explicit
-`EventFlags` guard at the outbox-enqueue boundary as defense-in-depth.)
+the composite was already delivered to every subscriber of its topic. Defended in depth:
+
+1. **Hop-based echo suppression (primary).** Children inherit the composite's `Hops` by reference, so
+   the owned-echo suppressor treats them as received-from-upstream and won't re-publish them. This
+   covers the persisted-and-re-claimed child too.
+2. **`EventFlags.NoRebroadcast` guard (explicit).** Fan-out stamps every child — both its persisted
+   `InboxMessage.Flags` and its in-memory envelope `Flags` — with `NoRebroadcast`. The outbox-enqueue
+   boundary (`Dispatcher.PublishToOutboxAsync` / `PublishToOutboxDynamicAsync`, via
+   `NoRebroadcastGuard.ShouldSuppress`) hard-drops any publish whose source envelope carries the flag.
+   Even a receptor that explicitly re-publishes a fan-out child it is processing is stopped at the gate.
 
 ## Code ↔ tests
 
@@ -148,8 +154,5 @@ suppressor treats them as received-from-upstream and won't re-publish them. (Pha
 | Dispatch-time fan-out | `CompositeInboxFanout`, `InboxDispatchWorker` | `Messaging/CompositeInboxFanoutTests.cs`, `Workers/InboxDispatchWorkerTests.cs` (`CompositeMessage_FansOut*`, `CompositeOverCap_DeadLetters*`) |
 | Pre-fanout hook (atomic emit) | `DispatchOutboxCollector`, `InboxDispatchWorker._invokePreFanoutHookAsync`, `Dispatcher` outbox seam | `Messaging/DispatchOutboxCollectorTests.cs`, `Workers/InboxDispatchWorkerTests.cs` (`CompositeWithPreFanoutReceptor_*`) |
 | Fan-out control | `FanoutMode`/`FanoutAtomicity`/`FanoutDirective`, `DispatchFanoutControl`, `CompositeInboxFanout`, `InboxDispatchWorker` | `Messaging/DispatchFanoutControlTests.cs`, `Messaging/CompositeInboxFanoutTests.cs` (atomicity + replacement), `Workers/InboxDispatchWorkerTests.cs` (`CompositeDirective_*`, `CompositeFanoutMode_Manual_*`) |
+| No-rebroadcast guard | `EventFlags.NoRebroadcast`, `IMessageEnvelope.Flags`, `NoRebroadcastGuard`, `CompositeInboxFanout` stamp, `Dispatcher` outbox seam | `Messaging/NoRebroadcastGuardTests.cs`, `Messaging/CompositeInboxFanoutTests.cs` (`TryExpand_ChildrenCarryNoRebroadcastFlag`), `Dispatcher/DispatcherNoRebroadcastGuardTests.cs` |
 | No transport-edge expansion | `TransportConsumerWorker` | `Workers/TransportConsumerWorkerCompositeNoExpandTests.cs` |
-
-## Upcoming (see the plan)
-
-- **Phase D** — explicit `EventFlags.NoRebroadcast` guard enforced at the outbox-enqueue boundary.

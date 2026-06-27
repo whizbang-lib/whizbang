@@ -58,6 +58,16 @@ public interface IMessageEnvelope {
   List<MessageHop> Hops { get; }
 
   /// <summary>
+  /// Per-instance routing flags carried in memory (not serialized). The load-bearing case is
+  /// <see cref="Messaging.EventFlags.NoRebroadcast"/>: a fan-out child carries it so the outbox-enqueue
+  /// boundary can drop any attempt to re-broadcast it. Default-implemented as
+  /// <see cref="Messaging.EventFlags.None"/> so existing envelope implementers are unaffected.
+  /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#no-rebroadcast</docs>
+  [JsonIgnore]
+  Messaging.EventFlags Flags => Messaging.EventFlags.None;
+
+  /// <summary>
   /// Per-receptor invocation records. Parallel to <see cref="Hops"/>; used by
   /// <see cref="Messaging.IReceptorDedupStore"/> to enforce exactly-once-per-receptor-per-message.
   /// Null by default; allocated lazily via <see cref="GetOrCreateReceptorInvocations"/> on first append.

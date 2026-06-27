@@ -137,11 +137,19 @@ StreamIds). Defended in depth:
     a bad child + continues; Atomic fails the whole composite) and an optional replacement inner set.
   - Tests: `DispatchFanoutControlTests` (4), `CompositeInboxFanoutTests` atomicity + replacement,
     `InboxDispatchWorkerTests.CompositeDirective_Skip/ReplaceWith` + `CompositeFanoutMode_Manual`.
-- [ ] **Phase D — no-rebroadcast flag GUARD.**
-  - New `EventFlags.NoRebroadcast` (or `LocalOnly`); fan-out stamps every child.
-  - **Outbox-enqueue boundary checks the flag and drops** flagged children (the guard).
-  - RED: a flagged child routed to the outbox path is enqueued (guard absent) → GREEN: dropped.
-  - Plus a test that hop-based suppression covers the same case (defense-in-depth).
+- [x] **Phase D — no-rebroadcast flag GUARD. DONE.**
+  - New `EventFlags.NoRebroadcast = 1<<2` + a per-instance `Flags` carrier on `IMessageEnvelope`
+    (default-implemented `None`) / `MessageEnvelope`. Fan-out stamps every child — both its persisted
+    `InboxMessage.Flags` and its in-memory child envelope `Flags`.
+  - **Guard at the outbox-enqueue boundary**: `NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)` wired
+    into `Dispatcher.PublishToOutboxAsync` + `PublishToOutboxDynamicAsync` — any publish whose source
+    carries the flag is dropped before the outbox write.
+  - Tests: `NoRebroadcastGuardTests` (4, both bits), `CompositeInboxFanoutTests` child-stamp,
+    `DispatcherNoRebroadcastGuardTests` (guard true/false branches via the unregistered-type probe).
+  - **Defense-in-depth note:** hop-based echo suppression (primary, Phase A) already covers the
+    persisted-and-re-claimed child. The explicit guard fires for any flagged source envelope. Surfacing
+    the persisted `wh_inbox.flags` (EventFlags) onto `InboxWork` so a re-claimed child's reconstructed
+    envelope also carries the flag is a follow-up (hop suppression covers that case today).
 - [ ] **Phase E — docs** — `docs/fundamentals/messaging/composite-events.md`: the lifecycle, hooks,
   control surface, no-rebroadcast invariant; link to `CompositeEventBase`, the dispatch seam, and the
   tests. Refresh `ICompositeEvent` XML docs to describe dispatch-time fan-out (not transport-edge).

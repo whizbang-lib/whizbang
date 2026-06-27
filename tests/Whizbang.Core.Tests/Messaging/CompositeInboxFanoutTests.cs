@@ -94,6 +94,18 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
+  public async Task TryExpand_ChildrenCarryNoRebroadcastFlagAsync() {
+    var composite = new _testComposite(new _innerEvent("J-1"), new _innerEvent("J-2"));
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Children.All(c => (c.Flags & EventFlags.NoRebroadcast) != 0)).IsTrue()
+      .Because("Every fan-out child is stamped NoRebroadcast so the outbox-enqueue boundary can drop any re-broadcast.");
+  }
+
+  [Test]
   public async Task TryExpand_OverCap_ReturnsCapExceededAsync() {
     var inners = Enumerable.Range(0, 11).Select(i => new _innerEvent($"i-{i}")).ToArray();
     var composite = new _testComposite(inners) { MaxInnerEventsAllowedOverride = 10 };

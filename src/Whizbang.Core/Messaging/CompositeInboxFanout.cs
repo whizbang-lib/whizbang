@@ -144,6 +144,9 @@ public static class CompositeInboxFanout {
       SourceCommitSequence = source.SourceCommitSequence,
       CausedByServiceId = source.CausedByServiceId,
       CausedByCommitSequence = source.CausedByCommitSequence,
+      // No-rebroadcast guard (Phase D): the child is confined to the inbox → event-store → local path.
+      // The outbox-enqueue boundary drops any message whose source envelope carries this flag.
+      Flags = EventFlags.NoRebroadcast,
     };
 
     var serialized = serializer.SerializeEnvelope(childEnvelope);
@@ -168,12 +171,11 @@ public static class CompositeInboxFanout {
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
       IsEvent = isEvent,
-      // Children are confined to the inbox → event-store → local-processing path; they never
-      // outbox (the composite already crossed the wire). The active defense in this phase is
-      // hop-based echo suppression — children share the composite's Hops, so the owned-echo
-      // suppressor treats them as received-from-upstream. Phase D adds an explicit
-      // EventFlags guard at the outbox-enqueue boundary as defense-in-depth.
-      Flags = EventFlags.None,
+      // Children are confined to the inbox → event-store → local-processing path; they never outbox
+      // (the composite already crossed the wire). Defense 1 is hop-based echo suppression (children
+      // share the composite's Hops). Defense 2 (Phase D) is this explicit NoRebroadcast marker, which
+      // the outbox-enqueue boundary hard-checks — turning the invariant into an enforced guard.
+      Flags = EventFlags.NoRebroadcast,
       Scope = source.GetCurrentScope()?.Scope,
       Metadata = new EnvelopeMetadata {
         MessageId = childEnvelope.MessageId,

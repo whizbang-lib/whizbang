@@ -3386,6 +3386,19 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
+    // No-rebroadcast guard (plans/composite-events-turnkey.md, Phase D): a fan-out child carries
+    // EventFlags.NoRebroadcast on its envelope. Any attempt to re-broadcast it (publish triggered while
+    // processing it) is dropped here at the outbox-enqueue boundary — the enforced "children never
+    // outbox" invariant, on top of hop-based echo suppression.
+    if (NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)) {
+#pragma warning disable CA1848
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        CascadeLogger.LogDebug("[CASCADE] Suppressed re-broadcast of NoRebroadcast message {EventType}", eventType.Name);
+      }
+#pragma warning restore CA1848
+      return;
+    }
+
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     // Guard against ObjectDisposedException during application shutdown or hot reload
     IServiceScope scope;
@@ -3612,6 +3625,15 @@ public abstract partial class Dispatcher(
   /// <param name="eventStoreOnly">If true, stores event without transport delivery</param>
   /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
   protected async Task PublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
+    // No-rebroadcast guard (Phase D) — see PublishToOutboxAsync.
+    if (NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)) {
+#pragma warning disable CA1848
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        CascadeLogger.LogDebug("[CASCADE] Suppressed re-broadcast of NoRebroadcast message {EventType}", eventType.Name);
+      }
+#pragma warning restore CA1848
+      return;
+    }
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
     try {
