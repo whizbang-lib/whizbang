@@ -44,9 +44,20 @@ public class VoidReceptorTests : DiagnosticTestBase {
   public class SendEmailReceptor : IReceptor<SendEmailCommand> {
     public int EmailsSent { get; private set; }
 
+    /// <summary>
+    /// Optional completion gate. When set, HandleAsync stays pending on this gate instead of a timer —
+    /// letting a test assert "not yet complete" deterministically, then release. When null, falls back to
+    /// a short timer so the cancellation test can still observe a token-cancelled await.
+    /// </summary>
+    public TaskCompletionSource? Gate { get; set; }
+
     public async ValueTask HandleAsync(SendEmailCommand message, CancellationToken cancellationToken = default) {
-      // Simulate async I/O
-      await Task.Delay(1, cancellationToken);
+      // Simulate async I/O — deterministic when gated, timer-based otherwise.
+      if (Gate is not null) {
+        await Gate.Task.WaitAsync(cancellationToken);
+      } else {
+        await Task.Delay(1, cancellationToken);
+      }
 
       EmailsSent++;
     }
@@ -82,17 +93,20 @@ public class VoidReceptorTests : DiagnosticTestBase {
 
   [Test]
   public async Task VoidReceptor_AsynchronousCompletion_ShouldCompleteAsync() {
-    // Arrange
-    var receptor = new SendEmailReceptor();
+    // Arrange — gate the receptor so its async-ness is deterministic, not timer-dependent (no real time, L5).
+    var gate = new TaskCompletionSource();
+    var receptor = new SendEmailReceptor { Gate = gate };
     var command = new SendEmailCommand(
       To: "user@example.com",
       Subject: "Test",
       Body: "Test message"
     );
 
-    // Act
+    // Act — the task is genuinely pending while the gate is closed.
     var task = receptor.HandleAsync(command);
-    await Assert.That(task.IsCompleted).IsFalse(); // Async operation
+    await Assert.That(task.IsCompleted).IsFalse(); // Deterministically incomplete — gate not yet released.
+
+    gate.SetResult();
     await task;
 
     // Assert
