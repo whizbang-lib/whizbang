@@ -3386,6 +3386,19 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
+    // No-rebroadcast guard (plans/composite-events-turnkey.md, Phase D): a fan-out child carries
+    // EventFlags.NoRebroadcast on its envelope. Any attempt to re-broadcast it (publish triggered while
+    // processing it) is dropped here at the outbox-enqueue boundary — the enforced "children never
+    // outbox" invariant, on top of hop-based echo suppression.
+    if (NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)) {
+#pragma warning disable CA1848
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        CascadeLogger.LogDebug("[CASCADE] Suppressed re-broadcast of NoRebroadcast message {EventType}", eventType.Name);
+      }
+#pragma warning restore CA1848
+      return;
+    }
+
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     // Guard against ObjectDisposedException during application shutdown or hot reload
     IServiceScope scope;
@@ -3558,6 +3571,14 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
+    // Composite pre-fanout hook (plans/composite-events-turnkey.md, Phase B): when a dispatch step has
+    // opened an ambient outbox collector, divert this message into it instead of the work-coordinator so
+    // it can be committed atomically with that step's other effects. AsyncLocal-gated — null off the path.
+    if (DispatchOutboxCollector.Current is { } collector) {
+      collector.Add(newOutboxMessage);
+      return;
+    }
+
     // Queue event for batched processing — async path routes through the per-stream
     // sliding-window batcher when StreamAffinityWorkCoordinatorStrategy is active.
     // Guard against ObjectDisposedException — the singleton IntervalWorkCoordinatorStrategy
@@ -3604,6 +3625,15 @@ public abstract partial class Dispatcher(
   /// <param name="eventStoreOnly">If true, stores event without transport delivery</param>
   /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
   protected async Task PublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
+    // No-rebroadcast guard (Phase D) — see PublishToOutboxAsync.
+    if (NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)) {
+#pragma warning disable CA1848
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        CascadeLogger.LogDebug("[CASCADE] Suppressed re-broadcast of NoRebroadcast message {EventType}", eventType.Name);
+      }
+#pragma warning restore CA1848
+      return;
+    }
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
     try {
@@ -3633,6 +3663,11 @@ public abstract partial class Dispatcher(
         ?? messageId.Value;
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId);
+      // Composite pre-fanout hook (Phase B): divert into the ambient collector when one is open.
+      if (DispatchOutboxCollector.Current is { } collector) {
+        collector.Add(newOutboxMessage);
+        return;
+      }
       await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
       await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
     } finally {

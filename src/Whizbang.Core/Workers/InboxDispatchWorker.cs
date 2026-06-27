@@ -378,6 +378,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // payload — lifecycle invocation then no-ops as before.
       var typedEnvelope = _resolveTypedEnvelope(work);
 
+      // Composite fan-out (plans/composite-events-turnkey.md, Phase A): a composite arrives as an
+      // ordinary inbox row. At the dispatch seam — inside the retry/DLQ envelope — it expands into N
+      // child inbox rows, committed atomically with the composite row's deletion (EventStored bit ⇒
+      // process_inbox_completions DELETEs it). The composite is never event-stored, only its children.
+      // Returning early skips the composite's own lifecycle stages — those fire per-child instead.
+      if (typedEnvelope?.Payload is ICompositeEvent composite) {
+        await _fanoutCompositeAsync(work, composite, typedEnvelope, scope.ServiceProvider, receptorInvoker, ct);
+        return;
+      }
+
       await InvokeInboxLifecycleStageAsync(
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
         "PreInbox", ct, detachedCancellationToken: stoppingToken);
@@ -432,7 +442,141 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
   }
 
-  private HandlerCommitRequest _buildCommitRequest(InboxWork work, int status)
+  /// <summary>
+  /// Fans a composite inbox row out into N child inbox rows at the dispatch seam. On success, a single
+  /// <see cref="HandlerCommitRequest"/> carries the children and marks the composite row
+  /// <see cref="MessageProcessingStatus.EventStored"/> so <c>process_inbox_completions</c> stores the
+  /// children and DELETEs the composite atomically. On cap-exceeded / expansion failure, the composite
+  /// row is dead-lettered via the same path as max-attempts (forensic snapshot + SQL delete), or — when
+  /// no <see cref="IDeadLetterStore"/> is wired — terminated via the legacy mark-Published completion.
+  /// </summary>
+  private async Task _fanoutCompositeAsync(
+      InboxWork work, ICompositeEvent composite, IMessageEnvelope typedEnvelope,
+      IServiceProvider scopeProvider, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
+    // Pre-fanout hook (plans/composite-events-turnkey.md, Phase B): fire the composite's INLINE
+    // receptors (IReceptor<TComposite>) before any child exists — so a receptor can validate the
+    // batch, stamp metadata, or emit a durable BatchReceivedEvent. Their emissions are captured by
+    // an ambient DispatchOutboxCollector (instead of writing to the outbox in a separate scope) and
+    // folded into the SAME HandlerCommitRequest as the fan-out children → pre-fanout side-effects +
+    // children commit all-or-nothing. Only inline receptors are collected: detached fire-and-forget
+    // receptors outlive this scope and cannot be part of the atomic commit.
+    var pre = await _invokePreFanoutHookAsync(work, typedEnvelope, receptorInvoker, ct);
+    var preFanoutOutbox = pre.Outbox;
+
+    // Fan-out control (Phase C): an imperative FanoutDirective set by the pre-fanout receptor takes
+    // precedence over the composite's declarative FanoutMode.
+    //   Skip                      → commit the receptor's emissions + delete the composite, no children.
+    //   ReplaceWith(children)     → fan out the receptor-supplied set instead of InnerEvents.
+    //   Proceed / none + Auto     → fan out InnerEvents (default).
+    //   Proceed / none + Manual   → nothing auto-fans-out (the receptor chose not to drive it).
+    var compositeTypeName = composite.GetType().FullName;
+    var result = (pre.Directive?.Kind, composite.FanoutMode) switch {
+      (FanoutDirectiveKind.Skip, _) =>
+        new CompositeInboxFanout.FanoutResult(
+          CompositeInboxFanout.FanoutOutcome.Expanded, Array.Empty<InboxMessage>(), null, compositeTypeName),
+      (FanoutDirectiveKind.ReplaceWith, _) =>
+        CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, pre.Directive!.Replacement),
+      (_, FanoutMode.Manual) =>
+        new CompositeInboxFanout.FanoutResult(
+          CompositeInboxFanout.FanoutOutcome.Expanded, Array.Empty<InboxMessage>(), null, compositeTypeName),
+      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider),
+    };
+    if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
+      var commitRequest = _buildCommitRequest(
+        work, status: (int)MessageProcessingStatus.EventStored,
+        newInboxMessages: result.Children, newOutboxMessages: preFanoutOutbox);
+      await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
+      return;
+    }
+
+    // CapExceeded / Failed: the composite is an inbox row that failed → dead-letter it (Phase 3 free).
+    var reason = result.Outcome == CompositeInboxFanout.FanoutOutcome.CapExceeded
+      ? Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded
+      : Whizbang.Core.Messaging.MessageFailureReason.CompositeExpansionFailure;
+    LogCompositeFanoutFailed(_logger, work.MessageId, reason.ToString(), result.Detail ?? "(none)");
+
+    if (_deadLetterStore is not null && _generationProvider is not null) {
+      try {
+        await _deadLetterStore.MoveAsync(
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+          sourceTable: DeadLetterSourceTable.INBOX,
+          sourceId: work.MessageId,
+          failureReason: reason,
+          errorText: result.Detail,
+          instanceId: _instanceProvider.InstanceId,
+          generation: _generationProvider.GetGeneration(),
+          ct: ct).ConfigureAwait(false);
+        _dlqMetrics?.Added.Add(1,
+          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>("reason", reason.ToString()));
+        return;
+      } catch (Exception ex) {
+        // DLQ move is best-effort — fall back to the legacy terminal completion so the row never
+        // re-claims. Mirrors the max-attempts branch.
+        LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
+      }
+    }
+    var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
+    await _handlerCommitChannel.EnqueueAsync(terminalRequest, ct);
+  }
+
+  /// <summary>
+  /// Fires the composite's inline receptors under an ambient <see cref="DispatchOutboxCollector"/> and
+  /// returns whatever durable events they emitted, so the caller can commit them atomically with the
+  /// fan-out children. Returns null when no inline receptor is registered for the composite type (the
+  /// common case) — skipping the collector + invocation entirely. Inline only: detached receptors run
+  /// fire-and-forget after this scope and cannot be part of the atomic commit.
+  /// </summary>
+  private async Task<PreFanoutResult> _invokePreFanoutHookAsync(
+      InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
+    if (receptorInvoker is null) {
+      return default;
+    }
+    var runtimeType = typedEnvelope.Payload?.GetType();
+    var hasPre = (_receptorRegistry?.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType) ?? false)
+      || _runtimeHasReceptors(runtimeType, LifecycleStage.PreInboxInline);
+    var hasPost = (_receptorRegistry?.HasReceptors(LifecycleStage.PostInboxInline, work.MessageType) ?? false)
+      || _runtimeHasReceptors(runtimeType, LifecycleStage.PostInboxInline);
+    if (!hasPre && !hasPost) {
+      return default;
+    }
+
+    var baseContext = new LifecycleExecutionContext {
+      CurrentStage = LifecycleStage.PreInboxInline,
+      EventId = null,
+      StreamId = null,
+      LastProcessedEventId = null,
+      MessageSource = MessageSource.Inbox,
+      AttemptNumber = work.Attempts,
+    };
+
+    // Open the outbox collector (captures emitted events for the atomic commit) and the fan-out control
+    // (lets the receptor impose a FanoutDirective) for the duration of the receptor invocation.
+    using var collecting = DispatchOutboxCollector.BeginCollecting();
+    using var controlling = DispatchFanoutControl.Begin();
+    if (hasPre) {
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline,
+        baseContext, ct);
+    }
+    if (hasPost) {
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline,
+        baseContext with { CurrentStage = LifecycleStage.PostInboxInline }, ct);
+    }
+    var collected = collecting.Collector.Collected;
+    return new PreFanoutResult(
+      collected.Count == 0 ? null : collected,
+      controlling.Control.Directive);
+  }
+
+  /// <summary>Outcome of the composite pre-fanout hook: emitted outbox messages + any imposed directive.</summary>
+  private readonly record struct PreFanoutResult(
+    IReadOnlyList<OutboxMessage>? Outbox,
+    FanoutDirective? Directive);
+
+  private HandlerCommitRequest _buildCommitRequest(
+      InboxWork work, int status,
+      IReadOnlyList<InboxMessage>? newInboxMessages = null,
+      IReadOnlyList<OutboxMessage>? newOutboxMessages = null)
     => new(
       HandlerId: work.MessageId,
       InstanceId: _instanceProvider.InstanceId,
@@ -441,8 +585,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       ProcessId: _instanceProvider.ProcessId,
       PartitionCount: _options.PartitionCount,
       InboxCompletion: new HandlerInboxCompletion(work.MessageId, status),
-      NewOutboxMessages: null,
-      NewInboxMessages: null,
+      NewOutboxMessages: newOutboxMessages,
+      NewInboxMessages: newInboxMessages,
       DebugMode: _coordinatorOptions.DebugMode);
 
   // ============================================================
@@ -647,6 +791,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  [LoggerMessage(EventId = 26, Level = LogLevel.Warning, Message = "InboxDispatchWorker composite fan-out failed for message {MessageId}: {Reason} — {Detail}; dead-lettering composite row")]
+  static partial void LogCompositeFanoutFailed(ILogger logger, Guid messageId, string reason, string detail);
 
   // Dispatch-checkpoint diagnostics for the "inbox rows never advance past
   // status=Stored with zero exception logs" failure class. At Debug so

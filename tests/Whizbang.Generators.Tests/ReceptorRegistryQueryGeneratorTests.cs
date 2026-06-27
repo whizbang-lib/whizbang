@@ -202,6 +202,63 @@ public class TagNotificationHook : IReceptor<OrderUpdated> {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_WithCompositeEvent_HasAnyConsumerReturnsTrueAsync() {
+    // A composite event is CONSUMED by the dispatch-time fan-out seam (Phase A of
+    // plans/composite-events-turnkey.md): the receive boundary must NOT drop it as
+    // unsubscribed. Today the only consumers the generator recognizes are receptors,
+    // perspectives, and tag attributes — none of which a bare ICompositeEvent has. So
+    // without explicit composite recognition the drop-gate (HasAnyConsumer) silently
+    // discards the composite before it can fan out. This locks composites into
+    // AnyConsumerTypes so they survive to the dispatch seam.
+    const string source = @"
+using System.Collections.Generic;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp;
+
+public record InnerCreated : IEvent { public string Id { get; init; } = string.Empty; }
+
+public record BulkImportComposite : ICompositeEvent {
+  public IEnumerable<IMessage> InnerEvents => new IMessage[0];
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var consumerRegion = _extractRegion(generated!, "AnyConsumerTypes");
+    await Assert.That(consumerRegion).Contains("MyApp.BulkImportComposite")
+      .Because("A composite event is consumed by the dispatch-time fan-out seam; it must register as a consumer so the receive-boundary drop-gate doesn't discard it before fan-out.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AbstractCompositeBase_NotRegisteredAsConsumerAsync() {
+    // The abstract CompositeEventBase is never dispatched — only concrete derived composites are.
+    // It must be skipped so it doesn't pollute AnyConsumerTypes with a type that can never arrive.
+    const string source = @"
+using System.Collections.Generic;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp;
+
+public abstract class AbstractComposite : ICompositeEvent {
+  public IEnumerable<IMessage> InnerEvents => new IMessage[0];
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated!).DoesNotContain("AbstractComposite")
+      .Because("The abstract composite base is never dispatched and must not be registered as a consumer.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_OrphanType_HasAnyConsumerReturnsFalseAsync() {
     const string source = @"
 using Whizbang.Core;

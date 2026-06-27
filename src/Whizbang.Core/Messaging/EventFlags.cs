@@ -30,8 +30,24 @@ namespace Whizbang.Core.Messaging;
 /// inspects the specific flag it cares about at each dispatch site,
 /// rather than treating the value as a discriminated enum.
 /// </para>
+/// <para>
+/// <strong>Two kinds of flag — the extension convention.</strong> Values fall into two groups:
+/// <em>category</em> flags describe what an event <em>is</em> (<see cref="Collective"/>,
+/// <see cref="Composite"/>); <em>treatment</em> flags tell the framework to bypass or alter some
+/// functionality for an event (<see cref="NoRebroadcast"/> is the first). Treatment flags are
+/// <strong>not composite-specific</strong> — any event can carry one. The convention for adding a new
+/// treatment flag:
+/// </para>
+/// <list type="number">
+///   <item><description>Add the bit here (next free position) and ship it <strong>with the gate that reads it</strong> — a flag with no gate is dead code.</description></item>
+///   <item><description>Let an event opt in by a <strong>marker interface</strong> (the builders already derive <see cref="Composite"/>/<see cref="Collective"/> via <c>payload is IXxxEvent</c>) for a type-level treatment, or by setting <see cref="Observability.IMessageEnvelope.Flags"/> on the envelope for a <strong>per-instance</strong> treatment.</description></item>
+///   <item><description>Composites <strong>propagate</strong> their treatment flags to fan-out children (today the child stamp carries <see cref="NoRebroadcast"/>; extend that line when a composite should pass a new flag down).</description></item>
+/// </list>
 /// </remarks>
-/// <docs>fundamentals/messaging/collective-events</docs>
+/// <docs>fundamentals/messaging/composite-events#treatment-flags</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/NoRebroadcastGuardTests.cs</tests>
 [Flags]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "EventFlags is the natural name for the [Flags] enum stored in the wh_event_store / wh_outbox / wh_inbox 'flags' column. CA1711's 'Flags' suffix rule is exactly the case where the suffix carries semantic meaning that the rule was not designed for.")]
 public enum EventFlags {
@@ -51,6 +67,15 @@ public enum EventFlags {
   /// inbox stores anything.
   /// </summary>
   Composite = 1 << 1,
+
+  /// <summary>
+  /// Per-instance marker on a fan-out child: this message is confined to the inbox → event-store →
+  /// local-processing path and MUST NOT be re-broadcast. Composite fan-out stamps every child with this
+  /// flag; the outbox-enqueue boundary hard-checks it and drops any flagged message, turning "children
+  /// never outbox" into an enforced invariant on top of hop-based echo suppression (defense-in-depth).
+  /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#no-rebroadcast</docs>
+  NoRebroadcast = 1 << 2,
 
   // Future flags add new values here without requiring schema migrations.
 }

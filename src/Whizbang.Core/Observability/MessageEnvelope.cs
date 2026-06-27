@@ -133,6 +133,10 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   [System.Text.Json.Serialization.JsonIgnore]
   public long? LocalCommitSequence { get; set; }
 
+  /// <inheritdoc />
+  [System.Text.Json.Serialization.JsonIgnore]
+  public Messaging.EventFlags Flags { get; init; } = Messaging.EventFlags.None;
+
   /// <summary>
   /// Parameterless constructor for object initializer syntax.
   /// </summary>

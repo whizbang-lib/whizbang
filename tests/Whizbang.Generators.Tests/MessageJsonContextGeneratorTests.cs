@@ -5831,6 +5831,41 @@ public record OrderDelivered(Guid OrderId) : IEvent;
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_WithCompositeEvent_RegistersAsIMessage_NotAsEventAsync() {
+    // A type implementing only ICompositeEvent must be registered as an IMessage derived type so
+    // MessageEnvelope<ICompositeEvent> round-trips on the wire (the producer serializes the composite
+    // and the receiver deserializes + expands it). It must NOT be registered as IEvent: composites are
+    // wire-only and are NEVER persisted to the event store — registering as IEvent would flip IsEvent
+    // and the producer's outbox->event-store copy would persist the composite itself.
+    const string source = @"
+using System.Collections.Generic;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public record BulkImported(IReadOnlyList<IMessage> Items) : ICompositeEvent {
+  public IEnumerable<IMessage> InnerEvents => Items;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+
+    // Registered as IMessage so the envelope deserializes to the concrete composite type.
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IMessage, global::MyApp.Events.BulkImported>");
+    // NOT registered as IEvent (wire-only, never persisted).
+    await Assert.That(initializerCode).DoesNotContain("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.BulkImported>");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_WithMixedMessageTypes_GeneratesCorrectBaseTypeRegistrationsAsync() {
     // Arrange - mix of commands and events
     const string source = @"

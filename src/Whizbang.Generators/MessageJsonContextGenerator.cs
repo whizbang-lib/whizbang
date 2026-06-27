@@ -47,6 +47,14 @@ namespace Whizbang.Generators;
 public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
+  private const string I_COMPOSITE_EVENT = "Whizbang.Core.Messaging.ICompositeEvent";
+  private const string JSON_IGNORE_ATTRIBUTE = "System.Text.Json.Serialization.JsonIgnoreAttribute";
+
+  /// <summary>True if the property carries <c>[JsonIgnore]</c> (any condition) — excluded from the
+  /// generated JsonTypeInfo to match System.Text.Json's own behavior.</summary>
+  private static bool _hasJsonIgnore(IPropertySymbol property) =>
+      property.GetAttributes().Any(a =>
+          a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{JSON_IGNORE_ATTRIBUTE}");
   private const string GRAPHQL_NAME_ATTRIBUTE = "HotChocolate.GraphQLNameAttribute";
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
@@ -234,12 +242,27 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // Skip abstract types - they cannot be instantiated for deserialization, so the generated
+    // JsonTypeInfo object factory would fail to compile (CS0144). Only concrete wire types are
+    // serialized; e.g. an abstract CompositeEventBase is never on the wire — only its concrete
+    // subclasses are (discovered separately and registered as IMessage derived types).
+    if (typeSymbol.IsAbstract) {
+      return null;
+    }
+
     // Check if implements ICommand or IEvent
     bool isCommand = typeSymbol.AllInterfaces.Any(i =>
         i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_COMMAND}");
 
     bool isEvent = typeSymbol.AllInterfaces.Any(i =>
         i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_EVENT}");
+
+    // Check if implements ICompositeEvent — a wire-only event that fans out into inner events at the
+    // receiver. Composites implement IMessage (NOT IEvent), so without explicit discovery they are
+    // neither serialized nor registered as an IMessage derived type, and MessageEnvelope<ICompositeEvent>
+    // fails to round-trip. They must register as IMessage but NOT as IEvent (never persisted).
+    bool isComposite = typeSymbol.AllInterfaces.Any(i =>
+        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_COMPOSITE_EVENT}");
 
     // Check if marked with [WhizbangSerializable] attribute
     bool isSerializable = typeSymbol.GetAttributes()
@@ -253,8 +276,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Look for sibling or nested types that implement IPerspectiveFor<ThisType, ...>
     bool isPerspectiveModel = _isPerspectiveModelType(typeSymbol);
 
-    // Type must be a command, event, explicitly marked as serializable, has GraphQL attribute, or is a perspective model
-    if (!isCommand && !isEvent && !isSerializable && !hasGraphQLName && !isPerspectiveModel) {
+    // Type must be a command, event, composite event, explicitly marked as serializable, has GraphQL attribute, or is a perspective model
+    if (!isCommand && !isEvent && !isComposite && !isSerializable && !hasGraphQLName && !isPerspectiveModel) {
       // Check if this type IS a perspective class (implements IPerspectiveBase<TModel, TEvent>)
       // If so, extract TModel and return its type info for JSON serialization
       // This handles the case where TModel is a plain record with no base types/attributes
@@ -301,6 +324,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         IsCommand: isCommand,
         IsEvent: isEvent,
         IsSerializable: isSerializable,
+        IsComposite: isComposite,
         Properties: properties,
         HasParameterizedConstructor: hasParameterizedConstructor
     );
@@ -571,8 +595,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.ICommand, {message.FullyQualifiedName}>(\"{discriminator}\");");
       }
 
-      // All message types (events and commands) are also IMessage
-      if (message.IsEvent || message.IsCommand) {
+      // All message types (events, commands, and composite events) are also IMessage. Composites
+      // register ONLY here — as IMessage (so MessageEnvelope<ICompositeEvent> round-trips), never as
+      // IEvent/ICommand — because they are wire-only and must not be persisted to the event store.
+      if (message.IsEvent || message.IsCommand || message.IsComposite) {
         sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.IMessage, {message.FullyQualifiedName}>(\"{discriminator}\");");
       }
     }
@@ -1687,6 +1713,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         IsCommand: false,
         IsEvent: false,
         IsSerializable: false,
+        IsComposite: false,
         Properties: nestedProperties,
         HasParameterizedConstructor: hasParameterizedConstructor
     );
@@ -1733,6 +1760,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           IsCommand: false,
           IsEvent: false,
           IsSerializable: false,
+          IsComposite: false,
           Properties: derivedProperties,
           HasParameterizedConstructor: hasDerivedCtor
       );
@@ -2814,6 +2842,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             IsCommand: false,
             IsEvent: true,
             IsSerializable: false,
+            IsComposite: false,
             Properties: properties,
             HasParameterizedConstructor: hasParameterizedConstructor
         ));
@@ -2879,6 +2908,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           IsCommand: false,
           IsEvent: false,
           IsSerializable: true,
+          IsComposite: false,
           Properties: properties,
           HasParameterizedConstructor: hasParameterizedConstructor
       );
@@ -3007,8 +3037,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Uses property name to dedupe (derived class property overrides base class property).
   /// </summary>
   private static List<IPropertySymbol> _getAllPropertiesIncludingInherited(INamedTypeSymbol typeSymbol) {
-    // GetAllProperties returns derived→base order; reverse to get base→derived order
-    var allProperties = typeSymbol.GetAllProperties().Reverse().ToList();
+    // GetAllProperties returns derived→base order; reverse to get base→derived order.
+    // Honor [JsonIgnore] — STJ excludes such properties, and the generated JsonTypeInfo must match
+    // (e.g. CompositeEventBase.InnerEvents is a [JsonIgnore] computed view over Inner; serializing it
+    // would both duplicate data and create an IEnumerable<IMessage> polymorphism cycle).
+    var allProperties = typeSymbol.GetAllProperties().Reverse()
+        .Where(p => !_hasJsonIgnore(p))
+        .ToList();
 
     // For types with a primary constructor, order properties to match constructor parameters
     // This is critical for JSON deserialization which passes args[i] positionally
