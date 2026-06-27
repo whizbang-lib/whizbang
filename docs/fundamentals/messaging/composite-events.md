@@ -144,6 +144,27 @@ the composite was already delivered to every subscriber of its topic. Defended i
    `NoRebroadcastGuard.ShouldSuppress`) hard-drops any publish whose source envelope carries the flag.
    Even a receptor that explicitly re-publishes a fan-out child it is processing is stopped at the gate.
 
+## Treatment flags (extending `EventFlags`)
+
+The no-rebroadcast guard generalizes into a small convention. `EventFlags` (the per-event bitmask on the
+envelope / inbox / outbox / event-store rows) holds two kinds of bit:
+
+- **Category** — what the event *is*: `Composite`, `Collective`.
+- **Treatment** — tell the framework to *bypass or alter* some functionality for this event:
+  `NoRebroadcast` today; future candidates like `SuppressNotifications` or `SkipPerspectives`.
+
+Treatment flags are **not composite-specific** — *any* event can carry one. An event opts in by a
+**marker interface** (the builders already derive `Composite`/`Collective` via `payload is IXxxEvent`,
+so a new treatment slots into the same `|`-chain) for a type-level treatment, or by setting the
+**per-instance** `IMessageEnvelope.Flags` carrier at publish. Composites are just one producer: fan-out
+**propagates** the composite's treatment flags to every child (today the child stamp carries
+`NoRebroadcast`).
+
+The rule that keeps this honest: **a treatment flag ships with the gate that reads it** — a bit nothing
+branches on is dead code. The mechanism (the bitmask, the marker-interface derivation, the per-instance
+carrier, composite→child propagation) is in place; each new bit is a small, localized addition shipped
+with its consumer.
+
 ## Code ↔ tests
 
 | Concern | Code | Tests |
@@ -155,4 +176,5 @@ the composite was already delivered to every subscriber of its topic. Defended i
 | Pre-fanout hook (atomic emit) | `DispatchOutboxCollector`, `InboxDispatchWorker._invokePreFanoutHookAsync`, `Dispatcher` outbox seam | `Messaging/DispatchOutboxCollectorTests.cs`, `Workers/InboxDispatchWorkerTests.cs` (`CompositeWithPreFanoutReceptor_*`) |
 | Fan-out control | `FanoutMode`/`FanoutAtomicity`/`FanoutDirective`, `DispatchFanoutControl`, `CompositeInboxFanout`, `InboxDispatchWorker` | `Messaging/DispatchFanoutControlTests.cs`, `Messaging/CompositeInboxFanoutTests.cs` (atomicity + replacement), `Workers/InboxDispatchWorkerTests.cs` (`CompositeDirective_*`, `CompositeFanoutMode_Manual_*`) |
 | No-rebroadcast guard | `EventFlags.NoRebroadcast`, `IMessageEnvelope.Flags`, `NoRebroadcastGuard`, `CompositeInboxFanout` stamp, `Dispatcher` outbox seam | `Messaging/NoRebroadcastGuardTests.cs`, `Messaging/CompositeInboxFanoutTests.cs` (`TryExpand_ChildrenCarryNoRebroadcastFlag`), `Dispatcher/DispatcherNoRebroadcastGuardTests.cs` |
+| Treatment-flag convention (`EventFlags`) | `EventFlags` (category vs treatment), `IMessageEnvelope.Flags` carrier | `Messaging/EventFlagsTests.cs` (bit-position locks incl. `NoRebroadcast`), `Messaging/EventFlagsTransportTests.cs` (outbox/inbox + envelope-carrier shape) |
 | No transport-edge expansion | `TransportConsumerWorker` | `Workers/TransportConsumerWorkerCompositeNoExpandTests.cs` |

@@ -19,6 +19,9 @@ internal sealed class CascadeEnvelopeWrapper(IMessageEnvelope inner) : IMessageE
   public MessageId MessageId => _inner.MessageId;
   public object Payload => _inner.Payload;
   public List<MessageHop> Hops => _inner.Hops;
+  // Delegate the per-instance treatment flags (e.g. NoRebroadcast) to the wrapped envelope — wrapping
+  // for cascade must not silently drop a fan-out child's flags.
+  public Messaging.EventFlags Flags => _inner.Flags;
   public List<ReceptorInvocationRecord>? ReceptorInvocations => _inner.ReceptorInvocations;
   public List<ReceptorInvocationRecord> GetOrCreateReceptorInvocations() => _inner.GetOrCreateReceptorInvocations();
   public void AddHop(MessageHop hop) => _inner.AddHop(hop);

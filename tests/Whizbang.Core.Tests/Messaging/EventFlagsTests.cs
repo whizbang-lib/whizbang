@@ -39,16 +39,26 @@ public class EventFlagsTests {
       .Because("Bit position 1. Same backward-compat reasoning as Collective.");
   }
 
+  [Test]
+  public async Task EventFlags_NoRebroadcast_BitPositionLockedAsync() {
+    var value = _asInt(EventFlags.NoRebroadcast);
+    await Assert.That(value).IsEqualTo(4)
+      .Because("Bit position 2 — the first 'treatment' flag (as opposed to a 'category' flag). The outbox-enqueue guard reads this exact bit; moving it silently breaks no-rebroadcast suppression and any persisted wh_inbox.flags rows.");
+  }
+
   private static int _asInt(EventFlags f) => (int)f;
 
   [Test]
-  public async Task EventFlags_Combine_TwoFlagsAreDistinctBitsAsync() {
-    var combined = EventFlags.Collective | EventFlags.Composite;
+  public async Task EventFlags_Combine_DistinctBitsCoexistAsync() {
+    // Category + treatment flags coexist: a fan-out child of a composite can be both. The framework
+    // checks each bit independently, so OR-ing must keep them distinct.
+    var combined = EventFlags.Collective | EventFlags.Composite | EventFlags.NoRebroadcast;
 
     await Assert.That(combined.HasFlag(EventFlags.Collective)).IsTrue();
     await Assert.That(combined.HasFlag(EventFlags.Composite)).IsTrue();
-    await Assert.That(_asInt(combined)).IsEqualTo(3)
-      .Because("OR-ing the two flags gives 0b11 = 3. Catches accidental collision (same bit position for two flags).");
+    await Assert.That(combined.HasFlag(EventFlags.NoRebroadcast)).IsTrue();
+    await Assert.That(_asInt(combined)).IsEqualTo(7)
+      .Because("OR-ing 1|2|4 gives 0b111 = 7. Catches accidental bit-collision between any two flags.");
   }
 
   [Test]
