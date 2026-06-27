@@ -55,6 +55,14 @@ public abstract class CompositeEventBase : ICompositeEvent {
   /// </summary>
   public int MaxInnerEventsAllowed { get; init; } = 10_000;
 
+  /// <inheritdoc cref="ICompositeEvent.FanoutMode" />
+  /// <remarks>Defaults to <see cref="Whizbang.Core.Messaging.FanoutMode.Auto"/>; set via the object initializer to defer to a pre-fanout receptor.</remarks>
+  public FanoutMode FanoutMode { get; init; } = FanoutMode.Auto;
+
+  /// <inheritdoc cref="ICompositeEvent.Atomicity" />
+  /// <remarks>Defaults to <see cref="FanoutAtomicity.Independent"/>; set to <see cref="FanoutAtomicity.Atomic"/> when the inner events are one logical unit.</remarks>
+  public FanoutAtomicity Atomicity { get; init; } = FanoutAtomicity.Independent;
+
   /// <inheritdoc />
   /// <remarks>
   /// Not serialized: it is a computed view over <see cref="Inner"/> (which carries the wire data).

@@ -63,4 +63,20 @@ public interface ICompositeEvent : IMessage {
   /// without writing partial results.
   /// </remarks>
   int MaxInnerEventsAllowed => 10_000;
+
+  /// <summary>
+  /// How fan-out is triggered. <see cref="Whizbang.Core.Messaging.FanoutMode.Auto"/> (default) fans out
+  /// <see cref="InnerEvents"/> automatically at the dispatch seam; <see cref="Whizbang.Core.Messaging.FanoutMode.Manual"/>
+  /// defers to a pre-fanout receptor that drives fan-out via <see cref="DispatchFanoutControl"/>.
+  /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#fanout-control</docs>
+  FanoutMode FanoutMode => FanoutMode.Auto;
+
+  /// <summary>
+  /// Per-child failure policy. <see cref="FanoutAtomicity.Independent"/> (default) drops a child that
+  /// fails to serialize and fans out the rest; <see cref="FanoutAtomicity.Atomic"/> dead-letters the
+  /// whole composite on any child failure (all-or-nothing).
+  /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#fanout-control</docs>
+  FanoutAtomicity Atomicity => FanoutAtomicity.Independent;
 }

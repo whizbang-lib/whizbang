@@ -264,6 +264,85 @@ public class InboxDispatchWorkerTests {
     MessageType = "TestApp.BatchReceived, TestApp",
   };
 
+  // A pre-fanout receptor that imposes a fan-out directive via the ambient control.
+  private sealed class DirectiveInvoker(FanoutDirective directive) : IReceptorInvoker {
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage,
+        ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      if (stage == LifecycleStage.PostInboxInline) {
+        DispatchFanoutControl.Set(directive);
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  // Composite that declares FanoutMode.Manual.
+  private sealed class _manualComposite(params _innerImportEvent[] inner) : ICompositeEvent {
+    public int MaxInnerEventsAllowed => 10_000;
+    public FanoutMode FanoutMode => FanoutMode.Manual;
+    public IEnumerable<IMessage> InnerEvents => inner;
+  }
+
+  private async Task<HandlerCommitRequest> _runCompositeWithInvokerAsync(
+      ICompositeEvent composite, IReceptorInvoker invoker) {
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .AddSingleton(invoker)
+      .BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
+      receptorRegistry: new PostInboxInlineRegistry());
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await inbox.WriteAsync(_makeWork(), cts.Token);
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+    return routed;
+  }
+
+  [Test]
+  public async Task CompositeDirective_Skip_CommitsNoChildren_DeletesCompositeAsync() {
+    var composite = new _bulkComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"));
+    var routed = await _runCompositeWithInvokerAsync(composite, new DirectiveInvoker(FanoutDirective.Skip));
+
+    await Assert.That(routed.NewInboxMessages is null || routed.NewInboxMessages.Count == 0).IsTrue()
+      .Because("Skip suppresses fan-out — no children are created.");
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)MessageProcessingStatus.EventStored)
+      .Because("The composite row is still deleted (EventStored bit) — the receptor handled it.");
+  }
+
+  [Test]
+  public async Task CompositeDirective_ReplaceWith_FansOutReplacementSetAsync() {
+    var composite = new _bulkComposite(new _innerImportEvent("original"));
+    var replacement = new IMessage[] { new _innerImportEvent("R-1"), new _innerImportEvent("R-2"), new _innerImportEvent("R-3") };
+    var routed = await _runCompositeWithInvokerAsync(composite, new DirectiveInvoker(FanoutDirective.ReplaceWith(replacement)));
+
+    await Assert.That(routed.NewInboxMessages!.Count).IsEqualTo(3)
+      .Because("ReplaceWith fans out the receptor-supplied 3, not the composite's own 1 inner event.");
+  }
+
+  [Test]
+  public async Task CompositeFanoutMode_Manual_NoReceptorDirective_FansOutNothingAsync() {
+    var composite = new _manualComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"));
+    // Invoker present (so the gate opens) but sets no directive.
+    var routed = await _runCompositeWithInvokerAsync(composite, new DirectiveInvoker(FanoutDirective.Proceed));
+
+    // Proceed + Manual → nothing auto-fans-out (the receptor didn't drive it).
+    await Assert.That(routed.NewInboxMessages is null || routed.NewInboxMessages.Count == 0).IsTrue()
+      .Because("Manual mode does not auto-fan-out; without a ReplaceWith directive, no children are produced.");
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)MessageProcessingStatus.EventStored);
+  }
+
   [Test]
   public async Task CompositeWithPreFanoutReceptor_CommitsEmittedEventAtomicallyWithChildrenAsync() {
     // Phase B: a pre-fanout receptor's emitted event (captured via the ambient collector) and the

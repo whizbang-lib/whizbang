@@ -65,7 +65,8 @@ public static class CompositeInboxFanout {
   public static FanoutResult TryExpand(
       ICompositeEvent? composite,
       IMessageEnvelope source,
-      IServiceProvider scope) {
+      IServiceProvider scope,
+      IEnumerable<IMessage>? replacementInner = null) {
     ArgumentNullException.ThrowIfNull(source);
     ArgumentNullException.ThrowIfNull(scope);
 
@@ -78,32 +79,42 @@ public static class CompositeInboxFanout {
       ?? throw new InvalidOperationException("IEnvelopeSerializer is required for composite fan-out but is not registered.");
     var eventTypeProvider = scope.GetService<IEventTypeProvider>();
 
+    // A pre-fanout directive may replace the composite's own inner events (filter / transform / re-key).
+    var inners = replacementInner ?? composite.InnerEvents;
+    var atomic = composite.Atomicity == FanoutAtomicity.Atomic;
     var max = composite.MaxInnerEventsAllowed;
     var children = new List<InboxMessage>();
     var count = 0;
 
-    foreach (var inner in composite.InnerEvents) {
+    foreach (var inner in inners) {
       count++;
       if (count > max) {
-        // No partial fan-out — the whole composite dead-letters; stop at the first yield past the cap.
+        // Cap breach is a producer bug (runaway enumerator), not a per-child fault — whole composite
+        // dead-letters regardless of atomicity; stop at the first yield past the cap.
         return new FanoutResult(
           FanoutOutcome.CapExceeded, Array.Empty<InboxMessage>(),
           $"Composite '{compositeTypeName}' yielded at least {count} inner events, exceeding MaxInnerEventsAllowed ({max}).",
           compositeTypeName);
       }
       if (inner is null) {
-        return new FanoutResult(
-          FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
-          $"Composite '{compositeTypeName}' yielded a null inner event at position {count - 1}.",
-          compositeTypeName);
+        if (atomic) {
+          return new FanoutResult(
+            FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+            $"Composite '{compositeTypeName}' yielded a null inner event at position {count - 1}.",
+            compositeTypeName);
+        }
+        continue; // Independent: drop the bad child, keep the batch.
       }
       try {
         children.Add(_buildChildInbox(inner, source, serializer, eventTypeProvider));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        return new FanoutResult(
-          FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
-          $"Composite '{compositeTypeName}' child serialization failed: {ex.Message}",
-          compositeTypeName);
+        if (atomic) {
+          return new FanoutResult(
+            FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+            $"Composite '{compositeTypeName}' child serialization failed: {ex.Message}",
+            compositeTypeName);
+        }
+        // Independent: one bad child doesn't sink the batch — drop it and continue.
       }
     }
 

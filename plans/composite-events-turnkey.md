@@ -127,12 +127,16 @@ StreamIds). Defended in depth:
     receptors are out of the atomic set by nature. A throwing pre-fanout receptor fails the composite
     row → retry → DLQ. Tests: `DispatchOutboxCollectorTests` (3),
     `InboxDispatchWorkerTests.CompositeWithPreFanoutReceptor_*`. Dispatcher 754/0 (seam inert off-path).
-- [ ] **Phase C — fan-out control.**
-  - Declarative `FanoutMode` (Auto/Manual) + `Atomicity` (Independent/Atomic) on the composite /
-    `CompositeEventBase`.
-  - Imperative `FanoutDirective` (Proceed/Skip/ReplaceWith) returned by a pre-fanout receptor.
-  - RED→GREEN per mode/directive; `Atomic` rolls back all children on any failure; `Independent`
-    isolates per child.
+- [x] **Phase C — fan-out control. DONE.**
+  - Declarative `FanoutMode` (Auto/Manual) + `FanoutAtomicity` (Independent/Atomic) as
+    default-implemented `ICompositeEvent` members + overridable `CompositeEventBase` properties.
+  - Imperative `FanoutDirective` (Proceed/Skip/ReplaceWith) imposed via the ambient
+    `DispatchFanoutControl` (AsyncLocal, mirrors the collector) — a pre-fanout receptor calls
+    `DispatchFanoutControl.Set(...)`; the dispatch worker reads it after invocation. Directive takes
+    precedence over `FanoutMode`. `CompositeInboxFanout.TryExpand` honors `Atomicity` (Independent drops
+    a bad child + continues; Atomic fails the whole composite) and an optional replacement inner set.
+  - Tests: `DispatchFanoutControlTests` (4), `CompositeInboxFanoutTests` atomicity + replacement,
+    `InboxDispatchWorkerTests.CompositeDirective_Skip/ReplaceWith` + `CompositeFanoutMode_Manual`.
 - [ ] **Phase D — no-rebroadcast flag GUARD.**
   - New `EventFlags.NoRebroadcast` (or `LocalOnly`); fan-out stamps every child.
   - **Outbox-enqueue boundary checks the flag and drops** flagged children (the guard).

@@ -96,6 +96,37 @@ Only **inline** receptors participate in the atomic commit; detached (`[FireAt(.
 receptors run fire-and-forget after the dispatch step and cannot be part of its transaction. The
 children dispatch normally post-fanout — there is no composite awareness downstream.
 
+## Fan-out control
+
+Fan-out is zero-config by default, with a declarative knob on the composite and an imperative override
+from a pre-fanout receptor.
+
+**Declarative** (on the composite type / `CompositeEventBase`):
+
+- `FanoutMode` — `Auto` (default, fans out `InnerEvents`) | `Manual` (a pre-fanout receptor drives it;
+  nothing fans out without an explicit directive).
+- `Atomicity` — `Independent` (default; a child that fails to serialize is dropped and the rest fan out
+  — "one bad child doesn't sink the batch") | `Atomic` (any child failure dead-letters the whole
+  composite — use when the inner events are one logical unit). A cap breach (`MaxInnerEventsAllowed`)
+  always dead-letters the whole composite regardless of atomicity — it signals a runaway producer.
+
+**Imperative** — a pre-fanout receptor calls `DispatchFanoutControl.Set(...)` (ambient, like the
+collector) to impose a `FanoutDirective`, which takes precedence over `FanoutMode`:
+
+- `Proceed` (default) — fan out the composite's own `InnerEvents`.
+- `Skip` — suppress fan-out; the receptor handled the composite. The composite row is still deleted and
+  any emitted events still commit.
+- `ReplaceWith(children)` — fan out a receptor-supplied set instead (filter / transform / re-key before
+  the children are created).
+
+```csharp
+public sealed class OrderBulkImportComposite : CompositeEventBase {
+  public OrderBulkImportComposite() {
+    Atomicity = FanoutAtomicity.Atomic;   // a job's field events are one unit
+  }
+}
+```
+
 ## The no-rebroadcast invariant
 
 > One composite on the wire; children are received-events confined to the
@@ -116,10 +147,9 @@ suppressor treats them as received-from-upstream and won't re-publish them. (Pha
 | Dispatch recognition (drop-gate) | `ReceptorRegistryQueryGenerator` | `ReceptorRegistryQueryGeneratorTests.cs` (`Generator_WithCompositeEvent_*`) |
 | Dispatch-time fan-out | `CompositeInboxFanout`, `InboxDispatchWorker` | `Messaging/CompositeInboxFanoutTests.cs`, `Workers/InboxDispatchWorkerTests.cs` (`CompositeMessage_FansOut*`, `CompositeOverCap_DeadLetters*`) |
 | Pre-fanout hook (atomic emit) | `DispatchOutboxCollector`, `InboxDispatchWorker._invokePreFanoutHookAsync`, `Dispatcher` outbox seam | `Messaging/DispatchOutboxCollectorTests.cs`, `Workers/InboxDispatchWorkerTests.cs` (`CompositeWithPreFanoutReceptor_*`) |
+| Fan-out control | `FanoutMode`/`FanoutAtomicity`/`FanoutDirective`, `DispatchFanoutControl`, `CompositeInboxFanout`, `InboxDispatchWorker` | `Messaging/DispatchFanoutControlTests.cs`, `Messaging/CompositeInboxFanoutTests.cs` (atomicity + replacement), `Workers/InboxDispatchWorkerTests.cs` (`CompositeDirective_*`, `CompositeFanoutMode_Manual_*`) |
 | No transport-edge expansion | `TransportConsumerWorker` | `Workers/TransportConsumerWorkerCompositeNoExpandTests.cs` |
 
 ## Upcoming (see the plan)
 
-- **Phase C** — fan-out control: declarative `FanoutMode` (Auto/Manual) + `Atomicity`
-  (Independent/Atomic), imperative `FanoutDirective` (Proceed/Skip/ReplaceWith).
 - **Phase D** — explicit `EventFlags.NoRebroadcast` guard enforced at the outbox-enqueue boundary.

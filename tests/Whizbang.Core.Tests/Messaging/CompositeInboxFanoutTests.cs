@@ -109,15 +109,45 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
-  public async Task TryExpand_NullInner_ReturnsFailedAsync() {
-    var composite = new _nullYieldingComposite();
+  public async Task TryExpand_NullInner_Atomic_ReturnsFailedAsync() {
+    var composite = new _nullYieldingComposite { AtomicityOverride = FanoutAtomicity.Atomic };
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
 
     var result = CompositeInboxFanout.TryExpand(composite, source, sp);
 
-    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed)
+      .Because("Atomic: any bad child sinks the whole composite.");
     await Assert.That(result.Children).IsEmpty();
+  }
+
+  [Test]
+  public async Task TryExpand_NullInner_Independent_DropsBadChildAndKeepsRestAsync() {
+    // Independent (default): a null inner is dropped; the valid inner still fans out.
+    var composite = new _mixedNullComposite();
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(1)
+      .Because("Independent: one bad child doesn't sink the batch — the good child survives.");
+  }
+
+  [Test]
+  public async Task TryExpand_ReplacementInner_FansOutTheReplacementSetAsync() {
+    // A pre-fanout ReplaceWith directive supplies the children to fan out instead of InnerEvents.
+    var composite = new _testComposite(new _innerEvent("original"));
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+    var replacement = new IMessage[] { new _innerEvent("R-1"), new _innerEvent("R-2") };
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp, replacement);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2)
+      .Because("The replacement set (2) is fanned out, not the composite's own InnerEvents (1).");
   }
 
   // ============================================================
@@ -180,9 +210,22 @@ public class CompositeInboxFanoutTests {
 
   private sealed class _nullYieldingComposite : ICompositeEvent {
     public int MaxInnerEventsAllowed => 10;
+    public FanoutAtomicity AtomicityOverride { get; init; } = FanoutAtomicity.Independent;
+    public FanoutAtomicity Atomicity => AtomicityOverride;
     public IEnumerable<IMessage> InnerEvents {
       get {
         yield return null!;
+      }
+    }
+  }
+
+  private sealed class _mixedNullComposite : ICompositeEvent {
+    public int MaxInnerEventsAllowed => 10;
+    // Default Atomicity (Independent) via the interface default-impl.
+    public IEnumerable<IMessage> InnerEvents {
+      get {
+        yield return null!;
+        yield return new _innerEvent("good");
       }
     }
   }

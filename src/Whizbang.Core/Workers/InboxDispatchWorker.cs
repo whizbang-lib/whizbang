@@ -460,9 +460,27 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // folded into the SAME HandlerCommitRequest as the fan-out children → pre-fanout side-effects +
     // children commit all-or-nothing. Only inline receptors are collected: detached fire-and-forget
     // receptors outlive this scope and cannot be part of the atomic commit.
-    var preFanoutOutbox = await _invokePreFanoutHookAsync(work, typedEnvelope, receptorInvoker, ct);
+    var pre = await _invokePreFanoutHookAsync(work, typedEnvelope, receptorInvoker, ct);
+    var preFanoutOutbox = pre.Outbox;
 
-    var result = CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider);
+    // Fan-out control (Phase C): an imperative FanoutDirective set by the pre-fanout receptor takes
+    // precedence over the composite's declarative FanoutMode.
+    //   Skip                      → commit the receptor's emissions + delete the composite, no children.
+    //   ReplaceWith(children)     → fan out the receptor-supplied set instead of InnerEvents.
+    //   Proceed / none + Auto     → fan out InnerEvents (default).
+    //   Proceed / none + Manual   → nothing auto-fans-out (the receptor chose not to drive it).
+    var compositeTypeName = composite.GetType().FullName;
+    var result = (pre.Directive?.Kind, composite.FanoutMode) switch {
+      (FanoutDirectiveKind.Skip, _) =>
+        new CompositeInboxFanout.FanoutResult(
+          CompositeInboxFanout.FanoutOutcome.Expanded, Array.Empty<InboxMessage>(), null, compositeTypeName),
+      (FanoutDirectiveKind.ReplaceWith, _) =>
+        CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, pre.Directive!.Replacement),
+      (_, FanoutMode.Manual) =>
+        new CompositeInboxFanout.FanoutResult(
+          CompositeInboxFanout.FanoutOutcome.Expanded, Array.Empty<InboxMessage>(), null, compositeTypeName),
+      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider),
+    };
     if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
       var commitRequest = _buildCommitRequest(
         work, status: (int)MessageProcessingStatus.EventStored,
@@ -509,10 +527,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// common case) — skipping the collector + invocation entirely. Inline only: detached receptors run
   /// fire-and-forget after this scope and cannot be part of the atomic commit.
   /// </summary>
-  private async Task<IReadOnlyList<OutboxMessage>?> _invokePreFanoutHookAsync(
+  private async Task<PreFanoutResult> _invokePreFanoutHookAsync(
       InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
     if (receptorInvoker is null) {
-      return null;
+      return default;
     }
     var runtimeType = typedEnvelope.Payload?.GetType();
     var hasPre = (_receptorRegistry?.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType) ?? false)
@@ -520,7 +538,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var hasPost = (_receptorRegistry?.HasReceptors(LifecycleStage.PostInboxInline, work.MessageType) ?? false)
       || _runtimeHasReceptors(runtimeType, LifecycleStage.PostInboxInline);
     if (!hasPre && !hasPost) {
-      return null;
+      return default;
     }
 
     var baseContext = new LifecycleExecutionContext {
@@ -532,7 +550,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       AttemptNumber = work.Attempts,
     };
 
+    // Open the outbox collector (captures emitted events for the atomic commit) and the fan-out control
+    // (lets the receptor impose a FanoutDirective) for the duration of the receptor invocation.
     using var collecting = DispatchOutboxCollector.BeginCollecting();
+    using var controlling = DispatchFanoutControl.Begin();
     if (hasPre) {
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline,
         baseContext, ct);
@@ -542,8 +563,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         baseContext with { CurrentStage = LifecycleStage.PostInboxInline }, ct);
     }
     var collected = collecting.Collector.Collected;
-    return collected.Count == 0 ? null : collected;
+    return new PreFanoutResult(
+      collected.Count == 0 ? null : collected,
+      controlling.Control.Directive);
   }
+
+  /// <summary>Outcome of the composite pre-fanout hook: emitted outbox messages + any imposed directive.</summary>
+  private readonly record struct PreFanoutResult(
+    IReadOnlyList<OutboxMessage>? Outbox,
+    FanoutDirective? Directive);
 
   private HandlerCommitRequest _buildCommitRequest(
       InboxWork work, int status,
