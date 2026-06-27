@@ -61,21 +61,32 @@ public class StreamIdGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractCommandStreamIdInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Generate extractor methods from collected events and commands
-    // Combine compilation with discovered events and commands to get assembly name for namespace
+    // Discover ICompositeEvent types with [StreamId]. A composite is IMessage-not-IEvent, but carries
+    // [StreamId] (via CompositeEventBase) — the stream its fanned-out inner events inherit. The extractor
+    // must resolve it via the object-typed resolver so producer-side fan-out routes children correctly.
+    var compositesWithStreamId = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
+                                    || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => _extractCompositeStreamIdInfo(ctx, ct)
+    ).Where(static info => info is not null);
+
+    // Generate extractor methods from collected events, commands, and composites
+    // Combine compilation with discovered types to get assembly name for namespace
     var compilationAndData = context.CompilationProvider
         .Combine(eventsWithStreamId.Collect())
         .Combine(eventsWithoutStreamId.Collect())
-        .Combine(commandsWithStreamId.Collect());
+        .Combine(commandsWithStreamId.Collect())
+        .Combine(compositesWithStreamId.Collect());
 
     context.RegisterSourceOutput(
         compilationAndData,
         static (ctx, data) => {
-          var compilation = data.Left.Left.Left;
-          var withStreamId = data.Left.Left.Right;
-          var withoutStreamId = data.Left.Right;
-          var commandsWithId = data.Right;
-          _generateStreamIdExtractors(ctx, compilation, withStreamId!, withoutStreamId!, commandsWithId!);
+          var compilation = data.Left.Left.Left.Left;
+          var withStreamId = data.Left.Left.Left.Right;
+          var withoutStreamId = data.Left.Left.Right;
+          var commandsWithId = data.Left.Right;
+          var compositesWithId = data.Right;
+          _generateStreamIdExtractors(ctx, compilation, withStreamId!, withoutStreamId!, commandsWithId!, compositesWithId!);
         }
     );
   }
@@ -120,6 +131,63 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // Look for [StreamId] on constructor parameters (for records)
+    return _extractStreamIdFromConstructorParameters(typeSymbol);
+  }
+
+  /// <summary>
+  /// Discovers a concrete <c>ICompositeEvent</c> with a [StreamId] property. A composite is
+  /// IMessage-not-IEvent (so never event-stored), but carries [StreamId] (via CompositeEventBase) — the
+  /// stream its fanned-out inner events inherit. We register an extractor on the object-typed resolver so
+  /// producer-side fan-out routes children to the composite's declared stream, not its MessageId.
+  /// Abstract types (e.g. CompositeEventBase itself) are skipped — only concrete composites are registered.
+  /// </summary>
+  // S3776: Sequential validation checks with early returns — mirrors _extractStreamIdInfo's structure.
+#pragma warning disable S3776
+  private static StreamIdInfo? _extractCompositeStreamIdInfo(
+      GeneratorSyntaxContext context,
+      CancellationToken ct) {
+#pragma warning restore S3776
+
+    var typeSymbol = RoslynGuards.GetTypeSymbolFromNode(context.Node, context.SemanticModel, ct);
+
+    // Skip non-public types (can't access from generated code)
+    if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+      return null;
+    }
+
+    // Skip abstract types — CompositeEventBase carries the [StreamId] but is never instantiated; only
+    // concrete composites are dispatched and fanned out.
+    if (typeSymbol.IsAbstract) {
+      return null;
+    }
+
+    // Must be an ICompositeEvent (IMessage-not-IEvent). IEvent/ICommand composites would already be
+    // handled by their own discovery paths, so exclude those to avoid duplicate extractor overloads.
+    if (!TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMPOSITE_EVENT)) {
+      return null;
+    }
+    if (TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_EVENT)
+        || TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND)) {
+      return null;
+    }
+
+    // Look for [StreamId] on properties (including the inherited CompositeEventBase.StreamId).
+    var streamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
+    if (streamIdProperty is not null) {
+      var (hasGenerate, onlyIfEmpty) = _extractGenerateStreamIdInfo(streamIdProperty, typeSymbol);
+
+      return new StreamIdInfo(
+          EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
+          PropertyName: streamIdProperty.Name,
+          PropertyType: TypeNameHelper.GetFullyQualifiedName(streamIdProperty.Type),
+          IsPropertyValueType: streamIdProperty.Type.IsValueType,
+          HasGenerate: hasGenerate,
+          OnlyIfEmpty: onlyIfEmpty,
+          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty)
+      );
+    }
+
+    // Look for [StreamId] on constructor parameters (for record composites).
     return _extractStreamIdFromConstructorParameters(typeSymbol);
   }
 
@@ -317,7 +385,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
       Compilation compilation,
       ImmutableArray<StreamIdInfo> eventsWithStreamId,
       ImmutableArray<EventWithoutStreamIdInfo> eventsWithoutStreamId,
-      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
+      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId,
+      ImmutableArray<StreamIdInfo> compositesWithStreamId) {
 #pragma warning restore S3776
 
     // Determine namespace from assembly name
@@ -343,15 +412,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
     // Generate command dispatch and extractors
     template = _generateCommandRegions(template, context, commandsWithStreamId);
 
-    // Replace other regions with empty (perspective DTOs - not yet implemented)
-    template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_OTHER_DISPATCH", "");
-    template = TemplateUtilities.ReplaceRegion(template, "OTHER_EXTRACTORS", "");
+    // Generate the object-typed (OTHER) regions for composites — IMessage-not-IEvent types carrying [StreamId].
+    template = _generateOtherRegions(template, compositesWithStreamId);
 
     // Generate SetStreamId dispatch cases
     template = _generateSetStreamIdRegion(template, eventsWithStreamId, commandsWithStreamId);
 
     // Generate [ModuleInitializer] registration code
-    template = _generateModuleInitializerRegion(template, eventsWithStreamId, commandsWithStreamId);
+    template = _generateModuleInitializerRegion(template, eventsWithStreamId, commandsWithStreamId, compositesWithStreamId);
 
     context.AddSource("StreamIdExtractors.g.cs", template);
   }
@@ -661,6 +729,59 @@ public class StreamIdGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Generates the object-typed OTHER regions for composites: the TRY_RESOLVE_OTHER_DISPATCH cases (matched
+  /// in <c>TryResolveAsGuid(object?)</c>) and their TryExtractAsGuid methods (OTHER_EXTRACTORS). A composite
+  /// is IMessage-not-IEvent, so it never matches the IEvent/ICommand fast paths — its [StreamId] is resolved
+  /// here so producer-side fan-out routes the inner events onto the composite's declared stream.
+  /// </summary>
+  private static string _generateOtherRegions(
+      string template,
+      ImmutableArray<StreamIdInfo> compositesWithStreamId) {
+
+    if (compositesWithStreamId.IsEmpty) {
+      template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_OTHER_DISPATCH", "");
+      template = TemplateUtilities.ReplaceRegion(template, "OTHER_EXTRACTORS", "");
+      return template;
+    }
+
+    var otherDispatchSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, "OTHER_TRY_DISPATCH_CASE");
+
+    var dispatchCode = new StringBuilder();
+    dispatchCode.AppendLine("// Type-based dispatch for composites (IMessage-not-IEvent carrying [StreamId])");
+    for (int i = 0; i < compositesWithStreamId.Length; i++) {
+      var caseCode = otherDispatchSnippet
+          .Replace(PLACEHOLDER_EVENT_TYPE, compositesWithStreamId[i].EventType)
+          .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture));
+      dispatchCode.AppendLine(caseCode);
+    }
+    template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_OTHER_DISPATCH", dispatchCode.ToString().TrimEnd());
+
+    var extractorsCode = new StringBuilder();
+    for (int i = 0; i < compositesWithStreamId.Length; i++) {
+      var info = compositesWithStreamId[i];
+      var simpleName = info.EventType.Split('.')[^1].Replace(PLACEHOLDER_GLOBAL, "");
+
+      var tryExtractorSnippetName = _getTryExtractorSnippetName(info.PropertyType, info.IsPropertyValueType);
+      var tryExtractorSnippet = TemplateUtilities.ExtractSnippet(
+          typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, tryExtractorSnippetName);
+
+      var tryExtractorCode = tryExtractorSnippet
+          .Replace(PLACEHOLDER_EVENT_TYPE, info.EventType)
+          .Replace("__EVENT_NAME__", simpleName)
+          .Replace(PLACEHOLDER_PROPERTY_NAME, info.PropertyName);
+
+      if (i > 0) {
+        extractorsCode.AppendLine();
+      }
+      extractorsCode.Append(tryExtractorCode);
+    }
+    template = TemplateUtilities.ReplaceRegion(template, "OTHER_EXTRACTORS", extractorsCode.ToString().TrimEnd());
+
+    return template;
+  }
+
+  /// <summary>
   /// Generates SET_STREAM_ID_DISPATCH region for events and commands with mutable Guid [StreamId] properties.
   /// </summary>
   private static string _generateSetStreamIdRegion(
@@ -711,9 +832,10 @@ public class StreamIdGenerator : IIncrementalGenerator {
   private static string _generateModuleInitializerRegion(
       string template,
       ImmutableArray<StreamIdInfo> eventsWithStreamId,
-      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
+      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId,
+      ImmutableArray<StreamIdInfo> compositesWithStreamId) {
 
-    var hasExtractors = !eventsWithStreamId.IsEmpty || !commandsWithStreamId.IsEmpty;
+    var hasExtractors = !eventsWithStreamId.IsEmpty || !commandsWithStreamId.IsEmpty || !compositesWithStreamId.IsEmpty;
     if (hasExtractors) {
       const string registrationCode = "global::Whizbang.Core.Registry.StreamIdExtractorRegistry.Register(new GeneratedStreamIdExtractor(), priority: 100);";
       return TemplateUtilities.ReplaceRegion(template, "MODULE_INITIALIZER_REGISTRATION", registrationCode);

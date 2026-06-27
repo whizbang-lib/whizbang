@@ -81,6 +81,20 @@ public class StreamIdSnippets {
   }
 
   /// <summary>
+  /// Example method showing snippet structure for the object-typed (other-types) dispatch routing.
+  /// Used for composites — IMessage-not-IEvent types that carry [StreamId].
+  /// </summary>
+  public Guid? OtherTryDispatchExample(object message) {
+    #region OTHER_TRY_DISPATCH_CASE
+    if (message is __EVENT_TYPE__ o__INDEX__) {
+      return TryExtractAsGuid(o__INDEX__);
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
   /// Example method showing snippet structure for TryExtractAsGuid method for Guid properties.
   /// </summary>
   public Guid? TryExtractorGuidExample() {

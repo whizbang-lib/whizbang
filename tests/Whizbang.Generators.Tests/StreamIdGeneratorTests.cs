@@ -43,6 +43,34 @@ public class StreamIdGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_CompositeEvent_RegistersStreamIdExtractorViaObjectResolverAsync() {
+    // A composite is IMessage-not-IEvent, but carries [StreamId] (via CompositeEventBase) — the stream
+    // its fanned-out inner events inherit. The extractor MUST resolve it, dispatched from the
+    // object-typed resolver (where `message is MyComposite` is valid), not the IEvent one.
+    const string source = """
+            using System;
+            using Whizbang.Core;
+            using Whizbang.Core.Messaging;
+
+            namespace TestNamespace;
+
+            public sealed class MyBulkComposite : CompositeEventBase { }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<StreamIdGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated!).Contains("MyBulkComposite")
+      .Because("the composite's inherited [StreamId] must be registered with the extractor.");
+    // Dispatched from the object resolver via `message is`, not the IEvent overload's `@event is`.
+    await Assert.That(generated!).Contains("message is global::TestNamespace.MyBulkComposite")
+      .Because("composites resolve through the object-typed TRY_RESOLVE_OTHER_DISPATCH region.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleMessageTypes_GeneratesAllExtractorsAsync() {
     // Arrange
     const string source = """

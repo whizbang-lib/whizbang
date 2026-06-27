@@ -30,14 +30,11 @@ public class OwnedCompositeFanoutStorageTests : EFCoreTestBase {
 
   public record BulkInnerEvent([property: StreamId] Guid StreamId, string Data) : IEvent;
 
-  // BLOCKED on the StreamIdGenerator: it discovers [StreamId] only on IEvent/ICommand types, not on
-  // ICompositeEvent (IMessage). So a composite's [StreamId] (inherited from CompositeEventBase) is never
-  // registered with the extractor, and producer-side fan-out routes children to the composite's MessageId
-  // instead of its declared stream. Fix: emit composite StreamId extractors into the (currently
-  // unimplemented) TRY_RESOLVE_OTHER_DISPATCH / OTHER_EXTRACTORS regions of StreamIdExtractorsTemplate.
-  // This test is the green proof once that lands. The producer-side fan-out + lineage are unit-proven
-  // (DispatcherOwnedCompositeFanoutTests, CompositeInboxFanoutTests).
-  [Skip("Blocked on StreamIdGenerator composite [StreamId] discovery — see comment above.")]
+  // The StreamIdGenerator now discovers [StreamId] on concrete ICompositeEvent types (inherited from
+  // CompositeEventBase) and emits an object-typed resolver case (TRY_RESOLVE_OTHER_DISPATCH /
+  // OTHER_EXTRACTORS), so producer-side fan-out routes the composite's inner events onto its declared
+  // stream. This test is the green end-to-end proof; the producer-side fan-out + lineage are also
+  // unit-proven (DispatcherOwnedCompositeFanoutTests, CompositeInboxFanoutTests).
   [Test]
   public async Task PublishOwnedComposite_FansOutInnerEventsToInbox_OnCompositeStream_WithLineageAsync() {
     await using var serviceProvider = (await _buildServicesAsync()).BuildServiceProvider();
