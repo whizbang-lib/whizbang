@@ -29,13 +29,4 @@ public sealed class ReceptorRegistryContribution {
   /// the lifecycle stage; values are the message types with at least one
   /// <c>[FireAt(stage)]</c> receptor.</summary>
   public required IReadOnlyDictionary<LifecycleStage, IReadOnlyCollection<string>> StageTypes { get; init; }
-
-  /// <summary>
-  /// Concrete <c>ICompositeEvent</c> message types declared in this assembly. A composite travels over
-  /// transport like an IEvent but is never event-stored; it auto-fans-out at every destination service,
-  /// including its own (so the receive boundary must NOT echo-discard an owned composite — see
-  /// <see cref="Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.IsComposite"/>). Defaulted to empty
-  /// so a contribution emitted before this field existed merges harmlessly.
-  /// </summary>
-  public IReadOnlyCollection<string> CompositeTypes { get; init; } = System.Array.Empty<string>();
 }

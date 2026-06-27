@@ -27,11 +27,4 @@ public interface IReceptorRegistryQuery {
   /// <summary>True when ANY consumer (handler / lifecycle receptor / perspective /
   /// tag-attribute) is registered for the message type.</summary>
   bool HasAnyConsumer(string messageType);
-
-  /// <summary>True when the message type is a concrete <c>ICompositeEvent</c>. The receive boundary
-  /// uses this to exempt owned composites from echo-discard so they survive to the dispatch-time
-  /// fan-out at every destination service, including the publishing service itself.</summary>
-  /// <remarks>Default-implemented as <c>false</c> so existing test doubles need no change; the
-  /// generated <see cref="WhizbangReceptorRegistryQueryAdapter"/> overrides it with the real lookup.</remarks>
-  bool IsComposite(string messageType) => false;
 }

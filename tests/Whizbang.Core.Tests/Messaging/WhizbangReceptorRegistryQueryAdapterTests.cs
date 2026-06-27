@@ -67,18 +67,6 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
   }
 
   [Test]
-  public async Task IsComposite_UnknownType_DelegatesAndReturnsFalseAsync() {
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
-
-    var direct = sut.IsComposite(UNKNOWN_TYPE);
-    var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery
-      .IsComposite(UNKNOWN_TYPE);
-
-    await Assert.That(direct).IsEqualTo(static_);
-    await Assert.That(direct).IsFalse();
-  }
-
-  [Test]
   public async Task Adapter_ImplementsIReceptorRegistryQueryAsync() {
     // Compile-time fact, but explicitly asserted here so a future rename / shape
     // change of IReceptorRegistryQuery breaks this test before it breaks DI.

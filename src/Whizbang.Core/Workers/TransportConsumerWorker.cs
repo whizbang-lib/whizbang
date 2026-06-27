@@ -601,13 +601,8 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// <summary>
   /// Owned events are ALWAYS echo (only the owning service publishes events in its namespace).
   /// Owned commands may come from other services, so the last-hop service name distinguishes
-  /// echo from cross-service delivery. <b>Composites are exempt</b>: a composite is not event-stored at
-  /// publish time, so it must survive its own loopback to fan out at the publishing service — recognized
-  /// via <see cref="IReceptorRegistryQuery.IsComposite"/>.
+  /// echo from cross-service delivery.
   /// </summary>
-  /// <docs>fundamentals/messaging/composite-events#owned-composites-fan-out-at-the-publishing-service</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedCompositeEchoTests.cs</tests>
   private bool _shouldDiscardOwnedEcho(
       IMessageEnvelope envelope,
       string? envelopeType,
@@ -618,16 +613,6 @@ public partial class TransportConsumerWorker : BackgroundService {
     }
     var ns = TypeNameFormatter.GetPayloadNamespace(envelopeType);
     if (!_isOwnedNamespace(ns)) {
-      return false;
-    }
-    // Composites are NEVER echo-discarded. Unlike a normal owned event (event-stored at publish time, so
-    // its loopback echo is redundant and dropped here), a composite is IMessage-not-IEvent — it has no
-    // publish-time event store, so it MUST survive to the dispatch seam to fan out. Fan-out happens at every
-    // destination service, INCLUDING the publishing service via self-loop; the children are stamped
-    // NoRebroadcast (CompositeInboxFanout) so they never go back on the wire. Resolve the inner payload type
-    // from the wrapper envelope type the same way the drop-gate does.
-    var innerTypeForComposite = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType) ?? envelopeType;
-    if (_receptorRegistry?.IsComposite(innerTypeForComposite) == true) {
       return false;
     }
     if (_isKnownEventType(envelopeType)) {
