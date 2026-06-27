@@ -1,166 +1,158 @@
-# Plan: turnkey composite events (Whizbang) + per-job composite in bulk import (a consumer)
+# Plan: composite events as dispatchable, fan-out-at-dispatch messages (turnkey)
 
 ## Goal
 
-Make `ICompositeEvent` a **turnkey** Whizbang feature — authoring a composite "just works"
-(serialization, registration, AOT, helpers, observable failures) — then adopt it in a consumer bulk
-import: **one composite per job** (≈350 composites for a 350-import), each bundling that job's
-field events on the job's own stream. The per-item saga lifecycle is untouched; the composite only
-replaces the per-job domain-event publishing.
+Make `ICompositeEvent` a **turnkey, architecturally-correct** Whizbang feature, then adopt it in a consumer
+bulk import (one composite per job). A composite is "N events batched for the wire." The correct shape:
 
-Receiving side is **transparent**: receptors and perspectives see ordinary per-stream inner events
-and never know a composite existed. Inner events inherit the composite's StreamId + identity context
-(tenant/scope/correlation) and get fresh MessageIds; the composite itself is never persisted (replay
-sees only inner events).
+> A composite is an **ordinary message** everywhere except **one seam — the fan-out** — and that seam
+> sits **inside the durable inbox/dispatch/retry/DLQ envelope**, not outside it at the transport edge.
 
-## Engineering constitution (applies to every phase)
+This replaces the original "wire-only, expand at the transport consumer" design (which orphaned the
+composite from durability/retry/DLQ and forced pervasive special-casing). The serialization +
+`CompositeEventBase` work already done stays valid; what moves is **where** fan-out happens.
 
-- **L1/L4 TDD red→green**: a failing test first, minimum code to green. No production line without a
-  test that was RED before it.
-- **L2 100% diff coverage** (line + branch) on changed lines; **L7** mutation-aware (don't write
-  coverage-only tests).
-- **L30–L32 docs**: ship/refresh `docs/fundamentals/messaging/composite-events.md`; close the
-  docs↔code↔tests graph (doc front-matter `related_files`/`related_tests`; MCP-indexed).
-- **L19 AOT-strict, no reflection**: all wire/registration work goes through the source generator and
-  `JsonContextRegistry`; zero runtime reflection. This is the AOT-critical surface.
+## The three message roles (one consistent lifecycle)
 
-## Background (verified against `release/v0.758.1-alpha.1`)
+1. **Composite** — dispatchable + hookable, but **never written to the event store** (only children
+   are). Lives transiently as an **inbox row**: received → pre-fanout receptors → fan out → deleted.
+2. **Children (inner events)** — ordinary received events. Produced by fan-out as **inbox rows**,
+   processed normally (event store + receptors + perspectives). **Never outboxed** (see invariant).
+3. Everything downstream of fan-out sees only children — no composite awareness.
 
-- `ICompositeEvent : IMessage` (NOT `IEvent`) — `src/Whizbang.Core/Messaging/ICompositeEvent.cs`.
-  `InnerEvents` (ordered, lazy-ok), `MaxInnerEventsAllowed` (default 10k).
-- **Producer**: `Dispatcher` stamps `EventFlags.Composite` on the single outbox row
-  (`Dispatcher.cs:3738`, `:4860`); because `IsEvent == false`, Phase 4.5A skips the composite when
-  copying outbox→event store (`Migrations/029_ProcessWorkBatch.sql:437-440`) — never persisted.
-- **Receiver**: `TransportConsumerWorker.cs:461` branches on `EventFlags.Composite`,
-  `CompositeEventExpander.Expand` (`src/Whizbang.Core/Messaging/CompositeEventExpander.cs:74`) yields
-  inner envelopes sharing the composite's `Hops` by reference; all inner inbox rows insert in one
-  `store_inbox_messages` transaction. Inner StreamId = composite StreamId via shared hop `AggregateId`
-  (`TransportConsumerWorker.cs:1107`). Inner `[GenerateStreamId]`/`[StreamId]` are ignored at receive.
-- **Gaps that make it NOT turnkey today**:
-  1. **Serialization/registration**: the JSON source-gen discovers types by `IsCommand || IsEvent ||
-     [WhizbangSerializable] || perspective-model` and emits `RegisterDerivedType<IMessage,…>` ONLY for
-     `IsEvent || IsCommand` (`MessageJsonContextGenerator.cs:575-576`). A type implementing only
-     `ICompositeEvent` is undiscovered/unregistered → `MessageEnvelope<ICompositeEvent>` may not
-     round-trip. Workarounds are both flawed (`[WhizbangSerializable]` skips the `IMessage`
-     registration; `IEvent` flips `IsEvent=true` → producer would persist the composite).
-  2. **No authoring helper** — consumers hand-roll `InnerEvents`, StreamId stamping, cap checks.
-  3. **Failure is silent** — receiver expansion failure logs-and-drops (ACKs); no DLQ, no signal
-     (`TransportConsumerWorker.cs:519-522`).
+### Dispatch lifecycle (at the dispatch seam, inside retry/DLQ)
 
-## Decisions (locked; override if needed)
+```
+claim composite inbox row
+  → PRE-FANOUT:  dispatch composite to IReceptor<TComposite> (same tx; optional)
+  → FANOUT:      expand InnerEvents → N child inbox rows   (automatic by default)
+  → COMMIT:      pre-fanout effects + child rows + delete-composite  (atomic)
+  → POST-FANOUT: each child inbox row dispatches normally to IReceptor<TChild>
+```
 
-- **Helper = base class** `CompositeEventBase` (nominal type → clean source-gen discovery + topic
-  routing), not a factory.
-- **DLQ failure-surfacing** (Track 1 phase 3) is planned but **does NOT block** the a consumer prototype.
-  The prototype uses optimistic saga completion + a producer-side count-vs-cap guard (a malformed
-  composite fails synchronously at publish via the existing try/catch). DLQ hardening lands alongside.
+- **Failure** at pre-fanout or fanout → the composite is *an inbox row that failed* → normal retry →
+  DLQ via the existing `IDeadLetterStore.MoveAsync(wh_inbox, …)`. **Phase 3/DLQ disappears.**
+- **Child failures**: `Independent` (default — each child its own inbox row + retry/DLQ; one bad
+  child doesn't sink the batch) or `Atomic` (children expand-and-process in one tx, all-or-nothing).
 
----
+## Hooks (no new concepts — just receptor typing)
 
-## Track 1 — Whizbang turnkey support (ships first)
+- **Pre-fanout** = `IReceptor<TComposite>` (the composite is a real message at the surface): validate
+  the batch, stamp batch metadata, emit a durable `BatchReceivedEvent`, or drive fan-out.
+- **Post-fanout** = `IReceptor<TChildEvent>` — the normal per-event receptors. No special-casing.
+- The only registry change: composite types become **dispatchable** (today's transport-expansion
+  model treats them as not-dispatchable). That seam is what makes "a receptor can listen for the
+  composite" work.
 
-### Phase 1 — serialization/registration "just works" (task #42)
-- **RED**: cross-service round-trip test — a type implementing only `ICompositeEvent` serialized into
-  `MessageEnvelope`, sent through the (test) transport, fails to deserialize/expand because it isn't a
-  registered `IMessage` derived type. (Unit-level: assert the generated initializer contains no
-  `RegisterDerivedType<IMessage, TheComposite>` today.)
-- **GREEN**: in `MessageJsonContextGenerator` — discover `ICompositeEvent` implementers; emit their
-  `JsonTypeInfo`; emit `RegisterDerivedType<IMessage, T>` for them; do **not** set `IsEvent`/emit
-  `RegisterDerivedType<IEvent,…>`. Add a `Composite`-flag guard to Phase 4.5A append SQL as a
-  belt-and-suspenders "never persisted" safety net (defense even if a future composite is also IEvent).
-- **Coverage/AOT**: generator snapshot tests + a runtime round-trip test; no reflection.
+## Fan-out control (automatic default, layered override)
 
-### Phase 2 — authoring helper `CompositeEventBase` (task #43) — DONE
-- `abstract class CompositeEventBase : ICompositeEvent`: `[StreamId] Guid StreamId`,
-  `List<IMessage> Inner` (init; concrete List so source-gen serializes each element with its `$type`),
-  `[JsonIgnore]` computed `InnerEvents => Inner`, init `MaxInnerEventsAllowed` (default 10k), and
-  `EnsureWithinCap()` (producer-side fail-fast — cheap `Inner.Count`). One-line consumer authoring:
-  `public sealed class OrderBulkImportComposite : CompositeEventBase;` →
-  `new OrderBulkImportComposite { StreamId = id, Inner = events }`.
-- RED→GREEN: `CompositeEventBaseTests` (5: StreamId+order, cap default/override, EnsureWithinCap
-  throws/passes, empty default) + `CompositeEventBaseSubclass_RoundTripsViaHelperShape` (serializes
-  via the auto-generated metadata — production path).
-- **Surfaced + fixed 2 real generator bugs** the helper would hit in production:
-  1. The generator tried to emit an instantiation factory for the **abstract** base (CS0144) → skip
-     abstract types in discovery.
-  2. The generator **ignored `[JsonIgnore]`** → it would serialize the computed `InnerEvents` and
-     form an `IEnumerable<IMessage>` polymorphism cycle → generator now honors `[JsonIgnore]`
-     (`_hasJsonIgnore`, applied in `_getAllPropertiesIncludingInherited`).
-- Verified: Core 8126 pass (+1 unrelated parallel flake), generator suite 1219/0.
-- Docs example uses this base (pending the docs pass).
+- **Default**: zero-config — any `ICompositeEvent` auto-fans-out, children processed `Independent`.
+- **Declarative** (common) — on the composite type / `CompositeEventBase`:
+  - `FanoutMode`: `Auto` (default) | `Manual` (a receptor drives it).
+  - `Atomicity`: `Independent` (default) | `Atomic`.
+- **Imperative** — a pre-fanout receptor returns a `FanoutDirective`:
+  `Proceed` (default) | `Skip` (handle the composite without fanning out — a pure control signal) |
+  `ReplaceWith(children)` (filter / transform / re-key children before they're created).
 
-### Phase 3 — expansion-failure DLQ routing (task #44, non-blocking)
-- **RED**: expansion failure (over-cap / malformed inner) currently ACKs and drops — test asserts no
-  DLQ row. 
-- **GREEN**: route `CompositeInnerEventLimitExceeded` / `CompositeExpansionFailure` to the real
-  failure channel/DLQ (mirror the body-claim rehydrate DLQ path at `TransportConsumerWorker.cs:654`).
+## The no-rebroadcast invariant (children never outbox) — enforced, not emergent
 
-### Release
-- New Whizbang alpha (GitVersion on a `release/*` → PR to develop), then bump a consumer
-  `Directory.Packages.props` (same loop as the `IVersionedApplyTarget` fix).
+> One composite on the wire; children are received-events confined to the
+> inbox → event-store → local-processing path.
+
+Correct **by construction** — the outbox is producer-only (`PublishAsync`); fan-out writes children
+to the **inbox/received** path, never `PublishAsync`. Children inherit the composite's routing, and
+the composite was already delivered to every subscriber of its topic, so a child never needs its own
+broadcast (a child needing different routing shouldn't be in a composite — same rule as per-inner
+StreamIds). Defended in depth:
+
+1. **Hop-based suppression (exists)** — children inherit the composite's `Hops`; existing owned-echo /
+   re-broadcast suppression treats them as "received from upstream" and won't re-publish them.
+2. **Explicit flag used as a GUARD (new, required)** — fan-out stamps children with an `EventFlags`
+   marker (`NoRebroadcast` / `LocalOnly`). The **outbox-enqueue boundary hard-checks the flag and
+   drops** flagged children. This turns "children don't outbox" into an *enforced invariant*: even a
+   future receptor or code path that explicitly publishes a fan-out child is dropped at the outbox
+   gate. Scope: the marker is on the **children themselves**, not on genuinely-new downstream events a
+   child's receptor produces (those outbox normally).
+
+## Engineering constitution (every phase)
+
+- **L1/L4 RED→GREEN TDD** — a failing test first; minimum code to green; refactor under green.
+- **L2 100% diff coverage** (line + branch) on changed lines; **L7** mutation-aware (no coverage-only
+  tests).
+- **L19 AOT-strict, no reflection** — all wire/registration/dispatch-routing work goes through the
+  source generator + `JsonContextRegistry`; zero runtime reflection.
+- **L30–L32 docs↔code↔tests** — ship/refresh `docs/fundamentals/messaging/composite-events.md`; every
+  new public type carries `<tests>`/`<docs>` frontmatter; close the graph (MCP-indexed).
 
 ---
-
-## Track 2 — a consumer per-job composite (after Track 1 + a consumer bump) (task #45)
-
-1. `OrderBulkImportComposite : CompositeEventBase` — inner events init-first then field events
-   (optionally fold the interim `OrderBulkImportItemCompletedEvent` marker; both share the job
-   stream).
-2. Rewire `BulkImportSagaHandlers.PublishOrderEventsAsync`: pre-mint `jobStreamId`
-   (`TrackedGuid.NewMedo()`), set it on the composite + all inner events, replace
-   `PublishAsync(init)` + `PublishManyAsync(rest)` with one `PublishAsync(composite)`. Saga
-   `UpdateItemAsync`/`FailItemAsync` unchanged.
-3. **RED→GREEN expansion-parity integration test**: a composite-per-job lands the **same N
-   event-store rows on `jobStreamId`** (types + order) as today's individual-publish path
-   (replay-identical), plus a cap test and a per-job-failure test.
-4. **Measure**: 350-import wall-clock + dispatch/outbox/transport counts, composite vs current, on
-   production.
-
-## Risks / open questions
-
-- Phase 1 is the load-bearing spike: confirm the generator change makes the envelope round-trip
-  end-to-end (not just emits the line). If `JsonContextRegistry` needs more than the derived-type
-  registration, scope grows.
-- "Batched event-store append, all-or-nothing" is **partial** — receive-time atomicity is the inbox
-  insert; event-store landing is per-row idempotent self-healing. Parity test asserts the end state,
-  not a single transaction.
-- Failure visibility: until Phase 3 lands, a downstream expansion failure is silent (same risk class
-  as today's outbox-processing failures); the producer-side cap guard catches the common case.
 
 ## Status
 
-- [x] T1.P1 serialization/registration (RED→GREEN) — registration + nested-polymorphism both done
-  - [x] Generator discovers `ICompositeEvent` → emits `JsonTypeInfo` + `RegisterDerivedType<IMessage,…>`,
-        NOT as IEvent. RED→GREEN (`Generator_WithCompositeEvent_RegistersAsIMessage_NotAsEventAsync`);
-        full generator suite 1219/0.
-  - [x] End-to-end round-trip test written (`MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync`)
-        — **found a real gap (RED, currently `[Skip]`):** the composite serializes, but its nested
-        `IMessage` list (`InnerEvents`) fails to deserialize — STJ: *"Deserialization of interface or
-        abstract types is not supported. Type 'IMessage'. Path: $.Payload.Items[0]"*.
-  - [x] **T1.P1b — nested IMessage polymorphism (cycle-safe fix). DONE.** `CreateCombinedOptions` now
-        prepends a `_polymorphicBaseTypeInfoResolver` that supplies a polymorphic typeinfo for the
-        registered base interfaces (`IMessage`/`IEvent`/`ICommand`) via explicit generic dispatch
-        (AOT-safe). Cycle-safety comes from a **lazy** builder (`_createPolymorphicTypeInfoLazy`) that
-        adds `JsonDerivedType` entries WITHOUT forcing resolution (`MakeReadOnly`/`Properties`) — so
-        building the base typeinfo never re-enters resolution for a nested same-base member; STJ
-        resolves derived types lazily against the cached base typeinfo. Round-trip test now GREEN;
-        full `Whizbang.Core` suite **8115/0**, no regressions.
-  - [x] **T1.P1c — edge-case + branch coverage, and skip-unresolvable robustness. DONE.** Added 6
-        tests: composite-in-composite (cycle-safety PROVEN, not just argued), plain event with a
-        polymorphic `IMessage` collection ("events with collections"), nested `IEvent`/`ICommand`
-        collections (cover those resolver branches), multiple mixed inner types (order preserved),
-        empty inner list. This surfaced a real robustness gap: the lazy builder must SKIP derived
-        types the options can't resolve (STJ finalizes a polymorphic typeinfo by resolving ALL its
-        derived types, so one unresolvable type throws for the whole base). Fixed with
-        `_isResolvableByRegisteredContext`, which checks `options.TypeInfoResolver` (the options'
-        snapshot — NOT the live `_resolvers`, which diverges under concurrent registration) and is
-        resolution-free (no recursion / no read-only race). Full `Whizbang.Core` 8120 pass; the lone
-        failure is a pre-existing parallel flake in `MetricAssertionHelper` (passes in isolation),
-        unrelated to serialization.
-  - [ ] (belt-and-suspenders, deferred/low-pri) `Composite`-flag guard on producer Phase 4.5A append —
-        moot while the generator keeps composites IMessage-only (`IsEvent=false` already skips them);
-        only needed if a consumer hand-rolls a composite that also implements `IEvent`.
-- [ ] T1.P2 `CompositeEventBase` helper
-- [ ] T1.P3 DLQ failure routing
-- [ ] T1 release + a consumer bump
-- [ ] T2 a consumer per-job composite + parity test + measure
+### DONE (committed on `feature/composite-events-turnkey`; still valid under the new spine)
+- **Serialization (P1)** — generator registers `ICompositeEvent` as an `IMessage` wire type (not
+  `IEvent`, so never persisted); cycle-safe nested-`IMessage` polymorphism via a resolver-supplied,
+  skip-unresolvable base typeinfo; edge coverage (composite-in-composite, polymorphic collections,
+  mixed/empty). Commits `2e72c74b`, `ee9b59e5`, `ede61b6e`. Core 8126/0, generator 1219/0.
+- **`CompositeEventBase` helper (P2)** — `[StreamId]`, `List<IMessage> Inner`, `[JsonIgnore]` computed
+  `InnerEvents`, init `MaxInnerEventsAllowed`, `EnsureWithinCap()`. Surfaced + fixed two real generator
+  bugs (abstract-type instantiation; `[JsonIgnore]` not honored). Commit `91bc9d85`.
+  - **Will gain** `FanoutMode` + `Atomicity` in Phase C.
+
+### REMAINING — the new spine (each phase RED→GREEN, 100% cov, AOT, docs)
+
+- [ ] **Phase A — composite as a dispatchable inbox message; fan-out moves to dispatch.**
+  - Make composite types **dispatchable** (receptor registry + generator includes them).
+  - Transport consumer: **stop expanding** — store the composite as an ordinary inbox row. Remove the
+    `EventFlags.Composite` branch + `_tryExpandCompositeToInboxMessages` from `TransportConsumerWorker`.
+  - Dispatch seam (work-batch processor): recognize `ICompositeEvent`, **auto-fan-out** into child
+    inbox rows (reusing `CompositeEventExpander` mechanics), atomic insert + delete-composite in the
+    dispatch tx.
+  - RED→GREEN: composite over (test) transport → becomes inbox row → fanned out at dispatch → children
+    processed; fan-out failure → inbox retry → **DLQ via existing `MoveAsync(wh_inbox)`** (this is
+    Phase 3, now free — assert a `wh_dead_letters` row, no new infra).
+- [ ] **Phase B — pre-fanout hook + post-fanout children.**
+  - `IReceptor<TComposite>` fires pre-fanout, in the dispatch tx, before any child exists.
+  - Children dispatch normally post-fanout. Lock the ordering (pre → fanout → commit → children) and
+    that pre-fanout side-effects + children commit atomically.
+- [ ] **Phase C — fan-out control.**
+  - Declarative `FanoutMode` (Auto/Manual) + `Atomicity` (Independent/Atomic) on the composite /
+    `CompositeEventBase`.
+  - Imperative `FanoutDirective` (Proceed/Skip/ReplaceWith) returned by a pre-fanout receptor.
+  - RED→GREEN per mode/directive; `Atomic` rolls back all children on any failure; `Independent`
+    isolates per child.
+- [ ] **Phase D — no-rebroadcast flag GUARD.**
+  - New `EventFlags.NoRebroadcast` (or `LocalOnly`); fan-out stamps every child.
+  - **Outbox-enqueue boundary checks the flag and drops** flagged children (the guard).
+  - RED: a flagged child routed to the outbox path is enqueued (guard absent) → GREEN: dropped.
+  - Plus a test that hop-based suppression covers the same case (defense-in-depth).
+- [ ] **Phase E — docs** — `docs/fundamentals/messaging/composite-events.md`: the lifecycle, hooks,
+  control surface, no-rebroadcast invariant; link to `CompositeEventBase`, the dispatch seam, and the
+  tests. Refresh `ICompositeEvent` XML docs to describe dispatch-time fan-out (not transport-edge).
+- [ ] **Release** — Whizbang alpha (GitVersion `release/*` → PR → develop → nuget); bump a consumer
+  `Directory.Packages.props`.
+- [ ] **Track 2 — a consumer per-job composite.**
+  - `OrderBulkImportComposite : CompositeEventBase` with `Atomicity = Atomic` (a job's field events
+    are one unit), `FanoutMode = Auto`. Optional pre-fanout receptor for the cap guard / per-job
+    metadata.
+  - Rewire `BulkImportSagaHandlers.PublishOrderEventsAsync`: pre-mint `jobStreamId`, publish ONE
+    composite (replacing `PublishAsync(init)` + `PublishManyAsync(rest)`). Saga lifecycle unchanged.
+  - RED→GREEN expansion-parity integration test: same N event-store rows on `jobStreamId` as today,
+    per-job atomic rollback on failure, and the no-rebroadcast invariant holds.
+  - Measure the 350-import win on production.
+
+## Risks / open questions
+
+- **Dispatch-seam reuse**: prefer reusing `CompositeEventExpander` at the dispatch step over a parallel
+  implementation. Confirm the work-batch processor is the right host (it owns claim/retry/DLQ).
+- **`Atomic` transaction size**: a large atomic composite is one big transaction — bounded by
+  `MaxInnerEventsAllowed` + the cap guard; `Independent` is the default for exactly this reason.
+- **Never-in-event-store invariant** stays: composites are inbox-transient only; the producer append
+  path already skips them (`IsEvent == false`). Keep the belt-and-suspenders Composite-flag guard on
+  Phase 4.5A append if a consumer ever marks a composite `IEvent`.
+- **Routing**: children inherit the composite's stream/routing; cross-domain children must not be
+  composited (same rule as per-inner StreamIds) — document this constraint.
+
+## Commit strategy
+
+One commit per phase, `feat(messaging): <phase>`; tests + docs in the same commit (L30–L32). End
+messages with the required `Co-Authored-By` trailer.
