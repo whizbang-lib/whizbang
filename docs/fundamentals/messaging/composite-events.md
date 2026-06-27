@@ -1,6 +1,6 @@
 # Composite Events
 
-**Status**: Implemented — dispatch-time fan-out, pre-fanout hook, fan-out control, no-rebroadcast guard (v0.758+)
+**Status**: Implemented — dispatch-time fan-out, pre-fanout hook, fan-out control, no-rebroadcast guard, owned-composite echo-gate exemption (v0.768+)
 **Namespace**: `Whizbang.Core.Messaging`
 **Design / plan**: [`plans/composite-events-turnkey.md`](../../../plans/composite-events-turnkey.md)
 
@@ -12,6 +12,15 @@ wire message instead of N — one outbox row, one publish, one receive — then 
 inner events at the receiver. The composite itself is **never written to the event store**; only the
 expanded inner events are persisted, so replay reads the inner events back as if no composite ever
 existed.
+
+A composite travels over transport **exactly like an ordinary `IEvent`** (one outbox row, one
+publish) — the single difference is that it is **not** event-stored. It then **fans out at every
+destination service that receives it, including the publishing service itself** (an owned event loops
+back to its own service). Fan-out runs on the local inbox/dispatch path, so the children **are**
+event-stored locally but **never rebroadcast**. There is **no separate producer-side code path**: a
+service publishing a composite in its own domain consumes its own loopback copy and fans it out
+through the exact same receive-side seam any other subscriber uses. The one accommodation this
+requires is the [echo-gate exemption](#owned-composites-fan-out-at-the-publishing-service) below.
 
 The load-bearing principle:
 
@@ -47,8 +56,11 @@ claim composite inbox row (InboxDispatchWorker.ProcessOneInnerAsync)
 ```
 
 - **Recognition** — the source generator (`ReceptorRegistryQueryGenerator`) discovers every concrete
-  `ICompositeEvent` type and lists it in `AnyConsumerTypes`, so the receive-boundary drop-gate keeps a
-  composite alive long enough to reach the dispatch seam. The abstract
+  `ICompositeEvent` type and lists it in **both** `AnyConsumerTypes` (so the receive-boundary drop-gate
+  keeps the composite alive long enough to reach the dispatch seam) **and** a dedicated `CompositeTypes`
+  set surfaced as `WhizbangReceptorRegistryQuery.IsComposite(typeName)` /
+  `IReceptorRegistryQuery.IsComposite` (so the echo-gate can recognize an owned composite — see
+  [below](#owned-composites-fan-out-at-the-publishing-service)). The abstract
   [`CompositeEventBase`](#authoring) is skipped (never dispatched).
 - **Fan-out** is AOT-clean: `CompositeInboxFanout` builds each child as a
   `MessageEnvelope<IMessage>` and serializes it through `IEnvelopeSerializer.SerializeEnvelope`, which
@@ -144,6 +156,39 @@ the composite was already delivered to every subscriber of its topic. Defended i
    `NoRebroadcastGuard.ShouldSuppress`) hard-drops any publish whose source envelope carries the flag.
    Even a receptor that explicitly re-publishes a fan-out child it is processing is stopped at the gate.
 
+## Owned composites: fan-out at the publishing service
+
+A composite fans out at **every** destination that receives it — and for an owned-domain composite,
+the publishing service is itself a destination (the message loops back to its own inbox). This is what
+makes "publish a composite in your own domain" work with **no** producer-side special case: the
+service consumes its own loopback copy and fans it out through the ordinary receive-side seam.
+
+The one obstacle is **echo suppression**. The receive boundary
+(`TransportConsumerWorker._shouldDiscardOwnedEcho`) normally **discards** an owned event arriving from
+transport — it's a redundant echo, because an owned event is already event-stored at publish time. But
+a composite is **not** an event and is **not** event-stored at publish: discarding its loopback would
+drop it before it ever fanned out, so the publishing service would persist **none** of the inner
+events.
+
+So composites are **exempt** from echo-discard. The gate consults
+`IReceptorRegistryQuery.IsComposite(innerType)` (backed by the generated `CompositeTypes` set) and lets
+any composite through to the dispatch seam, where the existing `InboxDispatchWorker` fan-out takes
+over. The children it produces are stamped [`NoRebroadcast`](#the-no-rebroadcast-invariant), so the
+loopback expands locally without any child going back onto the wire.
+
+```
+JobService: PublishAsync(OrderBulkImportComposite)   // owned domain
+  → outbox → transport (ONE wire row; composite is NOT event-stored)
+  → loops back to JobService's own inbox
+  → echo-gate: IsComposite == true ⟹ NOT discarded (an ordinary owned event WOULD be)
+  → InboxDispatchWorker fan-out (the same seam every subscriber uses)
+  → children: event-stored + perspectives + receptors, stamped NoRebroadcast (never re-transported)
+```
+
+Net effect: the inner events land in the event store and trigger their receptor cascades **exactly as
+if they had been published individually** — the composite is purely a transport/packaging optimization,
+not a change in downstream semantics.
+
 ## Treatment flags (extending `EventFlags`)
 
 The no-rebroadcast guard generalizes into a small convention. `EventFlags` (the per-event bitmask on the
@@ -172,6 +217,8 @@ with its consumer.
 | Composite marker / authoring | `ICompositeEvent`, `CompositeEventBase` | `Messaging/CompositeEventBaseTests.cs` |
 | Wire serialization (polymorphic, AOT) | `MessageJsonContextGenerator`, `JsonContextRegistry` | `JsonContextRegistryTests.cs` |
 | Dispatch recognition (drop-gate) | `ReceptorRegistryQueryGenerator` | `ReceptorRegistryQueryGeneratorTests.cs` (`Generator_WithCompositeEvent_*`) |
+| Composite recognition (`IsComposite`) | `ReceptorRegistryQueryGenerator` (`CompositeTypes` emission), `WhizbangReceptorRegistryQuery.IsComposite`, `IReceptorRegistryQuery.IsComposite`, `WhizbangReceptorRegistryQueryAdapter` | `ReceptorRegistryQueryGeneratorTests.cs` (`Generator_WithCompositeEvent_RegistersInCompositeTypes`), `Generated/WhizbangReceptorRegistryQueryAggregationTests.cs` (`*_IsComposite_*`), `Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs` (`IsComposite_*`) |
+| Owned-composite echo-gate exemption | `TransportConsumerWorker._shouldDiscardOwnedEcho` | `Workers/TransportConsumerWorkerOwnedCompositeEchoTests.cs` |
 | Dispatch-time fan-out | `CompositeInboxFanout`, `InboxDispatchWorker` | `Messaging/CompositeInboxFanoutTests.cs`, `Workers/InboxDispatchWorkerTests.cs` (`CompositeMessage_FansOut*`, `CompositeOverCap_DeadLetters*`) |
 | Pre-fanout hook (atomic emit) | `DispatchOutboxCollector`, `InboxDispatchWorker._invokePreFanoutHookAsync`, `Dispatcher` outbox seam | `Messaging/DispatchOutboxCollectorTests.cs`, `Workers/InboxDispatchWorkerTests.cs` (`CompositeWithPreFanoutReceptor_*`) |
 | Fan-out control | `FanoutMode`/`FanoutAtomicity`/`FanoutDirective`, `DispatchFanoutControl`, `CompositeInboxFanout`, `InboxDispatchWorker` | `Messaging/DispatchFanoutControlTests.cs`, `Messaging/CompositeInboxFanoutTests.cs` (atomicity + replacement), `Workers/InboxDispatchWorkerTests.cs` (`CompositeDirective_*`, `CompositeFanoutMode_Manual_*`) |

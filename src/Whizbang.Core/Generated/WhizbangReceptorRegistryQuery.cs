@@ -41,6 +41,7 @@ public static class WhizbangReceptorRegistryQuery {
   private static int _cachedContributionCount = -1;
   private static HashSet<string>? _cachedAnyConsumer;
   private static HashSet<string>? _cachedInboxHandler;
+  private static HashSet<string>? _cachedComposite;
   private static Dictionary<LifecycleStage, HashSet<string>>? _cachedStageTypes;
 
   /// <summary>True if any receptor is registered for the given lifecycle stage + message type.</summary>
@@ -59,6 +60,21 @@ public static class WhizbangReceptorRegistryQuery {
   public static bool HasAnyConsumer(string messageType) {
     var anyConsumer = _ensureAnyConsumerCached();
     return anyConsumer.Contains(_normalizeTypeName(messageType));
+  }
+
+  /// <summary>
+  /// True if <paramref name="messageType"/> is a concrete <c>ICompositeEvent</c>. A composite travels over
+  /// transport like an IEvent but is never event-stored, and it auto-fans-out at EVERY destination service
+  /// — including the publishing service itself. The receive boundary therefore must NOT echo-discard an
+  /// owned composite on self-loop (the way it does ordinary owned events): it has to survive to the
+  /// dispatch seam so <c>InboxDispatchWorker</c> can fan it out. The echo-gate consults this to make that
+  /// one exception.
+  /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#owned-composites-fan-out-at-the-publishing-service</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryAggregationTests.cs:SingleContribution_IsComposite_FindsOnlyCompositeTypesAsync</tests>
+  public static bool IsComposite(string messageType) {
+    var composites = _ensureCompositeCached();
+    return composites.Contains(_normalizeTypeName(messageType));
   }
 
   /// <summary>
@@ -100,6 +116,17 @@ public static class WhizbangReceptorRegistryQuery {
     }
   }
 
+  private static HashSet<string> _ensureCompositeCached() {
+    var current = AssemblyRegistry<ReceptorRegistryContribution>.Count;
+    if (_cachedComposite is not null && _cachedContributionCount == current) {
+      return _cachedComposite;
+    }
+    lock (_lock) {
+      _rebuildIfStale(current);
+      return _cachedComposite!;
+    }
+  }
+
   private static Dictionary<LifecycleStage, HashSet<string>> _ensureStageTypesCached() {
     var current = AssemblyRegistry<ReceptorRegistryContribution>.Count;
     if (_cachedStageTypes is not null && _cachedContributionCount == current) {
@@ -117,6 +144,7 @@ public static class WhizbangReceptorRegistryQuery {
     }
     var any = new HashSet<string>(System.StringComparer.Ordinal);
     var inbox = new HashSet<string>(System.StringComparer.Ordinal);
+    var composite = new HashSet<string>(System.StringComparer.Ordinal);
     var stages = new Dictionary<LifecycleStage, HashSet<string>>();
     foreach (var contribution in AssemblyRegistry<ReceptorRegistryContribution>.GetOrderedContributions()) {
       foreach (var t in contribution.AnyConsumerTypes) {
@@ -124,6 +152,9 @@ public static class WhizbangReceptorRegistryQuery {
       }
       foreach (var t in contribution.InboxHandlerTypes) {
         inbox.Add(t);
+      }
+      foreach (var t in contribution.CompositeTypes) {
+        composite.Add(t);
       }
       foreach (var (stage, types) in contribution.StageTypes) {
         if (!stages.TryGetValue(stage, out var set)) {
@@ -137,6 +168,7 @@ public static class WhizbangReceptorRegistryQuery {
     }
     _cachedAnyConsumer = any;
     _cachedInboxHandler = inbox;
+    _cachedComposite = composite;
     _cachedStageTypes = stages;
     _cachedContributionCount = currentCount;
   }
@@ -151,6 +183,7 @@ public static class WhizbangReceptorRegistryQuery {
     lock (_lock) {
       _cachedAnyConsumer = null;
       _cachedInboxHandler = null;
+      _cachedComposite = null;
       _cachedStageTypes = null;
       _cachedContributionCount = -1;
     }

@@ -82,6 +82,44 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
     await Assert.That(WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PreInboxInline, "Other.Evt, Other")).IsFalse();
   }
 
+  [Test]
+  public async Task SingleContribution_IsComposite_FindsOnlyCompositeTypesAsync() {
+    // A composite is BOTH an any-consumer (so the drop-gate keeps it) AND a composite (so the echo-gate
+    // exempts it). A plain event-consumer in the same contribution must NOT be reported as a composite.
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AnyConsumerTypes = ["MyApp.JobImportComposite", "MyApp.SomeEvent"],
+      InboxHandlerTypes = [],
+      CompositeTypes = ["MyApp.JobImportComposite"],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+    });
+
+    await Assert.That(WhizbangReceptorRegistryQuery.IsComposite("MyApp.JobImportComposite, MyApp.Contracts")).IsTrue()
+      .Because("Qualified runtime name must normalize to the stored unqualified composite form.");
+    await Assert.That(WhizbangReceptorRegistryQuery.IsComposite("MyApp.JobImportComposite")).IsTrue();
+    await Assert.That(WhizbangReceptorRegistryQuery.IsComposite("MyApp.SomeEvent")).IsFalse()
+      .Because("A non-composite consumer in the same assembly is not a composite — the echo-gate must still discard it.");
+    await Assert.That(WhizbangReceptorRegistryQuery.IsComposite("Other.Type, Other")).IsFalse();
+  }
+
+  [Test]
+  public async Task TwoContributions_IsComposite_UnionsBothAsync() {
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AnyConsumerTypes = ["JobService.OrderBulkImportComposite"],
+      InboxHandlerTypes = [],
+      CompositeTypes = ["JobService.OrderBulkImportComposite"],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+    });
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AnyConsumerTypes = ["BffService.SomeOtherComposite"],
+      InboxHandlerTypes = [],
+      CompositeTypes = ["BffService.SomeOtherComposite"],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+    });
+
+    await Assert.That(WhizbangReceptorRegistryQuery.IsComposite("JobService.OrderBulkImportComposite, JobService")).IsTrue();
+    await Assert.That(WhizbangReceptorRegistryQuery.IsComposite("BffService.SomeOtherComposite, BffService")).IsTrue();
+  }
+
   // ===== Multi-assembly aggregation (the load-bearing slice 1 invariant) =====
 
   [Test]
@@ -141,6 +179,7 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
     await Assert.That(WhizbangReceptorRegistryQuery.HasAnyConsumer("Any.Type, Asm")).IsFalse();
     await Assert.That(WhizbangReceptorRegistryQuery.HasInboxHandler("Any.Type, Asm")).IsFalse();
     await Assert.That(WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PreInboxInline, "Any.Type, Asm")).IsFalse();
+    await Assert.That(WhizbangReceptorRegistryQuery.IsComposite("Any.Type, Asm")).IsFalse();
   }
 
   // ===== Cache invalidation on additional registrations =====
