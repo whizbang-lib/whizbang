@@ -474,6 +474,20 @@ public partial class JsonContextRegistryTests {
   internal sealed partial class PolymorphicCollectionTestJsonContext : JsonSerializerContext {
   }
 
+  /// <summary>One-line consumer composite built on the turnkey <see cref="CompositeEventBase"/> helper.
+  /// Public so the source generator discovers it and auto-registers its wire metadata — exactly as a
+  /// real consumer's composite is registered (single generated context, no hand-written one).</summary>
+  public sealed class HelperRoundTripComposite : Whizbang.Core.Messaging.CompositeEventBase;
+
+  /// <summary>Public inner event so it is auto-registered as an IEvent/IMessage wire type, like a real
+  /// one. Carries its own [StreamId] (a public IEvent requires one); inside a composite the receiver
+  /// overrides it with the composite's stream, but the type still needs it to satisfy WHIZ009.</summary>
+  public sealed record HelperInnerEvent : IEvent {
+    [StreamId]
+    public Guid StreamId { get; init; }
+    public string Note { get; init; } = string.Empty;
+  }
+
 
   [Test]
   public async Task MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync() {
@@ -641,6 +655,32 @@ public partial class JsonContextRegistryTests {
 
     await Assert.That(back!.Payload).IsTypeOf<TestBulkImportComposite>();
     await Assert.That(((TestBulkImportComposite)back.Payload).InnerEvents.ToList().Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CompositeEventBaseSubclass_RoundTripsViaHelperShapeAsync() {
+    // Proves the turnkey CompositeEventBase shape (StreamId + List<IMessage> Inner + [JsonIgnore]
+    // computed InnerEvents) serializes and deserializes end to end via the SOURCE-GENERATED metadata
+    // (the composite + inner event are public, so the generator auto-registers them — exactly the
+    // production path; no hand-written JsonSerializableContext). StreamId + inner events survive.
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var streamId = Guid.NewGuid();
+    var inner = new HelperInnerEvent { StreamId = Guid.NewGuid(), Note = "Helper Customer" };
+    var composite = new HelperRoundTripComposite { StreamId = streamId, Inner = [inner] };
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), composite, []);
+
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<HelperRoundTripComposite>();
+    var rt = (HelperRoundTripComposite)back.Payload;
+    await Assert.That(rt.StreamId).IsEqualTo(streamId);
+    var innerList = rt.InnerEvents.ToList();
+    await Assert.That(innerList.Count).IsEqualTo(1);
+    await Assert.That(innerList[0]).IsTypeOf<HelperInnerEvent>();
+    await Assert.That(((HelperInnerEvent)innerList[0]).Note).IsEqualTo("Helper Customer");
   }
 
   [Test]

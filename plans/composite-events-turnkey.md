@@ -70,13 +70,24 @@ sees only inner events).
   belt-and-suspenders "never persisted" safety net (defense even if a future composite is also IEvent).
 - **Coverage/AOT**: generator snapshot tests + a runtime round-trip test; no reflection.
 
-### Phase 2 — authoring helper `CompositeEventBase` (task #43)
-- **RED**: test that `CompositeEventBase` stamps the shared StreamId, yields inner events in
-  insertion order, and throws/synchronously-fails when inner count > `MaxInnerEventsAllowed`.
-- **GREEN**: `abstract class CompositeEventBase : ICompositeEvent` with `[StreamId] Guid StreamId`,
-  ctor `(Guid streamId, IReadOnlyList<IMessage> inner)`, `InnerEvents` passthrough, overridable cap,
-  and a producer-side `ValidateInnerCount()` the dispatcher calls (or the base enforces lazily).
-- Docs example uses this base.
+### Phase 2 — authoring helper `CompositeEventBase` (task #43) — DONE
+- `abstract class CompositeEventBase : ICompositeEvent`: `[StreamId] Guid StreamId`,
+  `List<IMessage> Inner` (init; concrete List so source-gen serializes each element with its `$type`),
+  `[JsonIgnore]` computed `InnerEvents => Inner`, init `MaxInnerEventsAllowed` (default 10k), and
+  `EnsureWithinCap()` (producer-side fail-fast — cheap `Inner.Count`). One-line consumer authoring:
+  `public sealed class OrderBulkImportComposite : CompositeEventBase;` →
+  `new OrderBulkImportComposite { StreamId = id, Inner = events }`.
+- RED→GREEN: `CompositeEventBaseTests` (5: StreamId+order, cap default/override, EnsureWithinCap
+  throws/passes, empty default) + `CompositeEventBaseSubclass_RoundTripsViaHelperShape` (serializes
+  via the auto-generated metadata — production path).
+- **Surfaced + fixed 2 real generator bugs** the helper would hit in production:
+  1. The generator tried to emit an instantiation factory for the **abstract** base (CS0144) → skip
+     abstract types in discovery.
+  2. The generator **ignored `[JsonIgnore]`** → it would serialize the computed `InnerEvents` and
+     form an `IEnumerable<IMessage>` polymorphism cycle → generator now honors `[JsonIgnore]`
+     (`_hasJsonIgnore`, applied in `_getAllPropertiesIncludingInherited`).
+- Verified: Core 8126 pass (+1 unrelated parallel flake), generator suite 1219/0.
+- Docs example uses this base (pending the docs pass).
 
 ### Phase 3 — expansion-failure DLQ routing (task #44, non-blocking)
 - **RED**: expansion failure (over-cap / malformed inner) currently ACKs and drops — test asserts no

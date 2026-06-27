@@ -48,6 +48,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
   private const string I_COMPOSITE_EVENT = "Whizbang.Core.Messaging.ICompositeEvent";
+  private const string JSON_IGNORE_ATTRIBUTE = "System.Text.Json.Serialization.JsonIgnoreAttribute";
+
+  /// <summary>True if the property carries <c>[JsonIgnore]</c> (any condition) — excluded from the
+  /// generated JsonTypeInfo to match System.Text.Json's own behavior.</summary>
+  private static bool _hasJsonIgnore(IPropertySymbol property) =>
+      property.GetAttributes().Any(a =>
+          a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{JSON_IGNORE_ATTRIBUTE}");
   private const string GRAPHQL_NAME_ATTRIBUTE = "HotChocolate.GraphQLNameAttribute";
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
@@ -232,6 +239,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Skip non-public types - generated code can't access them
     if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+      return null;
+    }
+
+    // Skip abstract types - they cannot be instantiated for deserialization, so the generated
+    // JsonTypeInfo object factory would fail to compile (CS0144). Only concrete wire types are
+    // serialized; e.g. an abstract CompositeEventBase is never on the wire — only its concrete
+    // subclasses are (discovered separately and registered as IMessage derived types).
+    if (typeSymbol.IsAbstract) {
       return null;
     }
 
@@ -3022,8 +3037,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Uses property name to dedupe (derived class property overrides base class property).
   /// </summary>
   private static List<IPropertySymbol> _getAllPropertiesIncludingInherited(INamedTypeSymbol typeSymbol) {
-    // GetAllProperties returns derived→base order; reverse to get base→derived order
-    var allProperties = typeSymbol.GetAllProperties().Reverse().ToList();
+    // GetAllProperties returns derived→base order; reverse to get base→derived order.
+    // Honor [JsonIgnore] — STJ excludes such properties, and the generated JsonTypeInfo must match
+    // (e.g. CompositeEventBase.InnerEvents is a [JsonIgnore] computed view over Inner; serializing it
+    // would both duplicate data and create an IEnumerable<IMessage> polymorphism cycle).
+    var allProperties = typeSymbol.GetAllProperties().Reverse()
+        .Where(p => !_hasJsonIgnore(p))
+        .ToList();
 
     // For types with a primary constructor, order properties to match constructor parameters
     // This is critical for JSON deserialization which passes args[i] positionally
