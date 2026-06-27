@@ -118,10 +118,15 @@ StreamIds). Defended in depth:
     `_tryExpandCompositeToInboxMessages` + the now-dead `eventCategoryMetrics` ctor param) from
     `TransportConsumerWorker`; composites are stored as a single ordinary inbox row. Test:
     `TransportConsumerWorkerCompositeNoExpandTests`.
-- [ ] **Phase B — pre-fanout hook + post-fanout children.**
-  - `IReceptor<TComposite>` fires pre-fanout, in the dispatch tx, before any child exists.
-  - Children dispatch normally post-fanout. Lock the ordering (pre → fanout → commit → children) and
-    that pre-fanout side-effects + children commit atomically.
+- [x] **Phase B — pre-fanout hook + post-fanout children. DONE.**
+  - New `DispatchOutboxCollector` (AsyncLocal): the dispatcher's outbox seam diverts emitted messages
+    into an in-memory buffer when a collector is open (inert otherwise). `InboxDispatchWorker.`
+    `_invokePreFanoutHookAsync` fires the composite's **inline** `IReceptor<TComposite>` under a
+    collector before fan-out and folds the collected emissions into the SAME `HandlerCommitRequest`
+    (`NewOutboxMessages`) as the children → strict-atomic pre-fanout + children commit. Detached
+    receptors are out of the atomic set by nature. A throwing pre-fanout receptor fails the composite
+    row → retry → DLQ. Tests: `DispatchOutboxCollectorTests` (3),
+    `InboxDispatchWorkerTests.CompositeWithPreFanoutReceptor_*`. Dispatcher 754/0 (seam inert off-path).
 - [ ] **Phase C — fan-out control.**
   - Declarative `FanoutMode` (Auto/Manual) + `Atomicity` (Independent/Atomic) on the composite /
     `CompositeEventBase`.

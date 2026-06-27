@@ -36,10 +36,13 @@ is no separate composite-failure path.
 ```
 claim composite inbox row (InboxDispatchWorker.ProcessOneInnerAsync)
   → deserialize payload → typed ICompositeEvent
-  → FANOUT:  CompositeInboxFanout.TryExpand → N child inbox messages
-  → COMMIT:  one HandlerCommitRequest { NewInboxMessages = children,
-                                        InboxCompletion.Status = EventStored }
-             → process_inbox_completions stores children + DELETEs the composite (same tx)
+  → PRE-FANOUT: fire inline IReceptor<TComposite> under an outbox collector (Phase B)
+  → FANOUT:     CompositeInboxFanout.TryExpand → N child inbox messages
+  → COMMIT:     one HandlerCommitRequest { NewInboxMessages = children,
+                                           NewOutboxMessages = pre-fanout emissions,
+                                           InboxCompletion.Status = EventStored }
+                → process_inbox_completions stores children + pre-fanout events
+                  + DELETEs the composite (one tx)
   → children dispatch normally
 ```
 
@@ -79,6 +82,20 @@ serializes with its polymorphic `$type` discriminator), an overridable `MaxInner
 (default 10,000), and `EnsureWithinCap()`. Inner events share the composite's stream — a producer that
 needs per-inner streams must emit separate envelopes (no composite).
 
+## Pre-fanout hook
+
+A receptor can listen for the composite itself — `IReceptor<TComposite>` fires **before** fan-out,
+inside the dispatch step, so it can validate the batch, stamp per-batch metadata, or emit a durable
+`BatchReceivedEvent`. Its **inline** emissions are captured by an ambient `DispatchOutboxCollector`
+(which diverts the would-be outbox write into an in-memory buffer) and folded into the **same**
+`HandlerCommitRequest` as the fan-out children — so pre-fanout side-effects and children commit
+**all-or-nothing**. A pre-fanout receptor that throws fails the composite inbox row → normal retry →
+DLQ, exactly like any other dispatch failure.
+
+Only **inline** receptors participate in the atomic commit; detached (`[FireAt(...Detached)]`)
+receptors run fire-and-forget after the dispatch step and cannot be part of its transaction. The
+children dispatch normally post-fanout — there is no composite awareness downstream.
+
 ## The no-rebroadcast invariant
 
 > One composite on the wire; children are received-events confined to the
@@ -98,12 +115,11 @@ suppressor treats them as received-from-upstream and won't re-publish them. (Pha
 | Wire serialization (polymorphic, AOT) | `MessageJsonContextGenerator`, `JsonContextRegistry` | `JsonContextRegistryTests.cs` |
 | Dispatch recognition (drop-gate) | `ReceptorRegistryQueryGenerator` | `ReceptorRegistryQueryGeneratorTests.cs` (`Generator_WithCompositeEvent_*`) |
 | Dispatch-time fan-out | `CompositeInboxFanout`, `InboxDispatchWorker` | `Messaging/CompositeInboxFanoutTests.cs`, `Workers/InboxDispatchWorkerTests.cs` (`CompositeMessage_FansOut*`, `CompositeOverCap_DeadLetters*`) |
+| Pre-fanout hook (atomic emit) | `DispatchOutboxCollector`, `InboxDispatchWorker._invokePreFanoutHookAsync`, `Dispatcher` outbox seam | `Messaging/DispatchOutboxCollectorTests.cs`, `Workers/InboxDispatchWorkerTests.cs` (`CompositeWithPreFanoutReceptor_*`) |
 | No transport-edge expansion | `TransportConsumerWorker` | `Workers/TransportConsumerWorkerCompositeNoExpandTests.cs` |
 
 ## Upcoming (see the plan)
 
-- **Phase B** — pre-fanout hook (`IReceptor<TComposite>`) firing in the dispatch tx before any child
-  exists; post-fanout children dispatch normally.
 - **Phase C** — fan-out control: declarative `FanoutMode` (Auto/Manual) + `Atomicity`
   (Independent/Atomic), imperative `FanoutDirective` (Proceed/Skip/ReplaceWith).
 - **Phase D** — explicit `EventFlags.NoRebroadcast` guard enforced at the outbox-enqueue boundary.

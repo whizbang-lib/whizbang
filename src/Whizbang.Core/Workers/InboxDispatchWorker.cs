@@ -384,7 +384,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // process_inbox_completions DELETEs it). The composite is never event-stored, only its children.
       // Returning early skips the composite's own lifecycle stages — those fire per-child instead.
       if (typedEnvelope?.Payload is ICompositeEvent composite) {
-        await _fanoutCompositeAsync(work, composite, scope.ServiceProvider, ct);
+        await _fanoutCompositeAsync(work, composite, typedEnvelope, scope.ServiceProvider, receptorInvoker, ct);
         return;
       }
 
@@ -451,11 +451,22 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// no <see cref="IDeadLetterStore"/> is wired — terminated via the legacy mark-Published completion.
   /// </summary>
   private async Task _fanoutCompositeAsync(
-      InboxWork work, ICompositeEvent composite, IServiceProvider scopeProvider, CancellationToken ct) {
+      InboxWork work, ICompositeEvent composite, IMessageEnvelope typedEnvelope,
+      IServiceProvider scopeProvider, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
+    // Pre-fanout hook (plans/composite-events-turnkey.md, Phase B): fire the composite's INLINE
+    // receptors (IReceptor<TComposite>) before any child exists — so a receptor can validate the
+    // batch, stamp metadata, or emit a durable BatchReceivedEvent. Their emissions are captured by
+    // an ambient DispatchOutboxCollector (instead of writing to the outbox in a separate scope) and
+    // folded into the SAME HandlerCommitRequest as the fan-out children → pre-fanout side-effects +
+    // children commit all-or-nothing. Only inline receptors are collected: detached fire-and-forget
+    // receptors outlive this scope and cannot be part of the atomic commit.
+    var preFanoutOutbox = await _invokePreFanoutHookAsync(work, typedEnvelope, receptorInvoker, ct);
+
     var result = CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider);
     if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
       var commitRequest = _buildCommitRequest(
-        work, status: (int)MessageProcessingStatus.EventStored, newInboxMessages: result.Children);
+        work, status: (int)MessageProcessingStatus.EventStored,
+        newInboxMessages: result.Children, newOutboxMessages: preFanoutOutbox);
       await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
       return;
     }
@@ -491,8 +502,53 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     await _handlerCommitChannel.EnqueueAsync(terminalRequest, ct);
   }
 
+  /// <summary>
+  /// Fires the composite's inline receptors under an ambient <see cref="DispatchOutboxCollector"/> and
+  /// returns whatever durable events they emitted, so the caller can commit them atomically with the
+  /// fan-out children. Returns null when no inline receptor is registered for the composite type (the
+  /// common case) — skipping the collector + invocation entirely. Inline only: detached receptors run
+  /// fire-and-forget after this scope and cannot be part of the atomic commit.
+  /// </summary>
+  private async Task<IReadOnlyList<OutboxMessage>?> _invokePreFanoutHookAsync(
+      InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
+    if (receptorInvoker is null) {
+      return null;
+    }
+    var runtimeType = typedEnvelope.Payload?.GetType();
+    var hasPre = (_receptorRegistry?.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType) ?? false)
+      || _runtimeHasReceptors(runtimeType, LifecycleStage.PreInboxInline);
+    var hasPost = (_receptorRegistry?.HasReceptors(LifecycleStage.PostInboxInline, work.MessageType) ?? false)
+      || _runtimeHasReceptors(runtimeType, LifecycleStage.PostInboxInline);
+    if (!hasPre && !hasPost) {
+      return null;
+    }
+
+    var baseContext = new LifecycleExecutionContext {
+      CurrentStage = LifecycleStage.PreInboxInline,
+      EventId = null,
+      StreamId = null,
+      LastProcessedEventId = null,
+      MessageSource = MessageSource.Inbox,
+      AttemptNumber = work.Attempts,
+    };
+
+    using var collecting = DispatchOutboxCollector.BeginCollecting();
+    if (hasPre) {
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline,
+        baseContext, ct);
+    }
+    if (hasPost) {
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline,
+        baseContext with { CurrentStage = LifecycleStage.PostInboxInline }, ct);
+    }
+    var collected = collecting.Collector.Collected;
+    return collected.Count == 0 ? null : collected;
+  }
+
   private HandlerCommitRequest _buildCommitRequest(
-      InboxWork work, int status, IReadOnlyList<InboxMessage>? newInboxMessages = null)
+      InboxWork work, int status,
+      IReadOnlyList<InboxMessage>? newInboxMessages = null,
+      IReadOnlyList<OutboxMessage>? newOutboxMessages = null)
     => new(
       HandlerId: work.MessageId,
       InstanceId: _instanceProvider.InstanceId,
@@ -501,7 +557,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       ProcessId: _instanceProvider.ProcessId,
       PartitionCount: _options.PartitionCount,
       InboxCompletion: new HandlerInboxCompletion(work.MessageId, status),
-      NewOutboxMessages: null,
+      NewOutboxMessages: newOutboxMessages,
       NewInboxMessages: newInboxMessages,
       DebugMode: _coordinatorOptions.DebugMode);
 

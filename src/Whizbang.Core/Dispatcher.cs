@@ -3558,6 +3558,14 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
+    // Composite pre-fanout hook (plans/composite-events-turnkey.md, Phase B): when a dispatch step has
+    // opened an ambient outbox collector, divert this message into it instead of the work-coordinator so
+    // it can be committed atomically with that step's other effects. AsyncLocal-gated — null off the path.
+    if (DispatchOutboxCollector.Current is { } collector) {
+      collector.Add(newOutboxMessage);
+      return;
+    }
+
     // Queue event for batched processing — async path routes through the per-stream
     // sliding-window batcher when StreamAffinityWorkCoordinatorStrategy is active.
     // Guard against ObjectDisposedException — the singleton IntervalWorkCoordinatorStrategy
@@ -3633,6 +3641,11 @@ public abstract partial class Dispatcher(
         ?? messageId.Value;
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId);
+      // Composite pre-fanout hook (Phase B): divert into the ambient collector when one is open.
+      if (DispatchOutboxCollector.Current is { } collector) {
+        collector.Add(newOutboxMessage);
+        return;
+      }
       await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
       await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
     } finally {

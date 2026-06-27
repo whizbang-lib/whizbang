@@ -231,6 +231,84 @@ public class InboxDispatchWorkerTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  // Registry that reports an inline receptor for every type at PostInboxInline — drives the
+  // pre-fanout hook gate in _invokePreFanoutHookAsync.
+  private sealed class PostInboxInlineRegistry : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => stage == LifecycleStage.PostInboxInline;
+    public bool HasInboxHandler(string messageType) => true;
+    public bool HasAnyConsumer(string messageType) => true;
+  }
+
+  // Simulates a pre-fanout IReceptor<TComposite> that emits a durable event: when fired inline, it
+  // publishes via the ambient collector (the seam Dispatcher.PublishToOutboxAsync uses).
+  private sealed class EmittingInvoker(OutboxMessage emitted) : IReceptorInvoker {
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage,
+        ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      if (stage == LifecycleStage.PostInboxInline) {
+        DispatchOutboxCollector.Current?.Add(emitted);
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private static OutboxMessage _outboxMsg(string id) => new() {
+    MessageId = (Guid)TrackedGuid.NewMedo(),
+    Envelope = new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.New(),
+      Payload = JsonDocument.Parse($"{{\"id\":\"{id}\"}}").RootElement,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+    },
+    Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
+    EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.BatchReceived, TestApp]], Whizbang.Core",
+    MessageType = "TestApp.BatchReceived, TestApp",
+  };
+
+  [Test]
+  public async Task CompositeWithPreFanoutReceptor_CommitsEmittedEventAtomicallyWithChildrenAsync() {
+    // Phase B: a pre-fanout receptor's emitted event (captured via the ambient collector) and the
+    // fan-out children must land in ONE HandlerCommitRequest — pre-fanout side-effects + children
+    // commit all-or-nothing.
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var emitted = _outboxMsg("batch-received");
+    var composite = new _bulkComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"));
+    var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .AddSingleton<IReceptorInvoker>(new EmittingInvoker(emitted))
+      .BuildServiceProvider();
+
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
+      receptorRegistry: new PostInboxInlineRegistry());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await inbox.WriteAsync(_makeWork(), cts.Token);
+
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(routed.NewInboxMessages!.Count).IsEqualTo(2)
+      .Because("Both fan-out children are in the request.");
+    await Assert.That(routed.NewOutboxMessages).IsNotNull();
+    await Assert.That(routed.NewOutboxMessages!.Count).IsEqualTo(1)
+      .Because("The pre-fanout receptor's emitted event rides the SAME commit request as the children.");
+    await Assert.That(routed.NewOutboxMessages![0].MessageId).IsEqualTo(emitted.MessageId);
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)MessageProcessingStatus.EventStored);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   [Test]
   public async Task HappyPath_RoutesEventStoredCompletionToHandlerCommitChannelAsync() {
     var instance = new FakeInstanceProvider();
