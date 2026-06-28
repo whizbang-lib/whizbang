@@ -20,8 +20,4 @@ public sealed class WhizbangReceptorRegistryQueryAdapter : IReceptorRegistryQuer
   /// <inheritdoc />
   public bool HasAnyConsumer(string messageType)
     => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasAnyConsumer(messageType);
-
-  /// <inheritdoc />
-  public bool IsComposite(string messageType)
-    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.IsComposite(messageType);
 }

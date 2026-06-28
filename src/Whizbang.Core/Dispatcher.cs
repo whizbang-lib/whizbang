@@ -3013,16 +3013,21 @@ public abstract partial class Dispatcher(
       // Get strongly-typed delegate from generated code
       var publisher = GetReceptorPublisher(eventData, eventType);
 
+      // Owned composite — fan out LOCALLY at publish (step 1.1). Expand the composite and local-publish
+      // each inner event (→ event store + receptors + perspectives, no transport) so the publishing service
+      // materializes its own composite's children immediately. The composite ALSO goes over transport below
+      // (step 1.2) like any owned event, for OTHER subscribing services that fan out on receive. The
+      // service's own transported copy loops back and is echo-discarded (it already fanned out here), so
+      // there is no double fan-out. The composite itself is IMessage-not-IEvent and is never event-stored.
+      if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
+        await _fanOutCompositeLocallyAtPublishAsync(eventData!, eventType, messageId).ConfigureAwait(false);
+      }
+
       // Start outbox publishing concurrently with the local receptor.
       // The receptor (publisher) can take 30+ seconds for heavy operations — we don't want
       // to delay cross-service event delivery by that amount. Starting the outbox first also
       // ensures FIFO order: the original event enters the outbox before any cascaded events
       // produced by the receptor.
-      // A composite (IMessage-not-IEvent) travels over transport exactly like an owned event and is NOT
-      // event-stored here. It fans out at every destination service — including this one, via the
-      // self-loop — at the receive-side dispatch seam (InboxDispatchWorker), where the children are stored
-      // and stamped NoRebroadcast. No producer-side special-casing: the receive boundary's echo-gate
-      // exempts composites (WhizbangReceptorRegistryQuery.IsComposite) so the loopback survives to fan out.
       var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
 
       try {
@@ -3099,12 +3104,15 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
 
+      // Owned composite — fan out LOCALLY at publish (step 1.1); see the other PublishAsync overload.
+      if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
+        await _fanOutCompositeLocallyAtPublishAsync(eventData!, eventType, messageId).ConfigureAwait(false);
+      }
+
       // Start outbox concurrently with receptor (see other overload for rationale).
       // options.ScheduledFor flows through to the outbox row's scheduled_for column so
-      // wh_outbox's pickup query (mig 040) gates publication until the time elapses.
-      // A composite travels over transport like an owned event and fans out at the receive-side dispatch
-      // seam of every destination, including this service via the self-loop (the echo-gate exempts
-      // composites). No producer-side special-casing — see the other PublishAsync overload.
+      // wh_outbox's pickup query (mig 040) gates publication until the time elapses. The composite also
+      // goes over transport here (step 1.2) for other subscribing services.
       var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, scheduledFor: options.ScheduledFor);
 
       // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
@@ -3518,6 +3526,56 @@ public abstract partial class Dispatcher(
       }
     }
   }
+
+  /// <summary>
+  /// Producer-side composite fan-out (step 1.1 of the composite lifecycle). When a service publishes a
+  /// composite in its OWN domain, it expands the composite and <b>local-publishes each inner event</b>
+  /// through the normal local-only flow (<see cref="DispatchModes.Local"/> = local receptor dispatch + event
+  /// store, NO transport), so the publishing service materializes its own composite's children immediately —
+  /// event store + receptors + perspectives, exactly as if each inner event were published individually,
+  /// minus the per-event outbox row. The composite ALSO goes over transport (step 1.2) for other subscribing
+  /// services, which fan out the same way on receive (step 2.1); the publishing service's own transported
+  /// copy loops back and is echo-discarded, so there is no double fan-out. Inner events never rebroadcast
+  /// (DispatchModes.Local never reaches the outbox). Sequential await preserves producer-yielded order.
+  /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#publish-time-local-fan-out</docs>
+  // S3776: linear loop with one atomicity branch — already minimal.
+#pragma warning disable S3776
+  private async Task _fanOutCompositeLocallyAtPublishAsync(object composite, Type compositeType, MessageId messageId) {
+    if (composite is not ICompositeEvent comp) {
+      return;
+    }
+
+    // Producer-side fail-fast: a malformed composite surfaces synchronously in the publishing handler's
+    // try/catch, not silently later.
+    var innerCount = comp.InnerEvents.Count();
+    if (innerCount > comp.MaxInnerEventsAllowed) {
+      throw new InvalidOperationException(
+        $"Composite '{compositeType.Name}' carries {innerCount} inner events, exceeding MaxInnerEventsAllowed ({comp.MaxInnerEventsAllowed}).");
+    }
+
+    // Source envelope representing the composite, so each inner event inherits composite lineage
+    // (CausationId = the composite's MessageId, CausationType = the composite type).
+    var sourceEnvelope = _createOutboxEnvelopeWithHop(comp, compositeType, messageId, sourceEnvelope: null, destination: null);
+
+    // Atomicity governs child failure: Atomic propagates (the whole publish fails); Independent logs + continues.
+    var atomic = comp.Atomicity == FanoutAtomicity.Atomic;
+    foreach (var inner in comp.InnerEvents) {
+      if (inner is null) {
+        continue;
+      }
+      try {
+        await CascadeMessageAsync(inner, sourceEnvelope, DispatchModes.Local).ConfigureAwait(false);
+      } catch (Exception ex) when (!atomic) {
+#pragma warning disable CA1848
+        CascadeLogger.LogWarning(ex,
+          "[CASCADE] Owned composite '{Composite}' inner event '{Inner}' failed under Independent atomicity — skipping.",
+          compositeType.Name, inner.GetType().Name);
+#pragma warning restore CA1848
+      }
+    }
+  }
+#pragma warning restore S3776
 
   /// <summary>
   /// Creates a MessageEnvelope with hop metadata for outbox publishing.
