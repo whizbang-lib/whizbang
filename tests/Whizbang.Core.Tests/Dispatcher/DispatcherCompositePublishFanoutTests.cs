@@ -35,6 +35,10 @@ public class DispatcherCompositePublishFanoutTests {
 
   private sealed class _ownedComposite : CompositeEventBase;
 
+  private sealed class _atomicComposite : CompositeEventBase {
+    public _atomicComposite() => Atomicity = FanoutAtomicity.Atomic;
+  }
+
   private sealed record _localCascade(IMessage Message, IMessageEnvelope? Source);
 
   private sealed class _fakeSerializer : IEnvelopeSerializer {
@@ -66,8 +70,12 @@ public class DispatcherCompositePublishFanoutTests {
   private sealed class _fanoutDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
     public List<_localCascade> LocalEventStores { get; } = [];
     public int InnerOutboxCascadeCount { get; private set; }
+    public string? ThrowOnInnerId { get; set; }
 
     protected override Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
+      if (ThrowOnInnerId is not null && message is _innerEvt e && e.Id == ThrowOnInnerId) {
+        throw new InvalidOperationException($"injected failure for inner '{e.Id}'");
+      }
       LocalEventStores.Add(new _localCascade(message, sourceEnvelope));
       return Task.CompletedTask;
     }
@@ -119,6 +127,21 @@ public class DispatcherCompositePublishFanoutTests {
   }
 
   [Test]
+  public async Task OwnedComposite_FansOutAtPublish_ViaDispatchOptionsOverloadAsync() {
+    var dispatcher = _build(ownTestNamespace: true);
+    var composite = new _ownedComposite {
+      StreamId = (Guid)TrackedGuid.NewMedo(),
+      Inner = [new _innerEvt("a"), new _innerEvt("b")],
+    };
+
+    await dispatcher.PublishAsync(composite, new DispatchOptions());
+
+    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<_innerEvt>().Select(e => e.Id).ToList();
+    await Assert.That(fannedOut).IsEquivalentTo(["a", "b"])
+      .Because("the DispatchOptions overload fans out an owned composite at publish, same as the simple overload.");
+  }
+
+  [Test]
   public async Task OwnedComposite_InnerEventsSourcedFromCompositeForLineageAsync() {
     var dispatcher = _build(ownTestNamespace: true);
     var composite = new _ownedComposite {
@@ -134,6 +157,67 @@ public class DispatcherCompositePublishFanoutTests {
       await Assert.That(cascade.Source?.Payload is _ownedComposite).IsTrue()
         .Because("each inner event is local-published sourced from the composite, so its stored hop traces back to it.");
     }
+  }
+
+  [Test]
+  public async Task OwnedComposite_OverCap_ThrowsAtPublishAsync() {
+    var dispatcher = _build(ownTestNamespace: true);
+    var composite = new _ownedComposite {
+      StreamId = (Guid)TrackedGuid.NewMedo(),
+      MaxInnerEventsAllowed = 1,
+      Inner = [new _innerEvt("a"), new _innerEvt("b")],
+    };
+
+    await Assert.That(async () => await dispatcher.PublishAsync(composite))
+      .ThrowsExactly<InvalidOperationException>()
+      .Because("a composite over MaxInnerEventsAllowed fails fast at publish so a runaway producer surfaces synchronously.");
+    await Assert.That(dispatcher.LocalEventStores.Any(c => c.Message is _innerEvt)).IsFalse()
+      .Because("the cap is checked before any child is fanned out.");
+  }
+
+  [Test]
+  public async Task OwnedComposite_IndependentAtomicity_SkipsFailedChild_ContinuesAsync() {
+    var dispatcher = _build(ownTestNamespace: true);
+    dispatcher.ThrowOnInnerId = "b";  // default Atomicity is Independent
+    var composite = new _ownedComposite {
+      StreamId = (Guid)TrackedGuid.NewMedo(),
+      Inner = [new _innerEvt("a"), new _innerEvt("b"), new _innerEvt("c")],
+    };
+
+    await dispatcher.PublishAsync(composite);
+
+    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<_innerEvt>().Select(e => e.Id).ToList();
+    await Assert.That(fannedOut).IsEquivalentTo(["a", "c"])
+      .Because("Independent atomicity drops the failed child ('b') and fans out the rest.");
+  }
+
+  [Test]
+  public async Task OwnedComposite_AtomicAtomicity_PropagatesChildFailureAsync() {
+    var dispatcher = _build(ownTestNamespace: true);
+    dispatcher.ThrowOnInnerId = "b";
+    var composite = new _atomicComposite {
+      StreamId = (Guid)TrackedGuid.NewMedo(),
+      Inner = [new _innerEvt("a"), new _innerEvt("b"), new _innerEvt("c")],
+    };
+
+    await Assert.That(async () => await dispatcher.PublishAsync(composite))
+      .ThrowsExactly<InvalidOperationException>()
+      .Because("Atomic atomicity propagates a child failure so the whole publish fails.");
+  }
+
+  [Test]
+  public async Task OwnedComposite_SkipsNullInnerAsync() {
+    var dispatcher = _build(ownTestNamespace: true);
+    var composite = new _ownedComposite {
+      StreamId = (Guid)TrackedGuid.NewMedo(),
+      Inner = [new _innerEvt("a"), null!, new _innerEvt("c")],
+    };
+
+    await dispatcher.PublishAsync(composite);
+
+    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<_innerEvt>().Select(e => e.Id).ToList();
+    await Assert.That(fannedOut).IsEquivalentTo(["a", "c"])
+      .Because("a null inner event is skipped without failing the fan-out.");
   }
 
   [Test]
