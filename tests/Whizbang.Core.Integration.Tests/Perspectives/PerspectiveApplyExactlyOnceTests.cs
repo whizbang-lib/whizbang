@@ -330,7 +330,111 @@ public class PerspectiveApplyExactlyOnceTests {
   public Task RewindWithPopulatedModel_AppliesOnlyNewEvents_Async() =>
     Task.CompletedTask;
 
+  // ==================== Scenario 5: collective-event sink dispatch ====================
+
+  /// <summary>
+  /// A perspective-work item for the <see cref="CollectiveRouting.SINK_PERSPECTIVE_NAME"/> sink is
+  /// dispatched through <see cref="ICollectiveDispatcher"/> exactly once and does NOT touch the
+  /// per-stream runner. Proves the PerspectiveWorker collective seam glue (detect sink → load the
+  /// collective event → DispatchAsync once → skip runner). The dispatcher→SQL apply itself is proven
+  /// separately by CollectiveDispatcherEFCoreIntegrationTests.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_DispatchesEventOnceAndSkipsRunner_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+
+    var sinkWork = new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    };
+    var coordinator = new _dualPathCoordinator {
+      PerspectiveWorkToReturnOnce = [sinkWork]
+    };
+    var envelope = new MessageEnvelope<IEvent> {
+      MessageId = new MessageId(eventId),
+      Payload = collectiveEvent,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+    var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
+    // Runner registered for a DIFFERENT perspective — the sink must never reach it.
+    var runner = new _pathTrackingRunner(PerspectiveProcessingStatus.Completed, eventId);
+    var registry = new _singleRegistry(runner, "Test.NonCollectivePerspective", [typeof(_testCollectiveEvent)]);
+    var dispatcher = new _recordingCollectiveDispatcher();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness) = _createCollectiveWorker(coordinator, registry, eventStore, dispatcher);
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
+      .Because("The collective event must be dispatched through ICollectiveDispatcher exactly once.");
+    await Assert.That(dispatcher.Calls[0].EventId).IsEqualTo(eventId)
+      .Because("DispatchAsync receives the collective event's own message id as the collectiveEventId.");
+    await Assert.That(ReferenceEquals(dispatcher.Calls[0].Event, collectiveEvent)).IsTrue()
+      .Because("The exact collective event loaded from the stream is dispatched.");
+    await Assert.That(runner.Invocations.Count).IsEqualTo(0)
+      .Because("The sink bypasses the per-stream runner entirely — a collective event has no single target stream.");
+  }
+
   // ==================== Shared test-double infrastructure ====================
+
+  private sealed record _testCollectiveEvent : ICollectiveEvent {
+    public required CollectiveScope Scope { get; init; }
+  }
+
+  private sealed class _recordingCollectiveDispatcher : ICollectiveDispatcher {
+    public List<(ICollectiveEvent Event, Guid EventId, object Session)> Calls { get; } = [];
+    public Task<CollectiveDispatchResult> DispatchAsync(
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, CancellationToken cancellationToken) {
+      Calls.Add((evt, collectiveEventId, dbContextOrSession));
+      return Task.FromResult(new CollectiveDispatchResult(HandlerCount: 1, AffectedRowCount: 1));
+    }
+  }
+
+  private sealed class _stubCollectiveSessionAccessor : ICollectiveSessionAccessor {
+    public object GetSession(IServiceProvider scopedServiceProvider) => new object();
+  }
+
+  private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createCollectiveWorker(
+      IWorkCoordinator coordinator, IPerspectiveRunnerRegistry registry, IEventStore eventStore, ICollectiveDispatcher dispatcher) {
+    var instanceProvider = new _fakeInstanceProvider();
+    var strategy = new InstantCompletionStrategy();
+    var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
+
+    var services = new ServiceCollection();
+    services.AddSingleton(coordinator);
+    services.AddSingleton(registry);
+    services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton(eventStore);
+    services.AddSingleton(dispatcher);
+    services.AddSingleton<ICollectiveSessionAccessor>(new _stubCollectiveSessionAccessor());
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      strategy,
+      eventTypeProvider: registry,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel);
+    return (worker, harness);
+  }
 
   private sealed record _fakeApplyEvent(int Sequence) : IEvent;
 

@@ -100,12 +100,12 @@ public class CollectiveEventApplierTests {
     public string Name { get; set; } = string.Empty;
   }
 
-  private sealed record _tenantScope(string TenantId) : ICollectiveScope {
-    public string ScopeKind => "tenant";
+  private sealed record _tenantScope(string TenantId) : CollectiveScope {
+    public override string ScopeKind => "tenant";
   }
 
-  private sealed record _typeA(ICollectiveScope Scope) : ICollectiveEvent;
-  private sealed record _typeB(ICollectiveScope Scope) : ICollectiveEvent;
+  private sealed record _typeA(CollectiveScope Scope) : ICollectiveEvent;
+  private sealed record _typeB(CollectiveScope Scope) : ICollectiveEvent;
 
   private sealed class _handler {
     public int InvocationCount { get; private set; }

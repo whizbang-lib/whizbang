@@ -879,6 +879,15 @@ public partial class PerspectiveWorker(
         try {
           await using var groupScope = _scopeFactory.CreateAsyncScope();
           var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+
+          // Collective-event sink: a collective event is routed (migration 061) to the fixed
+          // __collective__ perspective, not a per-stream runner. Dispatch it via ICollectiveDispatcher
+          // and skip the normal runner path entirely.
+          if (perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
+            await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, ct);
+            return;
+          }
+
           var groupReceptorInvoker = groupScope.ServiceProvider.GetService<IReceptorInvoker>();
           var groupLifecycleCoordinator = groupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
@@ -1607,6 +1616,14 @@ public partial class PerspectiveWorker(
       CancellationToken ct) {
     await using var groupScope = _scopeFactory.CreateAsyncScope();
     var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+
+    // Collective-event sink (drain path twin of the channel-path guard): dispatch via
+    // ICollectiveDispatcher and skip the per-stream runner. See _processCollectiveSinkAsync.
+    if (perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
+      await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, ct);
+      return;
+    }
+
     var registry = groupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
     var runner = registry?.GetRunner(perspectiveName, groupScope.ServiceProvider);
 
@@ -2406,6 +2423,76 @@ public partial class PerspectiveWorker(
       eventStore, streamId, lastProcessedEventId, batchActivity, effectiveParent, cancellationToken);
 
     return (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext);
+  }
+
+  /// <summary>
+  /// Handles the collective-event sink. A collective event is routed (migration 061) to the fixed
+  /// <see cref="CollectiveRouting.SINK_PERSPECTIVE_NAME"/> perspective rather than a per-stream runner.
+  /// This loads the collective event(s) on the sink stream after its cursor, dispatches each through
+  /// <see cref="ICollectiveDispatcher"/> exactly once (the dispatcher fans out to every matching model
+  /// handler internally), and advances the sink cursor via the normal completion path. Bypasses the
+  /// per-stream runner entirely — a collective event has no single target stream.
+  /// </summary>
+  /// <remarks>
+  /// Returns without dispatching (leaving the work for a later, properly-configured instance) when the
+  /// collective infrastructure isn't registered in this service — emitting a collective event a service
+  /// doesn't handle is not an error.
+  /// </remarks>
+  private async Task _processCollectiveSinkAsync(
+      AsyncServiceScope scope,
+      IWorkCoordinator workCoordinator,
+      Guid streamId,
+      CancellationToken cancellationToken) {
+
+    var dispatcher = scope.ServiceProvider.GetService<ICollectiveDispatcher>();
+    var sessionAccessor = scope.ServiceProvider.GetService<ICollectiveSessionAccessor>();
+    var eventStore = scope.ServiceProvider.GetService<IEventStore>();
+    var eventTypeProvider = _eventTypeProvider ?? scope.ServiceProvider.GetService<IEventTypeProvider>();
+
+    if (dispatcher is null || sessionAccessor is null || eventStore is null || eventTypeProvider is null) {
+#pragma warning disable CA1848
+      _logger.LogWarning(
+        "Collective sink work for stream {StreamId} skipped — collective infrastructure not registered " +
+        "(dispatcher={HasDispatcher}, sessionAccessor={HasSession}, eventStore={HasEventStore}, eventTypeProvider={HasEventTypes}).",
+        streamId, dispatcher is not null, sessionAccessor is not null, eventStore is not null, eventTypeProvider is not null);
+#pragma warning restore CA1848
+      return;
+    }
+
+    var checkpoint = await workCoordinator.GetPerspectiveCursorAsync(
+      streamId, CollectiveRouting.SINK_PERSPECTIVE_NAME, cancellationToken).ConfigureAwait(false);
+    var lastProcessedEventId = checkpoint?.LastEventId;
+
+    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId, lastProcessedEventId, Guid.Empty, eventTypeProvider.GetEventTypes(), cancellationToken)
+      .ConfigureAwait(false);
+
+    var collectiveEnvelopes = events.Where(e => e.Payload is ICollectiveEvent).ToList();
+    if (collectiveEnvelopes.Count == 0) {
+      return;
+    }
+
+    var session = sessionAccessor.GetSession(scope.ServiceProvider);
+    var lastEventId = lastProcessedEventId ?? Guid.Empty;
+
+    foreach (var envelope in collectiveEnvelopes) {
+      var collectiveEvent = (ICollectiveEvent)envelope.Payload;
+      await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session, cancellationToken)
+        .ConfigureAwait(false);
+      lastEventId = envelope.MessageId.Value;
+    }
+
+    var completion = new PerspectiveCursorCompletion {
+      StreamId = streamId,
+      PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
+      LastEventId = lastEventId,
+      Status = PerspectiveProcessingStatus.Completed,
+      EventsProcessed = collectiveEnvelopes.Count,
+      ProcessedEventIds = collectiveEnvelopes.Select(e => e.MessageId.Value).ToArray(),
+    };
+    await _reportCompletionAndSignalSyncAsync(
+      completion, collectiveEnvelopes, workCoordinator, streamId,
+      CollectiveRouting.SINK_PERSPECTIVE_NAME, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>

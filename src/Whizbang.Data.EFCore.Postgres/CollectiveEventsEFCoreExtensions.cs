@@ -1,0 +1,54 @@
+using System.Linq;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whizbang.Core.Generated;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.Collective;
+
+namespace Whizbang.Data.EFCore.Postgres;
+
+/// <summary>
+/// DI registration for consuming collective events on the EF Core Postgres driver. Wires the
+/// worker-facing pieces of the consume path: the dispatcher, the built-in tenant scope resolver, and
+/// the session accessor that hands the perspective <c>DbContext</c> to the apply chain.
+/// </summary>
+/// <remarks>
+/// Per-model executors are registered with <see cref="AddCollectiveExecutorEFCore{TModel}"/> — one line
+/// per perspective model that has a <c>[CollectiveApplyFor]</c> handler. Kept as explicit compile-time
+/// generic calls (no <c>MakeGenericType</c>) to stay AOT-clean (L19); a source generator can emit these
+/// calls for full turnkey registration as a follow-up.
+/// </remarks>
+/// <docs>fundamentals/messaging/collective-events</docs>
+public static class CollectiveEventsEFCoreExtensions {
+  /// <summary>
+  /// Registers <see cref="ICollectiveDispatcher"/>, the built-in <see cref="TenantCollectiveScopeResolver"/>,
+  /// and the EF Core <see cref="ICollectiveSessionAccessor"/> bound to <typeparamref name="TDbContext"/>.
+  /// Call <see cref="AddCollectiveExecutorEFCore{TModel}"/> once per collective perspective model.
+  /// </summary>
+  /// <typeparam name="TDbContext">The perspective-owning EF Core context.</typeparam>
+  public static IServiceCollection AddCollectiveEventsEFCore<TDbContext>(this IServiceCollection services)
+      where TDbContext : DbContext {
+    services.TryAddSingleton<ICollectiveSessionAccessor, EFCoreCollectiveSessionAccessor<TDbContext>>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
+    services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
+      sp,
+      CollectiveApplyRegistry.Entries,
+      sp.GetServices<ICollectiveScopeResolver>().ToList(),
+      sp.GetServices<ICollectiveEventExecutor>().ToList(),
+      sp.GetService<EventCategoryMetrics>()));
+    return services;
+  }
+
+  /// <summary>
+  /// Registers the EF Core collective executor for one perspective model. Add a custom
+  /// <see cref="ICollectiveScopeResolver"/> separately for any non-tenant scope kind.
+  /// </summary>
+  /// <typeparam name="TModel">A perspective model with a <c>[CollectiveApplyFor]</c> handler.</typeparam>
+  public static IServiceCollection AddCollectiveExecutorEFCore<TModel>(this IServiceCollection services)
+      where TModel : class {
+    services.AddSingleton<ICollectiveEventExecutor, EFCoreCollectiveEventExecutor<TModel>>();
+    return services;
+  }
+}

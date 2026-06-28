@@ -186,12 +186,12 @@ public class CollectiveDispatcherTests {
     public string Name { get; set; } = string.Empty;
   }
 
-  private sealed record _tenantScope(string TenantId) : ICollectiveScope {
-    public string ScopeKind => "tenant";
+  private sealed record _tenantScope(string TenantId) : CollectiveScope {
+    public override string ScopeKind => "tenant";
   }
 
-  private sealed record _archive(ICollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
-  private sealed record _otherEvent(ICollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
+  private sealed record _archive(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
+  private sealed record _otherEvent(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
 
   private sealed class _jobHandler {
     public ICollectiveSpec<_jobModel> Apply(_archive _) =>

@@ -17,10 +17,10 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:TenantCollectiveScope_ScopeKind_IsTenantAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:TenantCollectiveScope_CarriesTenantIdAsync</tests>
-public sealed record TenantCollectiveScope(string TenantId) : ICollectiveScope {
+public sealed record TenantCollectiveScope(string TenantId) : CollectiveScope {
   /// <summary>
   /// Routing key for the tenant scope resolver. Stable across versions —
   /// renaming this string is a breaking change.
   /// </summary>
-  public string ScopeKind => "tenant";
+  public override string ScopeKind => "tenant";
 }

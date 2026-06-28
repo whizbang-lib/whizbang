@@ -40,13 +40,21 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_ExtendsIMessage_SoExistingPipelinesCanCarryItAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_Scope_CarriedThroughEvent_Async</tests>
-public interface ICollectiveEvent : IMessage {
+public interface ICollectiveEvent : IEvent {
   /// <summary>
   /// The scope envelope this event operates in. Drives runtime routing
   /// (which <see cref="ICollectiveScopeResolver"/> handles the apply
   /// path) and is the SOLE source of the SQL UPDATE's <c>WHERE</c>
   /// predicate — the resolver's <c>ScopeFilter(Scope)</c> is composed
   /// directly into the UPDATE.
+  /// <para>
+  /// Typed as the <see cref="CollectiveScope"/> abstract base (not the
+  /// <see cref="ICollectiveScope"/> interface) so the event round-trips
+  /// through the AOT-strict message serializer via a polymorphic
+  /// <c>$scopeKind</c> discriminator. <see cref="CollectiveScope"/>
+  /// implements <see cref="ICollectiveScope"/>, so resolver APIs are
+  /// unchanged.
+  /// </para>
   /// </summary>
-  ICollectiveScope Scope { get; }
+  CollectiveScope Scope { get; }
 }

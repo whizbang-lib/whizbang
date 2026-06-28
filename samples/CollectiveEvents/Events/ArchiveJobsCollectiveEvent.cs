@@ -28,7 +28,6 @@ namespace CollectiveEvents.Sample.Events;
 /// </para>
 /// </remarks>
 [PinnedId("2c4e9f8d-1a3b-4c5e-9d7f-0e6a8b2d4f51")]
-public sealed record ArchiveJobsCollectiveEvent : ICollectiveEvent {
-  public required ICollectiveScope Scope { get; init; }
+public sealed record ArchiveJobsCollectiveEvent : CollectiveEventBase {
   public required DateTimeOffset OccurredAt { get; init; }
 }

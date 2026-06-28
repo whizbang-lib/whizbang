@@ -36,6 +36,20 @@ public class CollectiveEventContractTests {
   }
 
   [Test]
+  public async Task ICollectiveEvent_IsAnEvent_SoItPersistsToTheEventStoreAsync() {
+    // A collective event is a first-class persistable event: the producer classifies
+    // outbox rows with `IsEvent = payload is IEvent`, and only is_event rows are copied
+    // into wh_event_store by _emit_event_store_chain. If ICollectiveEvent were merely
+    // IMessage (not IEvent), a published collective event would get is_event = false and
+    // never reach the event store — so the consume-side routing/dispatch could never fire.
+    ICollectiveEvent evt = new _archiveJobsCollectiveEvent(
+      new _tenantCollectiveScope("11111111-1111-1111-1111-111111111111"));
+
+    await Assert.That(evt is IEvent).IsTrue()
+      .Because("ICollectiveEvent : IEvent so the producer classifies it as is_event=true and it persists to wh_event_store via the normal event path — the precondition for the __collective__ sink routing and dispatch.");
+  }
+
+  [Test]
   public async Task ICollectiveEvent_Scope_CarriedThroughEvent_Async() {
     // Scope drives runtime routing (which perspectives accept this event)
     // and is the SOLE source of the WHERE clause for the SQL UPDATE.
@@ -78,13 +92,13 @@ public class CollectiveEventContractTests {
 
   // ── Inline test types ──────────────────────────────────────────────────
 
-  private sealed record _archiveJobsCollectiveEvent(ICollectiveScope Scope) : ICollectiveEvent;
+  private sealed record _archiveJobsCollectiveEvent(CollectiveScope Scope) : ICollectiveEvent;
 
-  private sealed record _tenantCollectiveScope(string TenantId) : ICollectiveScope {
-    public string ScopeKind => "tenant";
+  private sealed record _tenantCollectiveScope(string TenantId) : CollectiveScope {
+    public override string ScopeKind => "tenant";
   }
 
-  private sealed record _globalCollectiveScope : ICollectiveScope {
-    public string ScopeKind => "global";
+  private sealed record _globalCollectiveScope : CollectiveScope {
+    public override string ScopeKind => "global";
   }
 }

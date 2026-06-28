@@ -87,11 +87,11 @@ public class EFCoreCollectiveEventExecutorTests {
     public string Name { get; set; } = string.Empty;
   }
 
-  private sealed record _tenantScope(string TenantId) : ICollectiveScope {
-    public string ScopeKind => "tenant";
+  private sealed record _tenantScope(string TenantId) : CollectiveScope {
+    public override string ScopeKind => "tenant";
   }
 
-  private sealed record _typeA(ICollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
+  private sealed record _typeA(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
 
   private sealed class _handler {
     public ICollectiveSpec<_jobModel> Apply(_typeA _) =>
