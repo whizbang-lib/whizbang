@@ -112,7 +112,12 @@ stay AOT-clean — a source generator can emit these per-model calls for full tu
 | Driver | Expression → SQL | Apply executor | Status |
 |---|---|---|---|
 | **EF Core** (`Whizbang.Data.EFCore.Postgres`) | `CollectiveSettersRewriter` → `EF.Functions.JsonbSet` → `ExecuteUpdateAsync` | `EFCoreCollectiveEventExecutor<TModel>` | **Complete** |
-| **Dapper** (`Whizbang.Data.Dapper.Postgres`) | `DapperCollectiveSpecCompiler` → `jsonb_set` SQL | *not yet built* | **Follow-up** |
+| **Dapper** (`Whizbang.Data.Dapper.Postgres`) | `DapperCollectiveSpecCompiler` (SET) + `DapperCollectiveScopeFilterCompiler` (WHERE) → one `UPDATE` | `DapperCollectiveEventExecutor<TModel>` (+ `DapperCollectiveEventApplier`) | **Complete** |
+
+Dapper DI mirrors EF Core: `AddCollectiveEventsDapper(entries)` + `AddCollectiveExecutorDapper<TModel>(tableName)`
+(Dapper supplies the `wh_per_*` table name since it has no entity model to derive it from). The Dapper
+scope-filter compiler supports the built-in-resolver shape — equality over a scope field
+(`row.Scope.Prop == value`) and `&&`-chains — and throws for richer predicates (use a raw-SQL scope form).
 
 Both compilers support scalar top-level `SetProperty(j => j.Prop, constant)` with constant/captured-value
 sources, plus chained setters. **Computed-arithmetic** setters (`j => j.X + 1`) and nested paths are
@@ -120,10 +125,11 @@ deferred to `[CollectiveApplyFor(SpecKind = RawSql)]` in v1 (both compilers thro
 
 ## Open follow-ups
 
-- **Dapper apply executor** — the spec compiler exists; the executor + adapter that run the `UPDATE` do not.
-- **Generator-emitted executor registration** — auto-emit `AddCollectiveExecutorEFCore<TModel>()` per model.
+- **Generator-emitted executor registration** — auto-emit `AddCollectiveExecutor{EFCore,Dapper}<TModel>()`
+  per model (and the Dapper table name) for full turnkey registration.
 - **Open-set custom-scope serialization** — `[JsonDerivedType]` is a closed list; custom scopes need the
   cross-assembly `RegisterDerivedType` registry that `IMessage` polymorphism uses.
+- **Dapper computed/raw setter parity** — both compilers defer computed-arithmetic setters to `RawSql`.
 
 ## Reference
 

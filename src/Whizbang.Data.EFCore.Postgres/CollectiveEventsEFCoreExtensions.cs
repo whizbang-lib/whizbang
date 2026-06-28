@@ -1,8 +1,8 @@
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Collective;
@@ -15,10 +15,13 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// the session accessor that hands the perspective <c>DbContext</c> to the apply chain.
 /// </summary>
 /// <remarks>
-/// Per-model executors are registered with <see cref="AddCollectiveExecutorEFCore{TModel}"/> — one line
-/// per perspective model that has a <c>[CollectiveApplyFor]</c> handler. Kept as explicit compile-time
-/// generic calls (no <c>MakeGenericType</c>) to stay AOT-clean (L19); a source generator can emit these
-/// calls for full turnkey registration as a follow-up.
+/// The <c>applyEntries</c> argument is the consumer's generated
+/// <c>Whizbang.Core.Generated.CollectiveApplyRegistry.Entries</c> — passed in (not referenced here)
+/// because the registry is generated per consuming assembly from its <c>[CollectiveApplyFor]</c> handlers;
+/// the framework assembly's own copy is empty. Per-model executors are registered with
+/// <see cref="AddCollectiveExecutorEFCore{TModel}"/> — one line per perspective model. Kept as explicit
+/// compile-time generic calls (no <c>MakeGenericType</c>) to stay AOT-clean (L19); a source generator can
+/// emit these calls for full turnkey registration as a follow-up.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 public static class CollectiveEventsEFCoreExtensions {
@@ -28,13 +31,18 @@ public static class CollectiveEventsEFCoreExtensions {
   /// Call <see cref="AddCollectiveExecutorEFCore{TModel}"/> once per collective perspective model.
   /// </summary>
   /// <typeparam name="TDbContext">The perspective-owning EF Core context.</typeparam>
-  public static IServiceCollection AddCollectiveEventsEFCore<TDbContext>(this IServiceCollection services)
+  /// <param name="services">The service collection.</param>
+  /// <param name="applyEntries">The consumer's <c>CollectiveApplyRegistry.Entries</c>.</param>
+  public static IServiceCollection AddCollectiveEventsEFCore<TDbContext>(
+      this IServiceCollection services,
+      IReadOnlyList<CollectiveApplyEntry> applyEntries)
       where TDbContext : DbContext {
+    ArgumentNullException.ThrowIfNull(applyEntries);
     services.TryAddSingleton<ICollectiveSessionAccessor, EFCoreCollectiveSessionAccessor<TDbContext>>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
       sp,
-      CollectiveApplyRegistry.Entries,
+      applyEntries,
       sp.GetServices<ICollectiveScopeResolver>().ToList(),
       sp.GetServices<ICollectiveEventExecutor>().ToList(),
       sp.GetService<EventCategoryMetrics>()));
