@@ -19,7 +19,9 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Single-threaded (-maxcpucount:1) Release build of the full solution; 15m was razor-thin
+    # (observed 15m02s) once the collective-events feature landed. Bumped for headroom.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
