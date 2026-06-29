@@ -36,9 +36,16 @@ public abstract record CollectiveEventBase : ICollectiveEvent {
   /// The collective event's own stream id, auto-generated at dispatch (each collective event is its own
   /// single-event stream). Do not set this — the framework mints it.
   /// </summary>
+  /// <remarks>
+  /// Mutable (<c>set</c>, not <c>init</c>) on purpose: <c>[GenerateStreamId]</c> mints the id at dispatch
+  /// and the source generator's <c>SetStreamId</c> writer can only target a mutable Guid — an <c>init</c>-only
+  /// property would make the attribute a silent no-op (the minted id could never be written back). The
+  /// StreamIdGenerator emits a build error for <c>[GenerateStreamId]</c> on an <c>init</c>-only stream id to
+  /// keep this from regressing.
+  /// </remarks>
   [StreamId]
   [GenerateStreamId]
-  public Guid StreamId { get; init; }
+  public Guid StreamId { get; set; }
 
   /// <summary>
   /// The cohort descriptor — the sole source of the SQL UPDATE's <c>WHERE</c> predicate. Set it on the

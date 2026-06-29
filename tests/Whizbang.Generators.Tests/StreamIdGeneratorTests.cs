@@ -156,6 +156,53 @@ public class StreamIdGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_GenerateStreamIdOnInitOnlyProperty_ReportsWHIZ013ErrorAsync() {
+    // [GenerateStreamId] mints the id at dispatch and writes it back via a generated setter, which can't
+    // target an init-only property — so it would silently stay empty. The generator must error (WHIZ013).
+    const string source = """
+            using System;
+            using Whizbang.Core;
+
+            namespace TestNamespace;
+
+            public record ArchiveAll : IEvent {
+              [StreamId]
+              [GenerateStreamId]
+              public Guid StreamId { get; init; }
+            }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<StreamIdGenerator>(source);
+
+    var error = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ013");
+    await Assert.That(error).IsNotNull();
+    await Assert.That(error!.Severity).IsEqualTo(DiagnosticSeverity.Error);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GenerateStreamIdOnMutableProperty_DoesNotReportWHIZ013Async() {
+    // A mutable (get; set;) StreamId is the correct shape for [GenerateStreamId] — no diagnostic.
+    const string source = """
+            using System;
+            using Whizbang.Core;
+
+            namespace TestNamespace;
+
+            public record ArchiveAll : IEvent {
+              [StreamId]
+              [GenerateStreamId]
+              public Guid StreamId { get; set; }
+            }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<StreamIdGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ013");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_WithNoEvents_GeneratesEmptyRegistryAsync() {
     // Arrange - No IEvent types
     const string source = """

@@ -142,6 +142,19 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
+  /// WHIZ013: Error - [GenerateStreamId] on an init-only [StreamId] property is a silent no-op.
+  /// </summary>
+  public static readonly DiagnosticDescriptor GenerateStreamIdOnInitOnly = new(
+      id: "WHIZ013",
+      title: "GenerateStreamId requires a settable StreamId",
+      messageFormat: "Type '{0}' has [GenerateStreamId] on the init-only property '{1}'. The framework mints the id at dispatch and writes it back through a generated setter, which cannot target an init-only property — so the id would silently stay empty and dispatch would fail at the outbox. Change '{1}' to a mutable 'get; set;' property.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "[GenerateStreamId] auto-generates the stream id at dispatch; the value is written back via a generated SetStreamId writer that only targets mutable Guid properties. An init-only [StreamId] makes the attribute a silent no-op. Applies to every message kind (IEvent, ICommand, collective events)."
+  );
+
+  /// <summary>
   /// WHIZ011: Info - Message type discovered for JSON serialization.
   /// </summary>
   public static readonly DiagnosticDescriptor JsonSerializableTypeDiscovered = new(
