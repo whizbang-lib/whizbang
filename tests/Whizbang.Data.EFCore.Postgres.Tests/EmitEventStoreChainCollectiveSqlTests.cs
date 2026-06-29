@@ -99,6 +99,26 @@ public class EmitEventStoreChainCollectiveSqlTests : EFCoreTestBase {
     return (int)(await cmd.ExecuteScalarAsync())!;
   }
 
+  // Calls the real store_outbox_messages proc (migration 062) with a collective-event message whose Flags
+  // field is rendered as <paramref name="flagsJson"/> (a JSON number like 1, or a string like "Collective"
+  // — both shapes EventFlags can serialize to). Returns the wh_outbox.flags the proc persisted.
+  private static async Task<int> _storeOutboxThenFlagsAsync(
+      NpgsqlConnection conn, Guid messageId, Guid streamId, string eventType, Guid instanceId, string flagsJson) {
+    var msgs = "[{\"MessageId\":\"" + messageId + "\",\"Destination\":\"test-dest\",\"MessageType\":\"" + eventType
+      + "\",\"EnvelopeType\":\"env\",\"Envelope\":{\"p\":{}},\"Metadata\":{},\"Scope\":null,\"StreamId\":\""
+      + streamId + "\",\"IsEvent\":true,\"Flags\":" + flagsJson + "}]";
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "SELECT * FROM store_outbox_messages(@msgs::jsonb, @inst, NOW() + INTERVAL '5 minutes', NOW(), 10000)";
+      cmd.Parameters.AddWithValue("msgs", msgs);
+      cmd.Parameters.AddWithValue("inst", instanceId);
+      await cmd.ExecuteNonQueryAsync();
+    }
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT flags FROM wh_outbox WHERE message_id = @id";
+    read.Parameters.AddWithValue("id", messageId);
+    return (int)(await read.ExecuteScalarAsync())!;
+  }
+
   // ---------- TESTS ----------
 
   [Test]
@@ -150,6 +170,54 @@ public class EmitEventStoreChainCollectiveSqlTests : EFCoreTestBase {
 
     await Assert.That(storedFlags).IsEqualTo(1)
       .Because("EventFlags.Collective (1) must survive the outbox→event_store copy so the collective routing predicate matches.");
+  }
+
+  [Test]
+  public async Task StoreOutboxMessages_CollectiveEvent_PersistsFlagsAndRoutesToSinkAsync() {
+    // The end-to-end gap migration 062 closes: store_outbox_messages (migrations 020/021) never wrote the
+    // `flags` column added in 061, so a collective event published through the real proc landed with
+    // flags=0 → 061's (flags & 1) routing never matched → no __collective__ sink row → never applied.
+    // The existing tests above INSERT into wh_outbox directly (bypassing the proc), which is exactly why
+    // this gap slipped through. Drive the real proc here.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    var messageId = Guid.NewGuid();
+
+    // EventFlags.Collective as a JSON number (1) — the default System.Text.Json enum serialization.
+    var outboxFlags = await _storeOutboxThenFlagsAsync(conn, messageId, streamId, COLLECTIVE_EVENT_TYPE, instanceId, "1");
+
+    await Assert.That(outboxFlags).IsEqualTo(1)
+      .Because("store_outbox_messages must persist the EventFlags flags column.");
+    await Assert.That(await _eventStoreFlagsAsync(conn, messageId)).IsEqualTo(1)
+      .Because("The proc's _emit_event_store_chain call must carry the persisted flag into wh_event_store.");
+    await Assert.That(await _countPerspectiveEventsAsync(conn, messageId, COLLECTIVE_SINK)).IsEqualTo(1L)
+      .Because("With flags persisted, the collective event routes to exactly one __collective__ sink row.");
+  }
+
+  [Test]
+  public async Task StoreOutboxMessages_CollectiveEvent_PersistsFlagsFromStringEnumAsync() {
+    // EventFlags can also serialize as a [Flags] string ("Collective") when the caller's options carry a
+    // JsonStringEnumConverter. The proc's reader must handle that shape too.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    var messageId = Guid.NewGuid();
+
+    var outboxFlags = await _storeOutboxThenFlagsAsync(conn, messageId, streamId, COLLECTIVE_EVENT_TYPE, instanceId, "\"Collective\"");
+
+    await Assert.That(outboxFlags).IsEqualTo(1)
+      .Because("A string-serialized EventFlags ('Collective') must still set the collective bit on wh_outbox.flags.");
   }
 
   [Test]
