@@ -285,6 +285,15 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("  [ModuleInitializer]");
     sb.AppendLine("#pragma warning restore CA2255");
     sb.AppendLine("  internal static void Initialize() {");
+    sb.AppendLine("    // Join the cross-assembly serialization union under the Persistence profile at high");
+    sb.AppendLine("    // priority, so object-mode WhizbangId JsonTypeInfo out-ranks the scalar WhizbangIdJsonContext");
+    sb.AppendLine("    // resolver there. CreateCombinedOptions(Persistence) then carries object-mode WhizbangId");
+    sb.AppendLine("    // (EF Core 10 jsonb byte format) for every assembly's perspectives, not just this one.");
+    sb.AppendLine("    global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(");
+    sb.AppendLine("      PerspectivePersistenceJsonContext.Default,");
+    sb.AppendLine("      priority: 1000,");
+    sb.AppendLine("      profile: global::Whizbang.Core.Serialization.SerializationProfile.Persistence);");
+    sb.AppendLine();
     sb.AppendLine("    ServiceRegistrationCallbacks.PerspectivePersistenceOptions = _ =>");
     sb.AppendLine("      BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>");
     sb.AppendLine("        PerspectivePersistenceJsonContext.CreateOptions(");
