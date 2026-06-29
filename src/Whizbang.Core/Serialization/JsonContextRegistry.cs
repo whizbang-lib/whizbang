@@ -24,11 +24,24 @@ namespace Whizbang.Core.Serialization;
 /// (MessageHop, MessageEnvelope) from Core take precedence over application types.
 /// </remarks>
 public static class JsonContextRegistry {
+  /// <summary>Monotonic registration sequence — breaks priority ties in registration order (FIFO).</summary>
+  private static long _registrationSeq;
+
   /// <summary>
-  /// Thread-safe collection of registered resolvers.
+  /// A registered type-info provider with its ranking metadata. <paramref name="Profile"/> of
+  /// <c>null</c> means the provider applies to every <see cref="SerializationProfile"/>; a specific value
+  /// scopes it to that profile only. Higher <paramref name="Priority"/> is consulted first; equal
+  /// priorities preserve registration order via <paramref name="Seq"/>.
+  /// </summary>
+  private readonly record struct _resolverEntry(IJsonTypeInfoResolver Resolver, int Priority, SerializationProfile? Profile, long Seq);
+
+  private readonly record struct _converterEntry(JsonConverter Converter, int Priority, SerializationProfile? Profile, long Seq);
+
+  /// <summary>
+  /// Thread-safe collection of registered resolvers with priority + profile.
   /// Populated via [ModuleInitializer] methods in each assembly.
   /// </summary>
-  private static readonly ConcurrentQueue<IJsonTypeInfoResolver> _resolvers = new();
+  private static readonly ConcurrentQueue<_resolverEntry> _resolvers = new();
 
   /// <summary>
   /// Thread-safe collection of converter instances to add to JsonSerializerOptions.
@@ -36,7 +49,10 @@ public static class JsonContextRegistry {
   /// Needed for WhizbangId converters due to STJ source generation limitations.
   /// Converters are instantiated at compile-time by source generators for AOT compatibility.
   /// </summary>
-  private static readonly ConcurrentQueue<JsonConverter> _converters = new();
+  private static readonly ConcurrentQueue<_converterEntry> _converters = new();
+
+  private static bool _appliesTo(SerializationProfile? entryProfile, SerializationProfile requested)
+    => entryProfile is null || entryProfile.Value == requested;
 
   /// <summary>
   /// Thread-safe dictionary mapping normalized type names to (Type, Resolver) tuples.
@@ -51,10 +67,22 @@ public static class JsonContextRegistry {
   /// Called from [ModuleInitializer] methods - runs before Main().
   /// </summary>
   /// <param name="resolver">Source-generated JsonSerializerContext to register</param>
-  public static void RegisterContext(IJsonTypeInfoResolver resolver) {
+  public static void RegisterContext(IJsonTypeInfoResolver resolver) =>
+    RegisterContext(resolver, priority: 0, profile: null);
+
+  /// <summary>
+  /// Registers a JsonSerializerContext resolver with an explicit priority and optional profile scope.
+  /// Higher-priority resolvers are consulted first when <see cref="CreateCombinedOptions(SerializationProfile)"/>
+  /// builds the combined chain, so the winning <c>JsonTypeInfo</c> for a type is deterministic and
+  /// independent of assembly-load order. A <paramref name="profile"/> of <c>null</c> applies to every profile.
+  /// </summary>
+  /// <param name="resolver">Source-generated JsonSerializerContext to register.</param>
+  /// <param name="priority">Higher is consulted first; ties break in registration order.</param>
+  /// <param name="profile">Profile to scope this resolver to, or <c>null</c> for all profiles.</param>
+  public static void RegisterContext(IJsonTypeInfoResolver resolver, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(resolver);
 
-    _resolvers.Enqueue(resolver);
+    _resolvers.Enqueue(new _resolverEntry(resolver, priority, profile, Interlocked.Increment(ref _registrationSeq)));
   }
 
   /// <summary>
@@ -66,10 +94,22 @@ public static class JsonContextRegistry {
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithNull_ThrowsArgumentNullExceptionAsync</tests>
   /// <param name="converter">The JsonConverter instance to register (instantiated at compile-time by source generators for AOT compatibility)</param>
-  public static void RegisterConverter(JsonConverter converter) {
+  public static void RegisterConverter(JsonConverter converter) =>
+    RegisterConverter(converter, priority: 0, profile: null);
+
+  /// <summary>
+  /// Registers a JsonConverter with an explicit priority and optional profile scope. A
+  /// <paramref name="profile"/> of <c>null</c> applies to every profile; scoping a converter to
+  /// <see cref="SerializationProfile.Default"/> keeps it out of the Persistence options (e.g. the scalar
+  /// WhizbangId converters, which the persistence profile replaces with object-mode resolvers).
+  /// </summary>
+  /// <param name="converter">The JsonConverter instance (instantiated at compile-time by source generators).</param>
+  /// <param name="priority">Higher is added first; ties break in registration order.</param>
+  /// <param name="profile">Profile to scope this converter to, or <c>null</c> for all profiles.</param>
+  public static void RegisterConverter(JsonConverter converter, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(converter);
 
-    _converters.Enqueue(converter);
+    _converters.Enqueue(new _converterEntry(converter, priority, profile, Interlocked.Increment(ref _registrationSeq)));
   }
 
   /// <summary>
@@ -81,19 +121,38 @@ public static class JsonContextRegistry {
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:CreateCombinedOptions_IsAOTCompatible_NoReflectionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisteredConverters_AreInstantiatedAtCompileTime_NotRuntimeAsync</tests>
   /// <returns>JsonSerializerOptions with all registered contexts</returns>
-  public static JsonSerializerOptions CreateCombinedOptions() {
+  public static JsonSerializerOptions CreateCombinedOptions() =>
+    CreateCombinedOptions(SerializationProfile.Default);
+
+  /// <summary>
+  /// Creates JsonSerializerOptions for a specific <see cref="SerializationProfile"/>. Providers registered
+  /// for that profile (or for all profiles) are included, ordered by priority (highest first) so the winning
+  /// <c>JsonTypeInfo</c> for any type is deterministic and independent of assembly-load order. The
+  /// <see cref="SerializationProfile.Persistence"/> profile excludes Default-scoped providers (e.g. the
+  /// scalar WhizbangId converters), letting object-mode persistence resolvers win.
+  /// </summary>
+  public static JsonSerializerOptions CreateCombinedOptions(SerializationProfile profile) {
     if (_resolvers.IsEmpty) {
       throw new InvalidOperationException(
         "No JsonSerializerContext instances registered. " +
         "Ensure Whizbang.Core and application assemblies are loaded before calling CreateCombinedOptions().");
     }
 
+    // Highest priority first; registration order (Seq) breaks ties. JsonTypeInfoResolver.Combine is
+    // first-match-wins, so the ordered list makes the winning provider deterministic.
+    var orderedResolvers = _resolvers
+      .Where(e => _appliesTo(e.Profile, profile))
+      .OrderByDescending(e => e.Priority)
+      .ThenBy(e => e.Seq)
+      .Select(e => e.Resolver)
+      .ToArray();
+
     // The polymorphic-base resolver goes FIRST so nested interface-typed members (e.g. a composite's
     // inner-event IMessage list) resolve to a polymorphic typeinfo. Source-gen contexts never emit a
     // typeinfo for the interface bases themselves, so without this any nested IMessage/IEvent/ICommand
     // member fails to (de)serialize. The base resolvers handle every concrete type.
     var combinedResolver = JsonTypeInfoResolver.Combine(
-      [new _polymorphicBaseTypeInfoResolver(), .. _resolvers.ToArray()]);
+      [new _polymorphicBaseTypeInfoResolver(), .. orderedResolvers]);
     var options = new JsonSerializerOptions {
       TypeInfoResolver = combinedResolver,
       DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -107,8 +166,13 @@ public static class JsonContextRegistry {
     // Converters are instantiated at compile-time by source generators (no reflection!)
     // and registered via RegisterConverter() from [ModuleInitializer] methods.
     // This includes ProductId, OrderId, CustomerId, etc. from all application assemblies.
-    foreach (var converter in _converters) {
-      options.Converters.Add(converter);
+    // Profile-scoped: the Persistence profile omits Default-only (scalar WhizbangId) converters so the
+    // object-mode resolvers win.
+    foreach (var entry in _converters
+        .Where(e => _appliesTo(e.Profile, profile))
+        .OrderByDescending(e => e.Priority)
+        .ThenBy(e => e.Seq)) {
+      options.Converters.Add(entry.Converter);
     }
 
     return options;
