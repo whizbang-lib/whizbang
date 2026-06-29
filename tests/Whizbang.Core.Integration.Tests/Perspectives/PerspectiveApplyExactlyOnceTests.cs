@@ -195,12 +195,13 @@ public class PerspectiveApplyExactlyOnceTests {
     var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope, envelope] } };
     var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
 
-    // Act
+    // Act — wait deterministically on the runner having processed the (deduped) terminal event,
+    // not on a claim-cycle count that races the async drain.
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createWorker(coordinator, registry, eventStore);
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
+    await runner.TerminalProcessed.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
 
@@ -281,7 +282,7 @@ public class PerspectiveApplyExactlyOnceTests {
     var (worker, harness) = _createWorker(coordinator, registry, eventStore);
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
+    await runner.TerminalProcessed.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
 
@@ -385,6 +386,70 @@ public class PerspectiveApplyExactlyOnceTests {
       .Because("The sink bypasses the per-stream runner entirely — a collective event has no single target stream.");
   }
 
+  /// <summary>
+  /// Gap #6 regression: the production route. <c>claim_work</c> returns a collective event's sink
+  /// stream as a <see cref="WorkBatch.PerspectiveStreamIds"/> entry (the DRAIN path), NOT a per-event
+  /// <see cref="WorkBatch.PerspectiveWork"/> with the sink name already set. The drain expansion
+  /// (<c>_collectDrainModePerspectiveNames</c>) only consulted the registered-<c>IPerspectiveFor</c>
+  /// map, which has no entry for a collective event (it has only a <c>[CollectiveApplyFor]</c> sink),
+  /// so the drain guard was never reached and the sink row stayed unprocessed forever. The prior
+  /// Scenario-5 test masked this by injecting <c>PerspectiveWork</c> with the sink name directly,
+  /// exercising the channel guard instead of the drain guard.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_ViaDrainPath_DispatchesEventOnceAndSkipsRunner_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+
+    // DRAIN path: the sink stream arrives as a PerspectiveStreamId, exactly as claim_work emits it.
+    var coordinator = new _dualPathCoordinator {
+      StreamIdsToReturnOnce = [streamId],
+      PerspectiveWorkToReturnOnce = [],
+      StreamEventsToReturn = [
+        new StreamEventData {
+          StreamId = streamId,
+          EventId = eventId,
+          EventType = TypeNameFormatter.Format(typeof(_testCollectiveEvent)),
+          EventData = JsonSerializer.Serialize(collectiveEvent),
+          Metadata = null,
+          Scope = null,
+          EventWorkId = Guid.CreateVersion7()
+        }
+      ]
+    };
+    var envelope = new MessageEnvelope<IEvent> {
+      MessageId = new MessageId(eventId),
+      Payload = collectiveEvent,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+    var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
+    // Runner registered for a DIFFERENT perspective — the sink must never reach it.
+    var runner = new _pathTrackingRunner(PerspectiveProcessingStatus.Completed, eventId);
+    var registry = new _singleRegistry(runner, "Test.NonCollectivePerspective", [typeof(_testCollectiveEvent)]);
+    var dispatcher = new _recordingCollectiveDispatcher();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness) = _createCollectiveWorker(coordinator, registry, eventStore, dispatcher);
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    // Deterministic wait on the actual dispatch — the drain channel processes the claimed stream
+    // asynchronously, so cycle counting would race the drain. Times out (and fails) if the gap-#6
+    // fix doesn't surface the __collective__ sink through the drain expansion.
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
+      .Because("A collective event claimed via the drain path (PerspectiveStreamIds) must be dispatched "
+        + "through ICollectiveDispatcher exactly once — this is the production route claim_work emits.");
+    await Assert.That(dispatcher.Calls[0].EventId).IsEqualTo(eventId)
+      .Because("DispatchAsync receives the collective event's own message id as the collectiveEventId.");
+    await Assert.That(runner.Invocations.Count).IsEqualTo(0)
+      .Because("The sink bypasses the per-stream runner entirely — a collective event has no single target stream.");
+  }
+
   // ==================== Shared test-double infrastructure ====================
 
   private sealed record _testCollectiveEvent : ICollectiveEvent {
@@ -392,10 +457,19 @@ public class PerspectiveApplyExactlyOnceTests {
   }
 
   private sealed class _recordingCollectiveDispatcher : ICollectiveDispatcher {
+    private readonly TaskCompletionSource _firstDispatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<(ICollectiveEvent Event, Guid EventId, object Session)> Calls { get; } = [];
+
+    /// <summary>Completes the first time <see cref="DispatchAsync"/> is invoked — a deterministic
+    /// signal for the async drain path (no cycle-count race).</summary>
+    public Task FirstDispatch => _firstDispatch.Task;
+
     public Task<CollectiveDispatchResult> DispatchAsync(
         ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, CancellationToken cancellationToken) {
-      Calls.Add((evt, collectiveEventId, dbContextOrSession));
+      lock (Calls) {
+        Calls.Add((evt, collectiveEventId, dbContextOrSession));
+      }
+      _firstDispatch.TrySetResult();
       return Task.FromResult(new CollectiveDispatchResult(HandlerCount: 1, AffectedRowCount: 1));
     }
   }
@@ -451,12 +525,25 @@ public class PerspectiveApplyExactlyOnceTests {
     public Type PerspectiveType => typeof(object);
 
     private readonly ConcurrentBag<_Invocation> _invocations = [];
+    private readonly TaskCompletionSource _terminalSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public IReadOnlyCollection<_Invocation> Invocations => [.. _invocations];
 
+    /// <summary>Completes once an invocation for <c>AdvanceToEventId</c> (the terminal event of the
+    /// batch) is recorded — a deterministic settle signal for the async drain path, replacing
+    /// cycle-count waits that race drain completion.</summary>
+    public Task TerminalProcessed => _terminalSeen.Task;
+
+    private void _record(_Invocation invocation) {
+      _invocations.Add(invocation);
+      if (invocation.EventId == AdvanceToEventId) {
+        _terminalSeen.TrySetResult();
+      }
+    }
+
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
-      _invocations.Add(new _Invocation("RunAsync", streamId, perspectiveName, lastProcessedEventId ?? Guid.Empty));
+      _record(new _Invocation("RunAsync", streamId, perspectiveName, lastProcessedEventId ?? Guid.Empty));
       return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
@@ -470,7 +557,7 @@ public class PerspectiveApplyExactlyOnceTests {
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
         IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
       foreach (var envelope in events) {
-        _invocations.Add(new _Invocation("RunWithEventsAsync", streamId, perspectiveName, envelope.MessageId.Value));
+        _record(new _Invocation("RunWithEventsAsync", streamId, perspectiveName, envelope.MessageId.Value));
       }
       var lastId = events.Count > 0 ? events[^1].MessageId.Value : lastProcessedEventId ?? Guid.Empty;
       return Task.FromResult(new PerspectiveCursorCompletion {
@@ -484,7 +571,7 @@ public class PerspectiveApplyExactlyOnceTests {
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
         Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {
-      _invocations.Add(new _Invocation("RewindAndRunAsync", streamId, perspectiveName, triggeringEventId));
+      _record(new _Invocation("RewindAndRunAsync", streamId, perspectiveName, triggeringEventId));
       return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
