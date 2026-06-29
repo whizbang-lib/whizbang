@@ -167,8 +167,8 @@ public class TenantCollectiveScopeResolverTests {
     public string Name { get; set; } = string.Empty;
   }
 
-  private sealed record _customScope : ICollectiveScope {
-    public string ScopeKind => "custom-other";
+  private sealed record _customScope : CollectiveScope {
+    public override string ScopeKind => "custom-other";
   }
 
   private static PerspectiveRow<_jobModel> _row(string? tenantId) =>

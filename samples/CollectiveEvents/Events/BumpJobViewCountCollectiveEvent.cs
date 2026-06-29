@@ -18,7 +18,6 @@ namespace CollectiveEvents.Sample.Events;
 /// v1.0 (escape hatch: <c>SpecKind = RawSql</c>).
 /// </remarks>
 [PinnedId("7e1c5a3f-8b9d-4e2c-bf60-3d5a8c1e9b42")]
-public sealed record BumpJobViewCountCollectiveEvent : ICollectiveEvent {
-  public required ICollectiveScope Scope { get; init; }
+public sealed record BumpJobViewCountCollectiveEvent : CollectiveEventBase {
   public required DateTimeOffset OccurredAt { get; init; }
 }

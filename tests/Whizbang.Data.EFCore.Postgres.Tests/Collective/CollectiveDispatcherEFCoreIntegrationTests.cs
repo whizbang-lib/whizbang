@@ -328,7 +328,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   }
 
   internal sealed record _archiveJobsCollectiveEvent : ICollectiveEvent {
-    public required ICollectiveScope Scope { get; init; }
+    public required CollectiveScope Scope { get; init; }
     public required DateTimeOffset OccurredAt { get; init; }
   }
 }

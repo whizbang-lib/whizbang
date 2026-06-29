@@ -126,7 +126,7 @@ public class CollectiveSpecContractTests {
   }
 
   private sealed record _archiveCollectiveEvent(
-    ICollectiveScope Scope,
+    CollectiveScope Scope,
     IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
 
   private sealed record _archiveSpec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters)
