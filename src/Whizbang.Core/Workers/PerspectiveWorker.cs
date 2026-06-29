@@ -1448,11 +1448,16 @@ public partial class PerspectiveWorker(
         _registerDrainModeLifecycleTracking(currentEvents, currentContext.TypeNameCache, streamId, currentContext.LifecycleCoordinator);
 
         foreach (var perspectiveName in perspectiveNames) {
-          var filteredEvents = currentEvents
-              .Where(e => currentContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
-                && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
-              .OrderByMessageId()
-              .ToList();
+          // The __collective__ sink has no registered IPerspectiveFor, so it can't be matched via
+          // _perspectivesPerEventType — select the collective events directly. _processCollectiveSinkAsync
+          // reloads them from the event store, but the list must be non-empty to clear the empty-skip gate.
+          var filteredEvents = perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
+              ? currentEvents.Where(e => e.Payload is ICollectiveEvent).OrderByMessageId().ToList()
+              : currentEvents
+                  .Where(e => currentContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
+                    && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
+                  .OrderByMessageId()
+                  .ToList();
 
           if (filteredEvents.Count == 0) {
             continue;
@@ -1562,6 +1567,14 @@ public partial class PerspectiveWorker(
       Dictionary<Type, string> typeNameCache) {
     var perspectiveNames = new HashSet<string>();
     foreach (var envelope in streamEvents) {
+      // Collective events route (mig 061) to the fixed __collective__ sink, which has no registered
+      // IPerspectiveFor runner — only a [CollectiveApplyFor] handler. _perspectivesPerEventType maps
+      // event types to registered IPerspectiveFor perspectives only, so it never surfaces the sink.
+      // Add it explicitly so the drain guard (_runDrainModePerspectiveAsync) dispatches the event.
+      if (envelope.Payload is ICollectiveEvent) {
+        perspectiveNames.Add(CollectiveRouting.SINK_PERSPECTIVE_NAME);
+        continue;
+      }
       if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
           && _perspectivesPerEventType!.TryGetValue(eventTypeKey, out var perspectives)) {
         foreach (var p in perspectives) {
@@ -1591,6 +1604,14 @@ public partial class PerspectiveWorker(
       return;
     }
     foreach (var envelope in streamEvents) {
+      // Collective events bypass the per-stream runner and the PostAllPerspectives WhenAll gate:
+      // _processCollectiveSinkAsync reports its own cursor completion and never signals the lifecycle
+      // coordinator, so registering tracking here would leave a dangling (or empty, instantly-firing)
+      // gate entry. The sink owns its completion lifecycle.
+      if (envelope.Payload is ICollectiveEvent) {
+        continue;
+      }
+
       _ = lifecycleCoordinator.BeginTracking(
         envelope.MessageId.Value, envelope,
         LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
