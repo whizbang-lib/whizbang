@@ -1,11 +1,13 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Serialization;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -59,6 +61,30 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// </para>
   /// </remarks>
   public static Func<JsonSerializerOptions>? PathOnePersistenceOptionsProvider { get; set; }
+
+  /// <summary>
+  /// Persistence serialization options, sourced from the cross-assembly union
+  /// (<see cref="JsonContextRegistry.CreateCombinedOptions(SerializationProfile)"/> under the
+  /// <see cref="SerializationProfile.Persistence"/> profile — object-mode WhizbangId for EF Core 10's
+  /// jsonb byte format, aggregated across every assembly), combined with any user-supplied options from
+  /// <see cref="PathOnePersistenceOptionsProvider"/> as a fallback resolver. Rebuilt per call so late
+  /// assembly registrations and test-supplied options are always reflected — replacing the prior
+  /// process-wide single-slot snapshot that only ever held one assembly's view (and raced across tests).
+  /// </summary>
+  private static JsonSerializerOptions _resolvePersistenceOptions(Func<JsonSerializerOptions>? userProvider) {
+    var union = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
+    var user = userProvider?.Invoke();
+    if (user?.TypeInfoResolver is null) {
+      return union;
+    }
+
+    // Union first (object-mode WhizbangId + all registered persistence contexts), user options as a
+    // fallback for anything the union doesn't cover. User converters are intentionally NOT copied — the
+    // Persistence profile deliberately omits the scalar WhizbangId converters so object-mode wins.
+    return new JsonSerializerOptions(union) {
+      TypeInfoResolver = JsonTypeInfoResolver.Combine(union.TypeInfoResolver!, user.TypeInfoResolver)
+    };
+  }
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
@@ -217,10 +243,24 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       return false;
     }
 
-    var options = optionsProvider();
-    var dataJson = JsonSerializer.Serialize(args.Model, options.GetTypeInfo(typeof(TModel)));
-    var metadataJson = JsonSerializer.Serialize(args.Metadata, options.GetTypeInfo(typeof(PerspectiveMetadata)));
-    var scopeJson = JsonSerializer.Serialize(args.Scope, options.GetTypeInfo(typeof(PerspectiveScope)));
+    var options = _resolvePersistenceOptions(optionsProvider);
+
+    // Graceful fallback: the atomic path is an optimization. If the persistence union (+ user options)
+    // can't resolve a type — e.g. an ad-hoc model not registered in any source-gen context — defer to the
+    // legacy SELECT-then-INSERT path (which serializes through the DbContext's own, reflection-capable,
+    // Npgsql JSON options) instead of throwing. We probe via the resolver, whose GetTypeInfo returns null
+    // for an unresolvable type — unlike JsonSerializerOptions.GetTypeInfo, which throws NotSupportedException.
+    var resolver = options.TypeInfoResolver;
+    var modelInfo = resolver?.GetTypeInfo(typeof(TModel), options);
+    var metadataInfo = resolver?.GetTypeInfo(typeof(PerspectiveMetadata), options);
+    var scopeInfo = resolver?.GetTypeInfo(typeof(PerspectiveScope), options);
+    if (modelInfo is null || metadataInfo is null || scopeInfo is null) {
+      return false;
+    }
+
+    var dataJson = JsonSerializer.Serialize(args.Model, modelInfo);
+    var metadataJson = JsonSerializer.Serialize(args.Metadata, metadataInfo);
+    var scopeJson = JsonSerializer.Serialize(args.Scope, scopeInfo);
 
     // forceUpdateScope toggles whether scope participates in the DO UPDATE SET clause:
     // the INSERT path always sets scope so a new row carries the caller's scope verbatim,
@@ -333,6 +373,14 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       }
       await cmd.ExecuteNonQueryAsync(cancellationToken);
       return true;
+    } catch (Exception ex) when (ex is InvalidCastException or NotSupportedException or System.Text.Json.JsonException) {
+      // The atomic path couldn't serialize or bind this row — e.g. a CLR type Npgsql can't map to its
+      // column (a WhizbangId physical-field value bound to a uuid column), or a model the persistence
+      // union can serialize but Npgsql can't parameterize. Defer to the legacy SELECT-then-INSERT path,
+      // whose EF value converters handle those CLR↔column mappings. INSERT … ON CONFLICT is a single
+      // atomic statement, so a throw here means nothing was committed — falling back is safe (no
+      // double-write). The atomic path stays a best-effort optimization.
+      return false;
     } finally {
       if (openedHere && connection.State == System.Data.ConnectionState.Open) {
         await connection.CloseAsync();
