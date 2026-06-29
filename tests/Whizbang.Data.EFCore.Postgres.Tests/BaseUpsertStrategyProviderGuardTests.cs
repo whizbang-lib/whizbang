@@ -16,6 +16,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// nested test models. Now the atomic path additionally checks `Database.ProviderName`
 /// and bails out for non-Npgsql providers.
 /// </summary>
+// Mutates the process-wide BaseUpsertStrategy.PathOnePersistenceOptionsProvider — serialize against the
+// other persistence tests so it can't flip the provider mid-seed (the cross-test static race).
+[NotInParallel("PostgreSQL")]
 public class BaseUpsertStrategyProviderGuardTests {
 
   private sealed class ProbeDbContext(DbContextOptions<ProbeDbContext> options) : DbContext(options) { }
