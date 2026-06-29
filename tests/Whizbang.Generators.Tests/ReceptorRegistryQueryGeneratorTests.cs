@@ -259,6 +259,52 @@ public abstract class AbstractComposite : ICompositeEvent {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_WithCollectiveEvent_HasAnyConsumerReturnsTrueAsync() {
+    // A collective event is CONSUMED by the perspective worker's __collective__ sink (a
+    // [CollectiveApplyFor] handler), not a receptor or perspective. Without explicit recognition the
+    // inbox/receive drop-gate (HasAnyConsumer) discards it as unsubscribed BEFORE it is stored and routed
+    // (migration 061) — so the collective apply never runs. This locks concrete collective events into
+    // AnyConsumerTypes so they survive to the sink.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp;
+
+public record ArchiveAllCollective : CollectiveEventBase { }";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var consumerRegion = _extractRegion(generated!, "AnyConsumerTypes");
+    await Assert.That(consumerRegion).Contains("MyApp.ArchiveAllCollective")
+      .Because("A collective event is consumed by the __collective__ sink; it must register as a consumer so the inbox drop-gate doesn't discard it before it is stored and routed.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AbstractCollectiveBase_NotRegisteredAsConsumerAsync() {
+    // The abstract collective base is never dispatched — only concrete derived collective events are.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp;
+
+public abstract record AbstractCollective : CollectiveEventBase { }";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated!).DoesNotContain("AbstractCollective")
+      .Because("The abstract collective base is never dispatched and must not be registered as a consumer.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_OrphanType_HasAnyConsumerReturnsFalseAsync() {
     const string source = @"
 using Whizbang.Core;
