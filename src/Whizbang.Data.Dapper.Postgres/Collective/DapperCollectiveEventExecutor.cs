@@ -20,12 +20,19 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExecutor
     where TModel : class {
   private readonly string _tableName;
+  private readonly IReadOnlyDictionary<Type, string> _siblingTables;
 
   /// <summary>Create the executor for <typeparamref name="TModel"/> targeting <paramref name="tableName"/>.</summary>
   /// <param name="tableName">The perspective table for the model (e.g. <c>wh_per_job</c>).</param>
-  public DapperCollectiveEventExecutor(string tableName) {
+  /// <param name="siblingTables">
+  /// The <c>model → table</c> map used to resolve cross-perspective cohorts (<c>q.Of&lt;TOther&gt;()</c>).
+  /// Pass an empty map when no handler references a sibling perspective.
+  /// </param>
+  public DapperCollectiveEventExecutor(string tableName, IReadOnlyDictionary<Type, string> siblingTables) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    ArgumentNullException.ThrowIfNull(siblingTables);
     _tableName = tableName;
+    _siblingTables = siblingTables;
   }
 
   /// <inheritdoc />
@@ -50,6 +57,6 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
     }
 
     return DapperCollectiveEventApplier<TModel>.ApplyAsync(
-      entry, handlerInstance, evt, resolver, connectionFactory, _tableName, cancellationToken);
+      entry, handlerInstance, evt, resolver, connectionFactory, _tableName, _siblingTables, cancellationToken);
   }
 }

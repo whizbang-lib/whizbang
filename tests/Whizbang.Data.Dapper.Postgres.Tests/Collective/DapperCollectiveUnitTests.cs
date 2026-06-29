@@ -105,9 +105,61 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task ScopeFilter_TopLevelColumn_ThrowsNotSupportedAsync() {
-    // Only the scope and data jsonb columns are translatable; a top-level system column (version) is not.
+    // Scope/data jsonb columns and the top-level id (for correlation) are translatable; an arbitrary
+    // top-level system column (version) is not.
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Version == 5;
     await Assert.That(() => DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter))
+      .Throws<NotSupportedException>();
+  }
+
+  private sealed class _statusModel {
+    public string Status { get; set; } = "";
+  }
+
+  [Test]
+  public async Task ScopeFilter_CrossPerspectiveAny_CompilesToExistsSubqueryAsync() {
+    // The cross-perspective cohort: q.Of<Sibling>().Any(s => s.Id == r.Id && eligible.Contains(s.Data.X))
+    // compiles to a correlated EXISTS subquery — .Any -> EXISTS, Contains -> IN, sibling table resolved
+    // via the query context, outer id qualified by the outer table.
+    var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_statusModel)] = "wh_per_status" });
+    var eligible = new[] { "Draft", "Approved" };
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
+      r => q.Of<_statusModel>().Any(s => s.Id == r.Id && eligible.Contains(s.Data.Status));
+
+    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(
+      filter, parameterPrefix: "where", outerTableName: "wh_per_job");
+
+    await Assert.That(result.SqlFragment).IsEqualTo(
+      "EXISTS (SELECT 1 FROM wh_per_status s WHERE (s.id = wh_per_job.id AND s.data->>'Status' IN (@where_status_0, @where_status_1)))");
+    await Assert.That(result.Parameters["where_status_0"]).IsEqualTo("Draft");
+    await Assert.That(result.Parameters["where_status_1"]).IsEqualTo("Approved");
+  }
+
+  [Test]
+  public async Task ScopeFilter_ScopeAndCrossPerspectiveAny_ComposesEnvelopeAndExistsAsync() {
+    var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_statusModel)] = "wh_per_status" });
+    var tenant = "t-A";
+    var eligible = new[] { "Draft" };
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
+      r => r.Scope.TenantId == tenant
+        && q.Of<_statusModel>().Any(s => s.Id == r.Id && eligible.Contains(s.Data.Status));
+
+    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(
+      filter, parameterPrefix: "where", outerTableName: "wh_per_job");
+
+    await Assert.That(result.SqlFragment).IsEqualTo(
+      "(scope->>'TenantId' = @where_tenantid AND EXISTS (SELECT 1 FROM wh_per_status s WHERE (s.id = wh_per_job.id AND s.data->>'Status' IN (@where_status_0))))");
+  }
+
+  [Test]
+  public async Task ScopeFilter_AnyWithoutOuterTableName_ThrowsAsync() {
+    // A correlated EXISTS needs the outer table to qualify the correlation; without it the compiler can't
+    // disambiguate the outer id.
+    var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_statusModel)] = "wh_per_status" });
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
+      r => q.Of<_statusModel>().Any(s => s.Id == r.Id);
+
+    await Assert.That(() => DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter, "where", outerTableName: null))
       .Throws<NotSupportedException>();
   }
 
@@ -129,19 +181,21 @@ public class DapperCollectiveUnitTests {
   private static CollectiveApplyEntry _entryFor<TEvent>() => new(
     ModelType: typeof(_jobModel), EventType: typeof(TEvent), HandlerType: typeof(_handler),
     MethodName: nameof(_handler.Apply), ScopeHandling: CollectiveScopeHandling.Framework,
-    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e) => ((_handler)h).Apply((_evtA)e));
+    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, q) => ((_handler)h).Apply((_evtA)e));
 
   private sealed class _factory : IDbConnectionFactory {
     public Task<System.Data.IDbConnection> CreateConnectionAsync(CancellationToken cancellationToken = default)
       => throw new InvalidOperationException("validation should fail before a connection is needed");
   }
 
+  private static readonly IReadOnlyDictionary<Type, string> _noSiblings = new Dictionary<Type, string>();
+
   [Test]
   public async Task Applier_EventTypeMismatch_ThrowsArgumentAsync() {
     var entry = _entryFor<_evtB>(); // entry says _evtB but we pass _evtA
     await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
-        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", default))
+        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings, default))
       .Throws<ArgumentException>();
   }
 
@@ -150,7 +204,7 @@ public class DapperCollectiveUnitTests {
     var entry = _entryFor<_evtA>();
     await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), new _evtA { Scope = new _otherScope() },
-        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", default))
+        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings, default))
       .Throws<ArgumentException>();
   }
 
@@ -159,7 +213,7 @@ public class DapperCollectiveUnitTests {
     var entry = _entryFor<_evtA>();
     await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
-        new TenantCollectiveScopeResolver(), null!, "wh_per_x", default))
+        new TenantCollectiveScopeResolver(), null!, "wh_per_x", _noSiblings, default))
       .Throws<ArgumentNullException>();
   }
 
@@ -171,13 +225,13 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task Executor_ReportsModelTypeAsync() {
-    var ex = new DapperCollectiveEventExecutor<_jobModel>("wh_per_job");
+    var ex = new DapperCollectiveEventExecutor<_jobModel>("wh_per_job", _noSiblings);
     await Assert.That(ex.ModelType).IsEqualTo(typeof(_jobModel));
   }
 
   [Test]
   public async Task Executor_NonFactorySession_ThrowsArgumentAsync() {
-    var ex = new DapperCollectiveEventExecutor<_jobModel>("wh_per_job");
+    var ex = new DapperCollectiveEventExecutor<_jobModel>("wh_per_job", _noSiblings);
     await Assert.That(() => ex.ApplyAsync(
         _entryFor<_evtA>(), new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
         new TenantCollectiveScopeResolver(), dbContextOrSession: "not-a-factory", Guid.NewGuid(), default))
@@ -186,7 +240,7 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task Executor_NullTableName_ThrowsAsync() {
-    await Assert.That(() => new DapperCollectiveEventExecutor<_jobModel>(""))
+    await Assert.That(() => new DapperCollectiveEventExecutor<_jobModel>("", _noSiblings))
       .Throws<ArgumentException>();
   }
 

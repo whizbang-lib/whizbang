@@ -46,6 +46,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       ICollectiveScopeResolver resolver,
       IDbConnectionFactory connectionFactory,
       string tableName,
+      IReadOnlyDictionary<Type, string> siblingTables,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(entry);
@@ -54,6 +55,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(resolver);
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    ArgumentNullException.ThrowIfNull(siblingTables);
 
     if (entry.EventType != evt.GetType()) {
       throw new ArgumentException(
@@ -73,7 +75,10 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
 
     using var _ = resolver.EnterContext(evt.Scope);
 
-    if (entry.Invoker(handlerInstance, evt) is not ICollectiveSpec<TModel> spec) {
+    // The query context lets the handler's Where reference sibling perspectives; the Dapper filter compiler
+    // resolves their table names through it and emits a correlated EXISTS.
+    var query = new DapperCollectiveQuery(siblingTables);
+    if (entry.Invoker(handlerInstance, evt, query) is not ICollectiveSpec<TModel> spec) {
       throw new InvalidOperationException(
         $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance.");
     }
@@ -86,7 +91,8 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       ? null
       : resolver.ScopeFilter<TModel>(evt.Scope);
     var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
-    var whereClause = DapperCollectiveScopeFilterCompiler<TModel>.Compile(effectiveWhere, parameterPrefix: "where");
+    var whereClause = DapperCollectiveScopeFilterCompiler<TModel>.Compile(
+      effectiveWhere, parameterPrefix: "where", outerTableName: tableName);
 
     var sql = $"UPDATE {tableName} SET {setClause.SqlFragment} WHERE {whereClause.SqlFragment}";
 

@@ -238,7 +238,7 @@ public class CollectiveDispatcherTests {
       MethodName: "Apply",
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (handler, evt) => handler); // dispatcher tests don't exercise the invoker shape
+      Invoker: static (handler, evt, query) => handler); // dispatcher tests don't exercise the invoker shape
 
   private static CollectiveDispatcher _build(
       IReadOnlyList<CollectiveApplyEntry> entries,

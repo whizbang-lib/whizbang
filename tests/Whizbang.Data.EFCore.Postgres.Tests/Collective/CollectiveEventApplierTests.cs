@@ -141,8 +141,8 @@ public class CollectiveEventApplierTests {
   private static CollectiveApplyEntry _entryFor<TEvent>(Type modelType, string methodName)
     where TEvent : ICollectiveEvent {
     // Type-erased Invoker mirrors what the source generator (Slice 5) emits.
-    Func<object, ICollectiveEvent, object> invoker =
-      (handler, evt) => ((_handler)handler).Apply((_typeA)(ICollectiveEvent)evt);
+    Func<object, ICollectiveEvent, ICollectiveQuery, object> invoker =
+      (handler, evt, query) => ((_handler)handler).Apply((_typeA)(ICollectiveEvent)evt);
     return new CollectiveApplyEntry(
       ModelType: modelType,
       EventType: typeof(TEvent),

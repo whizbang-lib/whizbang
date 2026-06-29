@@ -21,6 +21,7 @@ namespace Whizbang.Generators;
 public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
   private const string ATTRIBUTE_FQN = "Whizbang.Core.Perspectives.CollectiveApplyForAttribute";
   private const string COLLECTIVE_EVENT_FQN = "Whizbang.Core.Messaging.ICollectiveEvent";
+  private const string COLLECTIVE_QUERY_FQN = "Whizbang.Core.Perspectives.ICollectiveQuery";
   private const string SPEC_TYPE_NAME = "ICollectiveSpec";
   private const string SPEC_NAMESPACE = "Whizbang.Core.Perspectives";
 
@@ -34,7 +35,8 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
     string HandlerTypeFqn,
     string MethodName,
     string ScopeHandlingEnumName,
-    string SpecKindEnumName
+    string SpecKindEnumName,
+    bool TakesQuery
   );
 
   /// <inheritdoc/>
@@ -81,8 +83,9 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
     var modelType = returnType.TypeArguments[0];
     var modelFqn = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-    // Single parameter implementing ICollectiveEvent.
-    if (methodSymbol.Parameters.Length != 1) {
+    // First parameter implements ICollectiveEvent; an optional second parameter is the
+    // ICollectiveQuery context (handlers that scope by a sibling perspective take it; others omit it).
+    if (methodSymbol.Parameters.Length is < 1 or > 2) {
       return null;
     }
     var eventType = methodSymbol.Parameters[0].Type;
@@ -92,6 +95,16 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
     var eventFqn = eventType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    var takesQuery = methodSymbol.Parameters.Length == 2;
+    if (takesQuery) {
+      var queryParam = methodSymbol.Parameters[1].Type;
+      var isCollectiveQuery = queryParam.ToDisplayString() == COLLECTIVE_QUERY_FQN
+        || queryParam.AllInterfaces.Any(i => i.ToDisplayString() == COLLECTIVE_QUERY_FQN);
+      if (!isCollectiveQuery) {
+        return null;
+      }
+    }
 
     var handlerFqn = methodSymbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
@@ -112,7 +125,8 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
       HandlerTypeFqn: handlerFqn,
       MethodName: methodSymbol.Name,
       ScopeHandlingEnumName: scopeHandling,
-      SpecKindEnumName: specKind
+      SpecKindEnumName: specKind,
+      TakesQuery: takesQuery
     );
   }
 
@@ -149,7 +163,10 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
         sb.AppendLine($"      MethodName: \"{info.MethodName}\",");
         sb.AppendLine($"      ScopeHandling: global::Whizbang.Core.Perspectives.CollectiveScopeHandling.{info.ScopeHandlingEnumName},");
         sb.AppendLine($"      SpecKind: global::Whizbang.Core.Perspectives.CollectiveSpecKind.{info.SpecKindEnumName},");
-        sb.AppendLine($"      Invoker: static (handler, evt) => (({info.HandlerTypeFqn})handler).{info.MethodName}(({info.EventTypeFqn})evt)");
+        var invokeArgs = info.TakesQuery
+          ? $"(({info.EventTypeFqn})evt, query)"
+          : $"(({info.EventTypeFqn})evt)";
+        sb.AppendLine($"      Invoker: static (handler, evt, query) => (({info.HandlerTypeFqn})handler).{info.MethodName}{invokeArgs}");
         sb.AppendLine("    ),");
       }
       sb.AppendLine("  };");
