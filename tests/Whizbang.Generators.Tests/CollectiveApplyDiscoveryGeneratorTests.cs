@@ -32,6 +32,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
         namespace Whizbang.Core.Perspectives {
           using Whizbang.Core.Messaging;
           public interface ICollectiveSetters<TModel> where TModel : class { }
+          public interface ICollectiveQuery { }
           public interface ICollectiveSpec<TModel> where TModel : class {
             System.Linq.Expressions.Expression<System.Action<ICollectiveSetters<TModel>>> Setters { get; }
           }
@@ -83,6 +84,43 @@ public class CollectiveApplyDiscoveryGeneratorTests {
       .Because("Unspecified attribute parameters should emit the Framework default — perspectives can opt out per-method, but they have to ask.");
     await Assert.That(code).Contains("CollectiveSpecKind.Linq")
       .Because("Unspecified SpecKind defaults to Linq — Dapper raw-SQL is the explicit escape hatch.");
+    await Assert.That(code).Contains("(handler, evt, query) =>")
+      .Because("The emitted invoker is 3-arg so the applier can thread the ICollectiveQuery context.");
+    await Assert.That(code).DoesNotContain(")evt, query)")
+      .Because("A handler that omits the context param is invoked without it — the third arg is just ignored.");
+  }
+
+  // ── Handler that takes the ICollectiveQuery context ────────────────────
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_DiscoversQueryContextHandler_PassesQueryToInvokerAsync() {
+    const string source = $$"""
+            using Whizbang.Core.Messaging;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public sealed class JobModel { public string Status { get; set; } = ""; }
+
+            public sealed record ArchiveJobsCollectiveEvent(
+              ICollectiveScope Scope,
+              System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+
+            public sealed class JobPerspective {
+              [CollectiveApplyFor]
+              public ICollectiveSpec<JobModel> Apply(ArchiveJobsCollectiveEvent e, ICollectiveQuery q) => null!;
+            }
+
+            {{COLLECTIVE_STUBS}}
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
+
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains(")evt, query)")
+      .Because("A handler that declares the ICollectiveQuery param is invoked with the threaded context.");
   }
 
   // ── No attributes: empty registry, no compile error ────────────────────

@@ -43,7 +43,8 @@ public static class CollectiveEventsDapperExtensions {
   }
 
   /// <summary>
-  /// Registers the Dapper collective executor for one perspective model + its table name.
+  /// Registers the Dapper collective executor for one perspective model + its table name. Also records the
+  /// model's table so other handlers can reference it as a cross-perspective sibling (<c>q.Of&lt;TModel&gt;()</c>).
   /// </summary>
   /// <typeparam name="TModel">A perspective model with a <c>[CollectiveApplyFor]</c> handler.</typeparam>
   /// <param name="services">The service collection.</param>
@@ -52,7 +53,38 @@ public static class CollectiveEventsDapperExtensions {
       this IServiceCollection services, string tableName)
       where TModel : class {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
-    services.AddSingleton<ICollectiveEventExecutor>(new DapperCollectiveEventExecutor<TModel>(tableName));
+    var registry = _getOrAddTableRegistry(services);
+    registry.Add(typeof(TModel), tableName);
+    services.AddSingleton<ICollectiveEventExecutor>(
+      new DapperCollectiveEventExecutor<TModel>(tableName, registry.Tables));
     return services;
+  }
+
+  /// <summary>
+  /// Records a perspective table for a <em>query-only</em> sibling model — one a handler's <c>Where</c>
+  /// references via <c>q.Of&lt;TModel&gt;()</c> but does not itself mutate (so it has no executor).
+  /// </summary>
+  /// <typeparam name="TModel">The sibling read model used only to scope a cohort.</typeparam>
+  /// <param name="services">The service collection.</param>
+  /// <param name="tableName">The sibling's perspective table (e.g. <c>wh_per_draft_job_status</c>).</param>
+  public static IServiceCollection AddCollectiveTableDapper<TModel>(
+      this IServiceCollection services, string tableName)
+      where TModel : class {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    _getOrAddTableRegistry(services).Add(typeof(TModel), tableName);
+    return services;
+  }
+
+  // The Dapper table registry is a single shared instance populated across all AddCollective*Dapper calls;
+  // each executor closes over its live Tables map, so registrations in any order are visible at apply time.
+  private static DapperCollectiveTableRegistry _getOrAddTableRegistry(IServiceCollection services) {
+    var existing = services.FirstOrDefault(d => d.ServiceType == typeof(DapperCollectiveTableRegistry))
+      ?.ImplementationInstance as DapperCollectiveTableRegistry;
+    if (existing is not null) {
+      return existing;
+    }
+    var registry = new DapperCollectiveTableRegistry();
+    services.AddSingleton(registry);
+    return registry;
   }
 }

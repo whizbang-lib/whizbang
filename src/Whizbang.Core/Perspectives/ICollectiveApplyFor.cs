@@ -41,11 +41,16 @@ public interface ICollectiveApplyFor<TModel, TEvent>
   /// <summary>
   /// Translate the incoming collective event into a mutation spec the
   /// framework will execute as a single SQL UPDATE. The spec describes
-  /// the SET clauses only; the framework composes the WHERE clause from
-  /// the scope resolver + matched-set membership unless the handler
+  /// the SET clauses (and an optional per-model <see cref="ICollectiveSpec{TModel}.Where"/>);
+  /// the framework composes the scope envelope around it unless the handler
   /// opts out via <c>[CollectiveApplyFor(ScopeHandling = Custom)]</c>.
   /// </summary>
   /// <param name="evt">The collective event being applied.</param>
+  /// <param name="query">
+  /// Driver-bound query context. Use <see cref="ICollectiveQuery.Of{TOther}"/> inside the spec's
+  /// <c>Where</c> to scope by a sibling perspective (a different projection table, same id) — e.g. a cohort
+  /// defined by a status that lives on a sibling read model. Ignore it for single-table cohorts.
+  /// </param>
   /// <returns>The mutation spec.</returns>
-  ICollectiveSpec<TModel> Apply(TEvent evt);
+  ICollectiveSpec<TModel> Apply(TEvent evt, ICollectiveQuery query);
 }

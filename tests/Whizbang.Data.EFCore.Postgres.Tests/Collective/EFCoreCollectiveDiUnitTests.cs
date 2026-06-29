@@ -52,7 +52,7 @@ public class EFCoreCollectiveDiUnitTests {
     var entry = new CollectiveApplyEntry(
       ModelType: typeof(_jobModel), EventType: typeof(_evt), HandlerType: typeof(object),
       MethodName: "x", ScopeHandling: CollectiveScopeHandling.Framework, SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (_, _) => null!);
+      Invoker: static (_, _, _) => null!);
     await Assert.That(() => new EFCoreCollectiveEventExecutor<_jobModel>().ApplyAsync(
         entry, new object(), new _evt { Scope = new TenantCollectiveScope("t") },
         new TenantCollectiveScopeResolver(), dbContextOrSession: "not-a-dbcontext", Guid.NewGuid(), default))

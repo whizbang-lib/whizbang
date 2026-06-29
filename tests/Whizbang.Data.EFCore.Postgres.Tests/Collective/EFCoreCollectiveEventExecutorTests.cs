@@ -117,5 +117,5 @@ public class EFCoreCollectiveEventExecutorTests {
       MethodName: methodName,
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (handler, evt) => ((_handler)handler).Apply((_typeA)evt));
+      Invoker: static (handler, evt, query) => ((_handler)handler).Apply((_typeA)evt));
 }

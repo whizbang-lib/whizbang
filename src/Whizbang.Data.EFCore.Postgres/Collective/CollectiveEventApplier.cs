@@ -93,8 +93,10 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
 
     // Invoke the handler. The entry's Invoker is the AOT-clean static
     // lambda the source generator (Slice 5) emitted — typed casts only,
-    // no reflection.
-    if (entry.Invoker(handlerInstance, evt) is not ICollectiveSpec<TModel> spec) {
+    // no reflection. The query context lets the handler's Where reference
+    // sibling perspectives (translated to a correlated EXISTS by EF).
+    var query = new EFCoreCollectiveQuery(dbContext);
+    if (entry.Invoker(handlerInstance, evt, query) is not ICollectiveSpec<TModel> spec) {
       throw new InvalidOperationException(
         $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
     }

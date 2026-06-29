@@ -133,7 +133,7 @@ public class CollectiveSpecContractTests {
     : ICollectiveSpec<_jobModel>;
 
   private sealed class _archiveApply : ICollectiveApplyFor<_jobModel, _archiveCollectiveEvent> {
-    public ICollectiveSpec<_jobModel> Apply(_archiveCollectiveEvent evt) =>
+    public ICollectiveSpec<_jobModel> Apply(_archiveCollectiveEvent evt, ICollectiveQuery query) =>
       new _archiveSpec(s => s.SetProperty(j => j.Status, "Archived"));
   }
 

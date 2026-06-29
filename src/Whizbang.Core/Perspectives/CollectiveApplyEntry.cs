@@ -38,8 +38,11 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="Invoker">
 /// Type-erased delegate that calls the handler's <c>Apply</c> method
 /// with the right cast on both <paramref name="HandlerType"/> and the
-/// event. The generator emits a static lambda per entry — no reflection,
-/// AOT-clean by construction.
+/// event, threading the driver-bound <see cref="ICollectiveQuery"/> so the
+/// handler's <c>Where</c> can reference sibling perspectives. The generator
+/// emits a static lambda per entry — no reflection, AOT-clean by
+/// construction. Handlers that don't need the query context simply ignore
+/// the third argument.
 /// </param>
 /// <docs>fundamentals/messaging/collective-events</docs>
 public sealed record CollectiveApplyEntry(
@@ -49,5 +52,5 @@ public sealed record CollectiveApplyEntry(
   string MethodName,
   CollectiveScopeHandling ScopeHandling,
   CollectiveSpecKind SpecKind,
-  Func<object, ICollectiveEvent, object> Invoker
+  Func<object, ICollectiveEvent, ICollectiveQuery, object> Invoker
 );

@@ -99,6 +99,35 @@ public ICollectiveSpec<OrderModel> ClearOverlay(OverlayClearedCollectiveEvent e)
 a nullable `Where` member. The default-interface-member `Where => null` keeps existing Setters-only specs
 working unchanged.
 
+### Cross-perspective cohorts (`ICollectiveQuery`)
+
+A `Where` over `row.Data` only sees the table being mutated. When the cohort is defined by a field on a
+**sibling** read model — e.g. JobService's `OrderModel` carries no status (it lives on the sibling
+`OrderStatusModel`, same id) — the handler's `Apply` receives an **`ICollectiveQuery`** and reaches the
+sibling through it:
+
+```csharp
+[CollectiveApplyFor]                                  // ScopeHandling = Framework (tenant envelope AND this cohort)
+public ICollectiveSpec<OrderModel> ApplyTemplate(TemplateAppliedCollectiveEvent e, ICollectiveQuery q) =>
+  new CollectiveSpec<OrderModel>(
+    Setters: s => s.SetProperty(j => j.JobTemplateId, e.TemplateId),
+    Where:   r => q.Of<OrderStatusModel>()
+                   .Any(st => st.Id == r.Id && Eligible.Contains(st.Data.Status)));
+```
+
+`ICollectiveQuery.Of<TOther>()` returns a queryable over the sibling perspective's rows. Both drivers
+translate the resulting `.Any(...)` to a **correlated `EXISTS`** in the same single `UPDATE`:
+
+- **EF Core** — `Of<TOther>()` is the live `DbContext.Set<PerspectiveRow<TOther>>()`; EF funcletizes the
+  `q.Of()` call and emits `EXISTS (SELECT 1 FROM <sibling> s WHERE s.id = d.id AND …)`.
+- **Dapper** — the filter compiler reads the `q.Of<TOther>()` node, resolves the sibling table (registered
+  via `AddCollectiveTableDapper<TOther>` / `AddCollectiveExecutorDapper`), and emits the same `EXISTS` SQL;
+  `.Any` → `EXISTS`, `Contains` → `IN`.
+
+Supported inside the `.Any(...)`: an `Id`-correlation (`st.Id == r.Id`) plus equality / `Contains` leaf
+predicates over the sibling's `Data`/`Scope`. Richer shapes (non-equality, nested `EXISTS`) throw a clear
+`NotSupportedException`. Handlers that don't need a sibling simply ignore the `ICollectiveQuery` parameter.
+
 ### Scope
 
 `Scope` is a **`CollectiveScope`** — an abstract polymorphic base (not a bare interface) so the event
@@ -160,11 +189,13 @@ stay AOT-clean — a source generator can emit these per-model calls for full tu
 | **Dapper** (`Whizbang.Data.Dapper.Postgres`) | `DapperCollectiveSpecCompiler` (SET) + `DapperCollectiveScopeFilterCompiler` (WHERE) → one `UPDATE` | `DapperCollectiveEventExecutor<TModel>` (+ `DapperCollectiveEventApplier`) | **Complete** |
 
 Dapper DI mirrors EF Core: `AddCollectiveEventsDapper(entries)` + `AddCollectiveExecutorDapper<TModel>(tableName)`
-(Dapper supplies the `wh_per_*` table name since it has no entity model to derive it from). The Dapper
-scope-filter compiler translates equality over a **scope** field (`row.Scope.Prop == value` →
-`scope->>'Prop'`) **or a data** field (`row.Data.Prop == value` → `data->>'Prop'`, for handler `Where`
-projections) and `&&`-chains mixing both, and throws for richer predicates (non-equality, top-level system
-columns, cross-table joins — use a raw-SQL form).
+(Dapper supplies the `wh_per_*` table name since it has no entity model to derive it from), plus
+`AddCollectiveTableDapper<TOther>(tableName)` for any **query-only sibling** a handler reaches via
+`q.Of<TOther>()`. The Dapper scope-filter compiler translates equality over a **scope** field
+(`row.Scope.Prop == value` → `scope->>'Prop'`) **or a data** field (`row.Data.Prop == value` →
+`data->>'Prop'`); `&&`-chains mixing both; `Contains` (→ `IN`); and `q.Of<TOther>().Any(...)`
+cross-perspective cohorts (→ a correlated `EXISTS`). It throws for richer predicates (non-equality,
+disjunctions, arbitrary top-level columns, nested `EXISTS`) — use a raw-SQL form.
 
 Both compilers support scalar top-level `SetProperty(j => j.Prop, constant)` with constant/captured-value
 sources, plus chained setters. **Computed-arithmetic** setters (`j => j.X + 1`) and nested paths are
@@ -183,12 +214,15 @@ deferred to `[CollectiveApplyFor(SpecKind = RawSql)]` in v1 (both compilers thro
 - Contracts: `src/Whizbang.Core/Messaging/ICollectiveEvent.cs`, `CollectiveEventBase.cs`,
   `CollectiveScope.cs`, `TenantCollectiveScope.cs`.
 - Apply + dispatch: `src/Whizbang.Core/Perspectives/ICollectiveApplyFor.cs`, `ICollectiveSpec.cs`
-  (the `Where` projection), `CollectiveWhereComposer.cs` (scope/`Where` composition),
-  `CollectiveDispatcher.cs`, `ICollectiveSessionAccessor.cs`, `CollectiveRouting.cs`,
-  `TenantCollectiveScopeResolver.cs`.
+  (the `Where` projection), `ICollectiveQuery.cs` (cross-perspective cohorts),
+  `CollectiveWhereComposer.cs` (scope/`Where` composition), `CollectiveDispatcher.cs`,
+  `ICollectiveSessionAccessor.cs`, `CollectiveRouting.cs`, `TenantCollectiveScopeResolver.cs`.
 - EF Core: `src/Whizbang.Data.EFCore.Postgres/Collective/` (`EFCoreCollectiveEventExecutor`,
-  `CollectiveEventApplier`, `EFCoreCollectiveAdapter`, `CollectiveSettersRewriter`,
+  `CollectiveEventApplier`, `EFCoreCollectiveAdapter`, `CollectiveSettersRewriter`, `EFCoreCollectiveQuery`,
   `EFCoreCollectiveSessionAccessor`), `CollectiveEventsEFCoreExtensions.cs`.
+- Dapper: `src/Whizbang.Data.Dapper.Postgres/Collective/` (`DapperCollectiveEventExecutor`,
+  `DapperCollectiveEventApplier`, `DapperCollectiveScopeFilterCompiler`, `DapperCollectiveQuery`,
+  `DapperCollectiveTableRegistry`), `CollectiveEventsDapperExtensions.cs`.
 - Routing migration: `src/Whizbang.Data.Postgres/Migrations/061_CollectiveEventRouting.sql`.
 - Worker seam: `src/Whizbang.Core/Workers/PerspectiveWorker.cs` (`_processCollectiveSinkAsync`).
 - Tests: `tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs`,

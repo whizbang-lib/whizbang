@@ -23,6 +23,9 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
 
   private const string TABLE = "wh_per_collective_dapper";
+  private const string STATUS_TABLE = "wh_per_collective_dapper_status";
+
+  private static readonly IReadOnlyDictionary<Type, string> _noSiblings = new Dictionary<Type, string>();
 
   private async Task _createTableAsync() {
     using var conn = await ConnectionFactory.CreateConnectionAsync();
@@ -51,6 +54,93 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       $"SELECT data->>'Status' FROM {TABLE} WHERE id = @id", new { id });
   }
 
+  private async Task _createStatusTableAsync() {
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    await conn.ExecuteAsync($@"
+      CREATE TABLE IF NOT EXISTS {STATUS_TABLE} (
+        id uuid PRIMARY KEY,
+        data jsonb NOT NULL,
+        metadata jsonb,
+        scope jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        version bigint NOT NULL DEFAULT 1);
+      TRUNCATE {STATUS_TABLE};");
+  }
+
+  private async Task _seedStatusAsync(Guid id, string status) {
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    await conn.ExecuteAsync(
+      $"INSERT INTO {STATUS_TABLE} (id, data, scope) VALUES (@id, @data::jsonb, '{{}}'::jsonb)",
+      new { id, data = $"{{\"Status\": \"{status}\"}}" });
+  }
+
+  [Test]
+  public async Task ApplyAsync_CrossPerspectiveCohort_ScopesBySiblingTableAsync() {
+    // The cohort is defined by a status that lives on a SIBLING table (same id). The handler's Where uses
+    // q.Of<_statusModel>().Any(...), which the Dapper compiler turns into a correlated EXISTS over the
+    // sibling table — proving cross-perspective projection end-to-end on the Dapper driver.
+    await _createTableAsync();
+    await _createStatusTableAsync();
+
+    var eligible = Guid.NewGuid();   // sibling status Draft → in cohort
+    var ineligible = Guid.NewGuid(); // sibling status Published → out
+    var noSibling = Guid.NewGuid();  // no sibling row → out
+
+    await _seedAsync(eligible, "t-A", "Active");
+    await _seedAsync(ineligible, "t-A", "Active");
+    await _seedAsync(noSibling, "t-A", "Active");
+    await _seedStatusAsync(eligible, "Draft");
+    await _seedStatusAsync(ineligible, "Published");
+
+    var siblings = new Dictionary<Type, string> { [typeof(_statusModel)] = STATUS_TABLE };
+
+    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+      _crossEntry(),
+      new _crossPerspective(),
+      new _archiveEvent { Scope = new TenantCollectiveScope("t-A") },
+      new TenantCollectiveScopeResolver(),
+      ConnectionFactory,
+      TABLE,
+      siblings,
+      default);
+
+    await Assert.That(affected).IsEqualTo(1)
+      .Because("Only the job whose sibling status is Draft is in the cohort (correlated EXISTS over the status table).");
+    await Assert.That(await _statusAsync(eligible)).IsEqualTo("Archived");
+    await Assert.That(await _statusAsync(ineligible)).IsEqualTo("Active")
+      .Because("Sibling status Published is not in the eligible set.");
+    await Assert.That(await _statusAsync(noSibling)).IsEqualTo("Active")
+      .Because("No sibling row → the EXISTS correlation finds nothing.");
+  }
+
+  private static CollectiveApplyEntry _crossEntry() => new(
+    ModelType: typeof(_jobModel),
+    EventType: typeof(_archiveEvent),
+    HandlerType: typeof(_crossPerspective),
+    MethodName: nameof(_crossPerspective.Archive),
+    ScopeHandling: CollectiveScopeHandling.Framework,
+    SpecKind: CollectiveSpecKind.Linq,
+    Invoker: static (h, e, q) => ((_crossPerspective)h).Archive((_archiveEvent)e, q));
+
+  private sealed class _statusModel {
+    public string Status { get; set; } = "";
+  }
+
+  // Cross-perspective handler: scopes the mutated job table by a status on the SIBLING status table.
+  private sealed class _crossPerspective {
+    private static readonly string[] _eligible = ["Draft"];
+
+    public ICollectiveSpec<_jobModel> Archive(_archiveEvent e, ICollectiveQuery q) =>
+      new _whereSpec(
+        s => s.SetProperty(j => j.Status, "Archived"),
+        r => q.Of<_statusModel>().Any(st => st.Id == r.Id && _eligible.Contains(st.Data.Status)));
+
+    private sealed record _whereSpec(
+        Expression<Action<ICollectiveSetters<_jobModel>>> Setters,
+        Expression<Func<PerspectiveRow<_jobModel>, bool>>? Where) : ICollectiveSpec<_jobModel>;
+  }
+
   [Test]
   public async Task ApplyAsync_TenantScoped_UpdatesOnlyInScopeRowsAsync() {
     await _createTableAsync();
@@ -69,7 +159,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       MethodName: nameof(_jobPerspective.Archive),
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (h, e) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+      Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
 
     var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
       entry,
@@ -78,6 +168,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
+      _noSiblings,
       default);
 
     await Assert.That(affected).IsEqualTo(2)
@@ -105,6 +196,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
+      _noSiblings,
       default);
 
     await Assert.That(affected).IsEqualTo(1)
@@ -133,6 +225,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
+      _noSiblings,
       default);
 
     await Assert.That(affected).IsEqualTo(2)
@@ -151,7 +244,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     MethodName: nameof(_draftPerspective.ArchiveDrafts),
     ScopeHandling: handling,
     SpecKind: CollectiveSpecKind.Linq,
-    Invoker: static (h, e) => ((_draftPerspective)h).ArchiveDrafts((_archiveEvent)e));
+    Invoker: static (h, e, q) => ((_draftPerspective)h).ArchiveDrafts((_archiveEvent)e));
 
   private sealed class _jobModel {
     public string Status { get; set; } = "";

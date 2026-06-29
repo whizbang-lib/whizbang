@@ -219,6 +219,79 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("The handler Where (Status=='Draft') still excludes the Approved row.");
   }
 
+  // ── Cross-perspective cohort: scope by a sibling table (correlated EXISTS) ──
+
+  [Test]
+  public async Task DispatchAsync_CrossPerspectiveCohort_ScopesBySiblingTableAsync() {
+    // OrderModel-style split: the cohort's status lives on a SIBLING table (same id). The handler's
+    // Where uses q.Of<_jobStatusModel>().Any(...), which EF funcletizes + translates to a correlated EXISTS
+    // in the ExecuteUpdate — proving cross-perspective projection end-to-end on EF Core.
+    var eligible = Guid.NewGuid();   // sibling status Draft → in cohort
+    var ineligible = Guid.NewGuid(); // sibling status Published → out
+    var noSibling = Guid.NewGuid();  // no sibling row → out
+
+    await _seedJobAsync(eligible, tenantId: "t-A", status: "Active");
+    await _seedJobAsync(ineligible, tenantId: "t-A", status: "Active");
+    await _seedJobAsync(noSibling, tenantId: "t-A", status: "Active");
+    await _seedJobStatusAsync(eligible, "Draft");
+    await _seedJobStatusAsync(ineligible, "Published");
+
+    var result = await _buildCrossDispatcher().DispatchAsync(
+      evt: new _archiveJobsCollectiveEvent {
+        Scope = new TenantCollectiveScope("t-A"),
+        OccurredAt = DateTimeOffset.UtcNow,
+      },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    await Assert.That(result.AffectedRowCount).IsEqualTo(1)
+      .Because("Only the job whose sibling status is Draft is in the cohort (correlated EXISTS over the status table).");
+    await Assert.That(await _readStatusAsync(eligible)).IsEqualTo("Archived");
+    await Assert.That(await _readStatusAsync(ineligible)).IsEqualTo("Active")
+      .Because("Sibling status Published is not in the eligible set.");
+    await Assert.That(await _readStatusAsync(noSibling)).IsEqualTo("Active")
+      .Because("No sibling row → the EXISTS correlation finds nothing.");
+  }
+
+  private CollectiveDispatcher _buildCrossDispatcher() {
+    var services = new ServiceCollection();
+    var handler = new _crossPerspective();
+    services.AddSingleton(handler);
+
+    var entries = new CollectiveApplyEntry[] {
+      new(
+        ModelType: typeof(_jobModel),
+        EventType: typeof(_archiveJobsCollectiveEvent),
+        HandlerType: typeof(_crossPerspective),
+        MethodName: nameof(_crossPerspective.Archive),
+        ScopeHandling: CollectiveScopeHandling.Framework,
+        SpecKind: CollectiveSpecKind.Linq,
+        Invoker: static (h, e, q) => ((_crossPerspective)h).Archive((_archiveJobsCollectiveEvent)e, q)
+      ),
+    };
+
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      entries,
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<_jobModel>()]);
+  }
+
+  // Scopes the mutated job table by a status that lives on the sibling status perspective.
+  internal sealed class _crossPerspective {
+    private static readonly string[] _eligible = ["Draft"];
+
+    public ICollectiveSpec<_jobModel> Archive(_archiveJobsCollectiveEvent e, ICollectiveQuery q) =>
+      new _whereSpec(
+        s => s.SetProperty(j => j.Status, "Archived"),
+        r => q.Of<_jobStatusModel>().Any(st => st.Id == r.Id && _eligible.Contains(st.Data.Status)));
+
+    private sealed record _whereSpec(
+        Expression<Action<ICollectiveSetters<_jobModel>>> Setters,
+        Expression<Func<PerspectiveRow<_jobModel>, bool>>? Where) : ICollectiveSpec<_jobModel>;
+  }
+
   // ── Setup / teardown / DbContext ──────────────────────────────────────
 
   [Before(Test)]
@@ -283,13 +356,23 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     public DateTimeOffset? ArchivedAt { get; set; }
   }
 
+  internal sealed class _jobStatusModel {
+    public string Status { get; set; } = string.Empty;
+  }
+
   private sealed class _jobDbContext(DbContextOptions<_jobDbContext> options) : DbContext(options) {
     public DbSet<PerspectiveRow<_jobModel>> Jobs => Set<PerspectiveRow<_jobModel>>();
+    public DbSet<PerspectiveRow<_jobStatusModel>> JobStatuses => Set<PerspectiveRow<_jobStatusModel>>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
-      modelBuilder.Entity<PerspectiveRow<_jobModel>>(e => {
-        e.ToTable("wh_per_collective_job");
+      _mapRow<_jobModel>(modelBuilder, "wh_per_collective_job");
+      _mapRow<_jobStatusModel>(modelBuilder, "wh_per_collective_job_status");
+    }
+
+    private static void _mapRow<TModel>(ModelBuilder modelBuilder, string table) where TModel : class {
+      modelBuilder.Entity<PerspectiveRow<TModel>>(e => {
+        e.ToTable(table);
         e.HasKey(x => x.Id);
         e.Property(x => x.Id).HasColumnName("id");
         e.Property(x => x.Data).HasColumnName("data").HasColumnType("jsonb");
@@ -323,7 +406,32 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         updated_at TIMESTAMPTZ NOT NULL,
         version INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS wh_per_collective_job_status (
+        id UUID PRIMARY KEY,
+        data JSONB NOT NULL,
+        metadata JSONB NOT NULL,
+        scope JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        version INTEGER NOT NULL
+      );
       """);
+  }
+
+  private async Task _seedJobStatusAsync(Guid id, string status) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync("""
+      INSERT INTO wh_per_collective_job_status
+        (id, data, metadata, scope, created_at, updated_at, version)
+      VALUES
+        (@id, @data::jsonb, '{}'::jsonb, '{}'::jsonb, @createdAt, @updatedAt, 1);
+      """, new {
+      id,
+      data = JsonSerializer.Serialize(new _jobStatusModel { Status = status }),
+      createdAt = DateTime.UtcNow,
+      updatedAt = DateTime.UtcNow,
+    });
   }
 
   private async Task _seedJobAsync(Guid id, string tenantId, string status) {
@@ -370,7 +478,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         MethodName: nameof(_jobPerspective.ArchiveJobs),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e) => ((_jobPerspective)h).ArchiveJobs((_archiveJobsCollectiveEvent)e)
+        Invoker: static (h, e, q) => ((_jobPerspective)h).ArchiveJobs((_archiveJobsCollectiveEvent)e)
       ),
     };
 
@@ -404,7 +512,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         MethodName: nameof(_archiveDraftPerspective.ArchiveDrafts),
         ScopeHandling: handling,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e) => ((_archiveDraftPerspective)h).ArchiveDrafts((_archiveJobsCollectiveEvent)e)
+        Invoker: static (h, e, q) => ((_archiveDraftPerspective)h).ArchiveDrafts((_archiveJobsCollectiveEvent)e)
       ),
     };
 
