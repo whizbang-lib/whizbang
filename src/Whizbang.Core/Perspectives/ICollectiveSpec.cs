@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Whizbang.Core.Lenses;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -36,4 +37,29 @@ public interface ICollectiveSpec<TModel> where TModel : class {
   /// runtime reflection, AOT-clean by construction.
   /// </summary>
   Expression<Action<ICollectiveSetters<TModel>>> Setters { get; }
+
+  /// <summary>
+  /// Optional per-model WHERE projection. When non-null, the handler — which knows its own model — shapes
+  /// the cohort onto its own columns (e.g. <c>r =&gt; statuses.Contains(r.Data.Status)</c>), letting the
+  /// SAME persisted collective event project differently across models and across services.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Composition is governed by the handler's <see cref="CollectiveScopeHandling"/> (see
+  /// <see cref="CollectiveWhereComposer"/>):
+  /// </para>
+  /// <list type="bullet">
+  ///   <item><description><see cref="CollectiveScopeHandling.Framework"/> (default): the resolver's scope
+  ///     filter is AND-ed with this <c>Where</c> — the scope envelope still binds, the handler refines.</description></item>
+  ///   <item><description><see cref="CollectiveScopeHandling.Custom"/>: this <c>Where</c> is the entire
+  ///     predicate — the handler owns the WHERE, and a null here is a misconfiguration.</description></item>
+  /// </list>
+  /// <para>
+  /// Defaults to <c>null</c> (a default interface member) so the common "set columns, framework scopes by
+  /// tenant" handler stays a one-liner and existing Setters-only specs are unaffected.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveWhereComposerTests.cs:Framework_WithHandlerWhere_AndsScopeAndHandlerAsync</tests>
+  Expression<Func<PerspectiveRow<TModel>, bool>>? Where => null;
 }

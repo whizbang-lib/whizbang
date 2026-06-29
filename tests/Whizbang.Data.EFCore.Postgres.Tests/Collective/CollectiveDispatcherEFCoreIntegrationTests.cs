@@ -155,6 +155,70 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await Assert.That(result.AffectedRowCount).IsEqualTo(0);
   }
 
+  // ── Per-model Where projection: Framework refines within scope ────────
+
+  [Test]
+  public async Task DispatchAsync_FrameworkWithHandlerWhere_RefinesWithinScopeAsync() {
+    // The handler projects the cohort onto its own column (Status == "Draft") via spec.Where. Under the
+    // Framework default, the resolver's tenant envelope is AND-ed with it: only tenant-A Draft rows mutate.
+    var draftA = Guid.NewGuid();
+    var approvedA = Guid.NewGuid();
+    var draftB = Guid.NewGuid();
+
+    await _seedJobAsync(draftA, tenantId: "t-A", status: "Draft");
+    await _seedJobAsync(approvedA, tenantId: "t-A", status: "Approved");
+    await _seedJobAsync(draftB, tenantId: "t-B", status: "Draft");
+
+    var result = await _buildDraftDispatcher(CollectiveScopeHandling.Framework).DispatchAsync(
+      evt: new _archiveJobsCollectiveEvent {
+        Scope = new TenantCollectiveScope("t-A"),
+        OccurredAt = DateTimeOffset.UtcNow,
+      },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    await Assert.That(result.AffectedRowCount).IsEqualTo(1)
+      .Because("Framework AND-composes the tenant envelope with the handler's Status=='Draft' projection — only tenant-A's single Draft row qualifies.");
+    await Assert.That(await _readStatusAsync(draftA)).IsEqualTo("Archived");
+    await Assert.That(await _readStatusAsync(approvedA)).IsEqualTo("Approved")
+      .Because("The handler Where refines within the scope — an Approved row in the same tenant falls out.");
+    await Assert.That(await _readStatusAsync(draftB)).IsEqualTo("Draft")
+      .Because("The scope envelope still binds — a Draft row in a different tenant is excluded.");
+  }
+
+  // ── Per-model Where projection: Custom owns the whole WHERE ────────────
+
+  [Test]
+  public async Task DispatchAsync_CustomHandlerWhere_IgnoresResolverScopeAsync() {
+    // Under Custom, the resolver scope filter is not applied at all — the handler's Where is the entire
+    // predicate. So a Draft row in tenant B is mutated even though the event's scope names tenant A.
+    var draftA = Guid.NewGuid();
+    var draftB = Guid.NewGuid();
+    var approvedB = Guid.NewGuid();
+
+    await _seedJobAsync(draftA, tenantId: "t-A", status: "Draft");
+    await _seedJobAsync(draftB, tenantId: "t-B", status: "Draft");
+    await _seedJobAsync(approvedB, tenantId: "t-B", status: "Approved");
+
+    var result = await _buildDraftDispatcher(CollectiveScopeHandling.Custom).DispatchAsync(
+      evt: new _archiveJobsCollectiveEvent {
+        Scope = new TenantCollectiveScope("t-A"),
+        OccurredAt = DateTimeOffset.UtcNow,
+      },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    await Assert.That(result.AffectedRowCount).IsEqualTo(2)
+      .Because("Custom ignores the tenant envelope: every Draft row, regardless of tenant, matches the handler's sole predicate.");
+    await Assert.That(await _readStatusAsync(draftA)).IsEqualTo("Archived");
+    await Assert.That(await _readStatusAsync(draftB)).IsEqualTo("Archived")
+      .Because("A Draft row in tenant B is mutated even though the event scope names tenant A — Custom dropped the scope envelope.");
+    await Assert.That(await _readStatusAsync(approvedB)).IsEqualTo("Approved")
+      .Because("The handler Where (Status=='Draft') still excludes the Approved row.");
+  }
+
   // ── Setup / teardown / DbContext ──────────────────────────────────────
 
   [Before(Test)]
@@ -325,6 +389,42 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     private sealed record _spec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters)
       : ICollectiveSpec<_jobModel>;
+  }
+
+  private CollectiveDispatcher _buildDraftDispatcher(CollectiveScopeHandling handling) {
+    var services = new ServiceCollection();
+    var handler = new _archiveDraftPerspective();
+    services.AddSingleton(handler);
+
+    var entries = new CollectiveApplyEntry[] {
+      new(
+        ModelType: typeof(_jobModel),
+        EventType: typeof(_archiveJobsCollectiveEvent),
+        HandlerType: typeof(_archiveDraftPerspective),
+        MethodName: nameof(_archiveDraftPerspective.ArchiveDrafts),
+        ScopeHandling: handling,
+        SpecKind: CollectiveSpecKind.Linq,
+        Invoker: static (h, e) => ((_archiveDraftPerspective)h).ArchiveDrafts((_archiveJobsCollectiveEvent)e)
+      ),
+    };
+
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      entries,
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<_jobModel>()]);
+  }
+
+  // Projects the cohort onto its own Status column via spec.Where — the per-perspective projection capability.
+  internal sealed class _archiveDraftPerspective {
+    public ICollectiveSpec<_jobModel> ArchiveDrafts(_archiveJobsCollectiveEvent e) =>
+      new _whereSpec(
+        s => s.SetProperty(j => j.Status, "Archived").SetProperty(j => j.ArchivedAt, e.OccurredAt),
+        r => r.Data.Status == "Draft");
+
+    private sealed record _whereSpec(
+        Expression<Action<ICollectiveSetters<_jobModel>>> Setters,
+        Expression<Func<PerspectiveRow<_jobModel>, bool>>? Where) : ICollectiveSpec<_jobModel>;
   }
 
   internal sealed record _archiveJobsCollectiveEvent : ICollectiveEvent {

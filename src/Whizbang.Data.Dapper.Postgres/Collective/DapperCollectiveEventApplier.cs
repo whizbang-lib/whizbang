@@ -79,8 +79,14 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     }
 
     var setClause = DapperCollectiveSpecCompiler<TModel>.Compile(spec, _jsonOptions, parameterPrefix: "set");
-    var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
-    var whereClause = DapperCollectiveScopeFilterCompiler<TModel>.Compile(scopeFilter, parameterPrefix: "where");
+
+    // Compose the effective WHERE. Framework: resolver scope envelope optionally refined by the handler's
+    // per-model Where. Custom: the handler's Where alone — the resolver scope filter is not computed.
+    var scopeFilter = entry.ScopeHandling == CollectiveScopeHandling.Custom
+      ? null
+      : resolver.ScopeFilter<TModel>(evt.Scope);
+    var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
+    var whereClause = DapperCollectiveScopeFilterCompiler<TModel>.Compile(effectiveWhere, parameterPrefix: "where");
 
     var sql = $"UPDATE {tableName} SET {setClause.SqlFragment} WHERE {whereClause.SqlFragment}";
 

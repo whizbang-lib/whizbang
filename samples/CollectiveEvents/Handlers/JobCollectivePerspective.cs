@@ -18,14 +18,18 @@ namespace CollectiveEvents.Sample.Handlers;
 /// <para>
 /// Both handlers use <c>ScopeHandling = Framework</c> (the default), so
 /// the framework composes each spec's SET clause with the resolver's
-/// scope filter (<c>row.Scope.TenantId == scope.TenantId</c>) as the
-/// SQL UPDATE's WHERE — and ONLY that. No matched-id membership clause,
-/// no audit-pointer write. The event IS the descriptor.
+/// scope filter (<c>row.Scope.TenantId == scope.TenantId</c>) as the SQL
+/// UPDATE's WHERE — AND-ed with the handler's own optional per-model
+/// <c>Where</c> projection (<c>ArchiveJobs</c> refines onto <c>Active</c>
+/// jobs). No matched-id membership clause, no audit-pointer write. The
+/// event IS the descriptor.
 /// </para>
 /// <para>
 /// Neither handler touches <c>ScopeContextAccessor</c> — they only
-/// describe the mutation. That's what makes them safe by default: a
-/// missing <c>WHERE</c> clause is impossible to write.
+/// describe the mutation (and, optionally, a model-column <c>Where</c>).
+/// That's what makes them safe by default: under <c>Framework</c> the
+/// scope envelope always binds, so a handler can refine within its scope
+/// but never over-mutate beyond it.
 /// </para>
 /// </remarks>
 [SuppressMessage("Performance", "CA1822:Mark members as static",
@@ -33,14 +37,17 @@ namespace CollectiveEvents.Sample.Handlers;
 public sealed class JobCollectivePerspective {
 
   /// <summary>
-  /// Archive every job currently in scope. Constant-value SetProperty —
-  /// the canonical "bulk state change" shape.
+  /// Archive every <c>Active</c> job currently in scope. Constant-value SetProperty —
+  /// the canonical "bulk state change" shape — refined by a per-model <c>Where</c> so the
+  /// tenant envelope is narrowed to just the Active rows (already-archived rows are left alone).
   /// </summary>
   [CollectiveApplyFor]
   public ICollectiveSpec<JobModel> ArchiveJobs(ArchiveJobsCollectiveEvent e) =>
-    new CollectiveSpec<JobModel>(s => s
-      .SetProperty(j => j.Status, "Archived")
-      .SetProperty(j => j.ArchivedAt, e.OccurredAt));
+    new CollectiveSpec<JobModel>(
+      Setters: s => s
+        .SetProperty(j => j.Status, "Archived")
+        .SetProperty(j => j.ArchivedAt, e.OccurredAt),
+      Where: r => r.Data.Status == "Active");
 
   /// <summary>
   /// Increment view count and touch <c>LastViewedAt</c>. Computed-value

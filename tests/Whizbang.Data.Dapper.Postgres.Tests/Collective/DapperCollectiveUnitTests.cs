@@ -77,8 +77,36 @@ public class DapperCollectiveUnitTests {
   }
 
   [Test]
-  public async Task ScopeFilter_EqualityNotOnScopeMember_ThrowsNotSupportedAsync() {
-    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Data.Status == "x";
+  public async Task ScopeFilter_DataMember_CompilesToDataJsonbWhereAsync() {
+    // A handler's per-model Where projects onto its own data columns — the compiler must translate
+    // row.Data.<Prop> to data->>'Prop' (the jsonb data column), not just row.Scope.<Prop>.
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Data.Status == "Draft";
+
+    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter);
+
+    await Assert.That(result.SqlFragment).IsEqualTo("data->>'Status' = @where_status");
+    await Assert.That(result.Parameters["where_status"]).IsEqualTo("Draft");
+  }
+
+  [Test]
+  public async Task ScopeFilter_ScopeAndDataMix_ComposesBothColumnsAsync() {
+    // The Framework path AND-composes a scope-column envelope with a data-column handler Where — both
+    // column kinds appear in one predicate tree and must translate side by side.
+    var tenant = "t-A";
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
+      row => row.Scope.TenantId == tenant && row.Data.Status == "Draft";
+
+    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter);
+
+    await Assert.That(result.SqlFragment)
+      .IsEqualTo("(scope->>'TenantId' = @where_tenantid AND data->>'Status' = @where_status)");
+    await Assert.That(result.Parameters.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task ScopeFilter_TopLevelColumn_ThrowsNotSupportedAsync() {
+    // Only the scope and data jsonb columns are translatable; a top-level system column (version) is not.
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Version == 5;
     await Assert.That(() => DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter))
       .Throws<NotSupportedException>();
   }

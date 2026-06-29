@@ -99,14 +99,19 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
         $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
     }
 
-    // ScopeFilter is generic-by-TModel — resolver builds the WHERE
-    // clause shape that gates the SQL UPDATE.
-    Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
+    // Compose the effective WHERE. Framework: the resolver's scope envelope (generic-by-TModel),
+    // optionally refined by the handler's own per-model Where. Custom: the handler owns the full
+    // predicate, so the resolver scope filter is not even computed.
+    Expression<Func<PerspectiveRow<TModel>, bool>>? scopeFilter =
+      entry.ScopeHandling == CollectiveScopeHandling.Custom
+        ? null
+        : resolver.ScopeFilter<TModel>(evt.Scope);
+    var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
 
     return await EFCoreCollectiveAdapter<TModel>.ExecuteAsync(
       dbContext,
       spec,
-      scopeFilter,
+      effectiveWhere,
       cancellationToken).ConfigureAwait(false);
   }
 }

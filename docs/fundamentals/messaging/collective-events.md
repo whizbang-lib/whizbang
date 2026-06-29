@@ -1,6 +1,6 @@
 # Collective Events
 
-**Status**: Implemented (consume side) — flags-driven routing, `__collective__` sink, PerspectiveWorker dispatch seam, EF Core apply path. Dapper executor and generator-emitted turnkey registration are follow-ups (see [Driver support](#driver-support)).
+**Status**: Implemented (consume side) — flags-driven routing, `__collective__` sink, PerspectiveWorker dispatch seam, EF Core **and** Dapper apply paths, per-perspective `Where` projection. Generator-emitted turnkey registration is the remaining follow-up (see [Driver support](#driver-support)).
 **Namespace**: `Whizbang.Core.Messaging` (contracts), `Whizbang.Core.Perspectives` (apply + dispatch)
 **Design / plan**: [`plans/collective-events-consume-wiring.md`](../../../plans/collective-events-consume-wiring.md)
 
@@ -11,7 +11,8 @@ scope-X."* Where a [composite event](composite-events.md) bundles many **distinc
 transport hop (1:N at the receiver), a collective event is the complement: **one** event applied
 **collectively** across a cohort, persisted as-is. A bulk operation that would emit N identical per-row
 events ("archive every job in this tenant") instead emits **one** scoped event, and the projection runner
-composes a **single SQL `UPDATE` per affected projection table** whose `WHERE` is the scope predicate.
+composes a **single SQL `UPDATE` per affected projection table** whose `WHERE` is the scope predicate —
+optionally refined per-perspective by the handler (see [Per-perspective projection](#per-perspective-projection-where)).
 
 Pick **collective** when the mutation is uniform across a scope and you do **not** need a per-entity event
 for it. Pick **composite** when each stream gets a distinct payload. Pick neither (stay individual) when a
@@ -39,7 +40,7 @@ at dispatch — and the `Scope`. Add a `[PinnedId]` and any mutation-payload fie
 
 The mutation lives on a **perspective handler**, not the event. Mark a method `[CollectiveApplyFor]`; it
 returns the SET clauses as an `ICollectiveSpec<TModel>`, and the framework composes the `WHERE` from the
-scope:
+scope (optionally refined by the handler — see [Per-perspective projection](#per-perspective-projection-where)):
 
 ```csharp
 public sealed class JobCollectivePerspective {
@@ -53,6 +54,50 @@ public sealed class JobCollectivePerspective {
 
 The generator (`CollectiveApplyDiscoveryGenerator`) discovers these methods into a reflection-free
 `CollectiveApplyRegistry.Entries` table (AOT-clean, one typed `Invoker` lambda per entry).
+
+### Per-perspective projection (`Where`)
+
+The **same persisted collective event projects independently into every perspective that handles it** —
+across models, and across services. `CollectiveApplyRegistry` is generated **per assembly**, so each
+service declares its own `[CollectiveApplyFor]` handler for its own `TModel`; the one routed event fans out
+to all of them. There is no per-row event replication — each perspective interprets the collective intent
+in **its own** columns.
+
+Each handler projects two things onto its model:
+
+- **the SET clauses** — already per-model via `ICollectiveSpec<TModel>.Setters`;
+- **the `WHERE`** — via the optional `ICollectiveSpec<TModel>.Where` (an
+  `Expression<Func<PerspectiveRow<TModel>, bool>>?`, default `null`). The handler — which *knows its model* —
+  shapes the cohort onto its own columns, e.g. `r => r.Data.Status == "Draft"`. This is what lets a model
+  that keeps a field on a sibling read model project the cohort differently than one that carries it inline.
+
+How `Where` composes with the resolver's scope filter is governed by `[CollectiveApplyFor(ScopeHandling = …)]`
+([`CollectiveWhereComposer`](#reference)):
+
+| `ScopeHandling` | Effective `WHERE` | Use when |
+|---|---|---|
+| **`Framework`** (default) | `resolverScopeFilter AND spec.Where` (or the scope filter alone when `Where` is null) | The scope envelope (e.g. tenant) must always bind; the handler only *refines* within it and can't over-mutate. |
+| **`Custom`** | `spec.Where` **alone** (the resolver scope filter is not even computed) | The handler owns the entire predicate — a multi-field/cross-table cohort the model-agnostic resolver can't express. A null `Where` here is a misconfiguration and throws. |
+
+```csharp
+// Refine within the tenant envelope — only Draft jobs in the event's tenant:
+[CollectiveApplyFor]                                    // ScopeHandling = Framework (default)
+public ICollectiveSpec<OrderModel> ApplyTemplate(TemplateAppliedCollectiveEvent e) =>
+  new CollectiveSpec<OrderModel>(
+    Setters: s => s.SetProperty(j => j.JobTemplateId, e.TemplateId),
+    Where:   r => r.Data.OverlayId == null);
+
+// Own the whole WHERE — the handler scopes by its own columns, resolver scope ignored:
+[CollectiveApplyFor(ScopeHandling = CollectiveScopeHandling.Custom)]
+public ICollectiveSpec<OrderModel> ClearOverlay(OverlayClearedCollectiveEvent e) =>
+  new CollectiveSpec<OrderModel>(
+    Setters: s => s.SetProperty(j => j.OverlayId, (Guid?)null),
+    Where:   r => r.Data.OverlayId == e.OverlayId);
+```
+
+`CollectiveSpec<TModel>` is a tiny consumer-owned record (Whizbang ships none) — give it both a `Setters` and
+a nullable `Where` member. The default-interface-member `Where => null` keeps existing Setters-only specs
+working unchanged.
 
 ### Scope
 
@@ -116,8 +161,10 @@ stay AOT-clean — a source generator can emit these per-model calls for full tu
 
 Dapper DI mirrors EF Core: `AddCollectiveEventsDapper(entries)` + `AddCollectiveExecutorDapper<TModel>(tableName)`
 (Dapper supplies the `wh_per_*` table name since it has no entity model to derive it from). The Dapper
-scope-filter compiler supports the built-in-resolver shape — equality over a scope field
-(`row.Scope.Prop == value`) and `&&`-chains — and throws for richer predicates (use a raw-SQL scope form).
+scope-filter compiler translates equality over a **scope** field (`row.Scope.Prop == value` →
+`scope->>'Prop'`) **or a data** field (`row.Data.Prop == value` → `data->>'Prop'`, for handler `Where`
+projections) and `&&`-chains mixing both, and throws for richer predicates (non-equality, top-level system
+columns, cross-table joins — use a raw-SQL form).
 
 Both compilers support scalar top-level `SetProperty(j => j.Prop, constant)` with constant/captured-value
 sources, plus chained setters. **Computed-arithmetic** setters (`j => j.X + 1`) and nested paths are
@@ -135,7 +182,8 @@ deferred to `[CollectiveApplyFor(SpecKind = RawSql)]` in v1 (both compilers thro
 
 - Contracts: `src/Whizbang.Core/Messaging/ICollectiveEvent.cs`, `CollectiveEventBase.cs`,
   `CollectiveScope.cs`, `TenantCollectiveScope.cs`.
-- Apply + dispatch: `src/Whizbang.Core/Perspectives/ICollectiveApplyFor.cs`, `ICollectiveSpec.cs`,
+- Apply + dispatch: `src/Whizbang.Core/Perspectives/ICollectiveApplyFor.cs`, `ICollectiveSpec.cs`
+  (the `Where` projection), `CollectiveWhereComposer.cs` (scope/`Where` composition),
   `CollectiveDispatcher.cs`, `ICollectiveSessionAccessor.cs`, `CollectiveRouting.cs`,
   `TenantCollectiveScopeResolver.cs`.
 - EF Core: `src/Whizbang.Data.EFCore.Postgres/Collective/` (`EFCoreCollectiveEventExecutor`,
@@ -144,5 +192,8 @@ deferred to `[CollectiveApplyFor(SpecKind = RawSql)]` in v1 (both compilers thro
 - Routing migration: `src/Whizbang.Data.Postgres/Migrations/061_CollectiveEventRouting.sql`.
 - Worker seam: `src/Whizbang.Core/Workers/PerspectiveWorker.cs` (`_processCollectiveSinkAsync`).
 - Tests: `tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs`,
+  `tests/Whizbang.Core.Tests/Perspectives/CollectiveWhereComposerTests.cs`,
   `tests/Whizbang.Data.EFCore.Postgres.Tests/EmitEventStoreChainCollectiveSqlTests.cs`,
-  `tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs`.
+  `tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs`
+  (`DispatchAsync_FrameworkWithHandlerWhere_*`, `DispatchAsync_CustomHandlerWhere_*`),
+  `tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs`.
