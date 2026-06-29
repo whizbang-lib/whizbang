@@ -394,6 +394,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var namespaceName = $"{assemblyName}.Generated";
 
     _reportStreamIdDiagnostics(context, eventsWithStreamId, eventsWithoutStreamId);
+    _reportGenerateStreamIdOnInitOnly(context, eventsWithStreamId, commandsWithStreamId);
 
     // Load and prepare template
     var template = TemplateUtilities.GetEmbeddedTemplate(
@@ -449,6 +450,32 @@ public class StreamIdGenerator : IIncrementalGenerator {
           info.Location,
           simpleName
       ));
+    }
+  }
+
+  /// <summary>
+  /// Reports WHIZ013 for any event/command that has [GenerateStreamId] on an init-only [StreamId] — the
+  /// generated SetStreamId writer can't target init-only, so the minted id would silently never be written.
+  /// </summary>
+  private static void _reportGenerateStreamIdOnInitOnly(
+      SourceProductionContext context,
+      ImmutableArray<StreamIdInfo> eventsWithStreamId,
+      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
+
+    foreach (var info in eventsWithStreamId) {
+      if (info.HasGenerate && info.IsPropertyInitOnly && _isGuidProperty(info.PropertyType)) {
+        var simpleName = info.EventType.Split('.')[^1].Replace(PLACEHOLDER_GLOBAL, "");
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, Location.None, simpleName, info.PropertyName));
+      }
+    }
+
+    foreach (var info in commandsWithStreamId) {
+      if (info.HasGenerate && info.IsPropertyInitOnly && _isGuidProperty(info.PropertyType)) {
+        var simpleName = info.CommandType.Split('.')[^1].Replace(PLACEHOLDER_GLOBAL, "");
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, Location.None, simpleName, info.PropertyName));
+      }
     }
   }
 
