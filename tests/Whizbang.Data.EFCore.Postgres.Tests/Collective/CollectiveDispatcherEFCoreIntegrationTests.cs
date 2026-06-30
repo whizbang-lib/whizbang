@@ -544,4 +544,84 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     public required CollectiveScope Scope { get; init; }
     public required DateTimeOffset OccurredAt { get; init; }
   }
+
+  // ── Null-valued setter: clears a JSON sub-property to jsonb null ──────────────────────────────
+  // EF Core 10 cannot set a ComplexProperty().ToJson() sub-property to null via ExecuteUpdate (bare null ->
+  // untyped-NULL 42804; value-selector null -> nulls the whole column). The adapter must fall back to a raw
+  // jsonb_set(data, '{Prop}', 'null'::jsonb) for null-valued setters. This is the Overlay-Clear shape.
+
+  [Test]
+  public async Task DispatchAsync_NullValuedSetter_ClearsJsonSubPropertyToNullAsync() {
+    var jobId = Guid.NewGuid();
+    await _seedJobAsync(jobId, tenantId: "t-clear", status: "Archived");
+
+    // First set ArchivedAt to a real value so we can prove the clear nulls it.
+    await _buildDispatcher().DispatchAsync(
+      evt: new _archiveJobsCollectiveEvent {
+        Scope = new TenantCollectiveScope("t-clear"),
+        OccurredAt = DateTimeOffset.UtcNow,
+      },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+    await Assert.That(await _readArchivedAtAsync(jobId)).IsNotNull()
+      .Because("Precondition: the archive set ArchivedAt to a non-null value.");
+
+    // Now clear ArchivedAt to null via a null-valued collective setter.
+    var result = await _buildClearArchivedDispatcher().DispatchAsync(
+      evt: new _clearArchivedCollectiveEvent { Scope = new TenantCollectiveScope("t-clear") },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    await Assert.That(result.AffectedRowCount).IsEqualTo(1);
+    await Assert.That(await _readArchivedAtAsync(jobId)).IsNull()
+      .Because("A null-valued collective setter must null the JSON sub-property (jsonb null) — not throw or null the whole column.");
+  }
+
+  private async Task<string?> _readArchivedAtAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT data->>'ArchivedAt' FROM wh_per_collective_job WHERE id = @id;";
+    cmd.Parameters.AddWithValue("id", id);
+    var result = await cmd.ExecuteScalarAsync();
+    return result == DBNull.Value || result is null ? null : (string)result;
+  }
+
+  private CollectiveDispatcher _buildClearArchivedDispatcher() {
+    var services = new ServiceCollection();
+    var handler = new _clearArchivedPerspective();
+    services.AddSingleton(handler);
+
+    var entries = new CollectiveApplyEntry[] {
+      new(
+        ModelType: typeof(_jobModel),
+        EventType: typeof(_clearArchivedCollectiveEvent),
+        HandlerType: typeof(_clearArchivedPerspective),
+        MethodName: nameof(_clearArchivedPerspective.ClearArchivedAt),
+        ScopeHandling: CollectiveScopeHandling.Framework,
+        SpecKind: CollectiveSpecKind.Linq,
+        Invoker: static (h, e, q) => ((_clearArchivedPerspective)h).ClearArchivedAt((_clearArchivedCollectiveEvent)e)
+      ),
+    };
+
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      entries,
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<_jobModel>()]);
+  }
+
+  internal sealed class _clearArchivedPerspective {
+    public ICollectiveSpec<_jobModel> ClearArchivedAt(_clearArchivedCollectiveEvent e) =>
+      new _spec(s => s.SetProperty(j => j.ArchivedAt, (DateTimeOffset?)null));
+
+    private sealed record _spec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters)
+      : ICollectiveSpec<_jobModel>;
+  }
+
+  internal sealed record _clearArchivedCollectiveEvent : ICollectiveEvent {
+    public required CollectiveScope Scope { get; init; }
+  }
 }
