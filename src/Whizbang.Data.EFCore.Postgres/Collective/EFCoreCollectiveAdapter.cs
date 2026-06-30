@@ -84,17 +84,33 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(spec);
     ArgumentNullException.ThrowIfNull(scopeFilter);
 
-    // EF Core 10 cannot set a ComplexProperty().ToJson() sub-property to null via ExecuteUpdate (a bare null
-    // emits an untyped NULL → Postgres 42804; a value-selector null nulls the whole column). When any setter
-    // value is null we fall back to a raw jsonb_set UPDATE. The WHERE is still translated by EF (we
-    // materialize the matching ids first), so cross-perspective cohorts keep working.
+    // The native nested SetProperty(r => r.Data.Prop, value) path requires Data to be mapped as an EF Core 10
+    // ComplexProperty().ToJson() complex type. It fails when:
+    //   • any value is null — EF emits an untyped NULL (Postgres 42804); the value-selector form nulls the
+    //     whole column;
+    //   • Data is mapped as a SCALAR jsonb column instead of a complex type — the polymorphic mapping a consumer
+    //     generates for models with [JsonPolymorphic] members (e.g. OrderTenantFields). There is no complex
+    //     sub-property to target, so EF rejects it with "does not represent a valid property to be set".
+    // In those cases we fall back to a raw jsonb_set UPDATE that targets the jsonb column directly. The WHERE
+    // is still translated by EF (we materialize the matching ids first), so cross-perspective cohorts keep
+    // working.
     var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters);
-    if (assignments.Any(a => a.IsNull)) {
+    if (assignments.Any(a => a.IsNull) || !_dataIsComplexProperty(dbContext)) {
       return _executeRawJsonbAsync(dbContext, assignments, scopeFilter, cancellationToken);
     }
 
     var (query, setters) = BuildCall(dbContext, spec, scopeFilter);
     return query.ExecuteUpdateAsync(setters.Compile(), cancellationToken);
+  }
+
+  /// <summary>
+  /// True when Data is mapped as an EF Core <c>ComplexProperty().ToJson()</c> complex type — the only shape
+  /// where native nested <c>SetProperty(r =&gt; r.Data.Prop, …)</c> works. False for a scalar/polymorphic jsonb
+  /// column mapping (no complex sub-property to set), which forces the raw jsonb_set path.
+  /// </summary>
+  private static bool _dataIsComplexProperty(DbContext dbContext) {
+    var entityType = dbContext.Model.FindEntityType(typeof(PerspectiveRow<TModel>));
+    return entityType?.FindComplexProperty(nameof(PerspectiveRow<TModel>.Data)) is not null;
   }
 
   /// <summary>
