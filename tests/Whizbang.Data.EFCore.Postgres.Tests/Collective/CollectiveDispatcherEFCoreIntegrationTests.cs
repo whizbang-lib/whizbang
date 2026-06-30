@@ -375,7 +375,12 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         e.ToTable(table);
         e.HasKey(x => x.Id);
         e.Property(x => x.Id).HasColumnName("id");
-        e.Property(x => x.Data).HasColumnName("data").HasColumnType("jsonb");
+        // Mirror the PRODUCTION turnkey mapping (EFCoreSnippets): Data is an EF Core 10
+        // ComplexProperty().ToJson() complex type, NOT a scalar jsonb column. This is the mapping a consumer
+        // actually generates, and the one the collective rewriter must support. (Metadata/Scope stay
+        // scalar jsonb here — they are not mutated or materialized by these tests, so keeping them simple
+        // avoids unrelated complex-collection materialization noise.)
+        e.ComplexProperty(x => x.Data, d => d.ToJson("data"));
         e.Property(x => x.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
         e.Property(x => x.Scope).HasColumnName("scope").HasColumnType("jsonb");
         e.Property(x => x.CreatedAt).HasColumnName("created_at");
