@@ -1471,6 +1471,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
       sb.AppendLine("using Npgsql;");
       sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
+      // UseWhizbangFunctions() registers the custom EF method-call translators (incl. JsonbSet) the
+      // collective-apply ExecuteUpdate path depends on. Without it, EF can't translate EF.Functions.JsonbSet
+      // and the collective sink's apply throws "could not be translated".
+      sb.AppendLine("using Whizbang.Data.EFCore.Postgres.Functions;");
       if (hasVectorFields) {
         sb.AppendLine("using Pgvector.EntityFrameworkCore;");
       }
@@ -1599,11 +1603,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine("      options.UseNpgsql(sp.GetRequiredService<NpgsqlDataSource>(), npgsqlOptions => {");
         sb.AppendLine("        // Auto-configured: pgvector support for EF Core");
         sb.AppendLine("        npgsqlOptions.UseVector();");
+        sb.AppendLine("        // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.");
+        sb.AppendLine("        npgsqlOptions.UseWhizbangFunctions();");
         sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
         sb.AppendLine(CLOSE_BRACE_INDENT_6);
       } else {
         sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>((sp, options) => {{");
         sb.AppendLine("      options.UseNpgsql(sp.GetRequiredService<NpgsqlDataSource>(), npgsqlOptions => {");
+        sb.AppendLine("        // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.");
+        sb.AppendLine("        npgsqlOptions.UseWhizbangFunctions();");
         sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
         sb.AppendLine(CLOSE_BRACE_INDENT_6);
       }

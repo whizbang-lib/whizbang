@@ -17,6 +17,7 @@ namespace Whizbang.Generators;
 public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_BASE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveBase";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
+  private const string COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN = "Whizbang.Core.Perspectives.CollectiveApplyForAttribute";
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
@@ -28,17 +29,52 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
+    // Collective events have no IPerspectiveFor — only a [CollectiveApplyFor] sink handler — so they're
+    // absent from the perspective-derived event-type set. But they ARE persisted events the
+    // PerspectiveWorker's __collective__ sink loads + polymorphically deserializes from the event store, so
+    // they must appear in GetEventTypes(). Discover them from the [CollectiveApplyFor] handlers in THIS
+    // compilation (the event type is the handler's first parameter, resolving to the — public — contracts
+    // type even when it lives in a referenced assembly). Matches CollectiveApplyDiscoveryGenerator's
+    // discovery, so the emitted typeof() references the same accessible types.
+    var collectiveEventCandidates = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is MethodDeclarationSyntax { AttributeLists.Count: > 0 },
+        transform: static (ctx, ct) => _extractCollectiveEventType(ctx, ct)
+    ).Where(static t => t is not null);
+
     // Combine with compilation to get assembly name
-    var compilationAndPerspectives = context.CompilationProvider.Combine(perspectiveCandidates.Collect());
+    var compilationAndPerspectives = context.CompilationProvider
+        .Combine(perspectiveCandidates.Collect())
+        .Combine(collectiveEventCandidates.Collect());
 
     context.RegisterSourceOutput(
         compilationAndPerspectives,
         static (ctx, data) => {
-          var compilation = data.Left;
-          var perspectives = data.Right;
-          _generatePerspectiveRunnerRegistry(ctx, compilation, perspectives!);
+          var compilation = data.Left.Left;
+          var perspectives = data.Left.Right;
+          var collectiveEventTypes = data.Right;
+          _generatePerspectiveRunnerRegistry(ctx, compilation, perspectives!, collectiveEventTypes!);
         }
     );
+  }
+
+  /// <summary>
+  /// For a method carrying <c>[CollectiveApplyFor]</c>, returns the fully-qualified type name of its first
+  /// parameter (the collective event it applies). Returns null otherwise. The event type resolves through
+  /// the semantic model, so it's correct even when the event lives in a referenced contracts assembly.
+  /// </summary>
+  private static string? _extractCollectiveEventType(
+      GeneratorSyntaxContext context,
+      System.Threading.CancellationToken cancellationToken) {
+    var methodDecl = (MethodDeclarationSyntax)context.Node;
+    if (context.SemanticModel.GetDeclaredSymbol(methodDecl, cancellationToken) is not IMethodSymbol methodSymbol) {
+      return null;
+    }
+    var hasAttribute = methodSymbol.GetAttributes()
+        .Any(a => a.AttributeClass?.ToDisplayString() == COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN);
+    if (!hasAttribute || methodSymbol.Parameters.Length < 1) {
+      return null;
+    }
+    return methodSymbol.Parameters[0].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
   }
 
   /// <summary>
@@ -174,7 +210,8 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   private static void _generatePerspectiveRunnerRegistry(
       SourceProductionContext context,
       Compilation compilation,
-      ImmutableArray<PerspectiveRegistryInfo> perspectives) {
+      ImmutableArray<PerspectiveRegistryInfo> perspectives,
+      ImmutableArray<string?> collectiveEventTypes) {
 
     if (perspectives.IsEmpty) {
       return;
@@ -191,7 +228,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     var source = new StringBuilder();
 
     _appendFileHeader(source, namespaceName);
-    _appendRegistryClass(source, perspectives);
+    _appendRegistryClass(source, perspectives, collectiveEventTypes);
     _appendExtensionsClass(source, perspectives);
     _appendModuleInitializerClass(source, perspectives.Length);
 
@@ -249,7 +286,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Appends the PerspectiveRunnerRegistry class with GetRunner, GetRegisteredPerspectives, and GetEventTypes.
   /// </summary>
-  private static void _appendRegistryClass(StringBuilder source, ImmutableArray<PerspectiveRegistryInfo> perspectives) {
+  private static void _appendRegistryClass(StringBuilder source, ImmutableArray<PerspectiveRegistryInfo> perspectives, ImmutableArray<string?> collectiveEventTypes) {
     source.AppendLine("/// <summary>");
     source.AppendLine($"/// Auto-generated registry for {perspectives.Length} perspective runner(s).");
     source.AppendLine("/// Provides zero-reflection lookup for PerspectiveWorker (AOT-compatible).");
@@ -299,14 +336,17 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("  public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => _registeredPerspectives;");
     source.AppendLine();
 
-    // GetEventTypes()
+    // GetEventTypes() — perspective event types PLUS collective events (which have no IPerspectiveFor but
+    // are polymorphically deserialized by the __collective__ sink). Without the collective union, the sink
+    // can't deserialize the event, its envelope set is empty, and the apply silently never runs.
     var allEventTypes = perspectives
         .SelectMany(p => p.EventTypesCodeGen)
+        .Concat(collectiveEventTypes.Where(t => t is not null).Select(t => t!))
         .Distinct()
         .OrderBy(e => e, StringComparer.Ordinal)
         .ToList();
 
-    source.AppendLine("  // All unique event types for IEventTypeProvider (lifecycle receptor polymorphic deserialization)");
+    source.AppendLine("  // All unique event types for IEventTypeProvider (lifecycle receptor polymorphic deserialization + collective sink)");
     source.AppendLine("  private static readonly Type[] _allEventTypes = [");
     foreach (var eventType in allEventTypes) {
       source.AppendLine($"    typeof({eventType}),");
