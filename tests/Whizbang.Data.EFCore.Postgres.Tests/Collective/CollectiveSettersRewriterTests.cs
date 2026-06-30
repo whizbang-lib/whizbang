@@ -12,26 +12,23 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 
 /// <summary>
 /// Verifies <see cref="CollectiveSettersRewriter.Rewrite"/> translates
-/// the spec's model-level <c>SetProperty</c> calls into the column-level
-/// <c>SetProperty(r =&gt; r.Data, r =&gt; EF.Functions.JsonbSet(...))</c>
-/// shape EF Core 10's <see cref="UpdateSettersBuilder{T}"/> can hand to
-/// <c>ExecuteUpdateAsync</c>. EF 10 only supports top-level scalar
-/// updates via <c>SetProperty</c>, so the adapter funnels every model
-/// mutation through a single <c>data</c> column update with the
-/// individual <c>SetProperty(j =&gt; j.X, value)</c> calls folded into a
-/// chained <see cref="Functions.WhizbangJsonDbFunctions.JsonbSet{TData}"/>
-/// expression that the custom translator emits as
-/// <c>jsonb_set(...)</c> SQL.
+/// the spec's model-level <c>SetProperty</c> calls into a fluent chain of
+/// native <c>SetProperty(r =&gt; r.Data.&lt;Prop&gt;, value)</c> calls that
+/// EF Core 10's <see cref="UpdateSettersBuilder{T}"/> hands to
+/// <c>ExecuteUpdateAsync</c>. The turnkey perspective mapping declares
+/// <c>Data</c> as a <c>ComplexProperty().ToJson()</c> complex type, for
+/// which EF Core 10 natively supports nested JSON sub-property updates and
+/// emits the appropriate <c>jsonb_set</c> SQL itself — no custom translator.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
 [Category("Unit")]
 [Category("CollectiveEvents")]
 public class CollectiveSettersRewriterTests {
 
-  // ── Output shape: SetProperty(r => r.Data, r => ...) ──────────────────
+  // ── Output shape: SetProperty(r => r.Data.X, value) ──────────────────
 
   [Test]
-  public async Task Rewrite_ConstantValue_ProducesSetPropertyOnDataColumnAsync() {
+  public async Task Rewrite_ConstantValue_ProducesNativeNestedSetPropertyAsync() {
     Expression<Action<ICollectiveSetters<_jobModel>>> source =
       s => s.SetProperty(j => j.Status, "Archived");
 
@@ -45,20 +42,18 @@ public class CollectiveSettersRewriterTests {
     var text = rewritten.ToString();
     await Assert.That(text).Contains("SetProperty")
       .Because("Result must be a SetProperty call on the UpdateSettersBuilder.");
-    await Assert.That(text).Contains("r.Data")
-      .Because("The LHS selector targets the Data jsonb column itself (r => r.Data), not r.Data.X — EF 10 rejects nested-path SetProperty.");
-    await Assert.That(text).Contains("JsonbSet")
-      .Because("The RHS uses EF.Functions.JsonbSet so the translator emits jsonb_set(...) SQL.");
-    await Assert.That(text).Contains("\"Status\"")
-      .Because("The constant property name is baked into the rewritten expression for the translator to render as the SQL path '{Status}'.");
+    await Assert.That(text).Contains("r.Data.Status")
+      .Because("The selector targets the JSON sub-property natively (r => r.Data.Status). EF Core 10 updates the ComplexProperty().ToJson() sub-property directly.");
+    await Assert.That(text).DoesNotContain("JsonbSet")
+      .Because("The native nested form replaces the custom JsonbSet translator entirely.");
     await Assert.That(text).Contains("Archived")
-      .Because("The value is JSON-serialized into the constant string passed to JsonbSet — the SQL site casts it to jsonb. Exact ToString() formatting of the embedded quotes varies by .NET version; just verify the raw value appears.");
+      .Because("The constant value is embedded directly. Exact ToString() formatting varies by .NET version; just verify the raw value appears.");
   }
 
-  // ── Multiple chained SetProperty → nested JsonbSet ────────────────────
+  // ── Multiple chained SetProperty → chained native setters ─────────────
 
   [Test]
-  public async Task Rewrite_TwoChainedSetProperty_FoldsIntoNestedJsonbSetAsync() {
+  public async Task Rewrite_TwoChainedSetProperty_ProducesTwoNativeSettersAsync() {
     Expression<Action<ICollectiveSetters<_jobModel>>> source =
       s => s.SetProperty(j => j.Status, "Archived")
            .SetProperty(j => j.ViewCount, 0);
@@ -66,14 +61,14 @@ public class CollectiveSettersRewriterTests {
     var rewritten = CollectiveSettersRewriter.Rewrite(source);
     var text = rewritten.ToString();
 
-    // Both property names appear in the rewritten body.
-    await Assert.That(text).Contains("\"Status\"");
-    await Assert.That(text).Contains("\"ViewCount\"");
+    // Both nested sub-property selectors appear in the rewritten body.
+    await Assert.That(text).Contains("r.Data.Status");
+    await Assert.That(text).Contains("r.Data.ViewCount");
 
-    // Two JsonbSet calls fold into a nested chain.
-    var occurrences = text.Split("JsonbSet", StringSplitOptions.None).Length - 1;
+    // Two source SetProperty calls become TWO native SetProperty calls (fluent chain).
+    var occurrences = text.Split("SetProperty", StringSplitOptions.None).Length - 1;
     await Assert.That(occurrences).IsEqualTo(2)
-      .Because("Two source SetProperty calls fold into TWO nested JsonbSet invocations on r.Data.");
+      .Because("Two source SetProperty calls map one-to-one to TWO native SetProperty calls on r.Data sub-properties.");
   }
 
   // ── Computed-value SetProperty unsupported (matches Slice 9) ──────────

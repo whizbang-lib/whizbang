@@ -17,7 +17,6 @@ public class WhizbangMethodCallTranslatorPlugin : IMethodCallTranslatorPlugin {
           $"Expected NpgsqlSqlExpressionFactory but got {sqlExpressionFactory.GetType().Name}");
     Translators = [
       new JsonArrayContainsAnyTranslator(npgsqlFactory),
-      new JsonbSetTranslator(npgsqlFactory),
     ];
   }
 

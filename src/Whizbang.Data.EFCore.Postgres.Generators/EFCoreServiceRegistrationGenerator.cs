@@ -1499,9 +1499,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
       sb.AppendLine("using Npgsql;");
       sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
-      // UseWhizbangFunctions() registers the custom EF method-call translators (incl. JsonbSet) the
-      // collective-apply ExecuteUpdate path depends on. Without it, EF can't translate EF.Functions.JsonbSet
-      // and the collective sink's apply throws "could not be translated".
+      // UseWhizbangFunctions() registers the custom EF method-call translators (e.g. the principal-filtering
+      // AllowedPrincipalsContainsAny ?| translator). Collective apply no longer needs a custom translator —
+      // it uses EF Core 10's native ComplexProperty().ToJson() nested SetProperty — but other features still
+      // depend on these translators, so the registration stays.
       sb.AppendLine("using Whizbang.Data.EFCore.Postgres.Functions;");
       if (hasVectorFields) {
         sb.AppendLine("using Pgvector.EntityFrameworkCore;");
