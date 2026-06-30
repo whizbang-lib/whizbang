@@ -347,6 +347,32 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// agree on every fixture — drift between the two becomes a failing build
   /// instead of a silent production divergence.
   /// </remarks>
+  /// <summary>
+  /// Emits the ONE canonical turnkey <c>AddDbContext</c> registration block — <c>UseNpgsql</c> with
+  /// <c>UseVector()</c> (when vector fields exist), <c>UseWhizbangFunctions()</c> (the JsonbSet etc.
+  /// translators the collective-apply <c>ExecuteUpdate</c> depends on), retry, and physical-field
+  /// interceptors. Both the public <c>AddJobDbContext</c> method and the
+  /// <c>GeneratedModelRegistration.Initialize</c> re-registration emit through here, so the two paths can
+  /// never drift. <paramref name="indent"/> is the leading whitespace of the <c>services.AddDbContext</c>
+  /// line; inner lines are offset relative to it.
+  /// </summary>
+  private static void _emitTurnkeyDbContextRegistration(
+      System.Text.StringBuilder sb, string dbContextFqn, bool hasVectorFields, bool hasPhysicalFields, string indent) {
+    sb.AppendLine($"{indent}services.AddDbContext<{dbContextFqn}>((sp, options) => {{");
+    sb.AppendLine($"{indent}  options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>(), npgsqlOptions => {{");
+    if (hasVectorFields) {
+      sb.AppendLine($"{indent}    npgsqlOptions.UseVector();");
+    }
+    sb.AppendLine($"{indent}    // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.");
+    sb.AppendLine($"{indent}    npgsqlOptions.UseWhizbangFunctions();");
+    sb.AppendLine($"{indent}    npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
+    sb.AppendLine($"{indent}  }});");
+    if (hasPhysicalFields) {
+      sb.AppendLine($"{indent}  options.UseWhizbangPhysicalFields();");
+    }
+    sb.AppendLine($"{indent}}});");
+  }
+
   private static string _deriveConnectionStringName(string className) {
     // Convention: strip a trailing "DbContext" suffix, lowercase, append "-db".
     // "ChatDbContext" → "chat-db", "BffServiceDbContext" → "appservice-db".
@@ -1598,28 +1624,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // DbContext registration resolves the NpgsqlDataSource via `sp` at build time");
       sb.AppendLine("    // (the (sp, options) AddDbContext overload). This keeps config access deferred");
       sb.AppendLine("    // and avoids the temp-provider/CM-disposal trap.");
-      if (hasVectorFields) {
-        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>((sp, options) => {{");
-        sb.AppendLine("      options.UseNpgsql(sp.GetRequiredService<NpgsqlDataSource>(), npgsqlOptions => {");
-        sb.AppendLine("        // Auto-configured: pgvector support for EF Core");
-        sb.AppendLine("        npgsqlOptions.UseVector();");
-        sb.AppendLine("        // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.");
-        sb.AppendLine("        npgsqlOptions.UseWhizbangFunctions();");
-        sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-        sb.AppendLine(CLOSE_BRACE_INDENT_6);
-      } else {
-        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>((sp, options) => {{");
-        sb.AppendLine("      options.UseNpgsql(sp.GetRequiredService<NpgsqlDataSource>(), npgsqlOptions => {");
-        sb.AppendLine("        // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.");
-        sb.AppendLine("        npgsqlOptions.UseWhizbangFunctions();");
-        sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-        sb.AppendLine(CLOSE_BRACE_INDENT_6);
-      }
-      // Register physical field interceptors (query rewriting + materialization hydration)
-      if (hasPhysicalFields) {
-        sb.AppendLine("      options.UseWhizbangPhysicalFields();");
-      }
-      sb.AppendLine(CLOSE_BRACE_INDENT_4);
+      // Single source of truth for the DbContext options (see _emitTurnkeyDbContextRegistration).
+      _emitTurnkeyDbContextRegistration(sb, dbContext.FullyQualifiedName, hasVectorFields, hasPhysicalFields, "    ");
       sb.AppendLine();
       sb.AppendLine("    // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
       sb.AppendLine("    // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
@@ -1755,24 +1761,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      // DbContext registration resolves the NpgsqlDataSource via `sp` at build time");
     sb.AppendLine("      // ((sp, options) AddDbContext overload). Defers all dependency resolution to");
     sb.AppendLine("      // the real provider — no temp container, no CM disposal.");
-    if (hasVectorFields) {
-      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>((sp, options) => {{");
-      sb.AppendLine("        options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>(), npgsqlOptions => {");
-      sb.AppendLine("          // Auto-configured: pgvector support for EF Core");
-      sb.AppendLine("          npgsqlOptions.UseVector();");
-      sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-      sb.AppendLine(CLOSE_BRACE_INDENT_8);
-    } else {
-      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>((sp, options) => {{");
-      sb.AppendLine("        options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>(), npgsqlOptions => {");
-      sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-      sb.AppendLine(CLOSE_BRACE_INDENT_8);
-    }
-    // Register physical field interceptors (query rewriting + materialization hydration)
-    if (hasPhysicalFields) {
-      sb.AppendLine("        options.UseWhizbangPhysicalFields();");
-    }
-    sb.AppendLine(CLOSE_BRACE_INDENT_6);
+    // Same single source of truth as AddJobDbContext — both paths emit identical options (incl.
+    // UseWhizbangFunctions). Previously this duplicate re-registration silently omitted UseWhizbangFunctions,
+    // so after the fixture's ReassertGeneratedModelRegistration re-ran it, the live DbContext lost the
+    // JsonbSet translator and collective-apply ExecuteUpdate threw "could not be translated".
+    _emitTurnkeyDbContextRegistration(sb, dbContext.FullyQualifiedName, hasVectorFields, hasPhysicalFields, "      ");
     sb.AppendLine();
     sb.AppendLine("      // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
     sb.AppendLine("      // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
