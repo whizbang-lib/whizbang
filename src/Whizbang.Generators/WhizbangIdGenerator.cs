@@ -924,8 +924,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("    // Register individual converters for runtime resolution");
     sb.AppendLine("    // This allows InfrastructureJsonContext's TryGetTypeInfoForRuntimeCustomConverter");
     sb.AppendLine("    // to find them when deserializing MessageHop properties (MessageId?, CorrelationId?).");
+    sb.AppendLine("    // Scoped to the Default (transport / event-store) profile: these write WhizbangId as a");
+    sb.AppendLine("    // scalar string. The Persistence profile uses object-mode JsonTypeInfo instead (EF Core 10");
+    sb.AppendLine("    // jsonb byte format), and STJ consults options.Converters before the resolver chain — so a");
+    sb.AppendLine("    // scalar converter in scope would shadow the object-mode resolver. Default-scoping keeps them apart.");
     foreach (var id in ids) {
-      sb.AppendLine($"    JsonContextRegistry.RegisterConverter(new {id.FullyQualifiedName}JsonConverter());");
+      sb.AppendLine($"    JsonContextRegistry.RegisterConverter(new {id.FullyQualifiedName}JsonConverter(), priority: 0, profile: global::Whizbang.Core.Serialization.SerializationProfile.Default);");
     }
 
     sb.AppendLine("  }");
