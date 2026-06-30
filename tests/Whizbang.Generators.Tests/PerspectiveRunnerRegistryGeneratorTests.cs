@@ -377,6 +377,54 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_AllEventTypes_IncludesCollectiveEventsAsync() {
+    // A collective event has no IPerspectiveFor — only a [CollectiveApplyFor] sink — but the
+    // PerspectiveWorker's __collective__ sink polymorphically deserializes it from the event store using
+    // IEventTypeProvider.GetEventTypes(). If it's absent, the sink's envelope set is empty and the apply
+    // silently never runs (the a consumer ApplyTemplateCollective end-to-end symptom: sink row claimed, never
+    // processed). So GetEventTypes() must include collective events alongside perspective event types.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Messaging;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamId] public Guid OrderId { get; init; }
+  }
+  public record OrderModel {
+    [StreamId] public Guid OrderId { get; init; }
+  }
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel current, OrderCreatedEvent @event) => current;
+  }
+
+  public record BulkRetagCollectiveEvent : CollectiveEventBase {
+    public Guid TemplateId { get; init; }
+  }
+
+  // The [CollectiveApplyFor] handler is how the assembly declares it handles the collective event —
+  // this is what surfaces the event type into GetEventTypes() (the event itself may live in a referenced
+  // contracts assembly; the handler is local).
+  public class BulkRetagHandler {
+    [CollectiveApplyFor]
+    public ICollectiveSpec<OrderModel> Apply(BulkRetagCollectiveEvent e) => null!;
+  }
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource!).Contains("BulkRetagCollectiveEvent")
+      .Because("Collective events handled via [CollectiveApplyFor] are polymorphically deserialized by the " +
+        "__collective__ sink, so they must appear in _allEventTypes / GetEventTypes() even though they have " +
+        "no IPerspectiveFor perspective.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_AllEventTypesContainsTypeofExpressionsAsync() {
     // Arrange - Perspective with multiple events
     const string source = @"
