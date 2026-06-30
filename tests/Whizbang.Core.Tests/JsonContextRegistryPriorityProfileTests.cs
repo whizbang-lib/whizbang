@@ -20,6 +20,18 @@ public partial class JsonContextRegistryTests {
   private sealed class _profileProbe;
   private sealed class _priorityProbe;
   private sealed class _persistenceOnlyProbe;
+  private sealed class _converterProbe;
+
+  // A converter scoped to a unique probe type. CRITICAL: it must NOT be JsonConverter&lt;object&gt; — the
+  // registry is process-wide and has no unregister, so a JsonConverter&lt;object&gt; would be added to every
+  // subsequent CreateCombinedOptions(Default) and hijack ALL object-typed serialization in the test run
+  // (e.g. MessageEnvelope deserialization in the work-coordinator suites). Typed to _converterProbe,
+  // CanConvert only matches that type, so it can't pollute anything else.
+  private sealed class _typedMarkerConverter : JsonConverter<_converterProbe> {
+    public override _converterProbe Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => new();
+    public override void Write(Utf8JsonWriter writer, _converterProbe value, JsonSerializerOptions options) =>
+      writer.WriteStringValue("converter-probe");
+  }
 
   private sealed class _markerResolver(Type target, string marker) : IJsonTypeInfoResolver {
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) =>
@@ -91,7 +103,7 @@ public partial class JsonContextRegistryTests {
 
   [Test]
   public async Task CreateCombinedOptions_DefaultOnlyConverter_AbsentFromPersistenceProfileAsync() {
-    var converter = new _markerConverter("default-only");
+    var converter = new _typedMarkerConverter();
     JsonContextRegistry.RegisterConverter(converter, priority: 0, profile: SerializationProfile.Default);
 
     var def = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Default);
