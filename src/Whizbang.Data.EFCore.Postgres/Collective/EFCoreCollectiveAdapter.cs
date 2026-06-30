@@ -1,6 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq.Expressions;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 
@@ -81,7 +84,69 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(spec);
     ArgumentNullException.ThrowIfNull(scopeFilter);
 
+    // EF Core 10 cannot set a ComplexProperty().ToJson() sub-property to null via ExecuteUpdate (a bare null
+    // emits an untyped NULL → Postgres 42804; a value-selector null nulls the whole column). When any setter
+    // value is null we fall back to a raw jsonb_set UPDATE. The WHERE is still translated by EF (we
+    // materialize the matching ids first), so cross-perspective cohorts keep working.
+    var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters);
+    if (assignments.Any(a => a.IsNull)) {
+      return _executeRawJsonbAsync(dbContext, assignments, scopeFilter, cancellationToken);
+    }
+
     var (query, setters) = BuildCall(dbContext, spec, scopeFilter);
     return query.ExecuteUpdateAsync(setters.Compile(), cancellationToken);
+  }
+
+  /// <summary>
+  /// Null-valued-setter path: materialize the matching ids via EF (so the WHERE — including cross-perspective
+  /// EXISTS — is translated by EF), then issue one raw <c>UPDATE … SET data = jsonb_set(…) WHERE id = ANY(@ids)</c>.
+  /// jsonb_set with a <c>'null'::jsonb</c> value sets the sub-property to JSON null, which EF's ExecuteUpdate
+  /// can't express for a complex-JSON column.
+  /// </summary>
+  private static async Task<int> _executeRawJsonbAsync(
+      DbContext dbContext,
+      IReadOnlyList<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,
+      Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
+      CancellationToken cancellationToken) {
+
+    var ids = await dbContext.Set<PerspectiveRow<TModel>>()
+      .Where(scopeFilter)
+      .Select(r => r.Id)
+      .ToListAsync(cancellationToken)
+      .ConfigureAwait(false);
+    if (ids.Count == 0) {
+      return 0;
+    }
+
+    var entityType = dbContext.Model.FindEntityType(typeof(PerspectiveRow<TModel>))
+      ?? throw new InvalidOperationException(
+        $"PerspectiveRow<{typeof(TModel).Name}> is not mapped in the DbContext model.");
+    var table = entityType.GetTableName()
+      ?? throw new InvalidOperationException($"PerspectiveRow<{typeof(TModel).Name}> has no table name.");
+    var schema = entityType.GetSchema();
+    var qualifiedTable = schema is null
+      ? "\"" + table + "\""
+      : "\"" + schema + "\".\"" + table + "\"";
+
+    // Build nested jsonb_set: jsonb_set(jsonb_set(data, @path0, @p0::jsonb), @path1, @p1::jsonb).
+    // The path is bound as a text[] parameter (not a '{...}' literal) so the SQL carries no braces — EF's
+    // ExecuteSqlRaw would otherwise try to parse '{Prop}' as a {n} placeholder — and so the property name is
+    // parameterized rather than concatenated.
+    var setExpr = new StringBuilder("data");
+    var parameters = new List<NpgsqlParameter>((assignments.Count * 2) + 1);
+    for (var i = 0; i < assignments.Count; i++) {
+      var a = assignments[i];
+      var idx = i.ToString(CultureInfo.InvariantCulture);
+      setExpr.Insert(0, "jsonb_set(")
+        .Append(", @path").Append(idx).Append(", @p").Append(idx).Append("::jsonb)");
+      parameters.Add(new NpgsqlParameter("path" + idx, new[] { a.PathName }));  // text[] path
+      parameters.Add(new NpgsqlParameter("p" + idx, a.JsonValue));              // JSON text, cast ::jsonb
+    }
+    parameters.Add(new NpgsqlParameter("ids", ids.ToArray()));
+
+    var sql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + " WHERE id = ANY(@ids)";
+    return await dbContext.Database
+      .ExecuteSqlRawAsync(sql, parameters, cancellationToken)
+      .ConfigureAwait(false);
   }
 }

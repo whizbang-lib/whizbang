@@ -1,9 +1,11 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore.Query;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Serialization;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 
@@ -126,6 +128,45 @@ internal static class CollectiveSettersRewriter {
 
     // The fluent chain returns UpdateSettersBuilder<...>; the Action lambda discards it.
     return Expression.Lambda<Action<UpdateSettersBuilder<PerspectiveRow<TModel>>>>(chain, settersParam);
+  }
+
+  // Persistence-profile options so a value serializes byte-for-byte the way the jsonb column stores it
+  // (e.g. WhizbangId object-mode, plain Guid as a JSON string, null as JSON null).
+  private static readonly JsonSerializerOptions _persistenceJsonOptions =
+    JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
+
+  /// <summary>
+  /// A single property assignment from the spec, with its value pre-serialized to the JSON text the jsonb
+  /// column stores. Used by the raw-SQL <c>jsonb_set</c> path the adapter falls back to when a setter value
+  /// is null — EF Core 10 cannot set a <c>ComplexProperty().ToJson()</c> sub-property to null via
+  /// <c>ExecuteUpdate</c>.
+  /// </summary>
+  public sealed record CollectiveSetterAssignment(string PathName, string JsonValue, bool IsNull);
+
+  /// <summary>
+  /// Walk the spec setters and return each top-level assignment as (property name, JSON-serialized value,
+  /// is-null). Same constraint matrix as <see cref="Rewrite"/> (constant values, scalar top-level selectors).
+  /// </summary>
+  public static IReadOnlyList<CollectiveSetterAssignment> CollectAssignments<TModel>(
+      Expression<Action<ICollectiveSetters<TModel>>> source)
+      where TModel : class {
+    ArgumentNullException.ThrowIfNull(source);
+
+    var visitor = new _propertyCollector(typeof(TModel));
+    visitor.Visit(source.Body);
+
+    if (visitor.Assignments.Count == 0) {
+      throw new InvalidOperationException(
+        $"Spec for {typeof(TModel).Name} produced zero SetProperty calls. " +
+        "An ICollectiveSpec must mutate at least one property.");
+    }
+
+    var result = new List<CollectiveSetterAssignment>(visitor.Assignments.Count);
+    foreach (var a in visitor.Assignments) {
+      var json = JsonSerializer.Serialize(a.Value, a.Value?.GetType() ?? a.Property.PropertyType, _persistenceJsonOptions);
+      result.Add(new CollectiveSetterAssignment(a.Property.Name, json, a.Value is null));
+    }
+    return result;
   }
 
   private sealed record _propertyAssignment(PropertyInfo Property, object? Value);
