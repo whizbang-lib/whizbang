@@ -304,6 +304,57 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// Regression lock: EVERY generated AddDbContext registration must wire UseWhizbangFunctions() (the
+  /// JsonbSet etc. translators the collective-apply ExecuteUpdate depends on). The generator emits the
+  /// registration twice — the public AddDbContext method AND GeneratedModelRegistration.Initialize's
+  /// RemoveAll+re-add — and the second one previously omitted UseWhizbangFunctions. Since
+  /// ReassertGeneratedModelRegistration re-runs the second path, the live DbContext lost the translator and
+  /// collective-apply threw "could not be translated". Both paths now share one emission helper; this
+  /// asserts no registration can drift again.
+  /// </summary>
+  [Test]
+  public async Task Generator_EveryDbContextRegistration_WiresUseWhizbangFunctionsAsync() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var sawRegistration = false;
+    foreach (var generated in result.GeneratedSources) {
+      var text = generated.SourceText.ToString();
+      // Match real registrations only (services.AddDbContext<...>), not doc-comment mentions.
+      var addCount = System.Text.RegularExpressions.Regex.Count(text, @"services\.AddDbContext<");
+      if (addCount == 0) {
+        continue;
+      }
+      sawRegistration = true;
+      var useCount = System.Text.RegularExpressions.Regex.Count(text, @"UseWhizbangFunctions\(\)");
+      await Assert.That(useCount).IsGreaterThanOrEqualTo(addCount)
+        .Because($"every AddDbContext registration in {generated.HintName} must call UseWhizbangFunctions() so the "
+          + $"JsonbSet translator is wired for collective-apply ExecuteUpdate. Found {addCount} AddDbContext vs {useCount} UseWhizbangFunctions.");
+
+      // The call won't compile without the Functions namespace imported (CS1061) — a real consumer build
+      // catches it, but assert it here so the source generator can't ship an un-compilable registration.
+      await Assert.That(text).Contains("Whizbang.Data.EFCore.Postgres.Functions")
+        .Because($"{generated.HintName} calls UseWhizbangFunctions() so it must import Whizbang.Data.EFCore.Postgres.Functions.");
+    }
+
+    await Assert.That(sawRegistration).IsTrue()
+      .Because("the generator should emit at least one AddDbContext registration for a [WhizbangDbContext] type.");
+  }
+
+  /// <summary>
   /// Test that generator produces schema extensions file.
   /// Schema extensions provide EnsureWhizbangTablesCreatedAsync method.
   /// </summary>
