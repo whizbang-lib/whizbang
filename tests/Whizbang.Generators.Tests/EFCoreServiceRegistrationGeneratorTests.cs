@@ -343,6 +343,11 @@ public class EFCoreServiceRegistrationGeneratorTests {
       await Assert.That(useCount).IsGreaterThanOrEqualTo(addCount)
         .Because($"every AddDbContext registration in {generated.HintName} must call UseWhizbangFunctions() so the "
           + $"JsonbSet translator is wired for collective-apply ExecuteUpdate. Found {addCount} AddDbContext vs {useCount} UseWhizbangFunctions.");
+
+      // The call won't compile without the Functions namespace imported (CS1061) — a real consumer build
+      // catches it, but assert it here so the source generator can't ship an un-compilable registration.
+      await Assert.That(text).Contains("Whizbang.Data.EFCore.Postgres.Functions")
+        .Because($"{generated.HintName} calls UseWhizbangFunctions() so it must import Whizbang.Data.EFCore.Postgres.Functions.");
     }
 
     await Assert.That(sawRegistration).IsTrue()

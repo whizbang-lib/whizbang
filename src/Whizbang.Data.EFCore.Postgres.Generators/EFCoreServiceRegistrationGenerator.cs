@@ -1252,6 +1252,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("using Microsoft.EntityFrameworkCore.Diagnostics;");
     sb.AppendLine("using global::Whizbang.Core.Lenses;");
     sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres;");
+    // UseWhizbangFunctions() (JsonbSet etc. translators for collective-apply ExecuteUpdate) lives here.
+    sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres.Functions;");
     // Npgsql namespace provides NpgsqlDataSourceBuilder.UseVector() extension (from Pgvector package)
     // Pgvector.EntityFrameworkCore provides NpgsqlDbContextOptionsBuilder.UseVector() extension
     var anyVectorFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector)));
