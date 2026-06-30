@@ -136,6 +136,48 @@ public class PerspectiveWorkerCollectiveSinkTests {
       .Because("No collective event on the stream → nothing to dispatch.");
   }
 
+  [Test]
+  public async Task CollectiveSink_DispatchThrows_DoesNotCrashWorker_Async() {
+    // A failing collective apply (e.g. an EF "does not represent a valid property to be set" on a polymorphic
+    // model) must NOT propagate out of the sink: if it does, the perspective batch re-throws and trips
+    // BackgroundServiceExceptionBehavior=StopHost, crash-looping the whole service on one poison event.
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new _throwingDispatcher();
+    var envelope = _envelope(eventId, collectiveEvent);
+
+    // DRAIN path (the production route: a collective event arriving via transport is claimed as a stream).
+    // Its caller catches only OperationCanceledException, so an un-guarded apply failure propagates and faults
+    // the worker host — exactly the dev crash-loop.
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      work: [],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      drainStreamIds: [streamId],
+      streamEvents: [_raw(streamId, eventId)]);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    // The fix catches the apply failure and REPORTS it as a perspective failure (instead of letting it
+    // propagate and fault the host). The un-guarded code throws raw and never reports — so this wait times
+    // out, which is the RED signal.
+    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { } catch { /* host must not have faulted */ }
+    // Fully stop the background worker so it doesn't linger and starve sibling [NotInParallel] tests.
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(dispatcher.Calls).IsGreaterThan(0)
+      .Because("The worker attempted to dispatch the collective event.");
+    await Assert.That(coordinator.ReportedFailures.Count).IsGreaterThan(0)
+      .Because("A failing collective apply must be caught and reported as a perspective failure — not propagated (which faults the host and crash-loops the service).");
+    await Assert.That(coordinator.ReportedFailures[0].PerspectiveName).IsEqualTo(CollectiveRouting.SINK_PERSPECTIVE_NAME);
+  }
+
   // ── helpers ────────────────────────────────────────────────────────────
 
   private static PerspectiveWork _sinkWork(Guid streamId) => new() {
@@ -164,7 +206,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
   };
 
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness, _coordinator Coordinator) _createWorker(
-      List<PerspectiveWork> work, _eventStore eventStore, _registry registry, _recordingDispatcher? dispatcher,
+      List<PerspectiveWork> work, _eventStore eventStore, _registry registry, ICollectiveDispatcher? dispatcher,
       List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null) {
     var instanceProvider = new _instanceProvider();
     var strategy = new InstantCompletionStrategy();
@@ -219,6 +261,21 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
   }
 
+  private sealed class _throwingDispatcher : ICollectiveDispatcher {
+    private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _calls;
+    public int Calls => Volatile.Read(ref _calls);
+    public Task FirstDispatch => _first.Task;
+
+    public Task<CollectiveDispatchResult> DispatchAsync(
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, CancellationToken cancellationToken) {
+      Interlocked.Increment(ref _calls);
+      _first.TrySetResult();
+      throw new InvalidOperationException(
+        "simulated collective apply failure (e.g. SetProperty does not represent a valid property to be set)");
+    }
+  }
+
   private sealed class _stubSessionAccessor : ICollectiveSessionAccessor {
     public object GetSession(IServiceProvider scopedServiceProvider) => new object();
   }
@@ -226,8 +283,17 @@ public class PerspectiveWorkerCollectiveSinkTests {
   private sealed class _coordinator(List<PerspectiveWork> work) : NoOpWorkCoordinator, IWorkCoordinator {
     private int _cycle;
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _waiters = new();
+    private readonly TaskCompletionSource _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<Guid> DrainStreamIds { get; init; } = [];
     public List<StreamEventData> StreamEvents { get; init; } = [];
+    public List<PerspectiveCursorFailure> ReportedFailures { get; } = [];
+    /// <summary>Completes on the first reported perspective failure — the collective-apply-failed signal.</summary>
+    public Task FirstFailure => _firstFailure.Task;
+    Task IWorkCoordinator.ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct) {
+      lock (ReportedFailures) { ReportedFailures.Add(failure); }
+      _firstFailure.TrySetResult();
+      return Task.CompletedTask;
+    }
     public Task WaitForCyclesAsync(int minCycles, TimeSpan timeout) =>
       _waiters.GetOrAdd(minCycles, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task.WaitAsync(timeout);
     public new Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {

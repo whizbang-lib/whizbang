@@ -363,11 +363,28 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   private sealed class _jobDbContext(DbContextOptions<_jobDbContext> options) : DbContext(options) {
     public DbSet<PerspectiveRow<_jobModel>> Jobs => Set<PerspectiveRow<_jobModel>>();
     public DbSet<PerspectiveRow<_jobStatusModel>> JobStatuses => Set<PerspectiveRow<_jobStatusModel>>();
+    public DbSet<PerspectiveRow<_cellsModel>> CellsRows => Set<PerspectiveRow<_cellsModel>>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
       _mapRow<_jobModel>(modelBuilder, "wh_per_collective_job");
       _mapRow<_jobStatusModel>(modelBuilder, "wh_per_collective_job_status");
+      // POLYMORPHIC model mapping: Data is a SCALAR jsonb column (Property + HasColumnType), NOT
+      // ComplexProperty().ToJson(). This is exactly what a consumer generates for perspective models with
+      // [JsonPolymorphic] members (e.g. OrderTenantFields, whose field cells are polymorphic). EF Core 10
+      // rejects native nested SetProperty(j => j.Data.Sub, …) on this shape — there is no complex
+      // sub-property — with "does not represent a valid property to be set".
+      modelBuilder.Entity<PerspectiveRow<_cellsModel>>(e => {
+        e.ToTable("wh_per_collective_cells");
+        e.HasKey(x => x.Id);
+        e.Property(x => x.Id).HasColumnName("id");
+        e.Property(x => x.Data).HasColumnName("data").HasColumnType("jsonb");
+        e.Property(x => x.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
+        e.Property(x => x.Scope).HasColumnName("scope").HasColumnType("jsonb");
+        e.Property(x => x.CreatedAt).HasColumnName("created_at");
+        e.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        e.Property(x => x.Version).HasColumnName("version");
+      });
     }
 
     private static void _mapRow<TModel>(ModelBuilder modelBuilder, string table) where TModel : class {
@@ -412,6 +429,15 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         version INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS wh_per_collective_job_status (
+        id UUID PRIMARY KEY,
+        data JSONB NOT NULL,
+        metadata JSONB NOT NULL,
+        scope JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        version INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS wh_per_collective_cells (
         id UUID PRIMARY KEY,
         data JSONB NOT NULL,
         metadata JSONB NOT NULL,
@@ -623,5 +649,97 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
   internal sealed record _clearArchivedCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
+  }
+
+  // ── Polymorphic model: Data is a SCALAR jsonb column (OrderTenantFields shape) ────────────────
+  // EF Core 10's native nested SetProperty(j => j.Tag, ...) throws "does not represent a valid property to be
+  // set" because there is no complex sub-property to target. The adapter must detect the non-complex Data
+  // mapping and fall back to the raw jsonb_set path.
+
+  [Test]
+  public async Task DispatchAsync_PolymorphicScalarJsonbModel_AppliesViaRawPathAsync() {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-cells", tag: "before");
+
+    var result = await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-cells"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    await Assert.That(result.AffectedRowCount).IsEqualTo(1);
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("A scalar set on a polymorphic model (Data mapped as a scalar jsonb column, not ComplexProperty) must apply via the raw jsonb_set path — EF Core 10's native SetProperty rejects it.");
+  }
+
+  private async Task _seedCellsAsync(Guid id, string tenantId, string tag) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    var dataJson = JsonSerializer.Serialize(new _cellsModel {
+      Tag = tag,
+      Cells = [new _cell { Key = "k1", Value = "v1" }, new _cell { Key = "k2", Value = "v2" }],
+    });
+    var scopeJson = JsonSerializer.Serialize(new PerspectiveScope { TenantId = tenantId });
+    await conn.ExecuteAsync("""
+      INSERT INTO wh_per_collective_cells (id, data, metadata, scope, created_at, updated_at, version)
+      VALUES (@id, @data::jsonb, '{}'::jsonb, @scope::jsonb, @createdAt, @updatedAt, 1);
+      """, new { id, data = dataJson, scope = scopeJson, createdAt = DateTime.UtcNow, updatedAt = DateTime.UtcNow });
+  }
+
+  private async Task<string?> _readCellsTagAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT data->>'Tag' FROM wh_per_collective_cells WHERE id = @id;";
+    cmd.Parameters.AddWithValue("id", id);
+    var result = await cmd.ExecuteScalarAsync();
+    return result == DBNull.Value || result is null ? null : (string)result;
+  }
+
+  private CollectiveDispatcher _buildSetTagDispatcher() {
+    var services = new ServiceCollection();
+    var handler = new _setTagPerspective();
+    services.AddSingleton(handler);
+
+    var entries = new CollectiveApplyEntry[] {
+      new(
+        ModelType: typeof(_cellsModel),
+        EventType: typeof(_setTagCollectiveEvent),
+        HandlerType: typeof(_setTagPerspective),
+        MethodName: nameof(_setTagPerspective.SetTag),
+        ScopeHandling: CollectiveScopeHandling.Framework,
+        SpecKind: CollectiveSpecKind.Linq,
+        Invoker: static (h, e, q) => ((_setTagPerspective)h).SetTag((_setTagCollectiveEvent)e)
+      ),
+    };
+
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      entries,
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<_cellsModel>()]);
+  }
+
+  internal sealed class _setTagPerspective {
+    public ICollectiveSpec<_cellsModel> SetTag(_setTagCollectiveEvent e) =>
+      new _spec(s => s.SetProperty(j => j.Tag, e.Tag));
+
+    private sealed record _spec(Expression<Action<ICollectiveSetters<_cellsModel>>> Setters)
+      : ICollectiveSpec<_cellsModel>;
+  }
+
+  internal sealed record _setTagCollectiveEvent : ICollectiveEvent {
+    public required CollectiveScope Scope { get; init; }
+    public required string Tag { get; init; }
+  }
+
+  internal sealed class _cellsModel {
+    public string? Tag { get; set; }
+    public List<_cell> Cells { get; set; } = [];
+  }
+
+  internal sealed class _cell {
+    public string Key { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
   }
 }

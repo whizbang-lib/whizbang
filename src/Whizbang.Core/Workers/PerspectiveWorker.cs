@@ -2498,8 +2498,28 @@ public partial class PerspectiveWorker(
 
     foreach (var envelope in collectiveEnvelopes) {
       var collectiveEvent = (ICollectiveEvent)envelope.Payload;
-      await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session, cancellationToken)
-        .ConfigureAwait(false);
+      try {
+        await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session, cancellationToken)
+          .ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // A failing collective apply must NOT crash the host. Without this guard the exception propagates out
+        // of the perspective batch, re-throws at the cursor catch, and trips BackgroundServiceExceptionBehavior
+        // = StopHost — one poison collective event then crash-loops the whole service. Instead: report the
+        // failure (records it + increments the __collective__ sink row's attempt count for eventual
+        // dead-lettering), advance the cursor only to the last SUCCESSFUL event, and stop processing this
+        // stream's collective batch without re-throwing.
+        LogErrorProcessingPerspectiveCursor(_logger, ex, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
+        _metrics?.Errors.Add(1);
+        var failure = new PerspectiveCursorFailure {
+          StreamId = streamId,
+          PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
+          LastEventId = lastEventId,
+          Status = PerspectiveProcessingStatus.Failed,
+          Error = ex.Message,
+        };
+        await _completionStrategy.ReportFailureAsync(failure, workCoordinator, cancellationToken).ConfigureAwait(false);
+        return;
+      }
       lastEventId = envelope.MessageId.Value;
     }
 
