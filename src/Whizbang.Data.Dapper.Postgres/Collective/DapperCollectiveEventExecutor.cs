@@ -21,6 +21,7 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
     where TModel : class {
   private readonly string _tableName;
   private readonly IReadOnlyDictionary<Type, string> _siblingTables;
+  private readonly CollectiveApplyOptions _options;
 
   /// <summary>Create the executor for <typeparamref name="TModel"/> targeting <paramref name="tableName"/>.</summary>
   /// <param name="tableName">The perspective table for the model (e.g. <c>wh_per_job</c>).</param>
@@ -28,11 +29,14 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
   /// The <c>model → table</c> map used to resolve cross-perspective cohorts (<c>q.Of&lt;TOther&gt;()</c>).
   /// Pass an empty map when no handler references a sibling perspective.
   /// </param>
-  public DapperCollectiveEventExecutor(string tableName, IReadOnlyDictionary<Type, string> siblingTables) {
+  /// <param name="options">Apply policy (batching + statement_timeout); DI supplies the resolved value.</param>
+  public DapperCollectiveEventExecutor(
+      string tableName, IReadOnlyDictionary<Type, string> siblingTables, CollectiveApplyOptions? options = null) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     ArgumentNullException.ThrowIfNull(siblingTables);
     _tableName = tableName;
     _siblingTables = siblingTables;
+    _options = options ?? CollectiveApplyOptions.Default;
   }
 
   /// <inheritdoc />
@@ -57,6 +61,6 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
     }
 
     return DapperCollectiveEventApplier<TModel>.ApplyAsync(
-      entry, handlerInstance, evt, resolver, connectionFactory, _tableName, _siblingTables, cancellationToken);
+      entry, handlerInstance, evt, resolver, connectionFactory, _tableName, _siblingTables, _options, cancellationToken);
   }
 }

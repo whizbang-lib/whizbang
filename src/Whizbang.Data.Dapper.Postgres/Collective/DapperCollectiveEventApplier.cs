@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text.Json;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
@@ -49,6 +50,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       IDbConnectionFactory connectionFactory,
       string tableName,
       IReadOnlyDictionary<Type, string> siblingTables,
+      CollectiveApplyOptions options,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(entry);
@@ -58,6 +60,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     ArgumentNullException.ThrowIfNull(siblingTables);
+    ArgumentNullException.ThrowIfNull(options);
 
     if (entry.EventType != evt.GetType()) {
       throw new ArgumentException(
@@ -105,7 +108,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     // (a rolled-back transaction leaves its connection unusable), which is why the open+execute is inside the
     // retried delegate.
     return await PostgresDeadlockRetry.ExecuteAsync(
-      () => _executeUpdateAsync(connectionFactory, sql, setClause.Parameters, whereClause.Parameters, cancellationToken),
+      () => _executeUpdateAsync(connectionFactory, sql, setClause.Parameters, whereClause.Parameters, options, cancellationToken),
       maxAttempts: 5,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
@@ -115,11 +118,32 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       string sql,
       IReadOnlyDictionary<string, object?> setParameters,
       IReadOnlyDictionary<string, object?> whereParameters,
+      CollectiveApplyOptions options,
       CancellationToken cancellationToken) {
     var rawConnection = await connectionFactory.CreateConnectionAsync(cancellationToken).ConfigureAwait(false);
     await using var connection = (DbConnection)rawConnection;
     if (connection.State != ConnectionState.Open) {
       await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    // Bound the apply by a server-side statement_timeout when configured: SET LOCAL inside a transaction is
+    // the only form that survives PgBouncer transaction pooling, so a runaway UPDATE is cancelled by Postgres
+    // rather than left as a zombie when the client gives up.
+    if (options.StatementTimeoutSeconds is int secs && secs > 0) {
+      await using var tx = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+      await using (var setCmd = connection.CreateCommand()) {
+        setCmd.Transaction = tx;
+        setCmd.CommandText = "SET LOCAL statement_timeout = " + (secs * 1000).ToString(CultureInfo.InvariantCulture);
+        await setCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
+      await using var txCmd = connection.CreateCommand();
+      txCmd.Transaction = tx;
+      txCmd.CommandText = sql;
+      _addParameters(txCmd, setParameters);
+      _addParameters(txCmd, whereParameters);
+      var txAffected = await txCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+      return txAffected;
     }
 
     await using var cmd = connection.CreateCommand();

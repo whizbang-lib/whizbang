@@ -58,6 +58,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       ICollectiveScopeResolver resolver,
       DbContext dbContext,
       Guid collectiveEventId,
+      CollectiveApplyOptions options,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(entry);
@@ -65,6 +66,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(evt);
     ArgumentNullException.ThrowIfNull(resolver);
     ArgumentNullException.ThrowIfNull(dbContext);
+    ArgumentNullException.ThrowIfNull(options);
 
     // Validate: the entry must match the event's concrete type and the
     // model we're generic over.
@@ -112,6 +114,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       dbContext,
       spec,
       effectiveWhere,
+      options,
       cancellationToken).ConfigureAwait(false);
   }
 }

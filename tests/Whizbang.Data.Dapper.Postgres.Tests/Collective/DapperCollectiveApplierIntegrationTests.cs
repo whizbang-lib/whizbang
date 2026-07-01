@@ -102,7 +102,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
-      siblings,
+      siblings, CollectiveApplyOptions.Default,
       default);
 
     await Assert.That(affected).IsEqualTo(1)
@@ -168,7 +168,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
-      _noSiblings,
+      _noSiblings, CollectiveApplyOptions.Default,
       default);
 
     await Assert.That(affected).IsEqualTo(2)
@@ -196,7 +196,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
-      _noSiblings,
+      _noSiblings, CollectiveApplyOptions.Default,
       default);
 
     await Assert.That(affected).IsEqualTo(1)
@@ -227,7 +227,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
-      _noSiblings,
+      _noSiblings, CollectiveApplyOptions.Default,
       default);
 
     await Assert.That(affected).IsEqualTo(1)

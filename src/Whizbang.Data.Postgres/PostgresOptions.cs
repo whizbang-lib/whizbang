@@ -74,4 +74,24 @@ public class PostgresOptions {
   public int MaxInFlightCommands { get; set; } = 50;
 
   #endregion
+
+  #region Collective Apply
+
+  /// <summary>
+  /// Rows mutated per batched collective-apply UPDATE (keyset <c>LIMIT</c>). Keeps each batch a short
+  /// transaction so lock hold stays brief. Default 1000.
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  public int CollectiveApplyBatchSize { get; set; } = 1000;
+
+  /// <summary>
+  /// Server-side <c>statement_timeout</c> (seconds) applied to each collective-apply batch transaction (via
+  /// the transaction-local <c>set_config('statement_timeout', …, true)</c> — the only form that survives
+  /// PgBouncer transaction pooling). Null leaves the server/role default; when set, a runaway batch is
+  /// cancelled by Postgres itself, so a client timeout can never leave a zombie query.
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  public int? CollectiveApplyStatementTimeoutSeconds { get; set; }
+
+  #endregion
 }

@@ -218,7 +218,7 @@ public class DapperCollectiveUnitTests {
     var entry = _entryFor<_evtB>(); // entry says _evtB but we pass _evtA
     await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
-        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings, default))
+        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings, CollectiveApplyOptions.Default, default))
       .Throws<ArgumentException>();
   }
 
@@ -227,7 +227,7 @@ public class DapperCollectiveUnitTests {
     var entry = _entryFor<_evtA>();
     await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), new _evtA { Scope = new _otherScope() },
-        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings, default))
+        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings, CollectiveApplyOptions.Default, default))
       .Throws<ArgumentException>();
   }
 
@@ -236,7 +236,7 @@ public class DapperCollectiveUnitTests {
     var entry = _entryFor<_evtA>();
     await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
-        new TenantCollectiveScopeResolver(), null!, "wh_per_x", _noSiblings, default))
+        new TenantCollectiveScopeResolver(), null!, "wh_per_x", _noSiblings, CollectiveApplyOptions.Default, default))
       .Throws<ArgumentNullException>();
   }
 

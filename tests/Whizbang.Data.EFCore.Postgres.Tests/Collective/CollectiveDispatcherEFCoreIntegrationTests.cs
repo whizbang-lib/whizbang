@@ -703,7 +703,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     return result == DBNull.Value || result is null ? null : (string)result;
   }
 
-  private CollectiveDispatcher _buildSetTagDispatcher() {
+  private CollectiveDispatcher _buildSetTagDispatcher(CollectiveApplyOptions? options = null) {
     var services = new ServiceCollection();
     var handler = new _setTagPerspective();
     services.AddSingleton(handler);
@@ -724,7 +724,27 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_cellsModel>()]);
+      [new EFCoreCollectiveEventExecutor<_cellsModel>(options)]);
+  }
+
+  // ── §3: server-side statement_timeout (SET LOCAL / set_config) bounds the apply ───────────────────
+
+  [Test]
+  public async Task DispatchAsync_WithStatementTimeout_BoundsApplyServerSideAsync() {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-timeout", tag: "before");
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { StatementTimeoutSeconds = 30 }).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-timeout"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    await Assert.That(_capturedSql.Any(c => c.Contains("set_config('statement_timeout'", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("With StatementTimeoutSeconds set, the apply must bound itself server-side (set_config('statement_timeout', …, true) — the SET LOCAL equivalent, transaction-scoped so it survives PgBouncer pooling) so a runaway UPDATE is cancelled by Postgres, not left a zombie when the client gives up.");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("The apply still completes within the timeout.");
   }
 
   internal sealed class _setTagPerspective {

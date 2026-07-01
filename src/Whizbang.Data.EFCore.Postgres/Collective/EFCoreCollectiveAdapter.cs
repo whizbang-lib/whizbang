@@ -72,18 +72,22 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
   }
 
   /// <summary>
-  /// Execute the collective-event mutation as a single SQL UPDATE.
+  /// Execute the collective-event mutation as a SQL UPDATE, bounded by the apply
+  /// <paramref name="options"/> (a per-batch <c>SET LOCAL statement_timeout</c> when configured — the only
+  /// form that survives PgBouncer transaction pooling, so a client timeout can never leave a zombie query).
   /// Returns the number of affected rows.
   /// </summary>
   public static Task<int> ExecuteAsync(
       DbContext dbContext,
       ICollectiveSpec<TModel> spec,
       Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
+      CollectiveApplyOptions options,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(spec);
     ArgumentNullException.ThrowIfNull(scopeFilter);
+    ArgumentNullException.ThrowIfNull(options);
 
     // The native nested SetProperty(r => r.Data.Prop, value) path requires Data to be mapped as an EF Core 10
     // ComplexProperty().ToJson() complex type. It fails when:
@@ -108,11 +112,36 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     // it instead incremented the sink attempts it could eventually (and wrongly) dead-letter a valid event.
     // Re-materializing ids on the raw path each attempt is idempotent.
     return PostgresDeadlockRetry.ExecuteAsync(
-      () => useRawPath
-        ? _executeRawJsonbAsync(dbContext, assignments, scopeFilter, cancellationToken)
-        : _executeNativeAsync(dbContext, spec, scopeFilter, cancellationToken),
+      () => _withStatementTimeoutAsync(dbContext, options, ct => useRawPath
+        ? _executeRawJsonbAsync(dbContext, assignments, scopeFilter, ct)
+        : _executeNativeAsync(dbContext, spec, scopeFilter, ct), cancellationToken),
       maxAttempts: 5,
       cancellationToken: cancellationToken);
+  }
+
+  /// <summary>
+  /// Runs the apply <paramref name="body"/> under a server-side <c>statement_timeout</c> when
+  /// <see cref="CollectiveApplyOptions.StatementTimeoutSeconds"/> is set: opens a transaction and sets the
+  /// timeout transaction-locally via <c>set_config('statement_timeout', …, true)</c> (parameterized — the
+  /// <c>SET LOCAL</c> equivalent), so the whole apply is bounded by Postgres and the setting survives PgBouncer
+  /// transaction pooling (a session-level <c>SET</c> would be wiped by the pooler's reset-on-return). With no
+  /// timeout configured, the body runs on the ambient/autocommit path. On <paramref name="body"/> failure the
+  /// <c>await using</c> transaction rolls back before the retry re-attempts.
+  /// </summary>
+  private static async Task<int> _withStatementTimeoutAsync(
+      DbContext dbContext, CollectiveApplyOptions options,
+      Func<CancellationToken, Task<int>> body, CancellationToken cancellationToken) {
+    if (options.StatementTimeoutSeconds is not int secs || secs <= 0) {
+      return await body(cancellationToken).ConfigureAwait(false);
+    }
+    await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+    var ms = (secs * 1000).ToString(CultureInfo.InvariantCulture);
+    await dbContext.Database.ExecuteSqlRawAsync(
+      "SELECT set_config('statement_timeout', @wb_stmt_timeout, true)",
+      new[] { new NpgsqlParameter("wb_stmt_timeout", ms) }, cancellationToken).ConfigureAwait(false);
+    var affected = await body(cancellationToken).ConfigureAwait(false);
+    await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+    return affected;
   }
 
   /// <summary>

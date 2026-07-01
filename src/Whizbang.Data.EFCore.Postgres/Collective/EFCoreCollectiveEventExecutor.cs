@@ -21,6 +21,13 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 public sealed class EFCoreCollectiveEventExecutor<TModel> : ICollectiveEventExecutor
     where TModel : class {
 
+  private readonly CollectiveApplyOptions _options;
+
+  /// <summary>Creates the executor with the apply policy (batching + statement_timeout). DI supplies the
+  /// resolved <see cref="CollectiveApplyOptions"/>; the parameterless default is used by tests.</summary>
+  public EFCoreCollectiveEventExecutor(CollectiveApplyOptions? options = null)
+    => _options = options ?? CollectiveApplyOptions.Default;
+
   /// <inheritdoc />
   public Type ModelType => typeof(TModel);
 
@@ -44,6 +51,6 @@ public sealed class EFCoreCollectiveEventExecutor<TModel> : ICollectiveEventExec
 
     return CollectiveEventApplier<TModel>.ApplyAsync(
       entry, handlerInstance, evt, resolver, dbContext,
-      collectiveEventId, cancellationToken);
+      collectiveEventId, _options, cancellationToken);
   }
 }
