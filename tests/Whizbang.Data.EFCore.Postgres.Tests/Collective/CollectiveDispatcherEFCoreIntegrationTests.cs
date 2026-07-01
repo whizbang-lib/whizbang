@@ -763,10 +763,11 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   // ── §1: the raw jsonb_set path is a single set-based UPDATE — no SELECT-id materialization ────────
 
   [Test]
-  public async Task DispatchAsync_RawPath_IssuesSingleUpdateNoIdSelectAsync() {
-    // The raw path (scalar/polymorphic jsonb) must compile the predicate straight into the UPDATE's WHERE,
-    // NOT gather ids via a SELECT then UPDATE WHERE id = ANY(@ids). Prove it by capturing the SQL the apply
-    // issues: exactly one statement against the table, and it's the UPDATE.
+  public async Task DispatchAsync_RawPath_SelectsAreBoundedNoWholeCohortGatherAsync() {
+    // The apply must never materialize the WHOLE cohort's ids (the old `SELECT id … ToList` seq scan). Every
+    // id selection is a bounded keyset batch (LIMIT), and the mutation is a set-based UPDATE. Prove it by
+    // capturing the SQL: every SELECT against the table carries a LIMIT (no unbounded whole-cohort scan), and
+    // an UPDATE is issued.
     var id = Guid.NewGuid();
     await _seedCellsAsync(id, tenantId: "t-raw", tag: "before");
     _capturedSql.Clear();
@@ -777,13 +778,43 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       dbContextOrSession: _ctx!,
       cancellationToken: default);
 
-    var applyCommands = _capturedSql
+    var tableCmds = _capturedSql
       .Where(c => c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase))
       .ToList();
-    await Assert.That(applyCommands.Count).IsEqualTo(1)
-      .Because("The raw jsonb_set path issues exactly ONE statement (a set-based UPDATE) — not a SELECT id followed by an UPDATE. No id materialization / seq scan.");
-    await Assert.That(applyCommands[0].TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase)).IsTrue()
-      .Because("The single statement is the compiled-predicate UPDATE; the id-gathering SELECT is gone.");
+    var tableSelects = tableCmds.Where(c => c.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)).ToList();
+    await Assert.That(tableSelects.Count).IsGreaterThan(0)
+      .Because("A keyset batch selects the batch ids before updating them.");
+    await Assert.That(tableSelects.All(c => c.Contains("LIMIT", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("Every id selection is bounded by LIMIT (at most BatchSize) — the whole-cohort seq-scan gather is gone.");
+    await Assert.That(tableCmds.Any(c => c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("The mutation is a set-based UPDATE over the batch ids.");
+  }
+
+  [Test]
+  public async Task DispatchAsync_CohortLargerThanBatchSize_UpdatesAllInMultipleBatchesAsync() {
+    // Keyset batching: a cohort bigger than BatchSize is applied in ⌈N/BatchSize⌉ short-transaction batches,
+    // and every row is updated exactly once (id > cursor guarantees forward progress, no gaps, no repeats).
+    var ids = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+    foreach (var id in ids) {
+      await _seedCellsAsync(id, tenantId: "t-batch", tag: "before");
+    }
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { BatchSize = 2 }).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-batch"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    foreach (var id in ids) {
+      await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+        .Because("Every row in the cohort must be updated exactly once across the batches.");
+    }
+    var updateBatches = _capturedSql.Count(c =>
+      c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase) &&
+      c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(updateBatches).IsEqualTo(3)
+      .Because("5 rows at BatchSize=2 → ⌈5/2⌉ = 3 batched UPDATEs, each a short transaction (brief lock hold).");
   }
 
   private sealed class _sqlCaptureInterceptor(List<string> captured) : DbCommandInterceptor {

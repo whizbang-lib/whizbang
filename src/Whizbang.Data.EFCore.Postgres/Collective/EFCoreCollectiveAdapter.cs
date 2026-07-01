@@ -1,12 +1,13 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Collective;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 
@@ -54,30 +55,14 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Adapter is generic over TModel; static factory + execute methods match the pattern of EF Core's own generic-static helpers.")]
 public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
   /// <summary>
-  /// Build the final query + setters pair that <c>ExecuteUpdateAsync</c>
-  /// consumes. Exposed separately from <see cref="ExecuteAsync"/> so
-  /// unit tests can inspect the composition without needing a connected
-  /// DbContext.
+  /// Execute the collective-event mutation as a keyset-batched set-based UPDATE, bounded by the apply
+  /// <paramref name="options"/>. One raw <c>jsonb_set</c> path serves every mapping (complex-JSON, scalar/
+  /// polymorphic, null setters) — the predicate is compiled straight to SQL (no id materialization), and the
+  /// cohort is chunked by <see cref="CollectiveApplyOptions.BatchSize"/> so each batch is a short transaction:
+  /// brief lock hold, and a per-batch <c>statement_timeout</c> (when configured) that Postgres enforces
+  /// server-side (surviving PgBouncer pooling). Returns the total number of rows affected.
   /// </summary>
-  internal static (IQueryable<PerspectiveRow<TModel>> Query,
-                   Expression<Action<Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder<PerspectiveRow<TModel>>>> Setters)
-    BuildCall(
-      DbContext dbContext,
-      ICollectiveSpec<TModel> spec,
-      Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter) {
-
-    var query = dbContext.Set<PerspectiveRow<TModel>>().Where(scopeFilter);
-    var setters = CollectiveSettersRewriter.Rewrite(spec.Setters);
-    return (query, setters);
-  }
-
-  /// <summary>
-  /// Execute the collective-event mutation as a SQL UPDATE, bounded by the apply
-  /// <paramref name="options"/> (a per-batch <c>SET LOCAL statement_timeout</c> when configured — the only
-  /// form that survives PgBouncer transaction pooling, so a client timeout can never leave a zombie query).
-  /// Returns the number of affected rows.
-  /// </summary>
-  public static Task<int> ExecuteAsync(
+  public static async Task<int> ExecuteAsync(
       DbContext dbContext,
       ICollectiveSpec<TModel> spec,
       Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
@@ -89,97 +74,7 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(scopeFilter);
     ArgumentNullException.ThrowIfNull(options);
 
-    // The native nested SetProperty(r => r.Data.Prop, value) path requires Data to be mapped as an EF Core 10
-    // ComplexProperty().ToJson() complex type. It fails when:
-    //   • any value is null — EF emits an untyped NULL (Postgres 42804); the value-selector form nulls the
-    //     whole column;
-    //   • Data is mapped as a SCALAR jsonb column instead of a complex type — the polymorphic mapping a consumer
-    //     generates for models with [JsonPolymorphic] members (e.g. OrderTenantFields). There is no complex
-    //     sub-property to target, so EF rejects it with "does not represent a valid property to be set".
-    // In those cases we fall back to a raw jsonb_set UPDATE that targets the jsonb column directly. The WHERE
-    // is still translated by EF (we materialize the matching ids first), so cross-perspective cohorts keep
-    // working.
-    //
-    // The path decision is evaluated ONCE (deterministic, no I/O) so the retry below re-runs only the DB work.
     var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters);
-    var useRawPath = assignments.Any(a => a.IsNull) || !_dataIsComplexProperty(dbContext);
-
-    // A collective apply is a single set-based UPDATE over every row in scope, so it overlaps row locks with
-    // concurrent per-row projection writes and other pods' collective UPDATEs — transient 40P01 (deadlock)
-    // and 40001 (serialization_failure) are expected under load. Retry the whole apply in-line with jittered
-    // backoff so contention clears here, before a failure ever bubbles up to the __collective__ sink's attempt
-    // counter. That ordering matters: a deadlock is transient, not poison, so it must resolve via retry — if
-    // it instead incremented the sink attempts it could eventually (and wrongly) dead-letter a valid event.
-    // Re-materializing ids on the raw path each attempt is idempotent.
-    return PostgresDeadlockRetry.ExecuteAsync(
-      () => _withStatementTimeoutAsync(dbContext, options, ct => useRawPath
-        ? _executeRawJsonbAsync(dbContext, assignments, scopeFilter, ct)
-        : _executeNativeAsync(dbContext, spec, scopeFilter, ct), cancellationToken),
-      maxAttempts: 5,
-      cancellationToken: cancellationToken);
-  }
-
-  /// <summary>
-  /// Runs the apply <paramref name="body"/> under a server-side <c>statement_timeout</c> when
-  /// <see cref="CollectiveApplyOptions.StatementTimeoutSeconds"/> is set: opens a transaction and sets the
-  /// timeout transaction-locally via <c>set_config('statement_timeout', …, true)</c> (parameterized — the
-  /// <c>SET LOCAL</c> equivalent), so the whole apply is bounded by Postgres and the setting survives PgBouncer
-  /// transaction pooling (a session-level <c>SET</c> would be wiped by the pooler's reset-on-return). With no
-  /// timeout configured, the body runs on the ambient/autocommit path. On <paramref name="body"/> failure the
-  /// <c>await using</c> transaction rolls back before the retry re-attempts.
-  /// </summary>
-  private static async Task<int> _withStatementTimeoutAsync(
-      DbContext dbContext, CollectiveApplyOptions options,
-      Func<CancellationToken, Task<int>> body, CancellationToken cancellationToken) {
-    if (options.StatementTimeoutSeconds is not int secs || secs <= 0) {
-      return await body(cancellationToken).ConfigureAwait(false);
-    }
-    await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-    var ms = (secs * 1000).ToString(CultureInfo.InvariantCulture);
-    await dbContext.Database.ExecuteSqlRawAsync(
-      "SELECT set_config('statement_timeout', @wb_stmt_timeout, true)",
-      new[] { new NpgsqlParameter("wb_stmt_timeout", ms) }, cancellationToken).ConfigureAwait(false);
-    var affected = await body(cancellationToken).ConfigureAwait(false);
-    await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-    return affected;
-  }
-
-  /// <summary>
-  /// Native EF Core path: nested <c>SetProperty(r =&gt; r.Data.Prop, value)</c> against a
-  /// <c>ComplexProperty().ToJson()</c> mapping, executed as one <c>ExecuteUpdateAsync</c>.
-  /// </summary>
-  private static Task<int> _executeNativeAsync(
-      DbContext dbContext,
-      ICollectiveSpec<TModel> spec,
-      Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
-      CancellationToken cancellationToken) {
-    var (query, setters) = BuildCall(dbContext, spec, scopeFilter);
-    return query.ExecuteUpdateAsync(setters.Compile(), cancellationToken);
-  }
-
-  /// <summary>
-  /// True when Data is mapped as an EF Core <c>ComplexProperty().ToJson()</c> complex type — the only shape
-  /// where native nested <c>SetProperty(r =&gt; r.Data.Prop, …)</c> works. False for a scalar/polymorphic jsonb
-  /// column mapping (no complex sub-property to set), which forces the raw jsonb_set path.
-  /// </summary>
-  private static bool _dataIsComplexProperty(DbContext dbContext) {
-    var entityType = dbContext.Model.FindEntityType(typeof(PerspectiveRow<TModel>));
-    return entityType?.FindComplexProperty(nameof(PerspectiveRow<TModel>.Data)) is not null;
-  }
-
-  /// <summary>
-  /// Raw jsonb_set path — for scalar/polymorphic jsonb models and null-valued setters, where EF's
-  /// <c>ExecuteUpdateAsync</c> can't express the SET. Issues ONE set-based
-  /// <c>UPDATE … SET data = jsonb_set(…) WHERE &lt;compiled-predicate&gt;</c> — the WHERE is compiled straight
-  /// to SQL by the shared <see cref="CollectivePredicateSqlCompiler{TModel}"/> (including scope envelope and
-  /// cross-perspective <c>EXISTS</c>), so there is NO <c>SELECT id</c> round-trip and no whole-cohort id
-  /// materialization. jsonb_set with a <c>'null'::jsonb</c> value sets the sub-property to JSON null.
-  /// </summary>
-  private static async Task<int> _executeRawJsonbAsync(
-      DbContext dbContext,
-      IReadOnlyList<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,
-      Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
-      CancellationToken cancellationToken) {
 
     var entityType = dbContext.Model.FindEntityType(typeof(PerspectiveRow<TModel>))
       ?? throw new InvalidOperationException(
@@ -187,37 +82,100 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     var table = entityType.GetTableName()
       ?? throw new InvalidOperationException($"PerspectiveRow<{typeof(TModel).Name}> has no table name.");
     var schema = entityType.GetSchema();
-    var qualifiedTable = schema is null
-      ? "\"" + table + "\""
-      : "\"" + schema + "\".\"" + table + "\"";
+    var qualifiedTable = schema is null ? "\"" + table + "\"" : "\"" + schema + "\".\"" + table + "\"";
 
-    // Build nested jsonb_set: jsonb_set(jsonb_set(data, @path0, @p0::jsonb), @path1, @p1::jsonb).
-    // The path is bound as a text[] parameter (not a '{...}' literal) so the SQL carries no braces — EF's
-    // ExecuteSqlRaw would otherwise try to parse '{Prop}' as a {n} placeholder — and so the property name is
-    // parameterized rather than concatenated.
+    // Nested jsonb_set: jsonb_set(jsonb_set(data, @path0, @p0::jsonb), …). The path is bound as a text[]
+    // parameter (no '{…}' brace literal) and the property name is parameterized, not concatenated.
     var setExpr = new StringBuilder("data");
-    var parameters = new List<NpgsqlParameter>(assignments.Count * 2);
     for (var i = 0; i < assignments.Count; i++) {
-      var a = assignments[i];
       var idx = i.ToString(CultureInfo.InvariantCulture);
       setExpr.Insert(0, "jsonb_set(")
         .Append(", @path").Append(idx).Append(", @p").Append(idx).Append("::jsonb)");
-      parameters.Add(new NpgsqlParameter("path" + idx, new[] { a.PathName }));  // text[] path
-      parameters.Add(new NpgsqlParameter("p" + idx, a.JsonValue));              // JSON text, cast ::jsonb
     }
 
-    // Compile the predicate straight to a SQL WHERE (no SELECT id / seq scan). The bare table name qualifies
-    // the outer row inside any correlated EXISTS; the sibling table resolves via ICollectiveSiblingTableSource
-    // on the EFCoreCollectiveQuery embedded in the predicate.
-    var where = Whizbang.Data.Postgres.Collective.CollectivePredicateSqlCompiler<TModel>.Compile(
+    // Compile the predicate straight to SQL (no SELECT-id seq scan). The bare table name qualifies the outer
+    // row inside any correlated EXISTS; the sibling table resolves via ICollectiveSiblingTableSource on the
+    // EFCoreCollectiveQuery embedded in the predicate.
+    var where = CollectivePredicateSqlCompiler<TModel>.Compile(
       scopeFilter, parameterPrefix: "where", outerTableName: table);
-    foreach (var (name, value) in where.Parameters) {
-      parameters.Add(new NpgsqlParameter(name, value ?? (object)DBNull.Value));
+
+    var batchSize = options.BatchSize > 0 ? options.BatchSize : CollectiveApplyOptions.Default.BatchSize;
+
+    // Keyset batch: select up to BatchSize ids past the cursor (bounded — never the whole cohort), then update
+    // exactly those. `id AS "Value"` is EF's required scalar-projection column name. The bare table qualifies
+    // the outer row inside any correlated EXISTS. The predicate re-evaluates against current state each batch —
+    // safe because collective setters are constant (idempotent), and `id > @cursor` guarantees forward progress
+    // even if a row falls out of the cohort after its update.
+    var selectSql = "SELECT id AS \"Value\" FROM " + table + " WHERE (" + where.SqlFragment +
+      ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
+    var updateSql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + " WHERE id = ANY(@wb_ids)";
+
+    var total = 0;
+    var lastId = Guid.Empty;
+    while (true) {
+      var lastCursor = lastId;
+      var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
+        () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lastCursor, cancellationToken),
+        maxAttempts: 5,
+        cancellationToken: cancellationToken).ConfigureAwait(false);
+      total += count;
+      if (count < batchSize || maxId is null) {
+        break;
+      }
+      lastId = maxId.Value;
+    }
+    return total;
+  }
+
+  /// <summary>
+  /// Runs ONE keyset batch in its own short transaction: sets a transaction-local <c>statement_timeout</c> via
+  /// <c>set_config(…, true)</c> when configured (the <c>SET LOCAL</c> equivalent — the only form that survives
+  /// PgBouncer pooling), selects up to <c>BatchSize</c> ids past the cursor (ordered, so the last is the
+  /// next cursor — Postgres uuid order, no client-side compare and no <c>max(uuid)</c> aggregate), and updates
+  /// exactly those ids. On failure the <c>await using</c> transaction rolls back before the retry re-attempts
+  /// the same batch (idempotent for the same cursor).
+  /// </summary>
+  private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
+      DbContext dbContext, string selectSql, string updateSql,
+      IReadOnlyList<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,
+      CollectivePredicateSqlCompiler<TModel>.CompiledWhereClause where,
+      CollectiveApplyOptions options, Guid lastId, CancellationToken cancellationToken) {
+
+    await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+    if (options.StatementTimeoutSeconds is int secs && secs > 0) {
+      await dbContext.Database.ExecuteSqlRawAsync(
+        "SELECT set_config('statement_timeout', @wb_stmt_timeout, true)",
+        new[] { _param("wb_stmt_timeout", (secs * 1000).ToString(CultureInfo.InvariantCulture)) },
+        cancellationToken).ConfigureAwait(false);
     }
 
-    var sql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + " WHERE " + where.SqlFragment;
-    return await dbContext.Database
-      .ExecuteSqlRawAsync(sql, parameters, cancellationToken)
-      .ConfigureAwait(false);
+    var selectParams = new List<Npgsql.NpgsqlParameter>(where.Parameters.Count + 1);
+    foreach (var (name, value) in where.Parameters) {
+      selectParams.Add(_param(name, value ?? (object)DBNull.Value));
+    }
+    selectParams.Add(_param("wb_lastid", lastId));
+    var ids = await dbContext.Database.SqlQueryRaw<Guid>(selectSql, selectParams.Cast<object>().ToArray())
+      .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+    if (ids.Count == 0) {
+      await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+      return (0, null);
+    }
+
+    var updateParams = new List<Npgsql.NpgsqlParameter>((assignments.Count * 2) + 1);
+    for (var i = 0; i < assignments.Count; i++) {
+      var idx = i.ToString(CultureInfo.InvariantCulture);
+      updateParams.Add(_param("path" + idx, new[] { assignments[i].PathName }));  // text[] path
+      updateParams.Add(_param("p" + idx, assignments[i].JsonValue));             // JSON text, cast ::jsonb
+    }
+    updateParams.Add(_param("wb_ids", ids.ToArray()));  // uuid[]
+    var count = await dbContext.Database.ExecuteSqlRawAsync(updateSql, updateParams, cancellationToken).ConfigureAwait(false);
+
+    await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+    // ids came back ordered by id ASC, so the last one is the batch's greatest id — the next cursor.
+    return (count, ids[^1]);
   }
+
+  private static Npgsql.NpgsqlParameter _param(string name, object value) => new(name, value);
 }
