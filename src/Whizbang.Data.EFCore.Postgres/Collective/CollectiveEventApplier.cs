@@ -115,11 +115,20 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     // compiler-generated (AOT-safe, no reflection) and carries the scope's members (e.g. TenantId).
     var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
 
+    // §6: fold this handler's per-apply knob overrides onto the global default (0 = inherit). SerializeApplies
+    // and EnsureIndexes stay global — exclusive serialization is not per-handler optional (D4 safety).
+    var effectiveOptions = options with {
+      BatchSize = entry.BatchSizeOverride > 0 ? entry.BatchSizeOverride : options.BatchSize,
+      StatementTimeoutSeconds = entry.StatementTimeoutSecondsOverride > 0
+        ? entry.StatementTimeoutSecondsOverride
+        : options.StatementTimeoutSeconds,
+    };
+
     return await EFCoreCollectiveAdapter<TModel>.ExecuteAsync(
       dbContext,
       spec,
       effectiveWhere,
-      options,
+      effectiveOptions,
       scopeKey,
       collectiveEventId,
       cancellationToken).ConfigureAwait(false);

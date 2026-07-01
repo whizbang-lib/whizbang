@@ -108,4 +108,19 @@ public sealed class CollectiveApplyForAttribute : Attribute {
   /// <see cref="CollectiveSpecKind.Linq"/>.
   /// </summary>
   public CollectiveSpecKind SpecKind { get; init; } = CollectiveSpecKind.Linq;
+
+  /// <summary>
+  /// Per-handler override for <see cref="CollectiveApplyOptions.BatchSize"/> (rows per batched UPDATE). A heavy
+  /// handler (large or slow rows) can shrink its batch for briefer lock holds; a light one can widen it.
+  /// <c>0</c> (default) inherits the global <see cref="CollectiveApplyOptions"/> default. Attribute arguments
+  /// can't be nullable, so 0 is the "inherit" sentinel.
+  /// </summary>
+  public int BatchSize { get; init; }
+
+  /// <summary>
+  /// Per-handler override for <see cref="CollectiveApplyOptions.StatementTimeoutSeconds"/> (server-side
+  /// <c>SET LOCAL statement_timeout</c> per batch). <c>0</c> (default) inherits the global default (which may
+  /// itself be null = no timeout). Positive sets this handler's batches to that many seconds.
+  /// </summary>
+  public int StatementTimeoutSeconds { get; init; }
 }

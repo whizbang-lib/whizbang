@@ -892,6 +892,57 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       "SELECT indexdef FROM pg_indexes WHERE indexname = @indexName;", new { indexName });
   }
 
+  // ── §6: per-[CollectiveApplyFor]-handler knob overrides beat the global default ───────────────────
+
+  [Test]
+  public async Task DispatchAsync_PerHandlerBatchSizeOverride_WinsOverGlobalDefaultAsync() {
+    // The entry carries BatchSizeOverride=2 (from [CollectiveApplyFor(BatchSize=2)]) while the global default
+    // stays 1000. A 5-row cohort must apply in ⌈5/2⌉=3 batched UPDATEs — proving the per-handler knob reached
+    // the adapter and won over the global default.
+    var ids = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+    foreach (var id in ids) {
+      await _seedCellsAsync(id, tenantId: "t-knob", tag: "before");
+    }
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcherWithBatchOverride(batchSizeOverride: 2).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-knob"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    foreach (var id in ids) {
+      await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+        .Because("Every row applies regardless of batch size.");
+    }
+    var updateBatches = _capturedSql.Count(c =>
+      c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase) &&
+      c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(updateBatches).IsEqualTo(3)
+      .Because("5 rows at the per-handler BatchSize override of 2 → 3 batched UPDATEs, even though the global default is 1000. The [CollectiveApplyFor] knob on the entry reached the adapter.");
+  }
+
+  // Global options stay at the framework defaults (BatchSize 1000); the ENTRY carries the per-handler override.
+  private CollectiveDispatcher _buildSetTagDispatcherWithBatchOverride(int batchSizeOverride) {
+    var services = new ServiceCollection();
+    services.AddSingleton(new _setTagPerspective());
+    var entries = new CollectiveApplyEntry[] {
+      new(
+        ModelType: typeof(_cellsModel),
+        EventType: typeof(_setTagCollectiveEvent),
+        HandlerType: typeof(_setTagPerspective),
+        MethodName: nameof(_setTagPerspective.SetTag),
+        ScopeHandling: CollectiveScopeHandling.Framework,
+        SpecKind: CollectiveSpecKind.Linq,
+        Invoker: static (h, e, q) => ((_setTagPerspective)h).SetTag((_setTagCollectiveEvent)e),
+        BatchSizeOverride: batchSizeOverride
+      ),
+    };
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      entries,
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<_cellsModel>(null)]);
+  }
+
   private sealed class _sqlCaptureInterceptor(List<string> captured) : DbCommandInterceptor {
     public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
         DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
