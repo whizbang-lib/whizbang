@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 
@@ -94,11 +95,35 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     // In those cases we fall back to a raw jsonb_set UPDATE that targets the jsonb column directly. The WHERE
     // is still translated by EF (we materialize the matching ids first), so cross-perspective cohorts keep
     // working.
+    //
+    // The path decision is evaluated ONCE (deterministic, no I/O) so the retry below re-runs only the DB work.
     var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters);
-    if (assignments.Any(a => a.IsNull) || !_dataIsComplexProperty(dbContext)) {
-      return _executeRawJsonbAsync(dbContext, assignments, scopeFilter, cancellationToken);
-    }
+    var useRawPath = assignments.Any(a => a.IsNull) || !_dataIsComplexProperty(dbContext);
 
+    // A collective apply is a single set-based UPDATE over every row in scope, so it overlaps row locks with
+    // concurrent per-row projection writes and other pods' collective UPDATEs — transient 40P01 (deadlock)
+    // and 40001 (serialization_failure) are expected under load. Retry the whole apply in-line with jittered
+    // backoff so contention clears here, before a failure ever bubbles up to the __collective__ sink's attempt
+    // counter. That ordering matters: a deadlock is transient, not poison, so it must resolve via retry — if
+    // it instead incremented the sink attempts it could eventually (and wrongly) dead-letter a valid event.
+    // Re-materializing ids on the raw path each attempt is idempotent.
+    return PostgresDeadlockRetry.ExecuteAsync(
+      () => useRawPath
+        ? _executeRawJsonbAsync(dbContext, assignments, scopeFilter, cancellationToken)
+        : _executeNativeAsync(dbContext, spec, scopeFilter, cancellationToken),
+      maxAttempts: 5,
+      cancellationToken: cancellationToken);
+  }
+
+  /// <summary>
+  /// Native EF Core path: nested <c>SetProperty(r =&gt; r.Data.Prop, value)</c> against a
+  /// <c>ComplexProperty().ToJson()</c> mapping, executed as one <c>ExecuteUpdateAsync</c>.
+  /// </summary>
+  private static Task<int> _executeNativeAsync(
+      DbContext dbContext,
+      ICollectiveSpec<TModel> spec,
+      Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
+      CancellationToken cancellationToken) {
     var (query, setters) = BuildCall(dbContext, spec, scopeFilter);
     return query.ExecuteUpdateAsync(setters.Compile(), cancellationToken);
   }

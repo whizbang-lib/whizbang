@@ -5,6 +5,7 @@ using System.Text.Json;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres.Collective;
 
@@ -96,6 +97,24 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
 
     var sql = $"UPDATE {tableName} SET {setClause.SqlFragment} WHERE {whereClause.SqlFragment}";
 
+    // Transient concurrency errors (40P01 deadlock / 40001 serialization_failure) are expected when the
+    // collective UPDATE overlaps per-row projection writes or another pod's collective UPDATE. Retry in-line
+    // with jittered backoff so contention clears here rather than bubbling a failure up to the __collective__
+    // sink's attempt counter — a deadlock is transient, not poison. Each attempt opens a fresh connection
+    // (a rolled-back transaction leaves its connection unusable), which is why the open+execute is inside the
+    // retried delegate.
+    return await PostgresDeadlockRetry.ExecuteAsync(
+      () => _executeUpdateAsync(connectionFactory, sql, setClause.Parameters, whereClause.Parameters, cancellationToken),
+      maxAttempts: 5,
+      cancellationToken: cancellationToken).ConfigureAwait(false);
+  }
+
+  private static async Task<int> _executeUpdateAsync(
+      IDbConnectionFactory connectionFactory,
+      string sql,
+      IReadOnlyDictionary<string, object?> setParameters,
+      IReadOnlyDictionary<string, object?> whereParameters,
+      CancellationToken cancellationToken) {
     var rawConnection = await connectionFactory.CreateConnectionAsync(cancellationToken).ConfigureAwait(false);
     await using var connection = (DbConnection)rawConnection;
     if (connection.State != ConnectionState.Open) {
@@ -104,8 +123,8 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
 
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = sql;
-    _addParameters(cmd, setClause.Parameters);
-    _addParameters(cmd, whereClause.Parameters);
+    _addParameters(cmd, setParameters);
+    _addParameters(cmd, whereParameters);
     return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
