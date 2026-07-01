@@ -187,12 +187,14 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("The scope envelope still binds — a Draft row in a different tenant is excluded.");
   }
 
-  // ── Per-model Where projection: Custom owns the whole WHERE ────────────
+  // ── Per-model Where projection: Custom refines the cohort but scope STILL binds (D0 fix) ────────────
 
   [Test]
-  public async Task DispatchAsync_CustomHandlerWhere_IgnoresResolverScopeAsync() {
-    // Under Custom, the resolver scope filter is not applied at all — the handler's Where is the entire
-    // predicate. So a Draft row in tenant B is mutated even though the event's scope names tenant A.
+  public async Task DispatchAsync_CustomHandlerWhere_StillHonorsTenantScopeAsync() {
+    // D0 data-safety fix: perspective tables are SHARED multi-tenant. Even under Custom — where the handler
+    // owns the cohort predicate — the framework MUST still AND the tenant scope envelope, or a tenant-A event
+    // rewrites tenant-B rows (cross-tenant corruption). The handler declares only its cohort (Status=='Draft');
+    // the framework guarantees the tenant filter.
     var draftA = Guid.NewGuid();
     var draftB = Guid.NewGuid();
     var approvedB = Guid.NewGuid();
@@ -210,13 +212,13 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       dbContextOrSession: _ctx!,
       cancellationToken: default);
 
-    await Assert.That(result.AffectedRowCount).IsEqualTo(2)
-      .Because("Custom ignores the tenant envelope: every Draft row, regardless of tenant, matches the handler's sole predicate.");
+    await Assert.That(result.AffectedRowCount).IsEqualTo(1)
+      .Because("Custom refines the cohort (Status=='Draft') but the framework still ANDs the tenant envelope — only tenant-A's single Draft row qualifies.");
     await Assert.That(await _readStatusAsync(draftA)).IsEqualTo("Archived");
-    await Assert.That(await _readStatusAsync(draftB)).IsEqualTo("Archived")
-      .Because("A Draft row in tenant B is mutated even though the event scope names tenant A — Custom dropped the scope envelope.");
+    await Assert.That(await _readStatusAsync(draftB)).IsEqualTo("Draft")
+      .Because("D0 FIX: a Draft row in tenant B must be UNTOUCHED even under Custom — the scope envelope always binds on a shared multi-tenant table.");
     await Assert.That(await _readStatusAsync(approvedB)).IsEqualTo("Approved")
-      .Because("The handler Where (Status=='Draft') still excludes the Approved row.");
+      .Because("The handler Where (Status=='Draft') excludes the Approved row anyway.");
   }
 
   // ── Cross-perspective cohort: scope by a sibling table (correlated EXISTS) ──

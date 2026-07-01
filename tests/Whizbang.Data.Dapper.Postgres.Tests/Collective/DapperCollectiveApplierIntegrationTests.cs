@@ -209,7 +209,9 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task ApplyAsync_CustomHandlerWhere_IgnoresResolverScopeAsync() {
+  public async Task ApplyAsync_CustomHandlerWhere_StillHonorsTenantScopeAsync() {
+    // D0 safety fix: under Custom the handler owns the cohort predicate, but the framework STILL ANDs the
+    // tenant envelope on shared multi-tenant tables — so a tenant-A event never touches tenant-B rows.
     await _createTableAsync();
     var draftA = Guid.NewGuid();
     var draftB = Guid.NewGuid();
@@ -228,13 +230,13 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       _noSiblings,
       default);
 
-    await Assert.That(affected).IsEqualTo(2)
-      .Because("Custom drops the tenant envelope: every Draft row matches the handler's sole predicate, regardless of tenant.");
+    await Assert.That(affected).IsEqualTo(1)
+      .Because("Custom refines the cohort (Status=='Draft') but the framework still ANDs the tenant envelope — only tenant-A's single Draft row qualifies.");
     await Assert.That(await _statusAsync(draftA)).IsEqualTo("Archived");
-    await Assert.That(await _statusAsync(draftB)).IsEqualTo("Archived")
-      .Because("Tenant-B Draft row is mutated even though the event scope names tenant A — Custom ignores the resolver scope filter.");
+    await Assert.That(await _statusAsync(draftB)).IsEqualTo("Draft")
+      .Because("D0 FIX: tenant-B Draft row is UNTOUCHED even under Custom — the scope envelope always binds.");
     await Assert.That(await _statusAsync(approvedB)).IsEqualTo("Approved")
-      .Because("Handler Where (Status=='Draft') still excludes the Approved row.");
+      .Because("Handler Where (Status=='Draft') excludes the Approved row anyway.");
   }
 
   private static CollectiveApplyEntry _draftsEntry(CollectiveScopeHandling handling) => new(

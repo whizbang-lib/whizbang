@@ -101,13 +101,11 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
         $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
     }
 
-    // Compose the effective WHERE. Framework: the resolver's scope envelope (generic-by-TModel),
-    // optionally refined by the handler's own per-model Where. Custom: the handler owns the full
-    // predicate, so the resolver scope filter is not even computed.
-    Expression<Func<PerspectiveRow<TModel>, bool>>? scopeFilter =
-      entry.ScopeHandling == CollectiveScopeHandling.Custom
-        ? null
-        : resolver.ScopeFilter<TModel>(evt.Scope);
+    // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
+    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
+    // Custom AND-composes it with the mandatory handler cohort Where. A handler can refine within scope but
+    // never escape it.
+    var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
     var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
 
     return await EFCoreCollectiveAdapter<TModel>.ExecuteAsync(

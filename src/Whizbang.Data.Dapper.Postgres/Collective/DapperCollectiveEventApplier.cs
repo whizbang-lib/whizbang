@@ -86,11 +86,11 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
 
     var setClause = DapperCollectiveSpecCompiler<TModel>.Compile(spec, _jsonOptions, parameterPrefix: "set");
 
-    // Compose the effective WHERE. Framework: resolver scope envelope optionally refined by the handler's
-    // per-model Where. Custom: the handler's Where alone — the resolver scope filter is not computed.
-    var scopeFilter = entry.ScopeHandling == CollectiveScopeHandling.Custom
-      ? null
-      : resolver.ScopeFilter<TModel>(evt.Scope);
+    // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
+    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
+    // Custom AND-composes it with the mandatory handler cohort Where. A handler refines within scope, never
+    // escapes it.
+    var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
     var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
     var whereClause = DapperCollectiveScopeFilterCompiler<TModel>.Compile(
       effectiveWhere, parameterPrefix: "where", outerTableName: tableName);
