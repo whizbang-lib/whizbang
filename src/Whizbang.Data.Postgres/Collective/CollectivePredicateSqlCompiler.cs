@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
@@ -176,9 +177,21 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       Dictionary<string, object?> parameters) {
     var value = _evaluateValue(valueExpr);
     var paramName = $"{prefix}_{propName.ToLowerInvariant()}";
-    parameters[paramName] = value?.ToString();
+    parameters[paramName] = _toJsonbText(value);
     sql.Append(columnSql).Append(' ').Append(op).Append(" @").Append(paramName);
   }
+
+  // The text a jsonb `->>` extraction yields for <paramref name="value"/>, so the bound parameter compares
+  // equal to `data->>'X'` / `scope->>'X'`. Only enums need special handling: EF's ComplexProperty().ToJson()
+  // stores a plain enum as its underlying NUMBER (the default mapping), so its `->>` text is e.g. "1" — while
+  // `enumValue.ToString()` is the NAME ("Draft") and would never match. Strings, Guids (stored as a JSON
+  // string → `->>` gives the guid text), and numeric/bool scalars already round-trip through ToString().
+  // (A perspective that maps an enum to text via .HasConversion&lt;string&gt;() would need SpecKind = RawSql.)
+  private static string? _toJsonbText(object? value) => value switch {
+    null => null,
+    Enum e => Convert.ToInt64(e, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture),
+    _ => value.ToString(),
+  };
 
   // <values>.Contains(row.Data.X) → row.data->>'X' IN (@p0, @p1, …).
   private static void _compileContains(
@@ -224,7 +237,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     var i = 0;
     foreach (var v in values) {
       var name = $"{prefix}_{itemProp!.ToLowerInvariant()}_{i}";
-      parameters[name] = v?.ToString();
+      parameters[name] = _toJsonbText(v);
       names.Add("@" + name);
       i++;
     }

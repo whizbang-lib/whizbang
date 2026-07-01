@@ -176,8 +176,12 @@ public class DapperCollectiveUnitTests {
 
     await Assert.That(result.SqlFragment).IsEqualTo(
       "EXISTS (SELECT 1 FROM wh_per_status s WHERE (s.id = wh_per_job.id AND s.data->>'Status' IN (@where_status_0, @where_status_1, @where_status_2)))");
-    await Assert.That(result.Parameters["where_status_0"]).IsEqualTo("Draft")
-      .Because("Enum values serialize to their names, matching how the jsonb column stores the enum.");
+    // Enum values serialize to their UNDERLYING INT (Draft=0, Approved=1, Published=2) — EF's
+    // ComplexProperty().ToJson() stores a plain enum as its number, so `data->>'Status'` is "0"/"1"/"2", NOT
+    // the name. Compiling to the name would match zero rows (the production collective template bug).
+    await Assert.That(result.Parameters["where_status_0"]).IsEqualTo("0");
+    await Assert.That(result.Parameters["where_status_1"]).IsEqualTo("1");
+    await Assert.That(result.Parameters["where_status_2"]).IsEqualTo("2");
   }
 
   [Test]
