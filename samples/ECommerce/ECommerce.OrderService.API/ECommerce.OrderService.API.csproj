@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.OpenApi" /> <!-- Pinned to patch GHSA-v5pm-xwqc-g5wc; overrides vulnerable transitive 2.0.0 -->
     <PackageReference Include="HotChocolate.AspNetCore" />
     <PackageReference Include="HotChocolate.Data" />
     <PackageReference Include="FastEndpoints" />
