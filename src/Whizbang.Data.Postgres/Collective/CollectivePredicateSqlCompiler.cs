@@ -189,11 +189,27 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     if (mc.Object is null && mc.Arguments.Count == 2) {           // Enumerable.Contains(source, item)
       sourceExpr = mc.Arguments[0];
       itemExpr = mc.Arguments[1];
+    } else if (mc.Object is null && mc.Arguments.Count == 3) {
+      // MemoryExtensions.Contains(ReadOnlySpan<T> span, T item, IEqualityComparer<T>? comparer) — the span
+      // overload the C# binder resolves `array.Contains(x)` to for some element types (notably value-type
+      // enums; reference types like string land on the 2-arg form). The source array reaches arg[0] via an
+      // array→span op_Implicit that _evaluateValue already unwraps. Only the default (null) comparer preserves
+      // plain equality semantics — a custom comparer would change matching and isn't translatable to SQL.
+      if (mc.Arguments[2] is not (ConstantExpression { Value: null } or DefaultExpression)) {
+        throw new NotSupportedException(
+          "Contains with a custom IEqualityComparer is not supported in a collective scope filter — it can't be translated to SQL IN.");
+      }
+      sourceExpr = mc.Arguments[0];
+      itemExpr = mc.Arguments[1];
     } else if (mc.Object is not null && mc.Arguments.Count == 1) { // list.Contains(item)
       sourceExpr = mc.Object;
       itemExpr = mc.Arguments[0];
     } else {
-      throw new NotSupportedException("Unsupported Contains shape in collective scope filter.");
+      var arg0 = mc.Arguments.Count > 0 ? mc.Arguments[0].Type.Name : "-";
+      var arg1 = mc.Arguments.Count > 1 ? mc.Arguments[1].Type.Name : "-";
+      throw new NotSupportedException(
+        $"Unsupported Contains shape in collective scope filter. Method={mc.Method.DeclaringType?.Name}.{mc.Method.Name}, " +
+        $"Object={(mc.Object is null ? "null" : mc.Object.Type.Name)}, Args={mc.Arguments.Count} [{arg0}, {arg1}].");
     }
 
     if (!_tryColumn(itemExpr, ctx, refs, out var itemSql, out var itemProp)) {

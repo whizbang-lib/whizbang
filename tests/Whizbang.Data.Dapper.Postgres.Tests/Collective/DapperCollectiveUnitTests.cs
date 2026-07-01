@@ -158,6 +158,28 @@ public class DapperCollectiveUnitTests {
     await Assert.That(result.Parameters["where_status_1"]).IsEqualTo("Approved");
   }
 
+  private enum _jobStatusEnum { Draft, Approved, Published, Archived }
+  private sealed class _enumStatusModel { public _jobStatusEnum Status { get; set; } }
+  private static readonly _jobStatusEnum[] _eligibleEnum =
+    [_jobStatusEnum.Draft, _jobStatusEnum.Approved, _jobStatusEnum.Published];
+
+  [Test]
+  public async Task ScopeFilter_EnumArrayContains_CompilesToInWithEnumNamesAsync() {
+    // Mirrors the a consumer OrderTemplateCollectiveHandler: a STATIC enum-array field `.Contains(enum property)`
+    // inside a cross-perspective Any. string[] Contains was covered; enum[] Contains is a different shape/value.
+    var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_enumStatusModel)] = "wh_per_status" });
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
+      r => q.Of<_enumStatusModel>().Any(s => s.Id == r.Id && _eligibleEnum.Contains(s.Data.Status));
+
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(
+      filter, parameterPrefix: "where", outerTableName: "wh_per_job");
+
+    await Assert.That(result.SqlFragment).IsEqualTo(
+      "EXISTS (SELECT 1 FROM wh_per_status s WHERE (s.id = wh_per_job.id AND s.data->>'Status' IN (@where_status_0, @where_status_1, @where_status_2)))");
+    await Assert.That(result.Parameters["where_status_0"]).IsEqualTo("Draft")
+      .Because("Enum values serialize to their names, matching how the jsonb column stores the enum.");
+  }
+
   [Test]
   public async Task ScopeFilter_ScopeAndCrossPerspectiveAny_ComposesEnvelopeAndExistsAsync() {
     var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_statusModel)] = "wh_per_status" });
