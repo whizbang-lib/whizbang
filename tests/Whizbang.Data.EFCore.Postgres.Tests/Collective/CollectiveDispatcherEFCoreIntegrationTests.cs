@@ -422,6 +422,16 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     return new _jobDbContext(optionsBuilder.Options);
   }
 
+  // A production-shaped context with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy), which forbids a
+  // user-initiated BeginTransaction outside strategy.ExecuteAsync.
+  private _jobDbContext _newRetryingContext() {
+    var optionsBuilder = new DbContextOptionsBuilder<_jobDbContext>();
+    optionsBuilder.UseNpgsql(_dataSource!, npg => npg.UseWhizbangFunctions().EnableRetryOnFailure())
+      .ConfigureWarnings(w => w.Ignore(
+        Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+    return new _jobDbContext(optionsBuilder.Options);
+  }
+
   private async Task _initSchemaAsync() {
     await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
@@ -883,6 +893,26 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("EnsureIndexes = false opts out of expression-index creation so a developer can manage indexes manually (e.g. a hand-tuned composite/partial index).");
     await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
       .Because("The apply still runs correctly without ensuring indexes.");
+  }
+
+  [Test]
+  public async Task DispatchAsync_UnderRetryingExecutionStrategy_AppliesWithoutUserTxErrorAsync() {
+    // A production DbContext enables EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy), which forbids a
+    // user-initiated BeginTransaction outside strategy.ExecuteAsync ("does not support user-initiated
+    // transactions"). The keyset-batch apply must run each batch transaction inside the context's execution
+    // strategy — otherwise it throws and updates nothing (caught only against a real production-shaped context).
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-retry", tag: "before");
+
+    await using var retryingCtx = _newRetryingContext();
+    await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-retry"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: retryingCtx,
+      cancellationToken: default);
+
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("The per-batch transaction runs inside CreateExecutionStrategy().ExecuteAsync, so the apply completes under a retrying execution strategy instead of throwing 'does not support user-initiated transactions'.");
   }
 
   private async Task<string?> _indexDefAsync(string indexName) {

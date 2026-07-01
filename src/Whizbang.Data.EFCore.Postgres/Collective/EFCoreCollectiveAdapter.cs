@@ -133,8 +133,15 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     var lastId = Guid.Empty;
     while (true) {
       var lastCursor = lastId;
+      // The per-batch transaction must run inside the DbContext's execution strategy: a DbContext configured
+      // with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy — the norm in production, e.g. a consumer) forbids
+      // a user-initiated BeginTransaction outside strategy.ExecuteAsync (the transaction must be one retriable
+      // unit). CreateExecutionStrategy() returns the configured strategy (a no-op non-retrying one when
+      // retries are off, e.g. tests), so this is correct either way. PostgresDeadlockRetry stays the outer
+      // backstop for 40P01/40001 when the configured strategy doesn't cover them.
       var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
-        () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lockKey, lastCursor, cancellationToken),
+        () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
+          () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lockKey, lastCursor, cancellationToken)),
         maxAttempts: 5,
         logger: logger,
         cancellationToken: cancellationToken).ConfigureAwait(false);
