@@ -4,27 +4,37 @@ using Npgsql;
 namespace Whizbang.Data.Postgres;
 
 /// <summary>
-/// Retries database operations that fail due to PostgreSQL deadlock (40P01).
-/// Deadlocks are transient — the losing transaction is rolled back by PostgreSQL,
-/// and retrying immediately (with a short jittered delay) succeeds in nearly all cases.
+/// Retries database operations that fail due to a transient PostgreSQL concurrency error —
+/// deadlock (<c>40P01</c>) or serialization failure (<c>40001</c>). Both are transient: the losing
+/// transaction is rolled back by PostgreSQL, and retrying immediately (with a short jittered delay)
+/// succeeds in nearly all cases. Non-transient errors (e.g. <c>42P01</c> undefined_table) propagate
+/// on the first attempt.
 /// </summary>
 /// <docs>operations/infrastructure/deadlock-retry</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresDeadlockRetryTests.cs</tests>
 public static partial class PostgresDeadlockRetry {
   private const string DEADLOCK_SQL_STATE = "40P01";
+  private const string SERIALIZATION_FAILURE_SQL_STATE = "40001";
+
+  /// <summary>
+  /// True when the exception is a transient PostgreSQL concurrency error worth retrying:
+  /// deadlock_detected (<c>40P01</c>) or serialization_failure (<c>40001</c>).
+  /// </summary>
+  private static bool _isTransient(PostgresException ex) =>
+    ex.SqlState is DEADLOCK_SQL_STATE or SERIALIZATION_FAILURE_SQL_STATE;
 
   [ThreadStatic]
   private static Random? _tRandom;
 
   [LoggerMessage(
     Level = LogLevel.Warning,
-    Message = "PostgreSQL deadlock detected (40P01), retrying attempt {Attempt}/{MaxAttempts} after {DelayMs}ms")]
-  private static partial void LogDeadlockRetry(ILogger logger, int attempt, int maxAttempts, int delayMs);
+    Message = "Transient PostgreSQL concurrency error ({SqlState}), retrying attempt {Attempt}/{MaxAttempts} after {DelayMs}ms")]
+  private static partial void LogTransientRetry(ILogger logger, string? sqlState, int attempt, int maxAttempts, int delayMs);
 
   [LoggerMessage(
     Level = LogLevel.Error,
-    Message = "PostgreSQL deadlock detected (40P01), exhausted {MaxAttempts} retry attempts")]
-  private static partial void LogDeadlockExhausted(ILogger logger, Exception exception, int maxAttempts);
+    Message = "Transient PostgreSQL concurrency error ({SqlState}), exhausted {MaxAttempts} retry attempts")]
+  private static partial void LogTransientExhausted(ILogger logger, Exception exception, string? sqlState, int maxAttempts);
 
   /// <summary>
   /// Executes an async action with deadlock retry.
@@ -42,15 +52,15 @@ public static partial class PostgresDeadlockRetry {
       try {
         await action();
         return;
-      } catch (PostgresException ex) when (ex.SqlState == DEADLOCK_SQL_STATE && attempt < maxAttempts) {
+      } catch (PostgresException ex) when (_isTransient(ex) && attempt < maxAttempts) {
         var delayMs = _computeJitteredDelay(attempt);
         if (logger is not null) {
-          LogDeadlockRetry(logger, attempt, maxAttempts, delayMs);
+          LogTransientRetry(logger, ex.SqlState, attempt, maxAttempts, delayMs);
         }
         await Task.Delay(delayMs, cancellationToken);
-      } catch (PostgresException ex) when (ex.SqlState == DEADLOCK_SQL_STATE && attempt == maxAttempts) {
+      } catch (PostgresException ex) when (_isTransient(ex) && attempt == maxAttempts) {
         if (logger is not null) {
-          LogDeadlockExhausted(logger, ex, maxAttempts);
+          LogTransientExhausted(logger, ex, ex.SqlState, maxAttempts);
         }
         throw;
       }
@@ -68,15 +78,15 @@ public static partial class PostgresDeadlockRetry {
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         return await action();
-      } catch (PostgresException ex) when (ex.SqlState == DEADLOCK_SQL_STATE && attempt < maxAttempts) {
+      } catch (PostgresException ex) when (_isTransient(ex) && attempt < maxAttempts) {
         var delayMs = _computeJitteredDelay(attempt);
         if (logger is not null) {
-          LogDeadlockRetry(logger, attempt, maxAttempts, delayMs);
+          LogTransientRetry(logger, ex.SqlState, attempt, maxAttempts, delayMs);
         }
         await Task.Delay(delayMs, cancellationToken);
-      } catch (PostgresException ex) when (ex.SqlState == DEADLOCK_SQL_STATE && attempt == maxAttempts) {
+      } catch (PostgresException ex) when (_isTransient(ex) && attempt == maxAttempts) {
         if (logger is not null) {
-          LogDeadlockExhausted(logger, ex, maxAttempts);
+          LogTransientExhausted(logger, ex, ex.SqlState, maxAttempts);
         }
         throw;
       }

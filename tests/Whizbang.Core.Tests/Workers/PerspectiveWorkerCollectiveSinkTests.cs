@@ -178,6 +178,50 @@ public class PerspectiveWorkerCollectiveSinkTests {
     await Assert.That(coordinator.ReportedFailures[0].PerspectiveName).IsEqualTo(CollectiveRouting.SINK_PERSPECTIVE_NAME);
   }
 
+  [Test]
+  public async Task CollectiveSink_AttemptsExceedMax_DeadLetteredNotDispatched_Async() {
+    // A genuinely poison collective event (one that fails apply every time — NOT a transient deadlock, which
+    // the driver retries in-line) must eventually stop: once its wh_perspective_events attempts exceed
+    // MaxPerspectiveEventAttempts it is moved to the DLQ instead of re-dispatched forever. The __collective__
+    // sink row is a normal perspective-event row, so the drain path's pre-apply dead-letter filter
+    // (FilterDeadLetteredAsync) already covers it — this test locks that in: an over-max sink row is
+    // dead-lettered (sourceTable=wh_perspective_events) and the dispatcher is never invoked.
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var workId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new _throwingDispatcher();
+    var deadLetters = new _recordingDeadLetterStore();
+    var envelope = _envelope(eventId, collectiveEvent);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      work: [],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      drainStreamIds: [streamId],
+      streamEvents: [_raw(streamId, eventId, attempts: 5, eventWorkId: workId)],
+      maxPerspectiveEventAttempts: 2,
+      deadLetterStore: deadLetters);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await deadLetters.FirstMove.WaitAsync(TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(deadLetters.Moves.Count).IsGreaterThanOrEqualTo(1)
+      .Because("An over-max sink row must be moved to the DLQ so it stops retrying.");
+    await Assert.That(deadLetters.Moves[0].SourceTable).IsEqualTo(DeadLetterSourceTable.PERSPECTIVE_EVENTS);
+    await Assert.That(deadLetters.Moves[0].SourceId).IsEqualTo(workId)
+      .Because("The dead-lettered row is the sink's own wh_perspective_events work row.");
+    await Assert.That(deadLetters.Moves[0].Reason).IsEqualTo(MessageFailureReason.MaxAttemptsExceeded);
+    await Assert.That(dispatcher.Calls).IsEqualTo(0)
+      .Because("The poison event is dead-lettered pre-apply — it must never reach the dispatcher again.");
+  }
+
   // ── helpers ────────────────────────────────────────────────────────────
 
   private static PerspectiveWork _sinkWork(Guid streamId) => new() {
@@ -195,19 +239,22 @@ public class PerspectiveWorkerCollectiveSinkTests {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
   };
 
-  private static StreamEventData _raw(Guid streamId, Guid eventId) => new() {
+  private static StreamEventData _raw(Guid streamId, Guid eventId, int attempts = 0, Guid? eventWorkId = null) => new() {
     StreamId = streamId,
     EventId = eventId,
     EventType = "collective",
     EventData = "{}",
     Metadata = null,
     Scope = null,
-    EventWorkId = Guid.CreateVersion7()
+    EventWorkId = eventWorkId ?? Guid.CreateVersion7(),
+    PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
+    Attempts = attempts
   };
 
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness, _coordinator Coordinator) _createWorker(
       List<PerspectiveWork> work, _eventStore eventStore, _registry registry, ICollectiveDispatcher? dispatcher,
-      List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null) {
+      List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null,
+      int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null) {
     var instanceProvider = new _instanceProvider();
     var strategy = new InstantCompletionStrategy();
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -229,14 +276,19 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var worker = new PerspectiveWorker(
       instanceProvider,
       sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
+      }),
       tracingOptions: null,
       strategy,
       eventTypeProvider: registry,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      deadLetterStore: deadLetterStore,
+      generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider());
     return (worker, harness, coordinator);
   }
 
@@ -278,6 +330,23 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   private sealed class _stubSessionAccessor : ICollectiveSessionAccessor {
     public object GetSession(IServiceProvider scopedServiceProvider) => new object();
+  }
+
+  private sealed class _recordingDeadLetterStore : IDeadLetterStore {
+    private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<(string SourceTable, Guid SourceId, MessageFailureReason Reason)> Moves { get; } = [];
+    /// <summary>Completes on the first dead-letter move — deterministic signal for the async drain path.</summary>
+    public Task FirstMove => _first.Task;
+
+    public Task<Guid?> MoveAsync(
+        Guid deadLetterId, string sourceTable, Guid sourceId, MessageFailureReason failureReason,
+        string? errorText, Guid instanceId, string generation, CancellationToken ct = default) {
+      lock (Moves) {
+        Moves.Add((sourceTable, sourceId, failureReason));
+      }
+      _first.TrySetResult();
+      return Task.FromResult<Guid?>(deadLetterId);
+    }
   }
 
   private sealed class _coordinator(List<PerspectiveWork> work) : NoOpWorkCoordinator, IWorkCoordinator {

@@ -15,6 +15,9 @@ public class PostgresDeadlockRetryTests {
   private static PostgresException _createDeadlockException() =>
     new("deadlock detected", "ERROR", "ERROR", "40P01");
 
+  private static PostgresException _createSerializationFailureException() =>
+    new("could not serialize access due to concurrent update", "ERROR", "ERROR", "40001");
+
   private static PostgresException _createOtherPostgresException() =>
     new("relation does not exist", "ERROR", "ERROR", "42P01");
 
@@ -56,6 +59,40 @@ public class PostgresDeadlockRetryTests {
 
     await Assert.That(act).ThrowsExactly<PostgresException>();
     await Assert.That(callCount).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task ExecuteAsync_SerializationFailure_RetriesAndSucceedsAsync() {
+    // Serialization failures (40001) are transient concurrency errors, exactly like deadlocks (40P01):
+    // the losing transaction is rolled back and retrying (with a short jittered delay) succeeds. The
+    // collective-event UPDATE runs concurrently with per-row projection writes and other pods' collective
+    // UPDATEs, so both 40P01 and 40001 can surface — both must retry, not propagate.
+    var callCount = 0;
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      callCount++;
+      if (callCount == 1) {
+        throw _createSerializationFailureException();
+      }
+      await Task.CompletedTask;
+    });
+
+    await Assert.That(callCount).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task ExecuteAsync_SerializationFailureWithReturnValue_RetriesAndSucceedsAsync() {
+    var callCount = 0;
+    var result = await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      callCount++;
+      if (callCount == 1) {
+        throw _createSerializationFailureException();
+      }
+      await Task.CompletedTask;
+      return 7;
+    });
+
+    await Assert.That(result).IsEqualTo(7);
+    await Assert.That(callCount).IsEqualTo(2);
   }
 
   [Test]
