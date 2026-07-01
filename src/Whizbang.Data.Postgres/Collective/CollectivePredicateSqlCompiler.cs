@@ -9,6 +9,19 @@ using Whizbang.Core.Perspectives;
 namespace Whizbang.Data.Postgres.Collective;
 
 /// <summary>
+/// A jsonb column path a compiled predicate filters a VALUE against (equality, <c>&lt;&gt;</c>, or
+/// <c>IN</c>) — e.g. <c>(wh_per_draft_job, "scope-&gt;&gt;'t'")</c> or
+/// <c>(wh_per_status, "data-&gt;&gt;'Status'")</c>. Each is a candidate for a btree expression index
+/// <c>CREATE INDEX … ON &lt;Table&gt; ((&lt;ColumnExpression&gt;))</c>; a plain <c>gin(data)</c>/<c>gin(scope)</c>
+/// index cannot serve <c>-&gt;&gt;</c> equality, so without these every apply seq-scans. <c>ColumnExpression</c>
+/// is UNqualified (no table/alias prefix) so it drops straight into the index DDL. The top-level <c>id</c>
+/// correlation column is never recorded — it is already the primary key. Driver-neutral and non-generic so the
+/// EF Core index ensurer can consume the paths a <see cref="CollectivePredicateSqlCompiler{TModel}"/> emitted.
+/// </summary>
+/// <docs>fundamentals/messaging/collective-events</docs>
+public sealed record ReferencedJsonPath(string Table, string ColumnExpression);
+
+/// <summary>
 /// Shared (driver-neutral) compiler that translates a collective apply's composed <c>WHERE</c> predicate
 /// (<see cref="Expression{TDelegate}"/> of <c>Func&lt;PerspectiveRow&lt;TModel&gt;, bool&gt;</c>) into a
 /// Postgres SQL <c>WHERE</c> fragment over the <c>scope</c> and <c>data</c> jsonb columns + a parameter
@@ -44,10 +57,12 @@ namespace Whizbang.Data.Postgres.Collective;
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Compiles captured-value sub-expressions; values come from compile-time selector metadata, not runtime type scanning.")]
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Matches the established Whizbang.Data.Postgres pattern of generic-over-TModel static compilers.")]
 public static class CollectivePredicateSqlCompiler<TModel> where TModel : class {
-  /// <summary>Compiled <c>WHERE</c> fragment + the named parameters it binds.</summary>
+  /// <summary>Compiled <c>WHERE</c> fragment + the named parameters it binds + the jsonb column paths it
+  /// filters on (§7 — btree expression-index candidates).</summary>
   public sealed record CompiledWhereClause(
     string SqlFragment,
-    IReadOnlyDictionary<string, object?> Parameters);
+    IReadOnlyDictionary<string, object?> Parameters,
+    IReadOnlyList<ReferencedJsonPath> ReferencedJsonPaths);
 
   /// <summary>
   /// Compile a collective-apply WHERE predicate to a SQL fragment over the <c>scope</c>/<c>data</c> jsonb
@@ -69,25 +84,30 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     ArgumentException.ThrowIfNullOrWhiteSpace(parameterPrefix);
 
     var parameters = new Dictionary<string, object?>(StringComparer.Ordinal);
+    var refs = new List<ReferencedJsonPath>();
     var sql = new StringBuilder();
-    var ctx = new _ctx(filter.Parameters[0], OuterQualifier: "", InnerParam: null, InnerAlias: null, OuterTableName: outerTableName);
-    _compilePredicate(filter.Body, ctx, parameterPrefix, sql, parameters);
-    return new CompiledWhereClause(sql.ToString(), parameters);
+    var ctx = new _ctx(filter.Parameters[0], OuterQualifier: "", InnerParam: null, InnerAlias: null,
+      OuterTableName: outerTableName, InnerTableName: null);
+    _compilePredicate(filter.Body, ctx, parameterPrefix, sql, parameters, refs);
+    // Distinct so a column referenced twice (e.g. two comparisons on data->>'Status') yields one index candidate.
+    var distinctRefs = refs.Distinct().ToList();
+    return new CompiledWhereClause(sql.ToString(), parameters, distinctRefs);
   }
 
   // How to qualify a member access rooted at the outer row vs. an EXISTS inner row.
   private sealed record _ctx(
     ParameterExpression OuterParam, string OuterQualifier,
     ParameterExpression? InnerParam, string? InnerAlias,
-    string? OuterTableName);
+    string? OuterTableName, string? InnerTableName);
 
   private static void _compilePredicate(
-      Expression node, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters) {
+      Expression node, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
+      List<ReferencedJsonPath> refs) {
     if (node is BinaryExpression { NodeType: ExpressionType.AndAlso } and) {
       sql.Append('(');
-      _compilePredicate(and.Left, ctx, prefix, sql, parameters);
+      _compilePredicate(and.Left, ctx, prefix, sql, parameters, refs);
       sql.Append(" AND ");
-      _compilePredicate(and.Right, ctx, prefix, sql, parameters);
+      _compilePredicate(and.Right, ctx, prefix, sql, parameters, refs);
       sql.Append(')');
       return;
     }
@@ -95,28 +115,28 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     if (node is UnaryExpression { NodeType: ExpressionType.Not } not) {
       // `!q.Of<T>().Any(...)` (not-in-cohort) → NOT EXISTS; `!(pred)` → NOT (pred).
       sql.Append("NOT (");
-      _compilePredicate(not.Operand, ctx, prefix, sql, parameters);
+      _compilePredicate(not.Operand, ctx, prefix, sql, parameters, refs);
       sql.Append(')');
       return;
     }
 
     if (node is BinaryExpression { NodeType: ExpressionType.Equal } eq) {
-      _compileComparison(eq, "=", ctx, prefix, sql, parameters);
+      _compileComparison(eq, "=", ctx, prefix, sql, parameters, refs);
       return;
     }
 
     if (node is BinaryExpression { NodeType: ExpressionType.NotEqual } neq) {
-      _compileComparison(neq, "<>", ctx, prefix, sql, parameters);
+      _compileComparison(neq, "<>", ctx, prefix, sql, parameters, refs);
       return;
     }
 
     if (node is MethodCallExpression mc) {
       if (mc.Method.Name == "Any" && mc.Arguments.Count == 2) {
-        _compileExists(mc, ctx, prefix, sql, parameters);
+        _compileExists(mc, ctx, prefix, sql, parameters, refs);
         return;
       }
       if (mc.Method.Name == "Contains") {
-        _compileContains(mc, ctx, prefix, sql, parameters);
+        _compileContains(mc, ctx, prefix, sql, parameters, refs);
         return;
       }
     }
@@ -128,9 +148,10 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   }
 
   private static void _compileComparison(
-      BinaryExpression cmp, string op, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters) {
-    var leftIsCol = _tryColumn(cmp.Left, ctx, out var leftSql, out var leftProp);
-    var rightIsCol = _tryColumn(cmp.Right, ctx, out var rightSql, out var rightProp);
+      BinaryExpression cmp, string op, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
+      List<ReferencedJsonPath> refs) {
+    var leftIsCol = _tryColumn(cmp.Left, ctx, refs, out var leftSql, out var leftProp);
+    var rightIsCol = _tryColumn(cmp.Right, ctx, refs, out var rightSql, out var rightProp);
 
     if (leftIsCol && rightIsCol) {
       // Column <op> column → a correlation (e.g. s.id = wh_per_job.id). No parameter.
@@ -161,7 +182,8 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
   // <values>.Contains(row.Data.X) → row.data->>'X' IN (@p0, @p1, …).
   private static void _compileContains(
-      MethodCallExpression mc, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters) {
+      MethodCallExpression mc, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
+      List<ReferencedJsonPath> refs) {
     Expression sourceExpr;
     Expression itemExpr;
     if (mc.Object is null && mc.Arguments.Count == 2) {           // Enumerable.Contains(source, item)
@@ -174,7 +196,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       throw new NotSupportedException("Unsupported Contains shape in collective scope filter.");
     }
 
-    if (!_tryColumn(itemExpr, ctx, out var itemSql, out var itemProp)) {
+    if (!_tryColumn(itemExpr, ctx, refs, out var itemSql, out var itemProp)) {
       throw new NotSupportedException(
         "Contains is only supported as <values>.Contains(row.Data.X / row.Scope.X) — the item must be a column field.");
     }
@@ -196,7 +218,8 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
   // q.Of<TOther>().Any(s => s.Id == r.Id && …) → EXISTS (SELECT 1 FROM <TOther table> s WHERE …).
   private static void _compileExists(
-      MethodCallExpression anyCall, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters) {
+      MethodCallExpression anyCall, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
+      List<ReferencedJsonPath> refs) {
     if (ctx.InnerParam is not null) {
       throw new NotSupportedException("Nested cross-perspective cohorts (EXISTS within EXISTS) are not supported.");
     }
@@ -236,15 +259,18 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       OuterQualifier = ctx.OuterTableName + ".",
       InnerParam = lambda.Parameters[0],
       InnerAlias = alias.ToString(),
+      InnerTableName = innerTable,
     };
 
     sql.Append("EXISTS (SELECT 1 FROM ").Append(innerTable).Append(' ').Append(alias).Append(" WHERE ");
-    _compilePredicate(lambda.Body, innerCtx, prefix, sql, parameters);
+    _compilePredicate(lambda.Body, innerCtx, prefix, sql, parameters, refs);
     sql.Append(')');
   }
 
   // row.Scope.X → scope->>'X', row.Data.X → data->>'X', row.Id → id — qualified per context (outer/inner).
-  private static bool _tryColumn(Expression e, _ctx ctx, out string? columnSql, out string? propName) {
+  // When the match is a jsonb column, also records the UNqualified path against its table in <paramref name="refs"/>
+  // as an expression-index candidate (§7).
+  private static bool _tryColumn(Expression e, _ctx ctx, List<ReferencedJsonPath> refs, out string? columnSql, out string? propName) {
     columnSql = null;
     propName = null;
     while (e is UnaryExpression { NodeType: ExpressionType.Convert } convert) {
@@ -258,8 +284,17 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       // is [JsonPropertyName("t")], so it persists as scope->>'t', NOT scope->>'TenantId'. Emit the short key
       // (matches EF's own translation for the native path). The PARAMETER name stays the property name.
       var jsonKey = jprop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? jprop.Name;
-      columnSql = $"{jq}{col}->>'{jsonKey}'";
+      var unqualified = $"{col}->>'{jsonKey}'";
+      columnSql = $"{jq}{unqualified}";
       propName = jprop.Name;
+      // Attribute the path to its table (outer vs. EXISTS-inner) so the index lands on the right relation.
+      // Null table (Compile called without an outer table name) → skip: can't build the DDL, so no candidate.
+      var table = ReferenceEquals(jp, ctx.OuterParam) ? ctx.OuterTableName
+                : ctx.InnerParam is not null && ReferenceEquals(jp, ctx.InnerParam) ? ctx.InnerTableName
+                : null;
+      if (table is not null) {
+        refs.Add(new ReferencedJsonPath(table, unqualified));
+      }
       return true;
     }
 

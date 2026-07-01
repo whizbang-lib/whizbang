@@ -192,6 +192,72 @@ public class DapperCollectiveUnitTests {
       .Throws<ArgumentNullException>();
   }
 
+  // ── ReferencedJsonPaths (§7 — drives expression-index creation) ─────────
+
+  [Test]
+  public async Task ReferencedJsonPaths_ScopeAndData_RecordsBothColumnsForOuterTableAsync() {
+    // Every value-comparison on a scope/data jsonb column is a candidate for a btree expression index.
+    // The scope->>'t' tenant filter (added on every apply after the D0 fix) is the single most important one.
+    var tenant = "t-A";
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
+      row => row.Scope.TenantId == tenant && row.Data.Status == "Draft";
+
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(
+      filter, parameterPrefix: "where", outerTableName: "wh_per_job");
+
+    await Assert.That(result.ReferencedJsonPaths).Contains(
+      p => p.Table == "wh_per_job" && p.ColumnExpression == "scope->>'t'")
+      .Because("The tenant scope filter must be indexable — scope->>'t' equality can't use gin(scope).");
+    await Assert.That(result.ReferencedJsonPaths).Contains(
+      p => p.Table == "wh_per_job" && p.ColumnExpression == "data->>'Status'")
+      .Because("A handler cohort filter on data->>'Status' must be indexable — gin(data) can't serve ->> equality.");
+  }
+
+  [Test]
+  public async Task ReferencedJsonPaths_ContainsInClause_RecordsTheColumnAsync() {
+    var eligible = new[] { "Draft", "Approved" };
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => eligible.Contains(row.Data.Status);
+
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(
+      filter, parameterPrefix: "where", outerTableName: "wh_per_job");
+
+    await Assert.That(result.ReferencedJsonPaths).Contains(
+      p => p.Table == "wh_per_job" && p.ColumnExpression == "data->>'Status'")
+      .Because("An IN (…) membership filter benefits from the same expression index as equality.");
+  }
+
+  [Test]
+  public async Task ReferencedJsonPaths_CrossPerspectiveAny_RecordsSiblingTableColumnAsync() {
+    // The inner EXISTS filters the SIBLING table — the index belongs on the sibling, not the outer table.
+    var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_statusModel)] = "wh_per_status" });
+    var tenant = "t-A";
+    var eligible = new[] { "Draft" };
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
+      r => r.Scope.TenantId == tenant
+        && q.Of<_statusModel>().Any(s => s.Id == r.Id && eligible.Contains(s.Data.Status));
+
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(
+      filter, parameterPrefix: "where", outerTableName: "wh_per_job");
+
+    await Assert.That(result.ReferencedJsonPaths).Contains(
+      p => p.Table == "wh_per_job" && p.ColumnExpression == "scope->>'t'");
+    await Assert.That(result.ReferencedJsonPaths).Contains(
+      p => p.Table == "wh_per_status" && p.ColumnExpression == "data->>'Status'")
+      .Because("The correlated cohort filter scans the sibling table by data->>'Status' — it must be indexed there.");
+  }
+
+  [Test]
+  public async Task ReferencedJsonPaths_IdCorrelationOnly_RecordsNothingIndexableAsync() {
+    // A pure id-correlation (s.id = outer.id) needs no expression index — id is the primary key. And when no
+    // outer table is supplied, outer columns can't be attributed to a table, so nothing is recorded.
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Data.Status == "Draft";
+
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
+
+    await Assert.That(result.ReferencedJsonPaths.Count).IsEqualTo(0)
+      .Because("Without an outer table name the compiler can't attribute a column to a table, so it records nothing (graceful — no index, statement_timeout still backstops).");
+  }
+
   // ── DapperCollectiveEventApplier validation guards (no DB reached) ──────
 
   private sealed record _evtA : ICollectiveEvent { public required CollectiveScope Scope { get; init; } }

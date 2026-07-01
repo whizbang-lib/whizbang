@@ -101,6 +101,13 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     var where = CollectivePredicateSqlCompiler<TModel>.Compile(
       scopeFilter, parameterPrefix: "where", outerTableName: table);
 
+    // §7: ensure a btree expression index exists for each jsonb path the WHERE filters on (incl. scope->>'t')
+    // before scanning — otherwise the keyset SELECT seq-scans every batch. Once-per-process, best-effort.
+    if (options.EnsureIndexes) {
+      await CollectiveIndexEnsurer.EnsureAsync(dbContext, where.ReferencedJsonPaths, cancellationToken)
+        .ConfigureAwait(false);
+    }
+
     var batchSize = options.BatchSize > 0 ? options.BatchSize : CollectiveApplyOptions.Default.BatchSize;
 
     // Keyset batch: select up to BatchSize ids past the cursor (bounded — never the whole cohort), then update

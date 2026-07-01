@@ -841,6 +841,57 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("The apply still runs correctly without the lock.");
   }
 
+  // ── §7: default-on btree expression indexes for the filtered jsonb paths (incl. scope->>'t') ──────
+
+  [Test]
+  public async Task DispatchAsync_EnsuresExpressionIndexForTenantScopePathAsync() {
+    // The tenant envelope scope->>'t' is AND-ed into every apply's WHERE. A gin(scope) index can't serve ->>
+    // equality, so without a btree expression index the keyset SELECT seq-scans. The apply must ensure
+    // `CREATE INDEX IF NOT EXISTS ((scope->>'t'))` so subsequent applies index-scan.
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-index", tag: "before");
+
+    await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-index"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    // Existence-by-name is guard/parallel-robust: whichever apply first creates it, it must exist afterward.
+    var indexDef = await _indexDefAsync("idx_wh_per_collective_cells_scope_t");
+    await Assert.That(indexDef).IsNotNull()
+      .Because("A collective apply on a tenant-scoped table ensures a btree expression index on scope->>'t'.");
+    await Assert.That(indexDef!.Contains(">>", StringComparison.Ordinal)
+        && indexDef.Contains("scope", StringComparison.Ordinal)).IsTrue()
+      .Because("It must be an EXPRESSION index over the jsonb path (e.g. ((scope ->> 't'::text))), which btree can serve — not a gin(scope) index, which cannot serve ->> equality.");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("The apply completes normally with the index ensured.");
+  }
+
+  [Test]
+  public async Task DispatchAsync_EnsureIndexesFalse_SkipsIndexCreationAsync() {
+    // Opt-out: EnsureIndexes = false never invokes the ensurer, so this apply emits no CREATE INDEX. Captured
+    // SQL is instance-isolated (this test's own interceptor), so the assertion holds regardless of what other
+    // tests do to the shared once-per-process guard.
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-noindex", tag: "before");
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { EnsureIndexes = false }).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-noindex"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    await Assert.That(_capturedSql.Any(c => c.Contains("CREATE INDEX", StringComparison.OrdinalIgnoreCase))).IsFalse()
+      .Because("EnsureIndexes = false opts out of expression-index creation so a developer can manage indexes manually (e.g. a hand-tuned composite/partial index).");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("The apply still runs correctly without ensuring indexes.");
+  }
+
+  private async Task<string?> _indexDefAsync(string indexName) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    return await conn.ExecuteScalarAsync<string?>(
+      "SELECT indexdef FROM pg_indexes WHERE indexname = @indexName;", new { indexName });
+  }
+
   private sealed class _sqlCaptureInterceptor(List<string> captured) : DbCommandInterceptor {
     public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
         DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,

@@ -35,6 +35,16 @@ public sealed record CollectiveApplyOptions {
   /// </summary>
   public bool SerializeApplies { get; init; } = true;
 
+  /// <summary>
+  /// When true (default), before the batch loop the adapter ensures a btree <em>expression index</em>
+  /// (<c>CREATE INDEX IF NOT EXISTS … ((data-&gt;&gt;'Prop'))</c>) exists for each jsonb column the apply's
+  /// WHERE filters on — including the <c>scope-&gt;&gt;'t'</c> tenant predicate. A <c>gin(data)</c>/<c>gin(scope)</c>
+  /// index cannot serve <c>-&gt;&gt;</c> equality, so without these the bounded keyset SELECT seq-scans every
+  /// batch. The ensure is once-per-process (guarded) and idempotent (<c>IF NOT EXISTS</c>). Set false to manage
+  /// the indexes manually (e.g. a hand-tuned composite/partial index).
+  /// </summary>
+  public bool EnsureIndexes { get; init; } = true;
+
   /// <summary>The framework default policy.</summary>
   public static CollectiveApplyOptions Default { get; } = new();
 }
