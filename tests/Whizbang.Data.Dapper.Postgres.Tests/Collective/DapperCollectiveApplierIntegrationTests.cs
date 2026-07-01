@@ -180,6 +180,47 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task ApplyAsync_CohortLargerThanBatchSize_UpdatesEveryRowAcrossBatchesAsync() {
+    // §4 parity: a cohort bigger than BatchSize is applied via the keyset loop (SELECT id … LIMIT + UPDATE …
+    // WHERE id = ANY, looped on id > cursor). Every row must be updated exactly once — the loop covers the
+    // whole cohort and terminates (no gaps, no repeats, no infinite loop). Runs with the exclusive advisory
+    // lock on (default SerializeApplies=true), so this also exercises the §5a lock path end-to-end.
+    await _createTableAsync();
+    var ids = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+    foreach (var id in ids) {
+      await _seedAsync(id, "t-A", "Active");
+    }
+
+    var handler = new _jobPerspective();
+    var entry = new CollectiveApplyEntry(
+      ModelType: typeof(_jobModel),
+      EventType: typeof(_archiveEvent),
+      HandlerType: typeof(_jobPerspective),
+      MethodName: nameof(_jobPerspective.Archive),
+      ScopeHandling: CollectiveScopeHandling.Framework,
+      SpecKind: CollectiveSpecKind.Linq,
+      Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+
+    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+      entry,
+      handler,
+      new _archiveEvent { Scope = new TenantCollectiveScope("t-A") },
+      new TenantCollectiveScopeResolver(),
+      ConnectionFactory,
+      TABLE,
+      _noSiblings, new CollectiveApplyOptions { BatchSize = 2 },
+      logger: null,
+      default);
+
+    await Assert.That(affected).IsEqualTo(5)
+      .Because("All 5 rows are applied across ⌈5/2⌉ = 3 keyset batches — the total is the sum of the batch counts.");
+    foreach (var id in ids) {
+      await Assert.That(await _statusAsync(id)).IsEqualTo("Archived")
+        .Because("Every row in the cohort is updated exactly once across the batches.");
+    }
+  }
+
+  [Test]
   public async Task ApplyAsync_FrameworkWithHandlerWhere_RefinesWithinScopeAsync() {
     await _createTableAsync();
     var draftA = Guid.NewGuid();

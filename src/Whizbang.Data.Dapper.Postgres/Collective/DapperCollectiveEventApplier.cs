@@ -3,6 +3,7 @@ using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
@@ -41,6 +42,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
   /// <param name="resolver">Scope resolver matching <paramref name="evt"/>'s scope kind.</param>
   /// <param name="connectionFactory">Factory the applier opens its own connection from.</param>
   /// <param name="tableName">The perspective table for <typeparamref name="TModel"/> (e.g. <c>wh_per_job</c>).</param>
+  /// <param name="logger">Optional logger for transient-retry warnings (parity with the EF Core adapter).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   public static async Task<int> ApplyAsync(
       CollectiveApplyEntry entry,
@@ -51,6 +53,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       string tableName,
       IReadOnlyDictionary<Type, string> siblingTables,
       CollectiveApplyOptions options,
+      ILogger? logger = null,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(entry);
@@ -99,66 +102,121 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var whereClause = CollectivePredicateSqlCompiler<TModel>.Compile(
       effectiveWhere, parameterPrefix: "where", outerTableName: tableName);
 
-    var sql = $"UPDATE {tableName} SET {setClause.SqlFragment} WHERE {whereClause.SqlFragment}";
+    // §6: fold this handler's per-apply knob overrides onto the global default (0 = inherit).
+    var effectiveOptions = options with {
+      BatchSize = entry.BatchSizeOverride > 0 ? entry.BatchSizeOverride : options.BatchSize,
+      StatementTimeoutSeconds = entry.StatementTimeoutSecondsOverride > 0
+        ? entry.StatementTimeoutSecondsOverride
+        : options.StatementTimeoutSeconds,
+    };
+    var batchSize = effectiveOptions.BatchSize > 0 ? effectiveOptions.BatchSize : CollectiveApplyOptions.Default.BatchSize;
 
-    // Transient concurrency errors (40P01 deadlock / 40001 serialization_failure) are expected when the
-    // collective UPDATE overlaps per-row projection writes or another pod's collective UPDATE. Retry in-line
-    // with jittered backoff so contention clears here rather than bubbling a failure up to the __collective__
-    // sink's attempt counter — a deadlock is transient, not poison. Each attempt opens a fresh connection
-    // (a rolled-back transaction leaves its connection unusable), which is why the open+execute is inside the
-    // retried delegate.
-    return await PostgresDeadlockRetry.ExecuteAsync(
-      () => _executeUpdateAsync(connectionFactory, sql, setClause.Parameters, whereClause.Parameters, options, cancellationToken),
-      maxAttempts: 5,
-      cancellationToken: cancellationToken).ConfigureAwait(false);
+    // §4 keyset batch + §5a exclusive advisory lock per (table, scope), mirroring EFCoreCollectiveAdapter.
+    // The bare table name qualifies the outer row inside any correlated EXISTS.
+    var selectSql = "SELECT id FROM " + tableName + " WHERE (" + whereClause.SqlFragment +
+      ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
+    var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment + " WHERE id = ANY(@wb_ids)";
+    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
+    long? lockKey = effectiveOptions.SerializeApplies ? CollectiveApplyLockKey.Compute(tableName, scopeKey) : null;
+
+    var total = 0;
+    var lastId = Guid.Empty;
+    while (true) {
+      var cursor = lastId;
+      // Each batch is one short transaction. Transient concurrency errors (40P01 / 40001) are retried in-line
+      // with jittered backoff so contention clears here, not at the __collective__ sink's attempt counter. Each
+      // attempt opens a fresh connection (a rolled-back transaction leaves its connection unusable).
+      var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
+        () => _executeOneBatchAsync(connectionFactory, selectSql, updateSql, setClause.Parameters,
+          whereClause.Parameters, effectiveOptions, lockKey, cursor, cancellationToken),
+        maxAttempts: 5,
+        logger: logger,
+        cancellationToken: cancellationToken).ConfigureAwait(false);
+      total += count;
+      if (count < batchSize || maxId is null) {
+        break;
+      }
+      lastId = maxId.Value;
+    }
+    return total;
   }
 
-  private static async Task<int> _executeUpdateAsync(
-      IDbConnectionFactory connectionFactory,
-      string sql,
-      IReadOnlyDictionary<string, object?> setParameters,
-      IReadOnlyDictionary<string, object?> whereParameters,
-      CollectiveApplyOptions options,
-      CancellationToken cancellationToken) {
+  /// <summary>
+  /// Runs ONE keyset batch in its own short transaction: <c>SET LOCAL statement_timeout</c> (when configured),
+  /// the exclusive <c>pg_advisory_xact_lock</c> (when serializing), a bounded <c>SELECT id … LIMIT</c>, and an
+  /// <c>UPDATE … WHERE id = ANY</c> of exactly those ids. Returns the batch count and the greatest id (next
+  /// cursor). A fresh connection per call keeps retries clean.
+  /// </summary>
+  private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
+      IDbConnectionFactory connectionFactory, string selectSql, string updateSql,
+      IReadOnlyDictionary<string, object?> setParameters, IReadOnlyDictionary<string, object?> whereParameters,
+      CollectiveApplyOptions options, long? lockKey, Guid lastId, CancellationToken cancellationToken) {
     var rawConnection = await connectionFactory.CreateConnectionAsync(cancellationToken).ConfigureAwait(false);
     await using var connection = (DbConnection)rawConnection;
     if (connection.State != ConnectionState.Open) {
       await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    // Bound the apply by a server-side statement_timeout when configured: SET LOCAL inside a transaction is
-    // the only form that survives PgBouncer transaction pooling, so a runaway UPDATE is cancelled by Postgres
-    // rather than left as a zombie when the client gives up.
+    // SET LOCAL statement_timeout is the only form that survives PgBouncer transaction pooling, so a runaway
+    // batch is cancelled by Postgres rather than left a zombie when the client gives up.
+    await using var tx = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
     if (options.StatementTimeoutSeconds is int secs && secs > 0) {
-      await using var tx = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-      await using (var setCmd = connection.CreateCommand()) {
-        setCmd.Transaction = tx;
-        setCmd.CommandText = "SET LOCAL statement_timeout = " + (secs * 1000).ToString(CultureInfo.InvariantCulture);
-        await setCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-      }
-      await using var txCmd = connection.CreateCommand();
-      txCmd.Transaction = tx;
-      txCmd.CommandText = sql;
-      _addParameters(txCmd, setParameters);
-      _addParameters(txCmd, whereParameters);
-      var txAffected = await txCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-      await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-      return txAffected;
+      await using var setCmd = connection.CreateCommand();
+      setCmd.Transaction = tx;
+      setCmd.CommandText = "SET LOCAL statement_timeout = " + (secs * 1000).ToString(CultureInfo.InvariantCulture);
+      await setCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    await using var cmd = connection.CreateCommand();
-    cmd.CommandText = sql;
-    _addParameters(cmd, setParameters);
-    _addParameters(cmd, whereParameters);
-    return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    if (lockKey is long key) {
+      // Exclusive, transaction-scoped: released at this batch's commit (brief hold); serializes same-(table,
+      // scope) collective applies across pods while disjoint scopes run concurrently.
+      await using var lockCmd = connection.CreateCommand();
+      lockCmd.Transaction = tx;
+      lockCmd.CommandText = "SELECT pg_advisory_xact_lock(@wb_lock)";
+      _addParameter(lockCmd, "wb_lock", key);
+      await lockCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    var ids = new List<Guid>();
+    await using (var selectCmd = connection.CreateCommand()) {
+      selectCmd.Transaction = tx;
+      selectCmd.CommandText = selectSql;
+      _addParameters(selectCmd, whereParameters);
+      _addParameter(selectCmd, "wb_lastid", lastId);
+      await using var reader = await selectCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        ids.Add(reader.GetGuid(0));
+      }
+    }
+
+    if (ids.Count == 0) {
+      await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+      return (0, null);
+    }
+
+    await using var updateCmd = connection.CreateCommand();
+    updateCmd.Transaction = tx;
+    updateCmd.CommandText = updateSql;
+    _addParameters(updateCmd, setParameters);
+    _addParameter(updateCmd, "wb_ids", ids.ToArray());
+    var count = await updateCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+    await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+    // ids came back ordered by id ASC → the last is the batch's greatest id, the next cursor.
+    return (count, ids[^1]);
   }
 
   private static void _addParameters(DbCommand cmd, IReadOnlyDictionary<string, object?> parameters) {
     foreach (var (name, value) in parameters) {
-      var p = cmd.CreateParameter();
-      p.ParameterName = name;
-      p.Value = value ?? (object)DBNull.Value;
-      cmd.Parameters.Add(p);
+      _addParameter(cmd, name, value ?? DBNull.Value);
     }
+  }
+
+  private static void _addParameter(DbCommand cmd, string name, object value) {
+    var p = cmd.CreateParameter();
+    p.ParameterName = name;
+    p.Value = value;
+    cmd.Parameters.Add(p);
   }
 }

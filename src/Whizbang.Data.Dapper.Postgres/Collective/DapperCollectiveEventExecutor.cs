@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
@@ -22,6 +23,7 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
   private readonly string _tableName;
   private readonly IReadOnlyDictionary<Type, string> _siblingTables;
   private readonly CollectiveApplyOptions _options;
+  private readonly ILogger? _logger;
 
   /// <summary>Create the executor for <typeparamref name="TModel"/> targeting <paramref name="tableName"/>.</summary>
   /// <param name="tableName">The perspective table for the model (e.g. <c>wh_per_job</c>).</param>
@@ -30,13 +32,16 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
   /// Pass an empty map when no handler references a sibling perspective.
   /// </param>
   /// <param name="options">Apply policy (batching + statement_timeout); DI supplies the resolved value.</param>
+  /// <param name="logger">Optional logger for transient-retry warnings on the apply (parity with EF Core).</param>
   public DapperCollectiveEventExecutor(
-      string tableName, IReadOnlyDictionary<Type, string> siblingTables, CollectiveApplyOptions? options = null) {
+      string tableName, IReadOnlyDictionary<Type, string> siblingTables, CollectiveApplyOptions? options = null,
+      ILogger? logger = null) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     ArgumentNullException.ThrowIfNull(siblingTables);
     _tableName = tableName;
     _siblingTables = siblingTables;
     _options = options ?? CollectiveApplyOptions.Default;
+    _logger = logger;
   }
 
   /// <inheritdoc />
@@ -61,6 +66,7 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
     }
 
     return DapperCollectiveEventApplier<TModel>.ApplyAsync(
-      entry, handlerInstance, evt, resolver, connectionFactory, _tableName, _siblingTables, _options, cancellationToken);
+      entry, handlerInstance, evt, resolver, connectionFactory, _tableName, _siblingTables, _options,
+      logger: _logger, cancellationToken: cancellationToken);
   }
 }

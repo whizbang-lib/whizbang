@@ -68,9 +68,11 @@ public static class CollectiveEventsDapperExtensions {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     var registry = _getOrAddTableRegistry(services);
     registry.Add(typeof(TModel), tableName);
-    // Factory (not a pre-built instance) so the executor picks up the DI-resolved CollectiveApplyOptions.
+    // Factory (not a pre-built instance) so the executor picks up the DI-resolved CollectiveApplyOptions
+    // and logger.
     services.AddSingleton<ICollectiveEventExecutor>(sp =>
-      new DapperCollectiveEventExecutor<TModel>(tableName, registry.Tables, sp.GetService<CollectiveApplyOptions>()));
+      new DapperCollectiveEventExecutor<TModel>(tableName, registry.Tables, sp.GetService<CollectiveApplyOptions>(),
+        sp.GetService<Microsoft.Extensions.Logging.ILogger<DapperCollectiveEventExecutor<TModel>>>()));
     return services;
   }
 
