@@ -6,6 +6,7 @@ using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Collective;
 
 namespace Whizbang.Data.Dapper.Postgres.Collective;
 
@@ -92,7 +93,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     // escapes it.
     var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
     var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
-    var whereClause = DapperCollectiveScopeFilterCompiler<TModel>.Compile(
+    var whereClause = CollectivePredicateSqlCompiler<TModel>.Compile(
       effectiveWhere, parameterPrefix: "where", outerTableName: tableName);
 
     var sql = $"UPDATE {tableName} SET {setClause.SqlFragment} WHERE {whereClause.SqlFragment}";

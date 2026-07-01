@@ -7,9 +7,10 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 /// <summary>
 /// Dapper binding of <see cref="ICollectiveQuery"/>. Dapper has no LINQ provider, so
 /// <see cref="Of{TOther}"/> returns an inert marker queryable — the handler's <c>Where</c> expression is
-/// never executed, only walked by <see cref="DapperCollectiveScopeFilterCompiler{TModel}"/>, which reads the
+/// never executed, only walked by the shared <c>CollectivePredicateSqlCompiler</c>, which reads the
 /// <c>TOther</c> type argument off the <c>q.Of&lt;TOther&gt;()</c> call node and resolves its table via
-/// <see cref="TableFor"/> to emit a correlated <c>EXISTS</c> subquery.
+/// <see cref="TableFor"/> (through <see cref="ICollectiveSiblingTableSource"/>) to emit a correlated
+/// <c>EXISTS</c> subquery.
 /// </summary>
 /// <remarks>
 /// The sibling table map is supplied at construction (the Dapper driver has no entity model to derive table
@@ -18,7 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:ApplyAsync_CrossPerspectiveCohort_ScopesBySiblingTableAsync</tests>
-public sealed class DapperCollectiveQuery : ICollectiveQuery {
+public sealed class DapperCollectiveQuery : ICollectiveQuery, ICollectiveSiblingTableSource {
   private readonly IReadOnlyDictionary<Type, string> _tables;
 
   /// <summary>Creates a query context over a <c>model type → perspective table name</c> map.</summary>
@@ -43,13 +44,13 @@ public sealed class DapperCollectiveQuery : ICollectiveQuery {
   /// The perspective table for a sibling model referenced via <see cref="Of{TOther}"/>. Throws if the
   /// model has no registered table — the cohort can't be projected without it.
   /// </summary>
-  public string TableFor(Type model) {
-    ArgumentNullException.ThrowIfNull(model);
-    return _tables.TryGetValue(model, out var table)
+  public string TableFor(Type modelType) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    return _tables.TryGetValue(modelType, out var table)
       ? table
       : throw new InvalidOperationException(
-          $"No Dapper collective table registered for sibling model '{model.FullName}'. A handler's Where " +
-          $"called q.Of<{model.Name}>(), but its table is unknown. Register it with " +
-          $"AddCollectiveTableDapper<{model.Name}>(\"wh_per_…\") (or AddCollectiveExecutorDapper).");
+          $"No Dapper collective table registered for sibling model '{modelType.FullName}'. A handler's Where " +
+          $"called q.Of<{modelType.Name}>(), but its table is unknown. Register it with " +
+          $"AddCollectiveTableDapper<{modelType.Name}>(\"wh_per_…\") (or AddCollectiveExecutorDapper).");
   }
 }

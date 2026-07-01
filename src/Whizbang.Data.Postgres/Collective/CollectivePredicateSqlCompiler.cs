@@ -2,42 +2,48 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
+using System.Text.Json.Serialization;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
-namespace Whizbang.Data.Dapper.Postgres.Collective;
+namespace Whizbang.Data.Postgres.Collective;
 
 /// <summary>
-/// Compiles a collective apply's composed <c>WHERE</c> predicate
+/// Shared (driver-neutral) compiler that translates a collective apply's composed <c>WHERE</c> predicate
 /// (<see cref="Expression{TDelegate}"/> of <c>Func&lt;PerspectiveRow&lt;TModel&gt;, bool&gt;</c>) into a
 /// Postgres SQL <c>WHERE</c> fragment over the <c>scope</c> and <c>data</c> jsonb columns + a parameter
-/// dictionary, for the Dapper driver. The predicate is the output of <see cref="CollectiveWhereComposer"/>:
-/// a resolver scope envelope (over <c>row.Scope</c>) optionally AND-ed with the handler's per-model
-/// projection (over <c>row.Data</c>, and/or a cross-perspective <c>q.Of&lt;TOther&gt;().Any(...)</c>). The EF
-/// driver composes the predicate directly into <c>Where(...)</c>; Dapper has no LINQ pipeline, so it is
-/// translated here.
+/// dictionary. The predicate is the output of <see cref="CollectiveWhereComposer"/>: a resolver scope
+/// envelope (over <c>row.Scope</c>) AND-ed with the handler's per-model projection (over <c>row.Data</c>,
+/// and/or a cross-perspective <c>q.Of&lt;TOther&gt;().Any(...)</c>).
 /// </summary>
 /// <remarks>
+/// <para>
+/// Both drivers use this so there is one predicate-translation code path: the Dapper applier (which has no
+/// LINQ provider) and the EF Core raw jsonb_set path (which cannot use <c>ExecuteUpdateAsync</c> for scalar/
+/// polymorphic jsonb or null-valued setters) both emit <c>UPDATE … WHERE &lt;compiled&gt;</c> — no id
+/// materialization, no <c>SELECT id</c> round-trip.
+/// </para>
 /// <para>
 /// <strong>Supported:</strong> equality over a single jsonb-column field — <c>row.Scope.PropName == value</c>
 /// (→ <c>scope-&gt;&gt;'PropName' = @param</c>) or <c>row.Data.PropName == value</c> (→
 /// <c>data-&gt;&gt;'PropName' = @param</c>); the top-level <c>row.Id</c> (→ <c>id</c>, for correlation);
 /// <c>&amp;&amp;</c>-chained conjunctions; <c>&lt;values&gt;.Contains(row.Data.X)</c> (→ <c>IN</c>); and
 /// cross-perspective cohorts <c>q.Of&lt;TOther&gt;().Any(s =&gt; s.Id == r.Id &amp;&amp; …)</c> (→ a correlated
-/// <c>EXISTS (SELECT 1 FROM &lt;TOther table&gt; s WHERE …)</c>).
+/// <c>EXISTS (SELECT 1 FROM &lt;TOther table&gt; s WHERE …)</c>, the table resolved via
+/// <see cref="ICollectiveSiblingTableSource"/> read off the <c>q.Of&lt;TOther&gt;()</c> node).
 /// </para>
 /// <para>
 /// <strong>Unsupported (throws <see cref="NotSupportedException"/>):</strong> non-equality operators,
 /// disjunctions, arbitrary top-level/system columns (e.g. <c>row.Version</c>), nested <c>EXISTS</c>, or
-/// comparisons not rooted at a known row parameter. A handler whose Where needs richer SQL should provide a
-/// raw-SQL form (mirrors the <c>DapperCollectiveSpecCompiler</c> constraint matrix).
+/// comparisons not rooted at a known row parameter.
 /// </para>
 /// </remarks>
 /// <typeparam name="TModel">The perspective model whose <see cref="PerspectiveRow{TModel}"/> the filter ranges over.</typeparam>
 /// <docs>fundamentals/messaging/collective-events</docs>
-[SuppressMessage("AOT", "IL2026:RequiresUnreferencedCode", Justification = "Whizbang.Data.Dapper.Postgres layer compiles captured-value sub-expressions; values come from compile-time selector metadata, not runtime type scanning.")]
-[SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Whizbang.Data.Dapper.Postgres layer compiles captured-value sub-expressions; values come from compile-time selector metadata, not runtime type scanning.")]
-[SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Matches the Whizbang.Data.Dapper.Postgres pattern of generic-over-TModel static compilers (DapperCollectiveSpecCompiler).")]
-public static class DapperCollectiveScopeFilterCompiler<TModel> where TModel : class {
+[SuppressMessage("AOT", "IL2026:RequiresUnreferencedCode", Justification = "Compiles captured-value sub-expressions; values come from compile-time selector metadata, not runtime type scanning.")]
+[SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Compiles captured-value sub-expressions; values come from compile-time selector metadata, not runtime type scanning.")]
+[SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Matches the established Whizbang.Data.Postgres pattern of generic-over-TModel static compilers.")]
+public static class CollectivePredicateSqlCompiler<TModel> where TModel : class {
   /// <summary>Compiled <c>WHERE</c> fragment + the named parameters it binds.</summary>
   public sealed record CompiledWhereClause(
     string SqlFragment,
@@ -86,8 +92,21 @@ public static class DapperCollectiveScopeFilterCompiler<TModel> where TModel : c
       return;
     }
 
+    if (node is UnaryExpression { NodeType: ExpressionType.Not } not) {
+      // `!q.Of<T>().Any(...)` (not-in-cohort) → NOT EXISTS; `!(pred)` → NOT (pred).
+      sql.Append("NOT (");
+      _compilePredicate(not.Operand, ctx, prefix, sql, parameters);
+      sql.Append(')');
+      return;
+    }
+
     if (node is BinaryExpression { NodeType: ExpressionType.Equal } eq) {
-      _compileEquality(eq, ctx, prefix, sql, parameters);
+      _compileComparison(eq, "=", ctx, prefix, sql, parameters);
+      return;
+    }
+
+    if (node is BinaryExpression { NodeType: ExpressionType.NotEqual } neq) {
+      _compileComparison(neq, "<>", ctx, prefix, sql, parameters);
       return;
     }
 
@@ -103,41 +122,41 @@ public static class DapperCollectiveScopeFilterCompiler<TModel> where TModel : c
     }
 
     throw new NotSupportedException(
-      $"DapperCollectiveScopeFilterCompiler<{typeof(TModel).Name}> supports equality over scope/data fields and id, " +
+      $"CollectivePredicateSqlCompiler<{typeof(TModel).Name}> supports equality over scope/data fields and id, " +
       "&&-chains, Contains (→ IN), and q.Of<TOther>().Any(...) cross-perspective cohorts (→ EXISTS). " +
       $"Got expression node kind '{node.NodeType}'. Provide a raw-SQL form for richer predicates.");
   }
 
-  private static void _compileEquality(
-      BinaryExpression eq, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters) {
-    var leftIsCol = _tryColumn(eq.Left, ctx, out var leftSql, out var leftProp);
-    var rightIsCol = _tryColumn(eq.Right, ctx, out var rightSql, out var rightProp);
+  private static void _compileComparison(
+      BinaryExpression cmp, string op, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters) {
+    var leftIsCol = _tryColumn(cmp.Left, ctx, out var leftSql, out var leftProp);
+    var rightIsCol = _tryColumn(cmp.Right, ctx, out var rightSql, out var rightProp);
 
     if (leftIsCol && rightIsCol) {
-      // Column == column → a correlation (e.g. s.id = wh_per_job.id). No parameter.
-      sql.Append(leftSql).Append(" = ").Append(rightSql);
+      // Column <op> column → a correlation (e.g. s.id = wh_per_job.id). No parameter.
+      sql.Append(leftSql).Append(' ').Append(op).Append(' ').Append(rightSql);
       return;
     }
     if (leftIsCol) {
-      _appendColumnEqualsValue(leftSql!, leftProp!, eq.Right, prefix, sql, parameters);
+      _appendColumnCompareValue(leftSql!, leftProp!, op, cmp.Right, prefix, sql, parameters);
       return;
     }
     if (rightIsCol) {
-      _appendColumnEqualsValue(rightSql!, rightProp!, eq.Left, prefix, sql, parameters);
+      _appendColumnCompareValue(rightSql!, rightProp!, op, cmp.Left, prefix, sql, parameters);
       return;
     }
     throw new NotSupportedException(
-      "DapperCollectiveScopeFilterCompiler equality requires at least one side to be a scope/data field or id " +
+      "CollectivePredicateSqlCompiler comparison requires at least one side to be a scope/data field or id " +
       "(row.Scope.X / row.Data.X / row.Id). Neither side matched.");
   }
 
-  private static void _appendColumnEqualsValue(
-      string columnSql, string propName, Expression valueExpr, string prefix, StringBuilder sql,
+  private static void _appendColumnCompareValue(
+      string columnSql, string propName, string op, Expression valueExpr, string prefix, StringBuilder sql,
       Dictionary<string, object?> parameters) {
     var value = _evaluateValue(valueExpr);
     var paramName = $"{prefix}_{propName.ToLowerInvariant()}";
     parameters[paramName] = value?.ToString();
-    sql.Append(columnSql).Append(" = @").Append(paramName);
+    sql.Append(columnSql).Append(' ').Append(op).Append(" @").Append(paramName);
   }
 
   // <values>.Contains(row.Data.X) → row.data->>'X' IN (@p0, @p1, …).
@@ -195,11 +214,14 @@ public static class DapperCollectiveScopeFilterCompiler<TModel> where TModel : c
     var otherModel = ofCall.Method.GetGenericArguments()[0];
     var queryInstance = _evaluateValue(ofCall.Object
         ?? throw new NotSupportedException("query.Of<TOther>() must be called on an ICollectiveQuery instance."));
-    if (queryInstance is not DapperCollectiveQuery dapperQuery) {
+    // Driver-neutral table resolution: the query binding (EF/Dapper) implements ICollectiveSiblingTableSource,
+    // read straight off the q.Of<TOther>() node — no driver-specific cast in the shared compiler.
+    if (queryInstance is not ICollectiveSiblingTableSource tableSource) {
       throw new NotSupportedException(
-        $"The cross-perspective query context must be a {nameof(DapperCollectiveQuery)} for the Dapper driver.");
+        $"The cross-perspective query context must implement {nameof(ICollectiveSiblingTableSource)} so the " +
+        "compiler can resolve the sibling table for the EXISTS correlation.");
     }
-    var innerTable = dapperQuery.TableFor(otherModel);
+    var innerTable = tableSource.TableFor(otherModel);
 
     var predicate = anyCall.Arguments[1];
     while (predicate is UnaryExpression { NodeType: ExpressionType.Quote } quote) {
@@ -232,7 +254,11 @@ public static class DapperCollectiveScopeFilterCompiler<TModel> where TModel : c
     if (e is MemberExpression { Member: PropertyInfo jprop, Expression: MemberExpression { Member.Name: var container, Expression: ParameterExpression jp } }
         && _qualifierFor(jp, ctx) is { } jq
         && _jsonbColumnFor(container) is { } col) {
-      columnSql = $"{jq}{col}->>'{jprop.Name}'";
+      // The jsonb KEY is the serialized name, which honors [JsonPropertyName] — e.g. PerspectiveScope.TenantId
+      // is [JsonPropertyName("t")], so it persists as scope->>'t', NOT scope->>'TenantId'. Emit the short key
+      // (matches EF's own translation for the native path). The PARAMETER name stays the property name.
+      var jsonKey = jprop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? jprop.Name;
+      columnSql = $"{jq}{col}->>'{jsonKey}'";
       propName = jprop.Name;
       return true;
     }
@@ -289,7 +315,7 @@ public static class DapperCollectiveScopeFilterCompiler<TModel> where TModel : c
       return _readMember(m);
     }
     throw new NotSupportedException(
-      $"DapperCollectiveScopeFilterCompiler cannot resolve a value of node kind {valueExpr.NodeType} " +
+      $"CollectivePredicateSqlCompiler cannot resolve a value of node kind {valueExpr.NodeType} " +
       "(supported: constant literal, captured local/field).");
   }
 

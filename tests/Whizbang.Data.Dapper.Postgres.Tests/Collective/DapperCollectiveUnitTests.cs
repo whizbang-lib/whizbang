@@ -12,6 +12,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Data.Dapper.Postgres.Collective;
+using Whizbang.Data.Postgres.Collective;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 
@@ -27,16 +28,18 @@ public class DapperCollectiveUnitTests {
     public int ViewCount { get; set; }
   }
 
-  // ── DapperCollectiveScopeFilterCompiler ────────────────────────────────
+  // ── CollectivePredicateSqlCompiler (shared) ────────────────────────────
 
   [Test]
-  public async Task ScopeFilter_SingleEquality_CompilesToScopeJsonbWhereAsync() {
+  public async Task ScopeFilter_SingleEquality_CompilesToScopeJsonbShortKeyWhereAsync() {
     var tenantId = "t-A";
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Scope.TenantId == tenantId;
 
-    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter);
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
 
-    await Assert.That(result.SqlFragment).IsEqualTo("scope->>'TenantId' = @where_tenantid");
+    // PerspectiveScope.TenantId is [JsonPropertyName("t")] — the persisted jsonb key is the SHORT key, so the
+    // compiler must emit scope->>'t', not scope->>'TenantId' (which matches nothing in production).
+    await Assert.That(result.SqlFragment).IsEqualTo("scope->>'t' = @where_tenantid");
     await Assert.That(result.Parameters.Count).IsEqualTo(1);
     await Assert.That(result.Parameters["where_tenantid"]).IsEqualTo("t-A");
   }
@@ -44,7 +47,7 @@ public class DapperCollectiveUnitTests {
   [Test]
   public async Task ScopeFilter_ConstantLiteral_IsEvaluatedAsync() {
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Scope.TenantId == "literal-t";
-    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter);
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
     await Assert.That(result.Parameters["where_tenantid"]).IsEqualTo("literal-t");
   }
 
@@ -55,9 +58,9 @@ public class DapperCollectiveUnitTests {
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       row => row.Scope.TenantId == tenantId && row.Scope.CustomerId == customer;
 
-    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter);
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
 
-    await Assert.That(result.SqlFragment).IsEqualTo("(scope->>'TenantId' = @where_tenantid AND scope->>'CustomerId' = @where_customerid)");
+    await Assert.That(result.SqlFragment).IsEqualTo("(scope->>'t' = @where_tenantid AND scope->>'c' = @where_customerid)");
     await Assert.That(result.Parameters.Count).IsEqualTo(2);
   }
 
@@ -65,15 +68,35 @@ public class DapperCollectiveUnitTests {
   public async Task ScopeFilter_ReversedOperands_StillMatchesScopeMemberAsync() {
     var tenantId = "t-A";
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => tenantId == row.Scope.TenantId;
-    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter);
-    await Assert.That(result.SqlFragment).IsEqualTo("scope->>'TenantId' = @where_tenantid");
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
+    await Assert.That(result.SqlFragment).IsEqualTo("scope->>'t' = @where_tenantid");
   }
 
   [Test]
-  public async Task ScopeFilter_NonEquality_ThrowsNotSupportedAsync() {
+  public async Task ScopeFilter_GreaterThan_ThrowsNotSupportedAsync() {
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Data.ViewCount > 5;
-    await Assert.That(() => DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter))
+    await Assert.That(() => CollectivePredicateSqlCompiler<_jobModel>.Compile(filter))
       .Throws<NotSupportedException>();
+  }
+
+  [Test]
+  public async Task ScopeFilter_NotEqual_CompilesToInequalityAsync() {
+    // a consumer cohort handlers use `!=` (e.g. r.Data.Status != "Archived"); the compiler must emit SQL `<>`.
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Data.Status != "Archived";
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
+    await Assert.That(result.SqlFragment).IsEqualTo("data->>'Status' <> @where_status");
+    await Assert.That(result.Parameters["where_status"]).IsEqualTo("Archived");
+  }
+
+  [Test]
+  public async Task ScopeFilter_NotOnAny_CompilesToNotExistsAsync() {
+    // a consumer overlay-apply cohorts use `!q.Of<Sibling>().Any(...)` (NOT-in-cohort) → NOT EXISTS.
+    var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_statusModel)] = "wh_per_status" });
+    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
+      r => !q.Of<_statusModel>().Any(s => s.Id == r.Id && s.Data.Status == "Archived");
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter, "where", "wh_per_job");
+    await Assert.That(result.SqlFragment).IsEqualTo(
+      "NOT (EXISTS (SELECT 1 FROM wh_per_status s WHERE (s.id = wh_per_job.id AND s.data->>'Status' = @where_status)))");
   }
 
   [Test]
@@ -82,7 +105,7 @@ public class DapperCollectiveUnitTests {
     // row.Data.<Prop> to data->>'Prop' (the jsonb data column), not just row.Scope.<Prop>.
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Data.Status == "Draft";
 
-    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter);
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
 
     await Assert.That(result.SqlFragment).IsEqualTo("data->>'Status' = @where_status");
     await Assert.That(result.Parameters["where_status"]).IsEqualTo("Draft");
@@ -96,10 +119,10 @@ public class DapperCollectiveUnitTests {
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       row => row.Scope.TenantId == tenant && row.Data.Status == "Draft";
 
-    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter);
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
 
     await Assert.That(result.SqlFragment)
-      .IsEqualTo("(scope->>'TenantId' = @where_tenantid AND data->>'Status' = @where_status)");
+      .IsEqualTo("(scope->>'t' = @where_tenantid AND data->>'Status' = @where_status)");
     await Assert.That(result.Parameters.Count).IsEqualTo(2);
   }
 
@@ -108,7 +131,7 @@ public class DapperCollectiveUnitTests {
     // Scope/data jsonb columns and the top-level id (for correlation) are translatable; an arbitrary
     // top-level system column (version) is not.
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Version == 5;
-    await Assert.That(() => DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter))
+    await Assert.That(() => CollectivePredicateSqlCompiler<_jobModel>.Compile(filter))
       .Throws<NotSupportedException>();
   }
 
@@ -126,7 +149,7 @@ public class DapperCollectiveUnitTests {
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       r => q.Of<_statusModel>().Any(s => s.Id == r.Id && eligible.Contains(s.Data.Status));
 
-    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(
       filter, parameterPrefix: "where", outerTableName: "wh_per_job");
 
     await Assert.That(result.SqlFragment).IsEqualTo(
@@ -144,11 +167,11 @@ public class DapperCollectiveUnitTests {
       r => r.Scope.TenantId == tenant
         && q.Of<_statusModel>().Any(s => s.Id == r.Id && eligible.Contains(s.Data.Status));
 
-    var result = DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(
+    var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(
       filter, parameterPrefix: "where", outerTableName: "wh_per_job");
 
     await Assert.That(result.SqlFragment).IsEqualTo(
-      "(scope->>'TenantId' = @where_tenantid AND EXISTS (SELECT 1 FROM wh_per_status s WHERE (s.id = wh_per_job.id AND s.data->>'Status' IN (@where_status_0))))");
+      "(scope->>'t' = @where_tenantid AND EXISTS (SELECT 1 FROM wh_per_status s WHERE (s.id = wh_per_job.id AND s.data->>'Status' IN (@where_status_0))))");
   }
 
   [Test]
@@ -159,13 +182,13 @@ public class DapperCollectiveUnitTests {
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       r => q.Of<_statusModel>().Any(s => s.Id == r.Id);
 
-    await Assert.That(() => DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(filter, "where", outerTableName: null))
+    await Assert.That(() => CollectivePredicateSqlCompiler<_jobModel>.Compile(filter, "where", outerTableName: null))
       .Throws<NotSupportedException>();
   }
 
   [Test]
   public async Task ScopeFilter_NullFilter_ThrowsArgumentNullAsync() {
-    await Assert.That(() => DapperCollectiveScopeFilterCompiler<_jobModel>.Compile(null!))
+    await Assert.That(() => CollectivePredicateSqlCompiler<_jobModel>.Compile(null!))
       .Throws<ArgumentNullException>();
   }
 

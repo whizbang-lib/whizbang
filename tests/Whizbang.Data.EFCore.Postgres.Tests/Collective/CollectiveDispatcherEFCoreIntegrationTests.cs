@@ -1,9 +1,11 @@
 #pragma warning disable CA1707
 #pragma warning disable CA1859 // tests assert against the interface return type
 
+using System.Data.Common;
 using System.Linq.Expressions;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Assertions.Extensions;
@@ -409,9 +411,12 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     }
   }
 
+  private readonly List<string> _capturedSql = [];
+
   private _jobDbContext _newContext() {
     var optionsBuilder = new DbContextOptionsBuilder<_jobDbContext>();
     optionsBuilder.UseNpgsql(_dataSource!, npg => npg.UseWhizbangFunctions())
+      .AddInterceptors(new _sqlCaptureInterceptor(_capturedSql))
       .ConfigureWarnings(w => w.Ignore(
         Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     return new _jobDbContext(optionsBuilder.Options);
@@ -733,6 +738,53 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   internal sealed record _setTagCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
     public required string Tag { get; init; }
+  }
+
+  // ── §1: the raw jsonb_set path is a single set-based UPDATE — no SELECT-id materialization ────────
+
+  [Test]
+  public async Task DispatchAsync_RawPath_IssuesSingleUpdateNoIdSelectAsync() {
+    // The raw path (scalar/polymorphic jsonb) must compile the predicate straight into the UPDATE's WHERE,
+    // NOT gather ids via a SELECT then UPDATE WHERE id = ANY(@ids). Prove it by capturing the SQL the apply
+    // issues: exactly one statement against the table, and it's the UPDATE.
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-raw", tag: "before");
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-raw"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    var applyCommands = _capturedSql
+      .Where(c => c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase))
+      .ToList();
+    await Assert.That(applyCommands.Count).IsEqualTo(1)
+      .Because("The raw jsonb_set path issues exactly ONE statement (a set-based UPDATE) — not a SELECT id followed by an UPDATE. No id materialization / seq scan.");
+    await Assert.That(applyCommands[0].TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase)).IsTrue()
+      .Because("The single statement is the compiled-predicate UPDATE; the id-gathering SELECT is gone.");
+  }
+
+  private sealed class _sqlCaptureInterceptor(List<string> captured) : DbCommandInterceptor {
+    public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+        CancellationToken cancellationToken = default) {
+      lock (captured) { captured.Add(command.CommandText); }
+      return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+    }
+    public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+        CancellationToken cancellationToken = default) {
+      lock (captured) { captured.Add(command.CommandText); }
+      return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+    }
+    public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
+        CancellationToken cancellationToken = default) {
+      lock (captured) { captured.Add(command.CommandText); }
+      return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+    }
   }
 
   internal sealed class _cellsModel {

@@ -139,25 +139,18 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
   }
 
   /// <summary>
-  /// Null-valued-setter path: materialize the matching ids via EF (so the WHERE — including cross-perspective
-  /// EXISTS — is translated by EF), then issue one raw <c>UPDATE … SET data = jsonb_set(…) WHERE id = ANY(@ids)</c>.
-  /// jsonb_set with a <c>'null'::jsonb</c> value sets the sub-property to JSON null, which EF's ExecuteUpdate
-  /// can't express for a complex-JSON column.
+  /// Raw jsonb_set path — for scalar/polymorphic jsonb models and null-valued setters, where EF's
+  /// <c>ExecuteUpdateAsync</c> can't express the SET. Issues ONE set-based
+  /// <c>UPDATE … SET data = jsonb_set(…) WHERE &lt;compiled-predicate&gt;</c> — the WHERE is compiled straight
+  /// to SQL by the shared <see cref="CollectivePredicateSqlCompiler{TModel}"/> (including scope envelope and
+  /// cross-perspective <c>EXISTS</c>), so there is NO <c>SELECT id</c> round-trip and no whole-cohort id
+  /// materialization. jsonb_set with a <c>'null'::jsonb</c> value sets the sub-property to JSON null.
   /// </summary>
   private static async Task<int> _executeRawJsonbAsync(
       DbContext dbContext,
       IReadOnlyList<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,
       Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
       CancellationToken cancellationToken) {
-
-    var ids = await dbContext.Set<PerspectiveRow<TModel>>()
-      .Where(scopeFilter)
-      .Select(r => r.Id)
-      .ToListAsync(cancellationToken)
-      .ConfigureAwait(false);
-    if (ids.Count == 0) {
-      return 0;
-    }
 
     var entityType = dbContext.Model.FindEntityType(typeof(PerspectiveRow<TModel>))
       ?? throw new InvalidOperationException(
@@ -174,7 +167,7 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     // ExecuteSqlRaw would otherwise try to parse '{Prop}' as a {n} placeholder — and so the property name is
     // parameterized rather than concatenated.
     var setExpr = new StringBuilder("data");
-    var parameters = new List<NpgsqlParameter>((assignments.Count * 2) + 1);
+    var parameters = new List<NpgsqlParameter>(assignments.Count * 2);
     for (var i = 0; i < assignments.Count; i++) {
       var a = assignments[i];
       var idx = i.ToString(CultureInfo.InvariantCulture);
@@ -183,9 +176,17 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
       parameters.Add(new NpgsqlParameter("path" + idx, new[] { a.PathName }));  // text[] path
       parameters.Add(new NpgsqlParameter("p" + idx, a.JsonValue));              // JSON text, cast ::jsonb
     }
-    parameters.Add(new NpgsqlParameter("ids", ids.ToArray()));
 
-    var sql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + " WHERE id = ANY(@ids)";
+    // Compile the predicate straight to a SQL WHERE (no SELECT id / seq scan). The bare table name qualifies
+    // the outer row inside any correlated EXISTS; the sibling table resolves via ICollectiveSiblingTableSource
+    // on the EFCoreCollectiveQuery embedded in the predicate.
+    var where = Whizbang.Data.Postgres.Collective.CollectivePredicateSqlCompiler<TModel>.Compile(
+      scopeFilter, parameterPrefix: "where", outerTableName: table);
+    foreach (var (name, value) in where.Parameters) {
+      parameters.Add(new NpgsqlParameter(name, value ?? (object)DBNull.Value));
+    }
+
+    var sql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + " WHERE " + where.SqlFragment;
     return await dbContext.Database
       .ExecuteSqlRawAsync(sql, parameters, cancellationToken)
       .ConfigureAwait(false);

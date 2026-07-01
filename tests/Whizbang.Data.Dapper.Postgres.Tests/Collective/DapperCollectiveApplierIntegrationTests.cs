@@ -45,7 +45,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     using var conn = await ConnectionFactory.CreateConnectionAsync();
     await conn.ExecuteAsync(
       $"INSERT INTO {TABLE} (id, data, scope) VALUES (@id, @data::jsonb, @scope::jsonb)",
-      new { id, data = $"{{\"Status\": \"{status}\"}}", scope = $"{{\"TenantId\": \"{tenantId}\"}}" });
+      new { id, data = $"{{\"Status\": \"{status}\"}}", scope = $"{{\"t\": \"{tenantId}\"}}" });
   }
 
   private async Task<string?> _statusAsync(Guid id) {
