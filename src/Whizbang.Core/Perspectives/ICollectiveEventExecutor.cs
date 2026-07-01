@@ -51,7 +51,7 @@ public interface ICollectiveEventExecutor {
   /// <param name="evt">The collective event being applied.</param>
   /// <param name="resolver">DI-resolved <see cref="ICollectiveScopeResolver"/> matching <paramref name="evt"/>'s scope kind.</param>
   /// <param name="dbContextOrSession">Driver-specific session (a <c>DbContext</c> for EF Core, an <c>NpgsqlConnection</c> for Dapper). The implementation casts to the type it expects; wrong-type input throws <see cref="ArgumentException"/>.</param>
-  /// <param name="collectiveEventId">Unique id of this collective event; written to the audit pointer on every affected row.</param>
+  /// <param name="collectiveEventId">Unique id of this collective event; emitted in the apply-completion telemetry.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Number of rows the SQL UPDATE mutated.</returns>
   Task<int> ApplyAsync(

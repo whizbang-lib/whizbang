@@ -48,7 +48,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
   /// <param name="evt">The collective event being applied.</param>
   /// <param name="resolver">DI-resolved <see cref="ICollectiveScopeResolver"/> whose <see cref="ICollectiveScopeResolver.ScopeKind"/> matches <paramref name="evt"/>.</param>
   /// <param name="dbContext">EF Core context that holds the perspective table.</param>
-  /// <param name="collectiveEventId">Unique id of this collective event; written to the audit-pointer column on every affected row.</param>
+  /// <param name="collectiveEventId">Unique id of this collective event; emitted in the apply-completion telemetry (which event mutated how many rows).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Number of rows the SQL UPDATE mutated.</returns>
   public static async Task<int> ApplyAsync(
@@ -121,6 +121,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       effectiveWhere,
       options,
       scopeKey,
+      collectiveEventId,
       cancellationToken).ConfigureAwait(false);
   }
 }

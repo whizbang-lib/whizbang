@@ -4,6 +4,8 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
@@ -53,7 +55,7 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 [SuppressMessage("AOT", "IL2075:UnrecognizedReflectionPattern", Justification = "EF Core data layer inherently uses reflection for query translation")]
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "EF Core data layer inherently uses reflection for query translation")]
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Adapter is generic over TModel; static factory + execute methods match the pattern of EF Core's own generic-static helpers.")]
-public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
+public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class {
   /// <summary>
   /// Execute the collective-event mutation as a keyset-batched set-based UPDATE, bounded by the apply
   /// <paramref name="options"/>. One raw <c>jsonb_set</c> path serves every mapping (complex-JSON, scalar/
@@ -68,6 +70,7 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
       Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
       CollectiveApplyOptions options,
       string scopeKey,
+      Guid collectiveEventId,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(dbContext);
@@ -75,6 +78,8 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(scopeFilter);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(scopeKey);
+
+    var logger = dbContext.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Collective.Apply");
 
     var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters);
 
@@ -124,21 +129,31 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
     long? lockKey = options.SerializeApplies ? CollectiveApplyLockKey.Compute(table, scopeKey) : null;
 
     var total = 0;
+    var batches = 0;
     var lastId = Guid.Empty;
     while (true) {
       var lastCursor = lastId;
       var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
         () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lockKey, lastCursor, cancellationToken),
         maxAttempts: 5,
+        logger: logger,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       total += count;
+      batches++;
       if (count < batchSize || maxId is null) {
         break;
       }
       lastId = maxId.Value;
     }
+    if (logger is not null) {
+      LogCollectiveApplyCompleted(logger, collectiveEventId, table, total, batches);
+    }
     return total;
   }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Information,
+    Message = "Collective apply {CollectiveEventId} on {Table} updated {AffectedRows} rows in {Batches} batch(es)")]
+  private static partial void LogCollectiveApplyCompleted(ILogger logger, Guid CollectiveEventId, string Table, int AffectedRows, int Batches);
 
   /// <summary>
   /// Runs ONE keyset batch in its own short transaction: sets a transaction-local <c>statement_timeout</c> via
