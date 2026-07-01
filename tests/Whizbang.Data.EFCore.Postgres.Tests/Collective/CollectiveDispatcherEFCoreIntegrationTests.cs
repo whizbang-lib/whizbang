@@ -817,6 +817,30 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("5 rows at BatchSize=2 → ⌈5/2⌉ = 3 batched UPDATEs, each a short transaction (brief lock hold).");
   }
 
+  [Test]
+  public async Task DispatchAsync_TakesExclusiveAdvisoryLockPerBatchAsync() {
+    // Each batch takes an exclusive pg_advisory_xact_lock keyed on (table, scope) so collective applies to the
+    // same table+scope serialize across pods instead of convoying. Opt-out disables it.
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-lock", tag: "before");
+
+    _capturedSql.Clear();
+    await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lock"), Tag = "a" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+    await Assert.That(_capturedSql.Any(c => c.Contains("pg_advisory_xact_lock", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("By default a collective apply serializes per (table, scope) via an exclusive advisory lock.");
+
+    _capturedSql.Clear();
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { SerializeApplies = false }).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lock"), Tag = "b" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+    await Assert.That(_capturedSql.Any(c => c.Contains("pg_advisory_xact_lock", StringComparison.OrdinalIgnoreCase))).IsFalse()
+      .Because("SerializeApplies = false opts out of the advisory lock.");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("b")
+      .Because("The apply still runs correctly without the lock.");
+  }
+
   private sealed class _sqlCaptureInterceptor(List<string> captured) : DbCommandInterceptor {
     public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
         DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,

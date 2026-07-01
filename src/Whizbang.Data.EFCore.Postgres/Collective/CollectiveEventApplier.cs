@@ -110,11 +110,17 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
     var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
 
+    // A stable identity for the scope (includes the tenant), so the per-(table,scope) advisory lock serializes
+    // same-scope applies while letting disjoint scopes run concurrently. The record ToString() is
+    // compiler-generated (AOT-safe, no reflection) and carries the scope's members (e.g. TenantId).
+    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
+
     return await EFCoreCollectiveAdapter<TModel>.ExecuteAsync(
       dbContext,
       spec,
       effectiveWhere,
       options,
+      scopeKey,
       cancellationToken).ConfigureAwait(false);
   }
 }

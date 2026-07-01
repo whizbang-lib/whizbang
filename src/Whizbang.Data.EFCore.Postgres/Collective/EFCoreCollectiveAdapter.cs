@@ -67,12 +67,14 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
       ICollectiveSpec<TModel> spec,
       Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
       CollectiveApplyOptions options,
+      string scopeKey,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(spec);
     ArgumentNullException.ThrowIfNull(scopeFilter);
     ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(scopeKey);
 
     var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters);
 
@@ -110,12 +112,16 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
       ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
     var updateSql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + " WHERE id = ANY(@wb_ids)";
 
+    // Per-(table,scope) exclusive advisory lock so collective applies to the same table+scope serialize
+    // (across pods) instead of convoying; disjoint scopes hash to different keys and run concurrently.
+    long? lockKey = options.SerializeApplies ? CollectiveApplyLockKey.Compute(table, scopeKey) : null;
+
     var total = 0;
     var lastId = Guid.Empty;
     while (true) {
       var lastCursor = lastId;
       var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
-        () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lastCursor, cancellationToken),
+        () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lockKey, lastCursor, cancellationToken),
         maxAttempts: 5,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       total += count;
@@ -139,7 +145,7 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
       DbContext dbContext, string selectSql, string updateSql,
       IReadOnlyList<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,
       CollectivePredicateSqlCompiler<TModel>.CompiledWhereClause where,
-      CollectiveApplyOptions options, Guid lastId, CancellationToken cancellationToken) {
+      CollectiveApplyOptions options, long? lockKey, Guid lastId, CancellationToken cancellationToken) {
 
     await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -148,6 +154,14 @@ public sealed class EFCoreCollectiveAdapter<TModel> where TModel : class {
         "SELECT set_config('statement_timeout', @wb_stmt_timeout, true)",
         new[] { _param("wb_stmt_timeout", (secs * 1000).ToString(CultureInfo.InvariantCulture)) },
         cancellationToken).ConfigureAwait(false);
+    }
+
+    if (lockKey is long key) {
+      // Exclusive, transaction-scoped: released at this batch's commit (brief hold), so standard applies and
+      // the next collective batch proceed between batches; blocks other collective applies to the same key.
+      await dbContext.Database.ExecuteSqlRawAsync(
+        "SELECT pg_advisory_xact_lock(@wb_lock)",
+        new[] { _param("wb_lock", key) }, cancellationToken).ConfigureAwait(false);
     }
 
     var selectParams = new List<Npgsql.NpgsqlParameter>(where.Parameters.Count + 1);

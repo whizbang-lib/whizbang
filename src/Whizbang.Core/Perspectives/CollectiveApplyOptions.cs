@@ -27,6 +27,14 @@ public sealed record CollectiveApplyOptions {
   /// </summary>
   public int? StatementTimeoutSeconds { get; init; }
 
+  /// <summary>
+  /// When true (default), each apply batch takes an <em>exclusive</em> <c>pg_advisory_xact_lock</c> keyed on
+  /// (table, scope), serializing collective applies that target the same table+scope — across all pods —
+  /// instead of letting up to <c>MaxConcurrentPerspectives</c> of them convoy on the same rows. Disjoint
+  /// scopes (e.g. different tenants) hash to different keys and still run concurrently.
+  /// </summary>
+  public bool SerializeApplies { get; init; } = true;
+
   /// <summary>The framework default policy.</summary>
   public static CollectiveApplyOptions Default { get; } = new();
 }
