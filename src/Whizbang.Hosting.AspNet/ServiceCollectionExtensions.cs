@@ -25,6 +25,10 @@ public static class ServiceCollectionExtensions {
   public static IServiceCollection AddWhizbangAspNet(this IServiceCollection services) {
     services.TryAddEnumerable(
       ServiceDescriptor.Singleton<IStartupFilter, WhizbangFlushStartupFilter>());
+    // Turnkey: capture an inbound correlation id (default X-Correlation-ID) at the start of the pipeline so
+    // the request's first dispatch adopts it. Configure headers via WhizbangCorrelationOptions.
+    services.TryAddEnumerable(
+      ServiceDescriptor.Singleton<IStartupFilter, WhizbangCorrelationStartupFilter>());
     return services;
   }
 }

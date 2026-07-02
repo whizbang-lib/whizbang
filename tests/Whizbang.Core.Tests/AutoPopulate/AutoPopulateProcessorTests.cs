@@ -105,12 +105,12 @@ public class AutoPopulateProcessorTests {
   }
 
   [Test]
-  public async Task PopulateKind_HasFourValuesAsync() {
+  public async Task PopulateKind_HasFiveValuesAsync() {
     // Arrange & Act
     var values = Enum.GetValues<PopulateKind>();
 
-    // Assert - Timestamp, Context, Service, Identifier
-    await Assert.That(values.Length).IsEqualTo(4);
+    // Assert - Timestamp, Context, Service, Identifier, Header
+    await Assert.That(values.Length).IsEqualTo(5);
   }
 
   #endregion

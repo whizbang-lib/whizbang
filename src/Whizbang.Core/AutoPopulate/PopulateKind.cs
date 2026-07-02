@@ -34,5 +34,10 @@ public enum PopulateKind {
   /// <summary>
   /// Populate from message identifiers (MessageId, CorrelationId, CausationId, StreamId).
   /// </summary>
-  Identifier = 3
+  Identifier = 3,
+
+  /// <summary>
+  /// Populate from an inbound HTTP header captured at the request edge (rides the scope extensions).
+  /// </summary>
+  Header = 4
 }

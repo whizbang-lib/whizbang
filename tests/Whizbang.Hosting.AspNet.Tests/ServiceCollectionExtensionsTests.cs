@@ -31,6 +31,24 @@ public class ServiceCollectionExtensionsTests {
   }
 
   [Test]
+  public async Task AddWhizbangAspNet_RegistersCorrelationStartupFilter_TurnkeyAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    services.AddWhizbangAspNet();
+
+    // Assert — correlation capture is wired without any manual UseWhizbangCorrelation() call.
+    var descriptor = services.FirstOrDefault(d =>
+      d.ServiceType == typeof(IStartupFilter) &&
+      d.ImplementationType == typeof(WhizbangCorrelationStartupFilter));
+
+    await Assert.That(descriptor).IsNotNull()
+      .Because("AddWhizbangAspNet should turnkey-register the correlation startup filter");
+    await Assert.That(descriptor!.Lifetime).IsEqualTo(ServiceLifetime.Singleton);
+  }
+
+  [Test]
   public async Task AddWhizbangAspNet_CalledMultipleTimes_RegistersOnceAsync() {
     // Arrange
     var services = new ServiceCollection();
