@@ -1,9 +1,11 @@
 #pragma warning disable CA1707
 #pragma warning disable CA1859 // tests assert against the interface return type
 
+using System.Data.Common;
 using System.Linq.Expressions;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Assertions.Extensions;
@@ -187,12 +189,14 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("The scope envelope still binds — a Draft row in a different tenant is excluded.");
   }
 
-  // ── Per-model Where projection: Custom owns the whole WHERE ────────────
+  // ── Per-model Where projection: Custom refines the cohort but scope STILL binds (D0 fix) ────────────
 
   [Test]
-  public async Task DispatchAsync_CustomHandlerWhere_IgnoresResolverScopeAsync() {
-    // Under Custom, the resolver scope filter is not applied at all — the handler's Where is the entire
-    // predicate. So a Draft row in tenant B is mutated even though the event's scope names tenant A.
+  public async Task DispatchAsync_CustomHandlerWhere_StillHonorsTenantScopeAsync() {
+    // D0 data-safety fix: perspective tables are SHARED multi-tenant. Even under Custom — where the handler
+    // owns the cohort predicate — the framework MUST still AND the tenant scope envelope, or a tenant-A event
+    // rewrites tenant-B rows (cross-tenant corruption). The handler declares only its cohort (Status=='Draft');
+    // the framework guarantees the tenant filter.
     var draftA = Guid.NewGuid();
     var draftB = Guid.NewGuid();
     var approvedB = Guid.NewGuid();
@@ -210,13 +214,13 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       dbContextOrSession: _ctx!,
       cancellationToken: default);
 
-    await Assert.That(result.AffectedRowCount).IsEqualTo(2)
-      .Because("Custom ignores the tenant envelope: every Draft row, regardless of tenant, matches the handler's sole predicate.");
+    await Assert.That(result.AffectedRowCount).IsEqualTo(1)
+      .Because("Custom refines the cohort (Status=='Draft') but the framework still ANDs the tenant envelope — only tenant-A's single Draft row qualifies.");
     await Assert.That(await _readStatusAsync(draftA)).IsEqualTo("Archived");
-    await Assert.That(await _readStatusAsync(draftB)).IsEqualTo("Archived")
-      .Because("A Draft row in tenant B is mutated even though the event scope names tenant A — Custom dropped the scope envelope.");
+    await Assert.That(await _readStatusAsync(draftB)).IsEqualTo("Draft")
+      .Because("D0 FIX: a Draft row in tenant B must be UNTOUCHED even under Custom — the scope envelope always binds on a shared multi-tenant table.");
     await Assert.That(await _readStatusAsync(approvedB)).IsEqualTo("Approved")
-      .Because("The handler Where (Status=='Draft') still excludes the Approved row.");
+      .Because("The handler Where (Status=='Draft') excludes the Approved row anyway.");
   }
 
   // ── Cross-perspective cohort: scope by a sibling table (correlated EXISTS) ──
@@ -407,9 +411,22 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     }
   }
 
+  private readonly List<string> _capturedSql = [];
+
   private _jobDbContext _newContext() {
     var optionsBuilder = new DbContextOptionsBuilder<_jobDbContext>();
     optionsBuilder.UseNpgsql(_dataSource!, npg => npg.UseWhizbangFunctions())
+      .AddInterceptors(new _sqlCaptureInterceptor(_capturedSql))
+      .ConfigureWarnings(w => w.Ignore(
+        Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+    return new _jobDbContext(optionsBuilder.Options);
+  }
+
+  // A production-shaped context with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy), which forbids a
+  // user-initiated BeginTransaction outside strategy.ExecuteAsync.
+  private _jobDbContext _newRetryingContext() {
+    var optionsBuilder = new DbContextOptionsBuilder<_jobDbContext>();
+    optionsBuilder.UseNpgsql(_dataSource!, npg => npg.UseWhizbangFunctions().EnableRetryOnFailure())
       .ConfigureWarnings(w => w.Ignore(
         Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     return new _jobDbContext(optionsBuilder.Options);
@@ -696,7 +713,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     return result == DBNull.Value || result is null ? null : (string)result;
   }
 
-  private CollectiveDispatcher _buildSetTagDispatcher() {
+  private CollectiveDispatcher _buildSetTagDispatcher(CollectiveApplyOptions? options = null) {
     var services = new ServiceCollection();
     var handler = new _setTagPerspective();
     services.AddSingleton(handler);
@@ -717,7 +734,27 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_cellsModel>()]);
+      [new EFCoreCollectiveEventExecutor<_cellsModel>(options)]);
+  }
+
+  // ── §3: server-side statement_timeout (SET LOCAL / set_config) bounds the apply ───────────────────
+
+  [Test]
+  public async Task DispatchAsync_WithStatementTimeout_BoundsApplyServerSideAsync() {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-timeout", tag: "before");
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { StatementTimeoutSeconds = 30 }).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-timeout"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    await Assert.That(_capturedSql.Any(c => c.Contains("set_config('statement_timeout'", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("With StatementTimeoutSeconds set, the apply must bound itself server-side (set_config('statement_timeout', …, true) — the SET LOCAL equivalent, transaction-scoped so it survives PgBouncer pooling) so a runaway UPDATE is cancelled by Postgres, not left a zombie when the client gives up.");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("The apply still completes within the timeout.");
   }
 
   internal sealed class _setTagPerspective {
@@ -731,6 +768,230 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   internal sealed record _setTagCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
     public required string Tag { get; init; }
+  }
+
+  // ── §1: the raw jsonb_set path is a single set-based UPDATE — no SELECT-id materialization ────────
+
+  [Test]
+  public async Task DispatchAsync_RawPath_SelectsAreBoundedNoWholeCohortGatherAsync() {
+    // The apply must never materialize the WHOLE cohort's ids (the old `SELECT id … ToList` seq scan). Every
+    // id selection is a bounded keyset batch (LIMIT), and the mutation is a set-based UPDATE. Prove it by
+    // capturing the SQL: every SELECT against the table carries a LIMIT (no unbounded whole-cohort scan), and
+    // an UPDATE is issued.
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-raw", tag: "before");
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-raw"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    var tableCmds = _capturedSql
+      .Where(c => c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase))
+      .ToList();
+    var tableSelects = tableCmds.Where(c => c.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)).ToList();
+    await Assert.That(tableSelects.Count).IsGreaterThan(0)
+      .Because("A keyset batch selects the batch ids before updating them.");
+    await Assert.That(tableSelects.All(c => c.Contains("LIMIT", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("Every id selection is bounded by LIMIT (at most BatchSize) — the whole-cohort seq-scan gather is gone.");
+    await Assert.That(tableCmds.Any(c => c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("The mutation is a set-based UPDATE over the batch ids.");
+  }
+
+  [Test]
+  public async Task DispatchAsync_CohortLargerThanBatchSize_UpdatesAllInMultipleBatchesAsync() {
+    // Keyset batching: a cohort bigger than BatchSize is applied in ⌈N/BatchSize⌉ short-transaction batches,
+    // and every row is updated exactly once (id > cursor guarantees forward progress, no gaps, no repeats).
+    var ids = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+    foreach (var id in ids) {
+      await _seedCellsAsync(id, tenantId: "t-batch", tag: "before");
+    }
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { BatchSize = 2 }).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-batch"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    foreach (var id in ids) {
+      await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+        .Because("Every row in the cohort must be updated exactly once across the batches.");
+    }
+    var updateBatches = _capturedSql.Count(c =>
+      c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase) &&
+      c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(updateBatches).IsEqualTo(3)
+      .Because("5 rows at BatchSize=2 → ⌈5/2⌉ = 3 batched UPDATEs, each a short transaction (brief lock hold).");
+  }
+
+  [Test]
+  public async Task DispatchAsync_TakesExclusiveAdvisoryLockPerBatchAsync() {
+    // Each batch takes an exclusive pg_advisory_xact_lock keyed on (table, scope) so collective applies to the
+    // same table+scope serialize across pods instead of convoying. Opt-out disables it.
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-lock", tag: "before");
+
+    _capturedSql.Clear();
+    await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lock"), Tag = "a" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+    await Assert.That(_capturedSql.Any(c => c.Contains("pg_advisory_xact_lock", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("By default a collective apply serializes per (table, scope) via an exclusive advisory lock.");
+
+    _capturedSql.Clear();
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { SerializeApplies = false }).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lock"), Tag = "b" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+    await Assert.That(_capturedSql.Any(c => c.Contains("pg_advisory_xact_lock", StringComparison.OrdinalIgnoreCase))).IsFalse()
+      .Because("SerializeApplies = false opts out of the advisory lock.");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("b")
+      .Because("The apply still runs correctly without the lock.");
+  }
+
+  // ── §7: default-on btree expression indexes for the filtered jsonb paths (incl. scope->>'t') ──────
+
+  [Test]
+  public async Task DispatchAsync_EnsuresExpressionIndexForTenantScopePathAsync() {
+    // The tenant envelope scope->>'t' is AND-ed into every apply's WHERE. A gin(scope) index can't serve ->>
+    // equality, so without a btree expression index the keyset SELECT seq-scans. The apply must ensure
+    // `CREATE INDEX IF NOT EXISTS ((scope->>'t'))` so subsequent applies index-scan.
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-index", tag: "before");
+
+    await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-index"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    // Existence-by-name is guard/parallel-robust: whichever apply first creates it, it must exist afterward.
+    var indexDef = await _indexDefAsync("idx_wh_per_collective_cells_scope_t");
+    await Assert.That(indexDef).IsNotNull()
+      .Because("A collective apply on a tenant-scoped table ensures a btree expression index on scope->>'t'.");
+    await Assert.That(indexDef!.Contains(">>", StringComparison.Ordinal)
+        && indexDef.Contains("scope", StringComparison.Ordinal)).IsTrue()
+      .Because("It must be an EXPRESSION index over the jsonb path (e.g. ((scope ->> 't'::text))), which btree can serve — not a gin(scope) index, which cannot serve ->> equality.");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("The apply completes normally with the index ensured.");
+  }
+
+  [Test]
+  public async Task DispatchAsync_EnsureIndexesFalse_SkipsIndexCreationAsync() {
+    // Opt-out: EnsureIndexes = false never invokes the ensurer, so this apply emits no CREATE INDEX. Captured
+    // SQL is instance-isolated (this test's own interceptor), so the assertion holds regardless of what other
+    // tests do to the shared once-per-process guard.
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-noindex", tag: "before");
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { EnsureIndexes = false }).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-noindex"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    await Assert.That(_capturedSql.Any(c => c.Contains("CREATE INDEX", StringComparison.OrdinalIgnoreCase))).IsFalse()
+      .Because("EnsureIndexes = false opts out of expression-index creation so a developer can manage indexes manually (e.g. a hand-tuned composite/partial index).");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("The apply still runs correctly without ensuring indexes.");
+  }
+
+  [Test]
+  public async Task DispatchAsync_UnderRetryingExecutionStrategy_AppliesWithoutUserTxErrorAsync() {
+    // A production DbContext enables EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy), which forbids a
+    // user-initiated BeginTransaction outside strategy.ExecuteAsync ("does not support user-initiated
+    // transactions"). The keyset-batch apply must run each batch transaction inside the context's execution
+    // strategy — otherwise it throws and updates nothing (caught only against a real production-shaped context).
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-retry", tag: "before");
+
+    await using var retryingCtx = _newRetryingContext();
+    await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-retry"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: retryingCtx,
+      cancellationToken: default);
+
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("The per-batch transaction runs inside CreateExecutionStrategy().ExecuteAsync, so the apply completes under a retrying execution strategy instead of throwing 'does not support user-initiated transactions'.");
+  }
+
+  private async Task<string?> _indexDefAsync(string indexName) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    return await conn.ExecuteScalarAsync<string?>(
+      "SELECT indexdef FROM pg_indexes WHERE indexname = @indexName;", new { indexName });
+  }
+
+  // ── §6: per-[CollectiveApplyFor]-handler knob overrides beat the global default ───────────────────
+
+  [Test]
+  public async Task DispatchAsync_PerHandlerBatchSizeOverride_WinsOverGlobalDefaultAsync() {
+    // The entry carries BatchSizeOverride=2 (from [CollectiveApplyFor(BatchSize=2)]) while the global default
+    // stays 1000. A 5-row cohort must apply in ⌈5/2⌉=3 batched UPDATEs — proving the per-handler knob reached
+    // the adapter and won over the global default.
+    var ids = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+    foreach (var id in ids) {
+      await _seedCellsAsync(id, tenantId: "t-knob", tag: "before");
+    }
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcherWithBatchOverride(batchSizeOverride: 2).DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-knob"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    foreach (var id in ids) {
+      await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+        .Because("Every row applies regardless of batch size.");
+    }
+    var updateBatches = _capturedSql.Count(c =>
+      c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase) &&
+      c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(updateBatches).IsEqualTo(3)
+      .Because("5 rows at the per-handler BatchSize override of 2 → 3 batched UPDATEs, even though the global default is 1000. The [CollectiveApplyFor] knob on the entry reached the adapter.");
+  }
+
+  // Global options stay at the framework defaults (BatchSize 1000); the ENTRY carries the per-handler override.
+  private CollectiveDispatcher _buildSetTagDispatcherWithBatchOverride(int batchSizeOverride) {
+    var services = new ServiceCollection();
+    services.AddSingleton(new _setTagPerspective());
+    var entries = new CollectiveApplyEntry[] {
+      new(
+        ModelType: typeof(_cellsModel),
+        EventType: typeof(_setTagCollectiveEvent),
+        HandlerType: typeof(_setTagPerspective),
+        MethodName: nameof(_setTagPerspective.SetTag),
+        ScopeHandling: CollectiveScopeHandling.Framework,
+        SpecKind: CollectiveSpecKind.Linq,
+        Invoker: static (h, e, q) => ((_setTagPerspective)h).SetTag((_setTagCollectiveEvent)e),
+        BatchSizeOverride: batchSizeOverride
+      ),
+    };
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      entries,
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<_cellsModel>(null)]);
+  }
+
+  private sealed class _sqlCaptureInterceptor(List<string> captured) : DbCommandInterceptor {
+    public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+        CancellationToken cancellationToken = default) {
+      lock (captured) { captured.Add(command.CommandText); }
+      return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+    }
+    public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+        CancellationToken cancellationToken = default) {
+      lock (captured) { captured.Add(command.CommandText); }
+      return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+    }
+    public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
+        CancellationToken cancellationToken = default) {
+      lock (captured) { captured.Add(command.CommandText); }
+      return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+    }
   }
 
   internal sealed class _cellsModel {

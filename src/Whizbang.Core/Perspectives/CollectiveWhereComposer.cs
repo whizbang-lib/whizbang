@@ -60,11 +60,16 @@ public static class CollectiveWhereComposer {
         return handlerWhere is null ? scopeFilter : _and(scopeFilter, handlerWhere);
 
       case CollectiveScopeHandling.Custom:
-        // Custom ignores the resolver scope filter entirely — the applier need not even compute one.
-        return handlerWhere ?? throw new InvalidOperationException(
+        // Custom lets the handler own the COHORT predicate, but the scope envelope STILL binds (D0 safety):
+        // perspective tables are shared multi-tenant, so a handler can refine within its scope but must never
+        // escape it. The scope filter is AND-ed on top of the handler's Where whenever the resolver supplies
+        // one (it always does for a scoped model); a null scope filter means an explicitly unscoped/global
+        // resolver, in which case the handler's Where stands alone.
+        var handler = handlerWhere ?? throw new InvalidOperationException(
           "CollectiveScopeHandling.Custom requires the handler's spec to supply a Where predicate — the " +
-          "handler owns the full WHERE. Spec.Where was null, which would update every row in the table. " +
+          "handler owns the cohort WHERE. Spec.Where was null, which would update every row in the table. " +
           "Either return a Where from the spec or use ScopeHandling.Framework.");
+        return scopeFilter is null ? handler : _and(scopeFilter, handler);
 
       default:
         throw new ArgumentOutOfRangeException(

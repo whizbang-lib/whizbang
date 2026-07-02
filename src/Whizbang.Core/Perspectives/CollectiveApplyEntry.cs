@@ -44,6 +44,14 @@ namespace Whizbang.Core.Perspectives;
 /// construction. Handlers that don't need the query context simply ignore
 /// the third argument.
 /// </param>
+/// <param name="BatchSizeOverride">
+/// Per-handler override for <see cref="CollectiveApplyOptions.BatchSize"/>; <c>0</c> inherits the global
+/// default. Emitted from <c>[CollectiveApplyFor(BatchSize = …)]</c>.
+/// </param>
+/// <param name="StatementTimeoutSecondsOverride">
+/// Per-handler override for <see cref="CollectiveApplyOptions.StatementTimeoutSeconds"/>; <c>0</c> inherits the
+/// global default. Emitted from <c>[CollectiveApplyFor(StatementTimeoutSeconds = …)]</c>.
+/// </param>
 /// <docs>fundamentals/messaging/collective-events</docs>
 public sealed record CollectiveApplyEntry(
   Type ModelType,
@@ -52,5 +60,7 @@ public sealed record CollectiveApplyEntry(
   string MethodName,
   CollectiveScopeHandling ScopeHandling,
   CollectiveSpecKind SpecKind,
-  Func<object, ICollectiveEvent, ICollectiveQuery, object> Invoker
+  Func<object, ICollectiveEvent, ICollectiveQuery, object> Invoker,
+  int BatchSizeOverride = 0,
+  int StatementTimeoutSecondsOverride = 0
 );

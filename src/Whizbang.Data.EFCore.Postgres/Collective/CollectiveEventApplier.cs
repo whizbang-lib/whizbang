@@ -48,7 +48,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
   /// <param name="evt">The collective event being applied.</param>
   /// <param name="resolver">DI-resolved <see cref="ICollectiveScopeResolver"/> whose <see cref="ICollectiveScopeResolver.ScopeKind"/> matches <paramref name="evt"/>.</param>
   /// <param name="dbContext">EF Core context that holds the perspective table.</param>
-  /// <param name="collectiveEventId">Unique id of this collective event; written to the audit-pointer column on every affected row.</param>
+  /// <param name="collectiveEventId">Unique id of this collective event; emitted in the apply-completion telemetry (which event mutated how many rows).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Number of rows the SQL UPDATE mutated.</returns>
   public static async Task<int> ApplyAsync(
@@ -58,6 +58,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       ICollectiveScopeResolver resolver,
       DbContext dbContext,
       Guid collectiveEventId,
+      CollectiveApplyOptions options,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(entry);
@@ -65,6 +66,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(evt);
     ArgumentNullException.ThrowIfNull(resolver);
     ArgumentNullException.ThrowIfNull(dbContext);
+    ArgumentNullException.ThrowIfNull(options);
 
     // Validate: the entry must match the event's concrete type and the
     // model we're generic over.
@@ -101,19 +103,34 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
         $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
     }
 
-    // Compose the effective WHERE. Framework: the resolver's scope envelope (generic-by-TModel),
-    // optionally refined by the handler's own per-model Where. Custom: the handler owns the full
-    // predicate, so the resolver scope filter is not even computed.
-    Expression<Func<PerspectiveRow<TModel>, bool>>? scopeFilter =
-      entry.ScopeHandling == CollectiveScopeHandling.Custom
-        ? null
-        : resolver.ScopeFilter<TModel>(evt.Scope);
+    // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
+    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
+    // Custom AND-composes it with the mandatory handler cohort Where. A handler can refine within scope but
+    // never escape it.
+    var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
     var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
+
+    // A stable identity for the scope (includes the tenant), so the per-(table,scope) advisory lock serializes
+    // same-scope applies while letting disjoint scopes run concurrently. The record ToString() is
+    // compiler-generated (AOT-safe, no reflection) and carries the scope's members (e.g. TenantId).
+    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
+
+    // §6: fold this handler's per-apply knob overrides onto the global default (0 = inherit). SerializeApplies
+    // and EnsureIndexes stay global — exclusive serialization is not per-handler optional (D4 safety).
+    var effectiveOptions = options with {
+      BatchSize = entry.BatchSizeOverride > 0 ? entry.BatchSizeOverride : options.BatchSize,
+      StatementTimeoutSeconds = entry.StatementTimeoutSecondsOverride > 0
+        ? entry.StatementTimeoutSecondsOverride
+        : options.StatementTimeoutSeconds,
+    };
 
     return await EFCoreCollectiveAdapter<TModel>.ExecuteAsync(
       dbContext,
       spec,
       effectiveWhere,
+      effectiveOptions,
+      scopeKey,
+      collectiveEventId,
       cancellationToken).ConfigureAwait(false);
   }
 }

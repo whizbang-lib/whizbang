@@ -16,7 +16,23 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_CrossPerspectiveCohort_ScopesBySiblingTableAsync</tests>
 [SuppressMessage("AOT", "IL2091:MakeGenericType", Justification = "EF Core's DbSet<T>() resolution is reflection-based by design; matches the established suppressions on the EF collective adapter.")]
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "EF Core data layer inherently uses reflection for query translation.")]
-internal sealed class EFCoreCollectiveQuery(DbContext dbContext) : ICollectiveQuery {
+internal sealed class EFCoreCollectiveQuery(DbContext dbContext) : ICollectiveQuery, ICollectiveSiblingTableSource {
   public IQueryable<PerspectiveRow<TOther>> Of<TOther>() where TOther : class
     => dbContext.Set<PerspectiveRow<TOther>>();
+
+  /// <summary>
+  /// Resolves a sibling model's perspective table from the EF Core model, for the raw jsonb_set path's
+  /// correlated <c>EXISTS</c> (the native <c>ExecuteUpdateAsync</c> path lets EF translate the sibling
+  /// <c>DbSet</c> directly instead).
+  /// </summary>
+  public string TableFor(Type modelType) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    var rowType = typeof(PerspectiveRow<>).MakeGenericType(modelType);
+    var entityType = dbContext.Model.FindEntityType(rowType)
+      ?? throw new InvalidOperationException(
+        $"No EF Core entity mapped for PerspectiveRow<{modelType.Name}> — a handler's Where referenced a " +
+        $"sibling perspective q.Of<{modelType.Name}>() whose DbSet is not registered in this DbContext.");
+    return entityType.GetTableName()
+      ?? throw new InvalidOperationException($"PerspectiveRow<{modelType.Name}> has no table name.");
+  }
 }

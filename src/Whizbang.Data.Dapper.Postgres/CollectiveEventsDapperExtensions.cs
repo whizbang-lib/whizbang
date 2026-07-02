@@ -2,9 +2,11 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Dapper.Postgres.Collective;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -31,6 +33,17 @@ public static class CollectiveEventsDapperExtensions {
       this IServiceCollection services,
       IReadOnlyList<CollectiveApplyEntry> applyEntries) {
     ArgumentNullException.ThrowIfNull(applyEntries);
+    // Apply policy (batching + statement_timeout) from PostgresOptions. TryAdd so a consumer can register
+    // their own CollectiveApplyOptions first to override.
+    services.TryAddSingleton(sp => {
+      var pg = sp.GetService<IOptions<PostgresOptions>>()?.Value;
+      return pg is null
+        ? CollectiveApplyOptions.Default
+        : new CollectiveApplyOptions {
+          BatchSize = pg.CollectiveApplyBatchSize,
+          StatementTimeoutSeconds = pg.CollectiveApplyStatementTimeoutSeconds,
+        };
+    });
     services.TryAddSingleton<ICollectiveSessionAccessor, DapperCollectiveSessionAccessor>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
@@ -55,8 +68,11 @@ public static class CollectiveEventsDapperExtensions {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     var registry = _getOrAddTableRegistry(services);
     registry.Add(typeof(TModel), tableName);
-    services.AddSingleton<ICollectiveEventExecutor>(
-      new DapperCollectiveEventExecutor<TModel>(tableName, registry.Tables));
+    // Factory (not a pre-built instance) so the executor picks up the DI-resolved CollectiveApplyOptions
+    // and logger.
+    services.AddSingleton<ICollectiveEventExecutor>(sp =>
+      new DapperCollectiveEventExecutor<TModel>(tableName, registry.Tables, sp.GetService<CollectiveApplyOptions>(),
+        sp.GetService<Microsoft.Extensions.Logging.ILogger<DapperCollectiveEventExecutor<TModel>>>()));
     return services;
   }
 

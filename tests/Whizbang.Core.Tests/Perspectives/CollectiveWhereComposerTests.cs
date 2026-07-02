@@ -65,18 +65,22 @@ public class CollectiveWhereComposerTests {
   }
 
   [Test]
-  public async Task Custom_WithHandlerWhere_UsesHandlerWhereAloneAsync() {
-    // Custom: a scope filter that would EXCLUDE everything must be ignored — the handler owns the WHERE.
-    Expression<Func<PerspectiveRow<_job>, bool>> excludeAll = _ => false;
+  public async Task Custom_WithHandlerWhere_StillAndsScopeAsync() {
+    // D0 safety: under Custom the handler owns the COHORT predicate, but the scope envelope STILL binds
+    // (shared multi-tenant tables). Compose ANDs the scope filter with the handler Where.
+    Expression<Func<PerspectiveRow<_job>, bool>> scope = r => r.Scope.TenantId == "t-1";
     Expression<Func<PerspectiveRow<_job>, bool>> where = r => r.Data.Status == "Draft";
 
     var predicate = CollectiveWhereComposer
-      .Compose(CollectiveScopeHandling.Custom, excludeAll, where)
+      .Compose(CollectiveScopeHandling.Custom, scope, where)
       .Compile();
 
     await Assert.That(predicate(_row("Draft", "t-1"))).IsTrue()
-      .Because("Custom ignores the resolver scope filter; only the handler's Where gates the update.");
-    await Assert.That(predicate(_row("Approved", "t-1"))).IsFalse();
+      .Because("In-scope tenant + handler cohort match → included.");
+    await Assert.That(predicate(_row("Approved", "t-1"))).IsFalse()
+      .Because("The handler Where (Status=='Draft') refines the cohort — Approved falls out.");
+    await Assert.That(predicate(_row("Draft", "t-2"))).IsFalse()
+      .Because("D0: the scope envelope still binds even under Custom — a Draft row in a different tenant is excluded.");
   }
 
   [Test]

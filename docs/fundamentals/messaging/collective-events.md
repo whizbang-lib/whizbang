@@ -77,7 +77,13 @@ How `Where` composes with the resolver's scope filter is governed by `[Collectiv
 | `ScopeHandling` | Effective `WHERE` | Use when |
 |---|---|---|
 | **`Framework`** (default) | `resolverScopeFilter AND spec.Where` (or the scope filter alone when `Where` is null) | The scope envelope (e.g. tenant) must always bind; the handler only *refines* within it and can't over-mutate. |
-| **`Custom`** | `spec.Where` **alone** (the resolver scope filter is not even computed) | The handler owns the entire predicate — a multi-field/cross-table cohort the model-agnostic resolver can't express. A null `Where` here is a misconfiguration and throws. |
+| **`Custom`** | `resolverScopeFilter AND spec.Where` (a non-null `Where` is **required**) | The handler owns the **cohort** predicate — a multi-field/cross-table cohort the model-agnostic resolver can't express — but the scope envelope **still binds**. A null `Where` here is a misconfiguration and throws. |
+
+> **The scope envelope always binds (0.795, D0).** Both modes AND the resolver's scope filter into the SQL
+> `WHERE`; a `Custom` handler refines *within* its scope and can never escape it. (Before 0.795 the `Custom`
+> path composed `spec.Where` *alone* and skipped the scope filter — a cross-tenant data-safety hole on shared
+> multi-tenant tables. The only remaining difference between the modes is that `Framework` permits a null
+> `Where` — scope alone — while `Custom` requires the handler to supply the cohort predicate.)
 
 ```csharp
 // Refine within the tenant envelope — only Draft jobs in the event's tenant:
@@ -87,7 +93,7 @@ public ICollectiveSpec<OrderModel> ApplyTemplate(TemplateAppliedCollectiveEvent 
     Setters: s => s.SetProperty(j => j.JobTemplateId, e.TemplateId),
     Where:   r => r.Data.OverlayId == null);
 
-// Own the whole WHERE — the handler scopes by its own columns, resolver scope ignored:
+// Own the cohort predicate by the handler's own columns — the resolver scope is STILL AND-ed in (D0):
 [CollectiveApplyFor(ScopeHandling = CollectiveScopeHandling.Custom)]
 public ICollectiveSpec<OrderModel> ClearOverlay(OverlayClearedCollectiveEvent e) =>
   new CollectiveSpec<OrderModel>(
@@ -157,8 +163,35 @@ through the normal produce → persist → project pipeline, with one branch at 
    it loads the collective event(s) on the sink stream, resolves `ICollectiveDispatcher` + the projection
    session (via `ICollectiveSessionAccessor`), calls `DispatchAsync` **exactly once** per event, advances the
    sink cursor, and **skips the per-stream runner** (a collective event has no single target stream). The
-   dispatcher fans out internally to every matching `TModel` handler, each running one
-   `ExecuteUpdateAsync`/`UPDATE … WHERE <scope>`.
+   dispatcher fans out internally to every matching `TModel` handler, each running the bounded, scoped apply
+   below.
+
+### Apply execution — scoped, bounded, indexed (0.795)
+
+Each handler's apply is **one predicate `UPDATE` per projection table**, hardened so a large cohort can never
+convoy locks or run away (the mechanics that stopped the production spiral):
+
+- **Predicate `UPDATE`, no id-gather (D1).** The composed `WHERE` (scope envelope AND the handler cohort) is
+  compiled straight to SQL by the shared `CollectivePredicateSqlCompiler` — no `SELECT id … ToList` of the
+  whole cohort. One code path serves both drivers.
+- **Scope always binds (D0).** The resolver's scope predicate (e.g. `scope->>'t' = @tenant`) is always
+  AND-ed in, even under `Custom` — see the [ScopeHandling table](#per-perspective-projection-where).
+- **Keyset batching (§4).** The cohort is applied in `CollectiveApplyOptions.BatchSize` chunks
+  (`… WHERE <pred> AND id > @cursor ORDER BY id LIMIT n` → `UPDATE … WHERE id = ANY`), each its own short
+  transaction — bounded lock holds, never materializes the whole cohort.
+- **Server-side `statement_timeout` (§3).** `SET LOCAL statement_timeout` per batch (the only form that
+  survives PgBouncer transaction pooling) so a runaway batch is cancelled by Postgres, never left a zombie.
+- **Per-(table, scope) exclusive advisory lock (§5a).** Each batch takes `pg_advisory_xact_lock(hash(table,
+  scope))` — DB-global, so it serializes same-scope collective applies **across pods** while disjoint scopes
+  (e.g. different tenants) run concurrently. Opt out with `SerializeApplies = false`.
+- **Default-on expression indexes (§7).** Before scanning, the adapter ensures a btree
+  `CREATE INDEX IF NOT EXISTS … ((data->>'Prop'))` for each jsonb path the `WHERE` filters on (incl.
+  `scope->>'t'`) — `gin` can't serve `->>` equality. Once per `(database, table, expr)`, best-effort,
+  PgBouncer-safe; opt out with `EnsureIndexes = false`.
+- **Per-handler knobs (§6).** `[CollectiveApplyFor(BatchSize = …, StatementTimeoutSeconds = …)]` override the
+  global `CollectiveApplyOptions` defaults for a heavy or light handler (`0` = inherit).
+- **Observability (§9).** Transient (`40P01`/`40001`) retries log via `PostgresDeadlockRetry`, and an
+  apply-completion log carries the collective event id + affected rows + batch count.
 
 ### Determinism & replay
 
@@ -166,8 +199,9 @@ Determinism is **at scope level, not stream level**. The event carries no enumer
 streams — only its scope. On replay the predicate is re-evaluated against the projection state at the
 event's log position; because event-sourcing fully determines projection state from the log up to that
 point, the result is deterministic and reflects the logically-correct cohort (self-healing against
-out-of-order original delivery). Re-applying is idempotent — the same SET values, and the
-`collectiveEventId` audit-pointer column identifies the last collective writer.
+out-of-order original delivery). Re-applying is idempotent — the same constant SET values — and `id > @cursor`
+keyset progress means a partial/resumed run never skips or double-applies a row. The collective event id is
+carried in the apply-completion telemetry (which event mutated how many rows), not a per-row audit column.
 
 ## DI wiring (EF Core)
 
@@ -183,15 +217,16 @@ stay AOT-clean — a source generator can emit these per-model calls for full tu
 
 ## Driver support
 
-| Driver | Expression → SQL | Apply executor | Status |
-|---|---|---|---|
-| **EF Core** (`Whizbang.Data.EFCore.Postgres`) | `CollectiveSettersRewriter` → `EF.Functions.JsonbSet` → `ExecuteUpdateAsync` | `EFCoreCollectiveEventExecutor<TModel>` | **Complete** |
-| **Dapper** (`Whizbang.Data.Dapper.Postgres`) | `DapperCollectiveSpecCompiler` (SET) + `DapperCollectiveScopeFilterCompiler` (WHERE) → one `UPDATE` | `DapperCollectiveEventExecutor<TModel>` (+ `DapperCollectiveEventApplier`) | **Complete** |
+| Driver | SET → SQL | WHERE → SQL | Apply | Status |
+|---|---|---|---|---|
+| **EF Core** (`Whizbang.Data.EFCore.Postgres`) | `CollectiveSettersRewriter` → nested `jsonb_set` | shared `CollectivePredicateSqlCompiler` | `EFCoreCollectiveEventExecutor<TModel>` — keyset-batched predicate `UPDATE` + advisory lock + `statement_timeout` + index-ensure | **Complete** |
+| **Dapper** (`Whizbang.Data.Dapper.Postgres`) | `DapperCollectiveSpecCompiler` → `jsonb_set` | shared `CollectivePredicateSqlCompiler` | `DapperCollectiveEventExecutor<TModel>` (+ applier) — keyset-batched + advisory lock + `statement_timeout` | **Parity** (no index-ensure / completion-log yet) |
 
-Dapper DI mirrors EF Core: `AddCollectiveEventsDapper(entries)` + `AddCollectiveExecutorDapper<TModel>(tableName)`
-(Dapper supplies the `wh_per_*` table name since it has no entity model to derive it from), plus
-`AddCollectiveTableDapper<TOther>(tableName)` for any **query-only sibling** a handler reaches via
-`q.Of<TOther>()`. The Dapper scope-filter compiler translates equality over a **scope** field
+Both drivers share one WHERE compiler (`CollectivePredicateSqlCompiler`, in `Whizbang.Data.Postgres`) and the
+same keyset-batched apply shape. Dapper DI mirrors EF Core: `AddCollectiveEventsDapper(entries)` +
+`AddCollectiveExecutorDapper<TModel>(tableName)` (Dapper supplies the `wh_per_*` table name since it has no
+entity model to derive it from), plus `AddCollectiveTableDapper<TOther>(tableName)` for any **query-only
+sibling** a handler reaches via `q.Of<TOther>()`. The shared compiler translates equality over a **scope** field
 (`row.Scope.Prop == value` → `scope->>'Prop'`) **or a data** field (`row.Data.Prop == value` →
 `data->>'Prop'`); `&&`-chains mixing both; `Contains` (→ `IN`); and `q.Of<TOther>().Any(...)`
 cross-perspective cohorts (→ a correlated `EXISTS`). It throws for richer predicates (non-equality,
@@ -203,6 +238,17 @@ deferred to `[CollectiveApplyFor(SpecKind = RawSql)]` in v1 (both compilers thro
 
 ## Open follow-ups
 
+- **§5b — standard-apply shared lock** (deferred): the standard single-row apply taking a *shared* advisory
+  lock so it coordinates with the collective *exclusive* lock (§5a). Collective-vs-collective is already
+  serialized cross-pod by §5a; §5b is the collective-vs-standard refinement (ordering, not correctness).
+  Reservations / pros-cons / how-to-vet: [`plans/collective-5b-standard-apply-shared-lock-deferred.md`](../../../plans/collective-5b-standard-apply-shared-lock-deferred.md).
+- **§8 — perspective failure / DLQ plumbing** (deferred): a triple identifier mismatch on the core
+  failure path means a perspective/collective apply failure is not recorded (Failed flag / backoff). Not
+  spiral-critical (the apply hardening makes applies *succeed*); precise root cause + fix plan:
+  [`plans/collective-8-perspective-failure-plumbing-deferred.md`](../../../plans/collective-8-perspective-failure-plumbing-deferred.md).
+- **Dapper index-ensure + completion-log parity** — Dapper has the keyset/lock/knob/logger parity but not
+  yet §7 expression-index ensuring or the apply-completion telemetry (no current Dapper consumer;
+  `statement_timeout` backstops the scan).
 - **Generator-emitted executor registration** — auto-emit `AddCollectiveExecutor{EFCore,Dapper}<TModel>()`
   per model (and the Dapper table name) for full turnkey registration.
 - **Open-set custom-scope serialization** — `[JsonDerivedType]` is a closed list; custom scopes need the
@@ -217,12 +263,17 @@ deferred to `[CollectiveApplyFor(SpecKind = RawSql)]` in v1 (both compilers thro
   (the `Where` projection), `ICollectiveQuery.cs` (cross-perspective cohorts),
   `CollectiveWhereComposer.cs` (scope/`Where` composition), `CollectiveDispatcher.cs`,
   `ICollectiveSessionAccessor.cs`, `CollectiveRouting.cs`, `TenantCollectiveScopeResolver.cs`.
+- Shared (both drivers): `src/Whizbang.Data.Postgres/Collective/` — `CollectivePredicateSqlCompiler` (WHERE →
+  SQL + `ReferencedJsonPath`s), `CollectiveApplyLockKey` (advisory-lock key), `CollectiveApplyOptions`
+  (`Whizbang.Core.Perspectives`, batch/timeout/serialize/index knobs).
 - EF Core: `src/Whizbang.Data.EFCore.Postgres/Collective/` (`EFCoreCollectiveEventExecutor`,
-  `CollectiveEventApplier`, `EFCoreCollectiveAdapter`, `CollectiveSettersRewriter`, `EFCoreCollectiveQuery`,
-  `EFCoreCollectiveSessionAccessor`), `CollectiveEventsEFCoreExtensions.cs`.
+  `CollectiveEventApplier`, `EFCoreCollectiveAdapter` (keyset batch + lock + timeout), `CollectiveSettersRewriter`,
+  `CollectiveIndexEnsurer` (§7), `EFCoreCollectiveQuery`, `EFCoreCollectiveSessionAccessor`),
+  `CollectiveEventsEFCoreExtensions.cs`.
 - Dapper: `src/Whizbang.Data.Dapper.Postgres/Collective/` (`DapperCollectiveEventExecutor`,
-  `DapperCollectiveEventApplier`, `DapperCollectiveScopeFilterCompiler`, `DapperCollectiveQuery`,
-  `DapperCollectiveTableRegistry`), `CollectiveEventsDapperExtensions.cs`.
+  `DapperCollectiveEventApplier` (keyset batch + lock + timeout), `DapperCollectiveSpecCompiler` (SET),
+  `DapperCollectiveQuery`, `DapperCollectiveTableRegistry`), `CollectiveEventsDapperExtensions.cs`.
+- Deadlock/retry: `src/Whizbang.Data.Postgres/PostgresDeadlockRetry.cs`.
 - Routing migration: `src/Whizbang.Data.Postgres/Migrations/061_CollectiveEventRouting.sql`.
 - Worker seam: `src/Whizbang.Core/Workers/PerspectiveWorker.cs` (`_processCollectiveSinkAsync`).
 - Tests: `tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs`,

@@ -44,6 +44,8 @@ public class CollectiveApplyDiscoveryGeneratorTests {
           public sealed class CollectiveApplyForAttribute : System.Attribute {
             public CollectiveScopeHandling ScopeHandling { get; init; } = CollectiveScopeHandling.Framework;
             public CollectiveSpecKind SpecKind { get; init; } = CollectiveSpecKind.Linq;
+            public int BatchSize { get; init; }
+            public int StatementTimeoutSeconds { get; init; }
           }
         }
         """;
@@ -213,6 +215,67 @@ public class CollectiveApplyDiscoveryGeneratorTests {
     await Assert.That(code).IsNotNull();
     await Assert.That(code).Contains("CollectiveSpecKind.RawSql")
       .Because("Generator MUST emit the escape-hatch SpecKind so the runner routes to the raw-SQL adapter instead of the LINQ visitor.");
+  }
+
+  // ── §6: per-handler BatchSize / StatementTimeoutSeconds overrides ───────
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithApplyKnobOverrides_EmitsOverridesOnEntryAsync() {
+    const string source = $$"""
+            using Whizbang.Core.Messaging;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public sealed class JobModel { }
+            public sealed record E(ICollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+
+            public sealed class P {
+              [CollectiveApplyFor(BatchSize = 250, StatementTimeoutSeconds = 15)]
+              public ICollectiveSpec<JobModel> Apply(E e) => null!;
+            }
+
+            {{COLLECTIVE_STUBS}}
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
+
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("BatchSizeOverride: 250")
+      .Because("A handler that declares BatchSize must carry it on the entry so the applier can override the global default for this handler.");
+    await Assert.That(code).Contains("StatementTimeoutSecondsOverride: 15")
+      .Because("A handler that declares StatementTimeoutSeconds must carry it on the entry to override the global timeout per apply.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithoutApplyKnobs_EmitsZeroInheritSentinelsAsync() {
+    const string source = $$"""
+            using Whizbang.Core.Messaging;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public sealed class JobModel { }
+            public sealed record E(ICollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+
+            public sealed class P {
+              [CollectiveApplyFor]
+              public ICollectiveSpec<JobModel> Apply(E e) => null!;
+            }
+
+            {{COLLECTIVE_STUBS}}
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
+
+    await Assert.That(code!).Contains("BatchSizeOverride: 0")
+      .Because("An unspecified knob emits the 0 sentinel meaning 'inherit the global CollectiveApplyOptions default'.");
+    await Assert.That(code).Contains("StatementTimeoutSecondsOverride: 0")
+      .Because("An unspecified timeout knob emits the 0 sentinel meaning 'inherit the global default'.");
   }
 
   // ── Multiple handlers on the same class ────────────────────────────────

@@ -2,7 +2,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore.Query;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Serialization;
@@ -10,33 +9,21 @@ using Whizbang.Core.Serialization;
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 
 /// <summary>
-/// Translates a perspective's <see cref="ICollectiveSpec{TModel}.Setters"/>
-/// LINQ expression into the shape EF Core's
-/// <see cref="UpdateSettersBuilder{T}"/> expects, emitting one native
-/// nested <c>SetProperty(r =&gt; r.Data.&lt;Prop&gt;, value)</c> call per
-/// mutated property so the resulting <c>ExecuteUpdateAsync</c> updates the
-/// JSON sub-properties of the <c>Data</c> column directly.
+/// Walks a perspective's <see cref="ICollectiveSpec{TModel}.Setters"/> LINQ
+/// expression and returns each top-level property assignment pre-serialized
+/// to the exact JSON text the jsonb column stores, so the adapter can build
+/// a single nested <c>jsonb_set(data, '{Prop}', @value::jsonb)</c> UPDATE
+/// that mutates the <c>Data</c> column's sub-properties directly.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The turnkey perspective mapping declares <c>Data</c> as an EF Core 10
-/// <c>ComplexProperty().ToJson()</c> complex type (see the generated
-/// configuration in <c>EFCoreServiceRegistrationGenerator</c>), not a
-/// scalar <c>jsonb</c> column. Against that mapping EF Core 10 natively
-/// supports <c>SetProperty(r =&gt; r.Data.PropName, value)</c> and emits the
-/// appropriate <c>jsonb_set</c> SQL itself — so the rewriter simply
-/// re-targets each model-level setter (<c>j =&gt; j.PropName</c>) onto the
-/// row's <c>Data</c> sub-property and lets EF's own JSON-update pipeline do
-/// the work. No custom <c>jsonb_set</c> translator and no raw SQL strings.
-/// </para>
-/// <para>
-/// (An earlier revision folded every mutation into a single column-level
-/// <c>SetProperty(r =&gt; r.Data, r =&gt; jsonb_set(...))</c> via a custom
-/// translator. That assumed <c>Data</c> was a scalar <c>jsonb</c> column;
-/// it threw "does not represent a valid value" against the real
-/// <c>ComplexProperty().ToJson()</c> mapping because <c>r.Data</c> does not
-/// translate to a scalar column. The native nested form is both simpler and
-/// correct for the production mapping.)
+/// The adapter (<see cref="EFCoreCollectiveAdapter{TModel}"/>) drives every
+/// mapping — complex-JSON, scalar/polymorphic, and null setters — through one
+/// raw <c>jsonb_set</c> path, so the rewriter's only job is to hand back the
+/// serialized <c>(PathName, JsonValue, IsNull)</c> triples. Values are
+/// serialized with the <see cref="SerializationProfile.Persistence"/> profile
+/// so they match byte-for-byte how the column stores them (e.g. WhizbangId
+/// object-mode, plain Guid as a JSON string, null as JSON null).
 /// </para>
 /// <para>
 /// Constraint matrix:
@@ -44,92 +31,22 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// <list type="bullet">
 ///   <item><description>Scalar top-level <c>SetProperty(j =&gt; j.PropName, constant)</c> — supported.</description></item>
 ///   <item><description>Constant value sources (literal, captured local, captured field) — supported.</description></item>
-///   <item><description>Multiple chained <c>SetProperty</c> calls — emitted as a fluent chain of native <c>SetProperty</c> calls.</description></item>
-///   <item><description>Computed expressions (<c>j =&gt; j.X + 1</c>) — UNSUPPORTED in v1.0; throws <see cref="NotSupportedException"/> with a pointer to <c>SpecKind = RawSql</c>. Matches the Slice 9 Dapper compiler's constraint matrix.</description></item>
+///   <item><description>Multiple chained <c>SetProperty</c> calls — collected in source order.</description></item>
+///   <item><description>Computed expressions (<c>j =&gt; j.X + 1</c>) — UNSUPPORTED in v1.0; throws <see cref="NotSupportedException"/> with a pointer to <c>SpecKind = RawSql</c>. Matches the Dapper compiler's constraint matrix.</description></item>
 ///   <item><description>Nested paths (<c>j =&gt; j.Nested.X</c>) — UNSUPPORTED in v1.0; throws <see cref="NotSupportedException"/>.</description></item>
 /// </list>
 /// <para>
-/// AOT note: matches the EF Core data-layer pattern of suppressing
-/// IL2060 / IL3050 — EF Core inherently uses reflection for query
-/// translation. Suppressions documented inline.
+/// AOT note: value evaluation compiles a captured sub-expression
+/// (<c>Expression.Lambda(...).Compile()</c>) and serializes via
+/// <see cref="JsonSerializer"/>, so IL2026 / IL3050 are suppressed — the
+/// values come from compile-time selector metadata, not runtime type
+/// scanning. Suppressions documented inline.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-[SuppressMessage("AOT", "IL2026:RequiresUnreferencedCode", Justification = "EF Core data layer accepts reflection tradeoff; values come from compile-time selector metadata, not runtime type scanning.")]
-[SuppressMessage("AOT", "IL2060:MakeGenericMethod can break functionality when AOT compiling", Justification = "EF Core data layer inherently uses reflection for query translation")]
-[SuppressMessage("AOT", "IL2070:UnrecognizedReflectionPattern", Justification = "EF Core data layer inherently uses reflection for query translation")]
-[SuppressMessage("AOT", "IL2075:UnrecognizedReflectionPattern", Justification = "EF Core data layer inherently uses reflection for query translation")]
-[SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "EF Core data layer inherently uses reflection for query translation")]
+[SuppressMessage("AOT", "IL2026:RequiresUnreferencedCode", Justification = "Values come from compile-time selector metadata serialized via the persistence JSON context, not runtime type scanning.")]
+[SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Captured value sub-expressions are compiled from spec setter metadata known at build time, not synthesized at runtime.")]
 internal static class CollectiveSettersRewriter {
-  /// <summary>
-  /// Rewrite the spec setters into a fluent chain of native
-  /// <c>SetProperty(r =&gt; r.Data.&lt;Prop&gt;, value)</c> calls that
-  /// EF Core 10 can hand to <c>ExecuteUpdateAsync</c>.
-  /// </summary>
-  public static Expression<Action<UpdateSettersBuilder<PerspectiveRow<TModel>>>> Rewrite<TModel>(
-      Expression<Action<ICollectiveSetters<TModel>>> source)
-      where TModel : class {
-    ArgumentNullException.ThrowIfNull(source);
-
-    // Walk the spec body once and accumulate (property, value) pairs.
-    var visitor = new _propertyCollector(typeof(TModel));
-    visitor.Visit(source.Body);
-
-    if (visitor.Assignments.Count == 0) {
-      throw new InvalidOperationException(
-        $"Spec for {typeof(TModel).Name} produced zero SetProperty calls. " +
-        "An ICollectiveSpec must mutate at least one property — empty specs are unsupported because they translate to a SQL UPDATE with no SET clause.");
-    }
-
-    // Build:
-    //   s => s.SetProperty(r => r.Data.<Prop1>, value1)
-    //         .SetProperty(r => r.Data.<Prop2>, value2)
-    var settersParam = Expression.Parameter(
-      typeof(UpdateSettersBuilder<PerspectiveRow<TModel>>),
-      "s");
-    var rowParam = Expression.Parameter(typeof(PerspectiveRow<TModel>), "r");
-    var dataProperty = typeof(PerspectiveRow<TModel>).GetProperty(nameof(PerspectiveRow<TModel>.Data))!;
-    var rowDotData = Expression.Property(rowParam, dataProperty);
-
-    // The (Expression<Func<TSource,TProperty>> propertyExpression, TProperty value) overload — the second
-    // argument is the bare constant value, not a value selector. EF Core embeds it as a parameter and emits
-    // the JSON-column update itself. (The sibling overload takes a value *selector* and trips EF's coercion
-    // validation for nullable JSON sub-properties; the bare-value form is both simpler and correct.)
-    var setPropertyValueOverload = settersParam.Type.GetMethods()
-      .Where(m => m.Name == "SetProperty" && m.IsGenericMethodDefinition && m.GetParameters().Length == 2)
-      .First(m => {
-        var ps = m.GetParameters();
-        return ps[0].ParameterType.IsGenericType
-            && ps[0].ParameterType.GetGenericTypeDefinition() == typeof(Expression<>)
-            && ps[1].ParameterType.IsGenericMethodParameter;
-      });
-
-    Expression chain = settersParam;
-    foreach (var a in visitor.Assignments) {
-      var propType = a.Property.PropertyType;
-      var selectorFuncType = typeof(Func<,>).MakeGenericType(typeof(PerspectiveRow<TModel>), propType);
-
-      // r => r.Data.<Prop>
-      var memberAccess = Expression.Property(rowDotData, a.Property);
-      var propSelector = Expression.Lambda(selectorFuncType, memberAccess, rowParam);
-
-      // The bare value, typed to the property type (handles nullable widening, e.g. DateTimeOffset -> DateTimeOffset?).
-      Expression valueArg = a.Value is null
-        ? Expression.Constant(null, propType)
-        : Expression.Convert(Expression.Constant(a.Value), propType);
-
-      var setProperty = setPropertyValueOverload.MakeGenericMethod(propType);
-      chain = Expression.Call(
-        chain,
-        setProperty,
-        Expression.Quote(propSelector),
-        valueArg);
-    }
-
-    // The fluent chain returns UpdateSettersBuilder<...>; the Action lambda discards it.
-    return Expression.Lambda<Action<UpdateSettersBuilder<PerspectiveRow<TModel>>>>(chain, settersParam);
-  }
-
   // Persistence-profile options so a value serializes byte-for-byte the way the jsonb column stores it
   // (e.g. WhizbangId object-mode, plain Guid as a JSON string, null as JSON null).
   private static readonly JsonSerializerOptions _persistenceJsonOptions =
@@ -137,15 +54,15 @@ internal static class CollectiveSettersRewriter {
 
   /// <summary>
   /// A single property assignment from the spec, with its value pre-serialized to the JSON text the jsonb
-  /// column stores. Used by the raw-SQL <c>jsonb_set</c> path the adapter falls back to when a setter value
-  /// is null — EF Core 10 cannot set a <c>ComplexProperty().ToJson()</c> sub-property to null via
-  /// <c>ExecuteUpdate</c>.
+  /// column stores. Feeds the adapter's nested <c>jsonb_set(data, '{PathName}', @value::jsonb)</c> UPDATE;
+  /// <see cref="IsNull"/> is carried so a null setter serializes to JSON <c>null</c> (which EF Core 10
+  /// cannot express against a <c>ComplexProperty().ToJson()</c> sub-property via <c>ExecuteUpdate</c>).
   /// </summary>
   public sealed record CollectiveSetterAssignment(string PathName, string JsonValue, bool IsNull);
 
   /// <summary>
   /// Walk the spec setters and return each top-level assignment as (property name, JSON-serialized value,
-  /// is-null). Same constraint matrix as <see cref="Rewrite"/> (constant values, scalar top-level selectors).
+  /// is-null), per the class-level constraint matrix (constant values, scalar top-level selectors).
   /// </summary>
   public static IReadOnlyList<CollectiveSetterAssignment> CollectAssignments<TModel>(
       Expression<Action<ICollectiveSetters<TModel>>> source)

@@ -3,9 +3,11 @@ using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Collective;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -38,6 +40,17 @@ public static class CollectiveEventsEFCoreExtensions {
       IReadOnlyList<CollectiveApplyEntry> applyEntries)
       where TDbContext : DbContext {
     ArgumentNullException.ThrowIfNull(applyEntries);
+    // Apply policy (batching + statement_timeout) from PostgresOptions. TryAdd so a consumer can register
+    // their own CollectiveApplyOptions first to override.
+    services.TryAddSingleton(sp => {
+      var pg = sp.GetService<IOptions<PostgresOptions>>()?.Value;
+      return pg is null
+        ? CollectiveApplyOptions.Default
+        : new CollectiveApplyOptions {
+          BatchSize = pg.CollectiveApplyBatchSize,
+          StatementTimeoutSeconds = pg.CollectiveApplyStatementTimeoutSeconds,
+        };
+    });
     services.TryAddSingleton<ICollectiveSessionAccessor, EFCoreCollectiveSessionAccessor<TDbContext>>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(

@@ -34,7 +34,7 @@ public class CollectiveEventApplierTests {
     using var ctx = _newCtx();
 
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid()))
+        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentException>()
       .Because("Entry registered for _typeA but dispatched a _typeB — that's a registry routing bug, not a domain condition.");
   }
@@ -47,7 +47,7 @@ public class CollectiveEventApplierTests {
     using var ctx = _newCtx();
 
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid()))
+        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentException>()
       .Because("Dispatching to CollectiveEventApplier<_jobModel> with an entry whose ModelType is _otherModel means the type-fanout in the upstream dispatcher is wrong.");
   }
@@ -60,7 +60,7 @@ public class CollectiveEventApplierTests {
     using var ctx = _newCtx();
 
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid()))
+        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentException>()
       .Because("DI should have dispatched the 'tenant' event to the tenant resolver — a mismatched resolver means the registry lookup is wrong.");
   }
@@ -72,7 +72,7 @@ public class CollectiveEventApplierTests {
     var evt = new _typeA(new _tenantScope("t"));
     using var ctx = _newCtx();
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        null!, new _handler(), evt, new _stubResolver("tenant"), ctx, Guid.NewGuid()))
+        null!, new _handler(), evt, new _stubResolver("tenant"), ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -82,7 +82,7 @@ public class CollectiveEventApplierTests {
     var evt = new _typeA(new _tenantScope("t"));
     using var ctx = _newCtx();
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, null!, evt, new _stubResolver("tenant"), ctx, Guid.NewGuid()))
+        entry, null!, evt, new _stubResolver("tenant"), ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentNullException>();
   }
 

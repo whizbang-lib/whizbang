@@ -36,7 +36,9 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
     string MethodName,
     string ScopeHandlingEnumName,
     string SpecKindEnumName,
-    bool TakesQuery
+    bool TakesQuery,
+    int BatchSizeOverride,
+    int StatementTimeoutSecondsOverride
   );
 
   /// <inheritdoc/>
@@ -111,11 +113,17 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
     // Attribute named-argument enums come through as int (the underlying value).
     var scopeHandling = "Framework";
     var specKind = "Linq";
+    var batchSize = 0;
+    var statementTimeoutSeconds = 0;
     foreach (var na in attr.NamedArguments) {
       if (na.Key == "ScopeHandling" && na.Value.Value is int sh) {
         scopeHandling = sh == 1 ? "Custom" : "Framework";
       } else if (na.Key == "SpecKind" && na.Value.Value is int sk) {
         specKind = sk == 1 ? "RawSql" : "Linq";
+      } else if (na.Key == "BatchSize" && na.Value.Value is int bs) {
+        batchSize = bs;
+      } else if (na.Key == "StatementTimeoutSeconds" && na.Value.Value is int st) {
+        statementTimeoutSeconds = st;
       }
     }
 
@@ -126,7 +134,9 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
       MethodName: methodSymbol.Name,
       ScopeHandlingEnumName: scopeHandling,
       SpecKindEnumName: specKind,
-      TakesQuery: takesQuery
+      TakesQuery: takesQuery,
+      BatchSizeOverride: batchSize,
+      StatementTimeoutSecondsOverride: statementTimeoutSeconds
     );
   }
 
@@ -166,7 +176,9 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
         var invokeArgs = info.TakesQuery
           ? $"(({info.EventTypeFqn})evt, query)"
           : $"(({info.EventTypeFqn})evt)";
-        sb.AppendLine($"      Invoker: static (handler, evt, query) => (({info.HandlerTypeFqn})handler).{info.MethodName}{invokeArgs}");
+        sb.AppendLine($"      Invoker: static (handler, evt, query) => (({info.HandlerTypeFqn})handler).{info.MethodName}{invokeArgs},");
+        sb.AppendLine($"      BatchSizeOverride: {info.BatchSizeOverride},");
+        sb.AppendLine($"      StatementTimeoutSecondsOverride: {info.StatementTimeoutSecondsOverride}");
         sb.AppendLine("    ),");
       }
       sb.AppendLine("  };");
