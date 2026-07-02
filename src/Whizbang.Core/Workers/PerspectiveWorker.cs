@@ -2559,6 +2559,60 @@ public partial class PerspectiveWorker(
     // same here or claim_orphaned re-leases the row forever and re-dispatches the whole-cohort UPDATE — the
     // production death spiral (re-dispatch loop → ~95% table bloat → lock convoy).
     _completeCollectiveSinkWorkRows(sinkWorkIds);
+
+    // The apply is now durably complete. A collective event has no per-stream runner, so it never reaches
+    // the normal PostAllPerspectives gate — but the apply finishing IS its "all perspectives complete"
+    // moment. Run each applied event through the PostAllPerspectives + PostLifecycle lifecycle so
+    // PostAllPerspectives receptors (e.g. a completion-notification emitter) fire and any [NotificationTag]
+    // on the collective event is processed. Without this, a UI waiting on a completion tag never learns the
+    // set-based apply finished (the "Template Activating" toast hang). Only reached on the success path —
+    // a failed apply returns above, so we never signal completion for an apply that did not happen.
+    await _fireCollectivePostApplyLifecycleAsync(scope, streamId, collectiveEnvelopes, cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Runs each successfully-applied collective event through the terminal (PostAllPerspectives +
+  /// PostLifecycle) lifecycle stages via <see cref="IReceptorInvoker"/>, so completion receptors and
+  /// <c>[NotificationTag]</c> hooks fire now that the set-based apply is durably done. No-ops when no
+  /// <see cref="IReceptorInvoker"/> is registered. Per-event failures are isolated + logged — the apply
+  /// already committed and its work rows are completed, so a throwing post-apply receptor must neither crash
+  /// the sink nor undo the completion.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "A post-apply completion receptor failure must not crash the sink or undo the committed apply (L35: logged with context).")]
+  private async Task _fireCollectivePostApplyLifecycleAsync(
+      AsyncServiceScope scope,
+      Guid streamId,
+      List<MessageEnvelope<IEvent>> collectiveEnvelopes,
+      CancellationToken cancellationToken) {
+    var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+    if (receptorInvoker is null) {
+      return;
+    }
+    foreach (var envelope in collectiveEnvelopes) {
+      try {
+        await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
+        var context = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.PostAllPerspectivesDetached,
+          EventId = envelope.MessageId.Value,
+          StreamId = streamId,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1,
+          IsNewEvent = true,
+        };
+        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostAllPerspectivesDetached,
+          context, cancellationToken).ConfigureAwait(false);
+        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostAllPerspectivesInline,
+          context with { CurrentStage = LifecycleStage.PostAllPerspectivesInline }, cancellationToken).ConfigureAwait(false);
+        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleDetached,
+          context with { CurrentStage = LifecycleStage.PostLifecycleDetached }, cancellationToken).ConfigureAwait(false);
+        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
+          context with { CurrentStage = LifecycleStage.PostLifecycleInline }, cancellationToken).ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogErrorProcessingPerspectiveCursor(_logger, ex, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
+        _metrics?.Errors.Add(1);
+      }
+    }
   }
 
   /// <summary>

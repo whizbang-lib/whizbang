@@ -2,6 +2,7 @@
 #pragma warning disable CA1859 // tests assert against the interface return type
 
 using System.Data.Common;
+using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -687,6 +688,40 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await Assert.That(result.AffectedRowCount).IsEqualTo(1);
     await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
       .Because("A scalar set on a polymorphic model (Data mapped as a scalar jsonb column, not ComplexProperty) must apply via the raw jsonb_set path — EF Core 10's native SetProperty rejects it.");
+  }
+
+  // ── §1 OTel: the apply emits a "Collective Apply" span tagged with table/rows/batches (child of the
+  // "Collective Dispatch" span) so a slow apply is pinpointable to a table, not just an event ──────────
+  [Test]
+  public async Task DispatchAsync_EmitsCollectiveApplySpanWithTableAndRowTagsAsync() {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-span", tag: "before");
+    var collectiveEventId = Guid.NewGuid();
+
+    var captured = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = src => src.Name == "Whizbang.Tracing",
+      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      ActivityStopped = a => { lock (captured) { captured.Add(a); } },
+    };
+    ActivitySource.AddActivityListener(listener);
+
+    await _buildSetTagDispatcher().DispatchAsync(
+      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-span"), Tag = "after" },
+      collectiveEventId: collectiveEventId, dbContextOrSession: _ctx!, cancellationToken: default);
+
+    Activity? span;
+    lock (captured) {
+      span = captured.SingleOrDefault(a => a.OperationName == "Collective Apply"
+        && string.Equals(a.GetTagItem("whizbang.collective.event_id")?.ToString(), collectiveEventId.ToString(), StringComparison.Ordinal));
+    }
+    await Assert.That(span).IsNotNull()
+      .Because("The keyset-batched apply must emit a child span so a slow apply is visible per table/batch.");
+    await Assert.That(span!.GetTagItem("whizbang.collective.table")?.ToString()).IsEqualTo("wh_per_collective_cells");
+    await Assert.That(span.GetTagItem("whizbang.collective.affected_rows")?.ToString()).IsEqualTo("1")
+      .Because("The span reports how many rows the apply touched (1 seeded cell in this tenant).");
+    await Assert.That(span.GetTagItem("whizbang.collective.batches")?.ToString()).IsNotNull()
+      .Because("The span reports the batch count so a cohort that fans into many batches is visible.");
   }
 
   private async Task _seedCellsAsync(Guid id, string tenantId, string tag) {
