@@ -180,6 +180,116 @@ public class PerspectiveWorkerCollectiveSinkTests {
         "from the drain batch's raw rows) so claim_orphaned can't re-lease it.");
   }
 
+  /// <summary>
+  /// REGRESSION (the "Template Activating" toast never resolves): a collective apply completing IS the
+  /// "all perspectives complete" moment for that collective event. The sink must run the event through the
+  /// PostAllPerspectives lifecycle so a PostAllPerspectives receptor (e.g. a consumer's completion-notification
+  /// emitter that publishes the tag-bearing Completed bookend) fires. Before the fix the sink dispatches the
+  /// apply and reports completion but never invokes the lifecycle, so nothing downstream learns the apply
+  /// finished — this asserts the lifecycle fires on success.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_SuccessfulDispatch_FiresPostAllPerspectivesLifecycle_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new _recordingDispatcher();
+    var invoker = new _capturingReceptorInvoker();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [_sinkWork(streamId)],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      receptorInvoker: invoker);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    await invoker.FirstPostAllPerspectives.WaitAsync(TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1);
+    await Assert.That(invoker.Invocations.Any(i => i.EventId == eventId && i.Stage == LifecycleStage.PostAllPerspectivesInline)).IsTrue()
+      .Because("A successful collective apply must run its event through PostAllPerspectives so the completion " +
+        "receptor/tag fires — otherwise the frontend's completion toast waits forever.");
+  }
+
+  /// <summary>
+  /// The mirror guard: a FAILED collective apply must NOT fire the PostAllPerspectives lifecycle — the apply
+  /// did not complete, so emitting a "completed" signal would be a lie (and would prematurely dismiss the toast).
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_DispatchThrows_DoesNotFirePostAllPerspectives_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new _throwingDispatcher();
+    var invoker = new _capturingReceptorInvoker();
+    var envelope = _envelope(eventId, collectiveEvent);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      work: [],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      drainStreamIds: [streamId],
+      streamEvents: [_raw(streamId, eventId)],
+      receptorInvoker: invoker);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(invoker.Invocations.Any(i => i.Stage is LifecycleStage.PostAllPerspectivesInline or LifecycleStage.PostAllPerspectivesDetached)).IsFalse()
+      .Because("A failed apply must not signal completion — no PostAllPerspectives lifecycle for it.");
+  }
+
+  /// <summary>
+  /// A throwing post-apply receptor must be isolated: the collective apply already committed and its work
+  /// rows were completed, so a failing PostAllPerspectives receptor must neither crash the worker nor undo
+  /// the completion. This exercises the sink's per-event catch around the lifecycle invocation.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_PostApplyReceptorThrows_DoesNotCrashWorker_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var sinkWork = _sinkWork(streamId);
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new _recordingDispatcher();
+    var invoker = new _throwingReceptorInvoker();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      receptorInvoker: invoker);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    await invoker.FirstInvoke.WaitAsync(TimeSpan.FromSeconds(10));
+    // The apply succeeded and its work row must still be completed despite the throwing post-apply receptor.
+    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { } catch { /* host must not have faulted */ }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(sinkWork.WorkId)
+      .Because("A throwing post-apply receptor must not undo the completed apply's work-row deletion.");
+  }
+
   [Test]
   public async Task CollectiveSink_NoDispatcherRegistered_DoesNotThrow_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
@@ -344,7 +454,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness, _coordinator Coordinator) _createWorker(
       List<PerspectiveWork> work, _eventStore eventStore, _registry registry, ICollectiveDispatcher? dispatcher,
       List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null,
-      int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null) {
+      int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
+      IReceptorInvoker? receptorInvoker = null) {
     var instanceProvider = new _instanceProvider();
     var strategy = new InstantCompletionStrategy();
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -359,6 +470,9 @@ public class PerspectiveWorkerCollectiveSinkTests {
     if (dispatcher is not null) {
       services.AddSingleton<ICollectiveDispatcher>(dispatcher);
       services.AddSingleton<ICollectiveSessionAccessor>(new _stubSessionAccessor());
+    }
+    if (receptorInvoker is not null) {
+      services.AddSingleton<IReceptorInvoker>(receptorInvoker);
     }
     services.AddLogging();
     var sp = services.BuildServiceProvider();
@@ -420,6 +534,35 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   private sealed class _stubSessionAccessor : ICollectiveSessionAccessor {
     public object GetSession(IServiceProvider scopedServiceProvider) => new object();
+  }
+
+  /// <summary>A post-apply receptor that throws — the apply already committed, so the sink must isolate this
+  /// and neither crash nor undo the completion. Records that it was invoked so the test can assert it ran.</summary>
+  private sealed class _throwingReceptorInvoker : IReceptorInvoker {
+    private readonly TaskCompletionSource _firstInvoke = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task FirstInvoke => _firstInvoke.Task;
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      _firstInvoke.TrySetResult();
+      throw new InvalidOperationException("simulated post-apply completion-receptor failure");
+    }
+  }
+
+  /// <summary>Captures every (eventId, stage) the sink drives through the lifecycle after a collective apply.</summary>
+  private sealed class _capturingReceptorInvoker : IReceptorInvoker {
+    private readonly TaskCompletionSource _firstPostAll = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<(Guid EventId, LifecycleStage Stage)> Invocations { get; } = [];
+    /// <summary>Completes on the first PostAllPerspectives* invocation — deterministic signal for the async path.</summary>
+    public Task FirstPostAllPerspectives => _firstPostAll.Task;
+
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      lock (Invocations) {
+        Invocations.Add((envelope.MessageId.Value, stage));
+      }
+      if (stage is LifecycleStage.PostAllPerspectivesInline or LifecycleStage.PostAllPerspectivesDetached) {
+        _firstPostAll.TrySetResult();
+      }
+      return ValueTask.CompletedTask;
+    }
   }
 
   private sealed class _recordingDeadLetterStore : IDeadLetterStore {

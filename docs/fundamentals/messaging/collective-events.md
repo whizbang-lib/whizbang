@@ -173,6 +173,16 @@ through the normal produce → persist → project pipeline, with one branch at 
    re-leased and the whole-cohort `UPDATE` re-dispatched every tick — the self-sustaining re-dispatch loop
    behind the production table bloat. A leased sink row whose event the cursor already passed is completed
    too (a stale re-lease), so it can't spin a no-op loop.
+5. **Terminal lifecycle after the apply completes.** A collective event has no per-stream runner, so it never
+   reaches the normal `PostAllPerspectives` gate — but the set-based apply *finishing* **is** its
+   "all-perspectives-complete" moment. On the success path (only), the sink runs each applied event through the
+   `PostAllPerspectivesDetached → PostAllPerspectivesInline → PostLifecycleDetached → PostLifecycleInline`
+   stages via `IReceptorInvoker` (`_fireCollectivePostApplyLifecycleAsync`). This is what lets a
+   **`[FireAt(PostAllPerspectivesInline)]` receptor** and any **`[NotificationTag]`** fire *after* the apply is
+   durably done — e.g. a completion receptor that publishes the tag-bearing "orchestration completed" event a
+   UI's progress toast waits on. Per-event failures in this stage are isolated + logged (the apply already
+   committed; a throwing completion receptor must not undo it). A **failed** apply returns before this step, so
+   a completion signal is never emitted for an apply that did not happen.
 
 ### Apply execution — scoped, bounded, indexed (0.795)
 
@@ -204,6 +214,28 @@ convoy locks or run away (the mechanics that stopped the production spiral):
   global `CollectiveApplyOptions` defaults for a heavy or light handler (`0` = inherit).
 - **Observability (§9).** Transient (`40P01`/`40001`) retries log via `PostgresDeadlockRetry`, and an
   apply-completion log carries the collective event id + affected rows + batch count.
+
+### Observability — traces + metrics
+
+A collective event's fan-out and apply are **traced** so a single slow event is investigable by type/namespace
+(not just an aggregate metric):
+
+- **`Collective Dispatch` span** (`ActivitySource` `Whizbang.Tracing`, from `CollectiveDispatcher`) wraps the
+  whole fan-out. Tags: `whizbang.collective.event_type`, `whizbang.collective.event_namespace`,
+  `whizbang.collective.scope_kind`, `whizbang.collective.event_id`, `whizbang.collective.handler_count`,
+  `whizbang.collective.affected_rows`. A failed apply sets the span status to `Error`. This is the span to
+  filter/sort on when "one event type is taking longer" — the namespace tag lets you scope a trace search to a
+  contract area, exactly like other Whizbang spans.
+- **`Collective Apply` span** (child, from `EFCoreCollectiveAdapter`) wraps the keyset-batched `UPDATE` loop.
+  Tags: `whizbang.collective.model_type`, `whizbang.collective.table`, `whizbang.collective.event_id`,
+  `whizbang.collective.batch_size`, `whizbang.collective.affected_rows`, `whizbang.collective.batches`. It
+  nests under the dispatch span (via `Activity.Current`), so a slow event drills down to *which table / how
+  many batches* consumed the time. Register the source with `.AddSource("Whizbang.Tracing")` in your OTel
+  tracing pipeline.
+- **Metrics** (`EventCategoryMetrics`, meter `Whizbang.EventCategories`) carry the same `event_type` /
+  `event_namespace` dimensions: `event_category.dispatched`, `event_category.fanout`,
+  `event_category.dispatch.duration`, `event_category.errors` — so dashboards and traces line up on the same
+  tag keys.
 
 ### Determinism & replay
 

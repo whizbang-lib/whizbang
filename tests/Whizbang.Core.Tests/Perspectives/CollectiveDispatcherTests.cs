@@ -1,12 +1,15 @@
 #pragma warning disable CA1707
 #pragma warning disable CA1859 // tests assert against the interface return type, not the concrete record
 
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Linq.Expressions;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Tests.Perspectives;
@@ -148,6 +151,112 @@ public class CollectiveDispatcherTests {
       .Because("Per-TModel executor registration is part of the contract; missing the executor for a registered handler is a wiring bug, not a domain condition.");
   }
 
+  // ── OTel spans (#1: investigate a slow collective event by type/namespace) ─────────────────────────
+
+  [Test]
+  public async Task DispatchAsync_Success_EmitsSpanTaggedWithEventTypeAndNamespaceAsync() {
+    var captured = new List<Activity>();
+    using var listener = _captureCollectiveSpans(captured);
+    var eventId = Guid.NewGuid();
+
+    var dispatcher = _build(
+      entries: [_entryFor<_archive>(typeof(_jobModel), typeof(_jobHandler))],
+      resolvers: [new _stubResolver("tenant")],
+      executors: [new _stubExecutor(typeof(_jobModel), affectedRows: 7)],
+      handlers: [new _jobHandler()]);
+
+    await dispatcher.DispatchAsync(
+      new _archive(new _tenantScope("t-1"), [Guid.NewGuid()]), eventId, new object(), default);
+
+    var span = _collectiveSpanFor(captured, eventId);
+    await Assert.That(span).IsNotNull()
+      .Because("A collective dispatch must emit a span so a single slow event is visible in a trace.");
+    await Assert.That(_tag(span!, "whizbang.collective.event_type")).IsEqualTo(typeof(_archive).FullName)
+      .Because("The span carries the concrete event type so one event's apply can be pinpointed.");
+    await Assert.That(_tag(span!, "whizbang.collective.event_namespace")).IsEqualTo(typeof(_archive).Namespace)
+      .Because("Namespace tag lets a trace be filtered to a contract area (like other Whizbang spans).");
+    await Assert.That(_tag(span!, "whizbang.collective.scope_kind")).IsEqualTo("tenant");
+    await Assert.That(_tag(span!, "whizbang.collective.handler_count")).IsEqualTo("1");
+    await Assert.That(_tag(span!, "whizbang.collective.affected_rows")).IsEqualTo("7");
+  }
+
+  [Test]
+  public async Task DispatchAsync_NoMatchingEntry_EmitsSpanWithZeroHandlerCountAsync() {
+    var captured = new List<Activity>();
+    using var listener = _captureCollectiveSpans(captured);
+    var eventId = Guid.NewGuid();
+
+    var dispatcher = _build(
+      entries: [_entryFor<_otherEvent>(typeof(_jobModel), typeof(_jobHandler))],
+      resolvers: [new _stubResolver("tenant")],
+      executors: [new _stubExecutor(typeof(_jobModel), 99)],
+      handlers: [new _jobHandler()]);
+
+    await dispatcher.DispatchAsync(
+      new _archive(new _tenantScope("t-1"), [Guid.NewGuid()]), eventId, new object(), default);
+
+    var span = _collectiveSpanFor(captured, eventId);
+    await Assert.That(span).IsNotNull();
+    await Assert.That(_tag(span!, "whizbang.collective.handler_count")).IsEqualTo("0")
+      .Because("A no-subscriber dispatch still spans (visible producer activity), tagged handler_count=0.");
+  }
+
+  [Test]
+  public async Task DispatchAsync_ApplyThrows_SpanMarkedErrorAsync() {
+    var captured = new List<Activity>();
+    using var listener = _captureCollectiveSpans(captured);
+    var eventId = Guid.NewGuid();
+
+    var dispatcher = _build(
+      entries: [_entryFor<_archive>(typeof(_jobModel), typeof(_jobHandler))],
+      resolvers: [new _stubResolver("tenant")],
+      executors: [new _throwingExecutor(typeof(_jobModel))],
+      handlers: [new _jobHandler()]);
+
+    await Assert.That(async () => {
+      _ = await dispatcher.DispatchAsync(
+        new _archive(new _tenantScope("t-1"), [Guid.NewGuid()]), eventId, new object(), default);
+    }).ThrowsExactly<InvalidTimeZoneException>();
+
+    var span = _collectiveSpanFor(captured, eventId);
+    await Assert.That(span).IsNotNull();
+    await Assert.That(span!.Status).IsEqualTo(ActivityStatusCode.Error)
+      .Because("A failed apply must mark the span Error so failures surface in trace search.");
+  }
+
+  [Test]
+  public async Task DispatchAsync_WithMetrics_RecordsDispatchDurationAsync() {
+    // When metrics are wired the dispatcher times the fan-out and records event_category.dispatch.duration.
+    // Assert via a MeterListener that a measurement lands with the collective category tag.
+    var recorded = new List<double>();
+    using var meterListener = new MeterListener {
+      InstrumentPublished = (inst, l) => {
+        if (inst.Meter.Name == "Whizbang.EventCategories" && inst.Name == "whizbang.event_category.dispatch.duration") {
+          l.EnableMeasurementEvents(inst);
+        }
+      },
+    };
+    meterListener.SetMeasurementEventCallback<double>((_, measurement, _, _) => { lock (recorded) { recorded.Add(measurement); } });
+    meterListener.Start();
+
+    var services = new ServiceCollection();
+    services.AddSingleton(_ => new _jobHandler());
+    var dispatcher = new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      [_entryFor<_archive>(typeof(_jobModel), typeof(_jobHandler))],
+      [new _stubResolver("tenant")],
+      [new _stubExecutor(typeof(_jobModel), affectedRows: 4)],
+      new EventCategoryMetrics(new WhizbangMetrics()));
+
+    var result = await dispatcher.DispatchAsync(
+      new _archive(new _tenantScope("t-1"), [Guid.NewGuid()]), Guid.NewGuid(), new object(), default);
+
+    meterListener.Dispose();
+    await Assert.That(result.AffectedRowCount).IsEqualTo(4);
+    await Assert.That(recorded.Count).IsGreaterThanOrEqualTo(1)
+      .Because("A metrics-wired dispatcher records dispatch.duration so a slow collective event surfaces on dashboards.");
+  }
+
   // ── Null guards ───────────────────────────────────────────────────────
 
   [Test]
@@ -227,6 +336,41 @@ public class CollectiveDispatcherTests {
         CancellationToken cancellationToken) {
       InvokeCount++;
       return Task.FromResult(affectedRows);
+    }
+  }
+
+  private sealed class _throwingExecutor(Type modelType) : ICollectiveEventExecutor {
+    public Type ModelType { get; } = modelType;
+    public Task<int> ApplyAsync(
+        CollectiveApplyEntry entry, object handlerInstance, ICollectiveEvent evt,
+        ICollectiveScopeResolver resolver, object dbContextOrSession, Guid collectiveEventId,
+        CancellationToken cancellationToken) =>
+      // A non-InvalidOperation, non-OCE exception exercises the dispatcher's SQL-exception catch (span → Error).
+      throw new InvalidTimeZoneException("simulated apply failure");
+  }
+
+  // ActivityListener that samples the collective spans (Whizbang.Tracing). StartActivity returns null unless
+  // a listener samples the source — so this is also the RED signal: without the span code, nothing is captured.
+  private static ActivityListener _captureCollectiveSpans(List<Activity> sink) {
+    var listener = new ActivityListener {
+      ShouldListenTo = src => src.Name == "Whizbang.Tracing",
+      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      ActivityStopped = a => { lock (sink) { sink.Add(a); } },
+    };
+    ActivitySource.AddActivityListener(listener);
+    return listener;
+  }
+
+  private static string? _tag(Activity a, string key) =>
+    a.GetTagItem(key)?.ToString();
+
+  // The ActivityListener is process-global, so parallel tests each emit a "Collective Dispatch" span into the
+  // same sink. Filter by this test's unique collectiveEventId tag so the assertion sees only its own span.
+  private static Activity? _collectiveSpanFor(List<Activity> captured, Guid eventId) {
+    lock (captured) {
+      return captured.SingleOrDefault(a =>
+        a.OperationName == "Collective Dispatch"
+        && string.Equals(a.GetTagItem("whizbang.collective.event_id")?.ToString(), eventId.ToString(), StringComparison.Ordinal));
     }
   }
 

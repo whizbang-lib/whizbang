@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
@@ -7,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Collective;
@@ -129,6 +131,17 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // (across pods) instead of convoying; disjoint scopes hash to different keys and run concurrently.
     long? lockKey = options.SerializeApplies ? CollectiveApplyLockKey.Compute(table, scopeKey) : null;
 
+    // Child span of the "Collective Dispatch" span (via Activity.Current): shows the per-model apply — which
+    // table, how many rows, how many batches — so a slow apply is pinpointable to a table/batch, not just an
+    // event. The parent span carries the event type/namespace; this one carries the physical detail.
+    using var applyActivity = WhizbangActivitySource.Tracing.StartActivity("Collective Apply", ActivityKind.Client);
+    if (applyActivity is not null) {
+      applyActivity.SetTag("whizbang.collective.model_type", typeof(TModel).Name);
+      applyActivity.SetTag("whizbang.collective.table", table);
+      applyActivity.SetTag("whizbang.collective.event_id", collectiveEventId);
+      applyActivity.SetTag("whizbang.collective.batch_size", batchSize);
+    }
+
     var total = 0;
     var batches = 0;
     var lastId = Guid.Empty;
@@ -152,6 +165,10 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
         break;
       }
       lastId = maxId.Value;
+    }
+    if (applyActivity is not null) {
+      applyActivity.SetTag("whizbang.collective.affected_rows", total);
+      applyActivity.SetTag("whizbang.collective.batches", batches);
     }
     if (logger is not null) {
       LogCollectiveApplyCompleted(logger, collectiveEventId, table, total, batches);

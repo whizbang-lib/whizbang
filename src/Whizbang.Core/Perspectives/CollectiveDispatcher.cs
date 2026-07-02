@@ -79,8 +79,21 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
     var eventTypeName = eventType.FullName ?? eventType.Name;
     var eventNamespace = eventType.Namespace ?? string.Empty;
 
+    // OTel span for the whole fan-out: this is what surfaces a single slow collective event in a trace
+    // (the metrics tag event_type/namespace too, but a span shows the duration + causal parent). Tagged the
+    // same way as the metrics so trace and metric views line up. Child spans (per-model apply, per-batch) are
+    // created by the driver adapters and nest under this via Activity.Current.
+    using var activity = WhizbangActivitySource.Tracing.StartActivity("Collective Dispatch", ActivityKind.Internal);
+    if (activity is not null) {
+      activity.SetTag(TAG_EVENT_TYPE, eventTypeName);
+      activity.SetTag(TAG_EVENT_NAMESPACE, eventNamespace);
+      activity.SetTag(TAG_SCOPE_KIND, evt.Scope.ScopeKind);
+      activity.SetTag(TAG_EVENT_ID, collectiveEventId);
+    }
+
     var matchingEntries = _entries.Where(e => e.EventType == eventType).ToList();
     if (matchingEntries.Count == 0) {
+      activity?.SetTag(TAG_HANDLER_COUNT, 0);
       // No perspective subscribed — not an error. Still increment the
       // dispatched counter so dashboards see the producer activity even
       // when consumers haven't caught up.
@@ -142,6 +155,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
           new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.MODEL_TYPE, entry.ModelType.Name));
       }
     } catch (Exception ex) when (ex is not InvalidOperationException && ex is not OperationCanceledException) {
+      activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       _metrics?.Errors.Add(1,
         new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
         new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
@@ -158,10 +172,23 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
       }
     }
 
+    if (activity is not null) {
+      activity.SetTag(TAG_HANDLER_COUNT, matchingEntries.Count);
+      activity.SetTag(TAG_AFFECTED_ROWS, totalAffectedRows);
+    }
+
     return new CollectiveDispatchResult(
       HandlerCount: matchingEntries.Count,
       AffectedRowCount: totalAffectedRows);
   }
+
+  // Span tag keys — mirror the EventCategoryMetrics dimensions so trace + metric views line up.
+  private const string TAG_EVENT_TYPE = "whizbang.collective.event_type";
+  private const string TAG_EVENT_NAMESPACE = "whizbang.collective.event_namespace";
+  private const string TAG_SCOPE_KIND = "whizbang.collective.scope_kind";
+  private const string TAG_EVENT_ID = "whizbang.collective.event_id";
+  private const string TAG_HANDLER_COUNT = "whizbang.collective.handler_count";
+  private const string TAG_AFFECTED_ROWS = "whizbang.collective.affected_rows";
 
   private ICollectiveScopeResolver _resolveResolver(string scopeKind) {
     foreach (var r in _resolvers) {
