@@ -142,7 +142,8 @@ public class CorrelationIdConverter : JsonConverter<CorrelationId> {
     if (guidString is null || !Guid.TryParse(guidString, out var guid)) {
       throw new JsonException("Invalid CorrelationId format");
     }
-    return CorrelationId.From(guid);
+    // Deserialized from the wire — an external source that may carry a non-v7 (e.g. client v4) token.
+    return CorrelationId.FromExternal(guid);
   }
 
   /// <inheritdoc/>

@@ -83,7 +83,10 @@ public sealed record CascadeContext {
   /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:NewRootWithAmbientSecurity_WithAmbientContextButPropagationDisabled_ReturnsNullSecurityAsync</tests>
   public static CascadeContext NewRootWithAmbientSecurity() {
     return new CascadeContext {
-      CorrelationId = CorrelationId.New(),
+      // Adopt a correlation id captured at the inbound edge (e.g. an X-Correlation-ID header) so a
+      // client-supplied token flows through the whole graph; otherwise mint one aligned to the ambient
+      // W3C trace (so Whizbang correlation lines up with the OpenTelemetry trace).
+      CorrelationId = InboundCorrelationAccessor.Current ?? CorrelationId.NewRootAligned(),
       CausationId = MessageId.New(),
       SecurityContext = GetSecurityFromAmbient()
     };

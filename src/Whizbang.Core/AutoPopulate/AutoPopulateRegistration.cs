@@ -57,4 +57,9 @@ public sealed record AutoPopulateRegistration {
   /// The specific identifier kind when <see cref="PopulateKind"/> is <see cref="AutoPopulate.PopulateKind.Identifier"/>.
   /// </summary>
   public IdentifierKind? IdentifierKind { get; init; }
+
+  /// <summary>
+  /// The header / scope-extension key when <see cref="PopulateKind"/> is <see cref="AutoPopulate.PopulateKind.Header"/>.
+  /// </summary>
+  public string? HttpHeaderName { get; init; }
 }

@@ -134,7 +134,8 @@ public sealed class ScopeDelta {
     }
 
     if (string.IsNullOrEmpty(scope.TenantId) && string.IsNullOrEmpty(scope.UserId)
-        && string.IsNullOrEmpty(scope.CustomerId) && string.IsNullOrEmpty(scope.OrganizationId)) {
+        && string.IsNullOrEmpty(scope.CustomerId) && string.IsNullOrEmpty(scope.OrganizationId)
+        && scope.Extensions.Count == 0) {
       return null;
     }
 
@@ -373,6 +374,7 @@ public sealed class ScopeDelta {
     _appendJsonStringProperty(sb, "c", scope.CustomerId, ref first);
     _appendJsonStringProperty(sb, "o", scope.OrganizationId, ref first);
     _appendAllowedPrincipals(sb, scope.AllowedPrincipals, ref first);
+    _appendExtensions(sb, scope.Extensions, ref first);
 
     sb.Append('}');
     using var doc = JsonDocument.Parse(sb.ToString());
@@ -407,6 +409,31 @@ public sealed class ScopeDelta {
     sb.Append(']');
   }
 
+  private static void _appendExtensions(StringBuilder sb, List<ScopeExtension> extensions, ref bool first) {
+    if (extensions.Count == 0) {
+      return;
+    }
+    if (!first) {
+      sb.Append(',');
+    }
+    sb.Append("\"ex\":[");
+    for (var i = 0; i < extensions.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append("{\"k\":\"").Append(JsonEncodedText.Encode(extensions[i].Key)).Append("\",\"v\":");
+      var value = extensions[i].Value;
+      if (value == null) {
+        sb.Append("null");
+      } else {
+        sb.Append('"').Append(JsonEncodedText.Encode(value)).Append('"');
+      }
+      sb.Append('}');
+    }
+    sb.Append(']');
+    first = false;
+  }
+
   private static PerspectiveScope _deserializeScope(JsonElement element) {
     var scope = new PerspectiveScope();
 
@@ -428,6 +455,19 @@ public sealed class ScopeDelta {
         if (val != null) {
           scope.AllowedPrincipals.Add(val);
         }
+      }
+    }
+    if (element.TryGetProperty("ex", out var ex) && ex.ValueKind == JsonValueKind.Array) {
+      foreach (var item in ex.EnumerateArray()) {
+        if (item.ValueKind != JsonValueKind.Object
+            || !item.TryGetProperty("k", out var k)
+            || k.GetString() is not { Length: > 0 } key) {
+          continue;
+        }
+        var value = item.TryGetProperty("v", out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString()
+            : null;
+        scope.Extensions.Add(new ScopeExtension(key, value));
       }
     }
 

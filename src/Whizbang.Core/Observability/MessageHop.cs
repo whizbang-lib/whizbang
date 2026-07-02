@@ -319,7 +319,9 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
         coElem.ValueKind != JsonValueKind.Null) {
       var uuid7String = coElem.GetString()!;
       var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
-      correlationId = CorrelationId.From(uuid7.ToGuid());
+      // Deserialized from a persisted/transported hop — accept any 128-bit token (may be a client v4 or a
+      // W3C trace-id), not just UUIDv7.
+      correlationId = CorrelationId.FromExternal(uuid7.ToGuid());
     }
 
     string? causationType = null;

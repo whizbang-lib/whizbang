@@ -243,6 +243,67 @@ public static class GeneratorTestHelper {
   }
 
   /// <summary>
+  /// Runs a source generator and returns the ERROR diagnostics of the resulting compilation
+  /// (original source + every generated tree). Unlike <see cref="GeneratorDriverRunResult.Diagnostics"/>,
+  /// which only carries the generator's own diagnostics, this surfaces downstream compile errors in the
+  /// GENERATED code — e.g. a populator that assigns a <c>Guid?</c> value to a <c>string?</c> property.
+  /// References the full shared-framework assembly set (plus Whizbang.Core) so a clean baseline compiles
+  /// and the only remaining errors come from the generated output.
+  /// </summary>
+  [RequiresAssemblyFiles()]
+  public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors<TGenerator>(string source)
+      where TGenerator : IIncrementalGenerator, new() {
+
+    var syntaxTree = CSharpSyntaxTree.ParseText(source);
+    var compilation = CSharpCompilation.Create(
+        assemblyName: "TestAssembly",
+        syntaxTrees: [syntaxTree],
+        references: _fullFrameworkReferences(),
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+    );
+
+    var generator = new TGenerator();
+    var driver = CSharpGeneratorDriver.Create(generator);
+    _ = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out _);
+
+    return outputCompilation.GetDiagnostics()
+        .Where(d => d.Severity == DiagnosticSeverity.Error)
+        .ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Builds a reference set covering the entire shared framework (via the trusted-platform-assemblies list)
+  /// plus Whizbang.Core, so a snippet + its generated code can be compiled without hunting facade assemblies.
+  /// </summary>
+  private static List<MetadataReference> _fullFrameworkReferences() {
+    var references = new List<MetadataReference>();
+
+    var trustedAssemblies = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty;
+    foreach (var path in trustedAssemblies.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)) {
+      if (File.Exists(path)) {
+        references.Add(MetadataReference.CreateFromFile(path));
+      }
+    }
+
+    // Whizbang.Core is a project reference (not a platform assembly) — add it explicitly for the
+    // message/attribute types the generated populator and registry reference.
+    try {
+      var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
+      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
+    } catch {
+      var coreAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Core.dll"
+      );
+      if (File.Exists(coreAssemblyPath)) {
+        references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
+      }
+    }
+
+    return references;
+  }
+
+  /// <summary>
   /// Test implementation of AnalyzerConfigOptionsProvider for passing MSBuild properties to generators.
   /// </summary>
   private sealed class TestAnalyzerConfigOptionsProvider(Dictionary<string, string> globalOptions) : AnalyzerConfigOptionsProvider {

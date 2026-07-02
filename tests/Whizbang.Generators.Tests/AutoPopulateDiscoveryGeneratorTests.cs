@@ -136,6 +136,41 @@ public class AutoPopulateDiscoveryGeneratorTests {
     await Assert.That(code).Contains("IdentifierKind.CorrelationId");
   }
 
+  /// <summary>
+  /// [PopulateFromHttpHeader] generates an extension-list read (case-insensitive) in the populator and an
+  /// HttpHeaderName/PopulateKind.Header entry in the registry, and the generated code compiles.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_HttpHeaderAttribute_GeneratesExtensionExtractionAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class OrderCreatedEvent {
+              [PopulateFromHttpHeader("X-Correlation-ID")] public string? CorrelationId { get; set; }
+            }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var populator = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(populator).IsNotNull();
+    await Assert.That(populator).Contains("_extractExtensionValue(hop, \"X-Correlation-ID\")");
+    await Assert.That(populator).Contains("StringComparison.OrdinalIgnoreCase");
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulateRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("PopulateKind = PopulateKind.Header");
+    await Assert.That(registry).Contains("HttpHeaderName = \"X-Correlation-ID\"");
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>(source);
+    await Assert.That(errors).IsEmpty()
+      .Because($"Generated header populator must compile; errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
+  }
+
   // ============================================================================
   // Multiple Attributes Tests
   // ============================================================================
@@ -757,6 +792,35 @@ public class AutoPopulateDiscoveryGeneratorTests {
   }
 
   /// <summary>
+  /// The context extractor must look up scope values by their real serialized JSON key (resolved from
+  /// PerspectiveScope's [JsonPropertyName] — "u"/"t"), with the long property name as a fallback alias. This
+  /// is the fix for context values silently returning null because the extractor searched for "UserId"/"TenantId".
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_ContextExtractor_UsesResolvedScopeAliasesAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class OrderCreatedEvent {
+              [PopulateFromContext(ContextKind.UserId)] public string? CreatedBy { get; set; }
+              [PopulateFromContext(ContextKind.TenantId)] public string? Tenant { get; set; }
+            }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("_extractScopeValue(hop, \"u\", \"UserId\")");
+    await Assert.That(code).Contains("_extractScopeValue(hop, \"t\", \"TenantId\")");
+    await Assert.That(code).Contains("params string[] aliases");
+  }
+
+  /// <summary>
   /// Test that populator generates service info extraction.
   /// </summary>
   [Test]
@@ -805,15 +869,19 @@ public class AutoPopulateDiscoveryGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
     await Assert.That(code).IsNotNull();
     await Assert.That(code).Contains("messageId.Value");
-    await Assert.That(code).Contains("hop.CorrelationId?.Value.Value");
+    // A WhizbangId's `.Value` is the Guid, so a Guid? target uses a single `.Value` (the prior
+    // `?.Value.Value` never compiled — a Guid has no `.Value`).
+    await Assert.That(code).Contains("hop.CorrelationId?.Value");
   }
 
   /// <summary>
-  /// Test that populator is NOT generated for non-record types.
+  /// Class messages with settable auto-populate properties must ALSO get a populator (mutated in place),
+  /// not just records. a consumer events are all classes deriving from a base class, so without this their
+  /// [PopulateFrom*] properties (CorrelationId, UserId, ...) are silently never set on the object.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Generator_WithNonRecordType_DoesNotGeneratePopulatorAsync() {
+  public async Task Generator_WithClassMessage_GeneratesInPlacePopulatorAsync() {
     const string source = """
             using System;
             using Whizbang.Core.Attributes;
@@ -824,19 +892,201 @@ public class AutoPopulateDiscoveryGeneratorTests {
               public Guid OrderId { get; set; }
               [PopulateTimestamp(TimestampKind.SentAt)]
               public DateTimeOffset? SentAt { get; set; }
+              [PopulateFromContext(ContextKind.UserId)]
+              public string? CreatedBy { get; set; }
             }
             """;
 
     var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
 
-    // Registry should still be generated
+    // Registry is generated for all types (records + classes)
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulateRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
     await Assert.That(registryCode).Contains("OrderCreatedEvent");
 
-    // Populator should NOT be generated for non-record types
+    // Populator IS now generated for the class and sets its properties (in-place assignment).
     var populatorCode = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
-    await Assert.That(populatorCode).IsNull();
+    await Assert.That(populatorCode).IsNotNull()
+      .Because("Class messages must get a populator so their auto-populate properties are set on the object.");
+    await Assert.That(populatorCode).Contains("OrderCreatedEvent");
+    await Assert.That(populatorCode).Contains("_extractUserId(hop)");
+    await Assert.That(populatorCode).Contains("hop.Timestamp");
+  }
+
+  /// <summary>
+  /// The generated class populator must compile — a settable class property populated from an auto-populate
+  /// source must receive an assignable value.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_ClassMessageWithMixedAttrs_GeneratesCompilableCodeAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class OrderCreatedEvent {
+              public Guid OrderId { get; set; }
+              [PopulateTimestamp(TimestampKind.SentAt)]
+              public DateTimeOffset? SentAt { get; set; }
+              [PopulateFromContext(ContextKind.UserId)]
+              public string? CreatedBy { get; set; }
+              [PopulateFromIdentifier(IdentifierKind.CorrelationId)]
+              public string? CorrelationId { get; set; }
+            }
+            """;
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>(source);
+
+    await Assert.That(errors).IsEmpty()
+      .Because($"Generated class populator must compile; errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
+  }
+
+  /// <summary>
+  /// A string CorrelationId populated from the framework's Guid CorrelationId must convert (Guid→string).
+  /// The record path exercises the generated 'with' expression directly; without a conversion the generated
+  /// <c>hop.CorrelationId?.Value.Value</c> (Guid?) fails to assign to a <c>string?</c> property.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_RecordCorrelationIdStringProperty_GeneratesCompilableCodeAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderCreatedEvent(
+              Guid OrderId,
+              [property: PopulateFromIdentifier(IdentifierKind.CorrelationId)] string? CorrelationId = null
+            );
+            """;
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>(source);
+
+    await Assert.That(errors).IsEmpty()
+      .Because($"A string CorrelationId must convert from the Guid source; errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
+  }
+
+  /// <summary>
+  /// Mirrors a consumer's <c>BaseConsumerEvent</c> exactly — a CLASS with a string CorrelationId (from the Guid id), a
+  /// non-null SentAt timestamp, a string OriginatingService (from ServiceName), and a <b>Guid?</b> AccountId
+  /// populated from the <b>string</b> UserId context. The AccountId conversion (string→Guid) is the one that
+  /// would break the real a consumer.Contracts build, so this compiles the exact generated shape in isolation.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_ClassMirroringConsumerBaseEvent_GeneratesCompilableCodeAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class BaseEvent {
+              public Guid StreamId { get; set; }
+              [PopulateFromIdentifier(IdentifierKind.CorrelationId)]
+              public string? CorrelationId { get; set; }
+              [PopulateTimestamp(TimestampKind.SentAt)]
+              public DateTimeOffset SentAt { get; set; }
+              [PopulateFromService(ServiceKind.ServiceName)]
+              public string OriginatingService { get; set; } = "";
+              [PopulateFromContext(ContextKind.UserId)]
+              public Guid? AccountId { get; set; }
+            }
+            """;
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>(source);
+
+    await Assert.That(errors).IsEmpty()
+      .Because($"Generated populator for a a consumer-shaped class must compile (AccountId Guid? from string UserId); errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
+  }
+
+  /// <summary>
+  /// Exercises every source→string conversion (MessageId, CausationId, service InstanceId/ProcessId) and the
+  /// non-nullable <c>Guid</c> context coercion (<c>_parseGuid(...) ?? Guid.Empty</c>) on a class, ensuring all
+  /// generated assignments compile.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_ClassStringAndGuidConversions_GenerateCompilableCodeAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class ConvEvent {
+              [PopulateFromIdentifier(IdentifierKind.MessageId)] public string? Mid { get; set; }
+              [PopulateFromIdentifier(IdentifierKind.CausationId)] public string? Cause { get; set; }
+              [PopulateFromService(ServiceKind.InstanceId)] public string? Inst { get; set; }
+              [PopulateFromService(ServiceKind.ProcessId)] public string? Pid { get; set; }
+              [PopulateFromContext(ContextKind.UserId)] public Guid Owner { get; set; }
+            }
+            """;
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>(source);
+
+    await Assert.That(errors).IsEmpty()
+      .Because($"All source→target conversions must compile; errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
+  }
+
+  /// <summary>
+  /// A class's init-only property cannot be assigned outside an initializer, so the class populator must skip
+  /// it (records reach init-only members via 'with'). The generated code must compile and must not emit an
+  /// assignment for the init-only property.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_ClassInitOnlyProperty_IsSkipped_AndCompilesAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class InitOnlyEvent {
+              [PopulateTimestamp(TimestampKind.SentAt)] public DateTimeOffset? SentAt { get; init; }
+              [PopulateFromContext(ContextKind.UserId)] public string? CreatedBy { get; set; }
+            }
+            """;
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>(source);
+    await Assert.That(errors).IsEmpty()
+      .Because($"Init-only property must be skipped, not assigned; errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!.Contains("m.SentAt =")).IsFalse()
+      .Because("The init-only SentAt cannot be assigned in place, so no assignment is emitted for it.");
+    await Assert.That(code).Contains("m.CreatedBy =");
+  }
+
+  /// <summary>
+  /// Control for the compile helper: the existing Guid CorrelationId record must compile clean, proving the
+  /// helper's reference set is sufficient and that a RED in the sibling string test is the real defect.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_RecordCorrelationIdGuidProperty_GeneratesCompilableCodeAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderCreatedEvent(
+              Guid OrderId,
+              [property: PopulateFromIdentifier(IdentifierKind.CorrelationId)] Guid? CorrelationId = null
+            );
+            """;
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>(source);
+
+    await Assert.That(errors).IsEmpty()
+      .Because($"Baseline Guid CorrelationId record must compile; errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
   }
 
   /// <summary>
