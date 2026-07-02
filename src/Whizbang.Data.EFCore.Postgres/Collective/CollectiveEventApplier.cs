@@ -116,7 +116,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
 
     // §6: fold this handler's per-apply knob overrides onto the global default (0 = inherit). SerializeApplies
-    // and EnsureIndexes stay global — exclusive serialization is not per-handler optional (D4 safety).
+    // stays global — exclusive serialization is not per-handler optional (D4 safety).
     var effectiveOptions = options with {
       BatchSize = entry.BatchSizeOverride > 0 ? entry.BatchSizeOverride : options.BatchSize,
       StatementTimeoutSeconds = entry.StatementTimeoutSecondsOverride > 0

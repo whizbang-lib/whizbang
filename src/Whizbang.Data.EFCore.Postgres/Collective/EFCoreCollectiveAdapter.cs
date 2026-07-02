@@ -106,12 +106,13 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     var where = CollectivePredicateSqlCompiler<TModel>.Compile(
       scopeFilter, parameterPrefix: "where", outerTableName: table);
 
-    // §7: ensure a btree expression index exists for each jsonb path the WHERE filters on (incl. scope->>'t')
-    // before scanning — otherwise the keyset SELECT seq-scans every batch. Once-per-process, best-effort.
-    if (options.EnsureIndexes) {
-      await CollectiveIndexEnsurer.EnsureAsync(dbContext, where.ReferencedJsonPaths, cancellationToken)
-        .ConfigureAwait(false);
-    }
+    // §7: the btree expression index the WHERE needs — the universal `((scope->>'t'))` tenant envelope
+    // ANDed onto every apply — is created at SERVICE STARTUP by the schema generator (see
+    // EFCoreServiceRegistrationGenerator._appendStandardIndexes), NOT here. Creating indexes inside the
+    // apply hot path took a SHARE lock on the table on the first apply per process — unacceptable in a
+    // live path (production). Cohort filters correlate by PK (id) so they need no extra index; the
+    // compiler still records `where.ReferencedJsonPaths` as the compile-time basis for any future
+    // per-property startup index, but nothing creates indexes at apply time anymore.
 
     var batchSize = options.BatchSize > 0 ? options.BatchSize : CollectiveApplyOptions.Default.BatchSize;
 

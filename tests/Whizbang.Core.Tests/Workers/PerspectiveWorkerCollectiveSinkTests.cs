@@ -97,6 +97,89 @@ public class PerspectiveWorkerCollectiveSinkTests {
       .Because("The sink bypasses the per-stream runner.");
   }
 
+  /// <summary>
+  /// REGRESSION (production death spiral): after a collective event is dispatched successfully, the sink
+  /// MUST complete its own <c>__collective__</c> <c>wh_perspective_events</c> work row by
+  /// <c>event_work_id</c> (the <c>complete_perspective_events</c> DELETE path — same as every standard
+  /// perspective). Without this the row keeps <c>processed_at = NULL</c>, <c>claim_orphaned_perspective_events</c>
+  /// re-leases it every tick, and each re-lease re-dispatches the whole-cohort collective UPDATE — the
+  /// self-sustaining re-dispatch loop that bloated <c>wh_per_draft_job</c> to ~95% dead tuples. The cursor
+  /// advance alone does NOT delete the row (<c>complete_perspective_cursor_work</c> only advances the cursor
+  /// and marks <c>processed_at</c> by <c>event_id</c>; that path is insufficient — the row lingers).
+  /// RED before the fix: the sink never enqueues an event-work-id, so <see cref="CapturingPerspectiveCompletionChannel.FirstEventWorkId"/>
+  /// never completes and this times out.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_SuccessfulDispatch_CompletesSinkWorkRowByEventWorkId_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var sinkWork = _sinkWork(streamId);
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new _recordingDispatcher();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    // The fix enqueues the sink's event_work_id for deletion; the worker's idle-tick flush drains it to
+    // the completion channel. Wait on that deterministically instead of racing the idle loop.
+    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
+      .Because("The collective event is dispatched exactly once.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(sinkWork.WorkId)
+      .Because("A successful sink dispatch must delete its own __collective__ work row by event_work_id, " +
+        "so claim_orphaned can't re-lease it into the re-dispatch loop that caused the production bloat.");
+  }
+
+  /// <summary>
+  /// Same regression as <see cref="CollectiveSink_SuccessfulDispatch_CompletesSinkWorkRowByEventWorkId_Async"/>,
+  /// but via the production DRAIN route (a collective event claimed as a stream, not injected as channel work).
+  /// The drain twin of the sink guard must resolve the sink row's <c>event_work_id</c> from the drain batch's
+  /// raw rows and complete it the same way.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_ViaDrainPath_CompletesSinkWorkRowByEventWorkId_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var workId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new _recordingDispatcher();
+    var envelope = _envelope(eventId, collectiveEvent);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      work: [],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      drainStreamIds: [streamId],
+      streamEvents: [_raw(streamId, eventId, eventWorkId: workId)]);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
+      .Because("A collective event claimed via the drain path is dispatched exactly once.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(workId)
+      .Because("The drain-path sink must delete its own __collective__ work row by event_work_id (resolved " +
+        "from the drain batch's raw rows) so claim_orphaned can't re-lease it.");
+  }
+
   [Test]
   public async Task CollectiveSink_NoDispatcherRegistered_DoesNotThrow_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
@@ -118,22 +201,29 @@ public class PerspectiveWorkerCollectiveSinkTests {
   [Test]
   public async Task CollectiveSink_NoCollectiveEventOnStream_NoDispatch_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
+    var sinkWork = _sinkWork(streamId);
     var dispatcher = new _recordingDispatcher();
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
-      [_sinkWork(streamId)],
+      [sinkWork],
       eventStore: new _eventStore(), // empty — no events on the stream
       registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
       dispatcher: dispatcher);
 
     var workerTask = worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await coordinator.WaitForCyclesAsync(2, TimeSpan.FromSeconds(10));
+    // A leased sink row with no collective event on the stream (cursor already advanced past it, or a
+    // stale re-lease) must still be completed — otherwise it re-leases forever. Wait on that deletion.
+    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(0)
       .Because("No collective event on the stream → nothing to dispatch.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(sinkWork.WorkId)
+      .Because("A leased sink row with no matching collective event must be completed (deleted) so " +
+        "claim_orphaned stops re-leasing it into a no-op re-dispatch loop.");
   }
 
   [Test]

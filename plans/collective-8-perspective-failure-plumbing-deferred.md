@@ -1,7 +1,13 @@
 # Deferred: §8 — perspective/collective failure & dead-letter plumbing (D6)
 
-**Status**: DEFERRED (decided 2026-07-01). Bug precisely identified below; fix needs a dedicated session
-with work-coordinator context.
+**Status**: PARTIALLY SHIPPED (2026-07-01). The **success-side sink completion** — item #3 below, the
+`__collective__` sink completing its own work rows by `event_work_id` so `claim_orphaned` can't re-lease
+them — **is fixed and shipped** (it was the production re-dispatch loop / table bloat; see
+`PerspectiveWorker._completeCollectiveSinkWorkRows` + `PerspectiveWorkerCollectiveSinkTests`). What remains
+**DEFERRED** is the *failure-reporting* path (items #1, #2, #4): a failing apply still does not set the
+Failed flag / `error` / `scheduled_for` backoff, because of the identifier mismatch below. That fix touches
+the core failure path shared by every perspective and needs a dedicated session with work-coordinator
+context.
 **Context**: Whizbang 0.795 collective-event apply hardening. §8 of the 0.795 plan ("Failure / dead-letter
 plumbing"). Root cause D6 from the investigation.
 **Why deferred**: the fix touches the **core perspective failure/completion path shared by every perspective
@@ -61,10 +67,15 @@ Net effect: the perspective-failure UPDATE matches **zero rows**. The Failed fla
    and `Reason` not `FailureReason`) via a NEW migration (never edit a shipped one). Keep the
    `status | Failed(32768)`, `error`, `scheduled_for` exponential backoff, `instance_id/lease_expiry = NULL`
    semantics.
-3. **Sink completion / cursor.** Confirm the `__collective__` sink reports per-`event_work_id` completion so
-   successful sink events delete their `wh_perspective_events` work rows and advance the cursor past a poison
-   event (the plan flagged the sink "never deletes its work rows nor advances the cursor past a poison
-   event"). Verify against the completion path.
+3. **Sink completion / cursor — ✅ DONE (2026-07-01).** The `__collective__` sink now reports per-`event_work_id`
+   completion on success: `PerspectiveWorker._processCollectiveSinkAsync` calls `_completeCollectiveSinkWorkRows`
+   (enqueues each leased sink row's `event_work_id` → `complete_perspective_events` DELETE) on the successful
+   path AND the no-collective-event stale-lease path. This deletes the `wh_perspective_events` sink rows so
+   `claim_orphaned_perspective_events` can't re-lease them — the fix for the re-dispatch loop. The cursor is
+   still advanced by `_reportCompletionAndSignalSyncAsync` as before. Locked in by
+   `PerspectiveWorkerCollectiveSinkTests.CollectiveSink_SuccessfulDispatch_CompletesSinkWorkRowByEventWorkId_Async`
+   (+ drain twin + stale-lease case). The *failure*-path cursor-advance-past-poison is still part of the
+   deferred failure work below.
 4. **DLQ.** Confirm `_deadLetterStore` / `_generationProvider` reach the worker and that
    `FilterDeadLetteredAsync` / `> MaxPerspectiveEventAttempts` (default 10) fires as the poison backstop —
    valid-but-heavy events must succeed via D0–§7, only genuinely-poison events dead-letter.

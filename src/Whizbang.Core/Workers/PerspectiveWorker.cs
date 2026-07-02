@@ -884,7 +884,10 @@ public partial class PerspectiveWorker(
           // __collective__ perspective, not a per-stream runner. Dispatch it via ICollectiveDispatcher
           // and skip the normal runner path entirely.
           if (perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
-            await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, ct);
+            // The leased group IS the set of __collective__ work rows for this stream; their WorkIds
+            // (event_work_id) are what the sink must complete on success so the rows are deleted.
+            var sinkWorkIds = group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct().ToArray();
+            await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, sinkWorkIds, ct);
             return;
           }
 
@@ -1641,7 +1644,16 @@ public partial class PerspectiveWorker(
     // Collective-event sink (drain path twin of the channel-path guard): dispatch via
     // ICollectiveDispatcher and skip the per-stream runner. See _processCollectiveSinkAsync.
     if (perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
-      await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, ct);
+      // Resolve the sink rows' event_work_ids from this drain batch's raw rows so the sink can complete
+      // (DELETE) them on success — without it the row loops forever (production re-dispatch death spiral).
+      var sinkWorkIds = filteredEvents
+        .SelectMany(e => batchContext.RawByEventId[e.MessageId.Value])
+        .Where(raw => string.Equals(raw.PerspectiveName, CollectiveRouting.SINK_PERSPECTIVE_NAME, StringComparison.Ordinal))
+        .Select(raw => raw.EventWorkId)
+        .Where(id => id != Guid.Empty)
+        .Distinct()
+        .ToArray();
+      await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, sinkWorkIds, ct);
       return;
     }
 
@@ -2463,6 +2475,7 @@ public partial class PerspectiveWorker(
       AsyncServiceScope scope,
       IWorkCoordinator workCoordinator,
       Guid streamId,
+      IReadOnlyList<Guid> sinkWorkIds,
       CancellationToken cancellationToken) {
 
     var dispatcher = scope.ServiceProvider.GetService<ICollectiveDispatcher>();
@@ -2490,6 +2503,11 @@ public partial class PerspectiveWorker(
 
     var collectiveEnvelopes = events.Where(e => e.Payload is ICollectiveEvent).ToList();
     if (collectiveEnvelopes.Count == 0) {
+      // No collective event to dispatch, yet the sink rows were leased — the cursor already advanced
+      // past them (a prior run applied the event and advanced the cursor without completing the row,
+      // or a stale re-lease). Complete them anyway so claim_orphaned stops re-leasing them into a
+      // no-op loop; leaving them keeps processed_at=NULL and re-spins the whole death-spiral.
+      _completeCollectiveSinkWorkRows(sinkWorkIds);
       return;
     }
 
@@ -2534,6 +2552,39 @@ public partial class PerspectiveWorker(
     await _reportCompletionAndSignalSyncAsync(
       completion, collectiveEnvelopes, workCoordinator, streamId,
       CollectiveRouting.SINK_PERSPECTIVE_NAME, cancellationToken).ConfigureAwait(false);
+
+    // Delete the sink's own __collective__ work rows by event_work_id. The cursor completion above only
+    // advances the cursor + marks processed_at by event_id — it does NOT delete the wh_perspective_events
+    // rows. Standard perspectives get the DELETE via _bufferCompletionsAndUpdateCache; the sink must do the
+    // same here or claim_orphaned re-leases the row forever and re-dispatches the whole-cohort UPDATE — the
+    // production death spiral (re-dispatch loop → ~95% table bloat → lock convoy).
+    _completeCollectiveSinkWorkRows(sinkWorkIds);
+  }
+
+  /// <summary>
+  /// Enqueues the collective sink's own <c>__collective__</c> <c>wh_perspective_events</c> work rows for
+  /// deletion by <c>event_work_id</c> — the same <c>complete_perspective_events</c> DELETE path every
+  /// standard perspective uses (see <see cref="_bufferCompletionsAndUpdateCache"/>). Marks them in the
+  /// dedup cache so a re-lease inside the flush window is short-circuited. Called on both the successful-
+  /// dispatch path and the no-collective-event path of <see cref="_processCollectiveSinkAsync"/>.
+  /// </summary>
+  private void _completeCollectiveSinkWorkRows(IReadOnlyList<Guid> sinkWorkIds) {
+    if (sinkWorkIds.Count == 0) {
+      return;
+    }
+    var completedWorkIds = new List<Guid>(sinkWorkIds.Count);
+    foreach (var workId in sinkWorkIds) {
+      if (workId == Guid.Empty) {
+        continue;
+      }
+      _pendingEventCompletions.Enqueue(new PerspectiveEventCompletion {
+        EventWorkId = workId,
+        StatusFlags = (int)PerspectiveProcessingStatus.Completed
+      });
+      completedWorkIds.Add(workId);
+    }
+    // In-flight (no TTL until the DB acks the DELETE) so claim_orphaned can't re-lease in the flush window.
+    _processedEventCache.AddRange(completedWorkIds);
   }
 
   /// <summary>

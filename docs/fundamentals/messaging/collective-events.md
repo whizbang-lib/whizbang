@@ -165,6 +165,14 @@ through the normal produce → persist → project pipeline, with one branch at 
    sink cursor, and **skips the per-stream runner** (a collective event has no single target stream). The
    dispatcher fans out internally to every matching `TModel` handler, each running the bounded, scoped apply
    below.
+4. **Complete the sink row (§8).** On a successful dispatch the sink completes its own `__collective__`
+   `wh_perspective_events` work rows **by `event_work_id`** (the `complete_perspective_events` DELETE path
+   every standard perspective uses), so `claim_orphaned_perspective_events` can't re-lease them. The cursor
+   advance in step 3 only moves the cursor + marks `processed_at`; it does **not** delete the row. Omitting
+   the by-`event_work_id` completion left every applied sink row with `processed_at = NULL`, so it was
+   re-leased and the whole-cohort `UPDATE` re-dispatched every tick — the self-sustaining re-dispatch loop
+   behind the production table bloat. A leased sink row whose event the cursor already passed is completed
+   too (a stale re-lease), so it can't spin a no-op loop.
 
 ### Apply execution — scoped, bounded, indexed (0.795)
 
@@ -184,10 +192,14 @@ convoy locks or run away (the mechanics that stopped the production spiral):
 - **Per-(table, scope) exclusive advisory lock (§5a).** Each batch takes `pg_advisory_xact_lock(hash(table,
   scope))` — DB-global, so it serializes same-scope collective applies **across pods** while disjoint scopes
   (e.g. different tenants) run concurrently. Opt out with `SerializeApplies = false`.
-- **Default-on expression indexes (§7).** Before scanning, the adapter ensures a btree
-  `CREATE INDEX IF NOT EXISTS … ((data->>'Prop'))` for each jsonb path the `WHERE` filters on (incl.
-  `scope->>'t'`) — `gin` can't serve `->>` equality. Once per `(database, table, expr)`, best-effort,
-  PgBouncer-safe; opt out with `EnsureIndexes = false`.
+- **Startup expression index (§7).** The btree `((scope->>'t'))` expression index the tenant-scope filter
+  needs (`gin(scope)` can't serve `->>` equality) is created **at service startup** by the schema generator
+  (`EFCoreServiceRegistrationGenerator._appendStandardIndexes`, alongside the `gin` indexes), **never in the
+  apply path**. Index creation takes a `SHARE` lock, so doing it in a live apply — as an earlier apply-time
+  `EnsureIndexes`/`CollectiveIndexEnsurer` design did — is unacceptable and was removed. Handler cohort
+  filters correlate the sibling perspective by **PK** (`st.Id == r.Id`), so they need no extra index; the
+  compiler still records `ReferencedJsonPaths` as the compile-time basis for any future per-property startup
+  index.
 - **Per-handler knobs (§6).** `[CollectiveApplyFor(BatchSize = …, StatementTimeoutSeconds = …)]` override the
   global `CollectiveApplyOptions` defaults for a heavy or light handler (`0` = inherit).
 - **Observability (§9).** Transient (`40P01`/`40001`) retries log via `PostgresDeadlockRetry`, and an
@@ -219,8 +231,8 @@ stay AOT-clean — a source generator can emit these per-model calls for full tu
 
 | Driver | SET → SQL | WHERE → SQL | Apply | Status |
 |---|---|---|---|---|
-| **EF Core** (`Whizbang.Data.EFCore.Postgres`) | `CollectiveSettersRewriter` → nested `jsonb_set` | shared `CollectivePredicateSqlCompiler` | `EFCoreCollectiveEventExecutor<TModel>` — keyset-batched predicate `UPDATE` + advisory lock + `statement_timeout` + index-ensure | **Complete** |
-| **Dapper** (`Whizbang.Data.Dapper.Postgres`) | `DapperCollectiveSpecCompiler` → `jsonb_set` | shared `CollectivePredicateSqlCompiler` | `DapperCollectiveEventExecutor<TModel>` (+ applier) — keyset-batched + advisory lock + `statement_timeout` | **Parity** (no index-ensure / completion-log yet) |
+| **EF Core** (`Whizbang.Data.EFCore.Postgres`) | `CollectiveSettersRewriter` → nested `jsonb_set` | shared `CollectivePredicateSqlCompiler` | `EFCoreCollectiveEventExecutor<TModel>` — keyset-batched predicate `UPDATE` + advisory lock + `statement_timeout` (tenant-scope index emitted at startup, §7) | **Complete** |
+| **Dapper** (`Whizbang.Data.Dapper.Postgres`) | `DapperCollectiveSpecCompiler` → `jsonb_set` | shared `CollectivePredicateSqlCompiler` | `DapperCollectiveEventExecutor<TModel>` (+ applier) — keyset-batched + advisory lock + `statement_timeout` | **Parity** (no completion-log yet) |
 
 Both drivers share one WHERE compiler (`CollectivePredicateSqlCompiler`, in `Whizbang.Data.Postgres`) and the
 same keyset-batched apply shape. Dapper DI mirrors EF Core: `AddCollectiveEventsDapper(entries)` +
@@ -242,13 +254,18 @@ deferred to `[CollectiveApplyFor(SpecKind = RawSql)]` in v1 (both compilers thro
   lock so it coordinates with the collective *exclusive* lock (§5a). Collective-vs-collective is already
   serialized cross-pod by §5a; §5b is the collective-vs-standard refinement (ordering, not correctness).
   Reservations / pros-cons / how-to-vet: [`plans/collective-5b-standard-apply-shared-lock-deferred.md`](../../../plans/collective-5b-standard-apply-shared-lock-deferred.md).
-- **§8 — perspective failure / DLQ plumbing** (deferred): a triple identifier mismatch on the core
-  failure path means a perspective/collective apply failure is not recorded (Failed flag / backoff). Not
-  spiral-critical (the apply hardening makes applies *succeed*); precise root cause + fix plan:
+- **§8 — perspective failure / DLQ backoff plumbing** (deferred): a triple identifier mismatch on the core
+  *failure* path means a perspective/collective apply **failure** is not recorded (Failed flag / backoff).
+  Note the **success** side of §8 — the sink completing its own `__collective__` rows by `event_work_id` so
+  they're deleted and never re-leased — **is fixed** (that was the production re-dispatch loop; see
+  [Persistence, routing, and dispatch](#persistence-routing-and-dispatch) step 4). What remains deferred is
+  the *failure* attribution/backoff; not spiral-critical (the apply hardening makes applies *succeed*, and a
+  genuinely poison sink row still dead-letters via `claim_orphaned`'s attempt increment + the pre-apply DLQ
+  filter). Precise root cause + fix plan:
   [`plans/collective-8-perspective-failure-plumbing-deferred.md`](../../../plans/collective-8-perspective-failure-plumbing-deferred.md).
-- **Dapper index-ensure + completion-log parity** — Dapper has the keyset/lock/knob/logger parity but not
-  yet §7 expression-index ensuring or the apply-completion telemetry (no current Dapper consumer;
-  `statement_timeout` backstops the scan).
+- **Dapper completion-log parity** — Dapper has the keyset/lock/knob/logger parity but not yet the
+  apply-completion telemetry (no current Dapper consumer). The `((scope->>'t'))` startup index is emitted by
+  the EF Core schema generator; the Dapper schema snippet already emits its own `((scope->>'t'))` btree.
 - **Generator-emitted executor registration** — auto-emit `AddCollectiveExecutor{EFCore,Dapper}<TModel>()`
   per model (and the Dapper table name) for full turnkey registration.
 - **Open-set custom-scope serialization** — `[JsonDerivedType]` is a closed list; custom scopes need the
@@ -264,21 +281,30 @@ deferred to `[CollectiveApplyFor(SpecKind = RawSql)]` in v1 (both compilers thro
   `CollectiveWhereComposer.cs` (scope/`Where` composition), `CollectiveDispatcher.cs`,
   `ICollectiveSessionAccessor.cs`, `CollectiveRouting.cs`, `TenantCollectiveScopeResolver.cs`.
 - Shared (both drivers): `src/Whizbang.Data.Postgres/Collective/` — `CollectivePredicateSqlCompiler` (WHERE →
-  SQL + `ReferencedJsonPath`s), `CollectiveApplyLockKey` (advisory-lock key), `CollectiveApplyOptions`
-  (`Whizbang.Core.Perspectives`, batch/timeout/serialize/index knobs).
+  SQL + `ReferencedJsonPath`s, the compile-time basis for index decisions), `CollectiveApplyLockKey`
+  (advisory-lock key), `CollectiveApplyOptions` (`Whizbang.Core.Perspectives`, batch/timeout/serialize knobs).
 - EF Core: `src/Whizbang.Data.EFCore.Postgres/Collective/` (`EFCoreCollectiveEventExecutor`,
   `CollectiveEventApplier`, `EFCoreCollectiveAdapter` (keyset batch + lock + timeout), `CollectiveSettersRewriter`,
-  `CollectiveIndexEnsurer` (§7), `EFCoreCollectiveQuery`, `EFCoreCollectiveSessionAccessor`),
-  `CollectiveEventsEFCoreExtensions.cs`.
+  `EFCoreCollectiveQuery`, `EFCoreCollectiveSessionAccessor`), `CollectiveEventsEFCoreExtensions.cs`.
+- Startup index (§7): the tenant-scope btree `((scope->>'t'))` is emitted per perspective table by
+  `src/Whizbang.Data.EFCore.Postgres.Generators/EFCoreServiceRegistrationGenerator.cs`
+  (`_appendStandardIndexes` / `_generatePerspectiveIndexSql`) — never at apply time.
 - Dapper: `src/Whizbang.Data.Dapper.Postgres/Collective/` (`DapperCollectiveEventExecutor`,
   `DapperCollectiveEventApplier` (keyset batch + lock + timeout), `DapperCollectiveSpecCompiler` (SET),
   `DapperCollectiveQuery`, `DapperCollectiveTableRegistry`), `CollectiveEventsDapperExtensions.cs`.
 - Deadlock/retry: `src/Whizbang.Data.Postgres/PostgresDeadlockRetry.cs`.
 - Routing migration: `src/Whizbang.Data.Postgres/Migrations/061_CollectiveEventRouting.sql`.
-- Worker seam: `src/Whizbang.Core/Workers/PerspectiveWorker.cs` (`_processCollectiveSinkAsync`).
+- Worker seam: `src/Whizbang.Core/Workers/PerspectiveWorker.cs` (`_processCollectiveSinkAsync` +
+  `_completeCollectiveSinkWorkRows` — the §8 by-`event_work_id` completion).
 - Tests: `tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs`,
   `tests/Whizbang.Core.Tests/Perspectives/CollectiveWhereComposerTests.cs`,
+  `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs`
+  (`CollectiveSink_SuccessfulDispatch_CompletesSinkWorkRowByEventWorkId_*`, drain twin, and the
+  no-collective-event stale-lease case — the §8 re-dispatch-loop regression lock-in),
   `tests/Whizbang.Data.EFCore.Postgres.Tests/EmitEventStoreChainCollectiveSqlTests.cs`,
   `tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs`
-  (`DispatchAsync_FrameworkWithHandlerWhere_*`, `DispatchAsync_CustomHandlerWhere_*`),
+  (`DispatchAsync_FrameworkWithHandlerWhere_*`, `DispatchAsync_CustomHandlerWhere_*`,
+  `DispatchAsync_NeverCreatesIndexesInTheApplyHotPath_*` — §7),
+  `tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs`
+  (`Generator_SchemaExtensions_IncludesBtreeExpressionIndexForTenantScope_*` — §7 startup index),
   `tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs`.
