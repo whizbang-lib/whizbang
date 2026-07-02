@@ -46,21 +46,33 @@ public sealed class PerspectiveWorkerTestHarness {
 /// the worker enqueues for assertions.
 /// </summary>
 public sealed class CapturingPerspectiveCompletionChannel : IPerspectiveCompletionChannel {
+  private readonly TaskCompletionSource _firstEventWorkId = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private readonly TaskCompletionSource _firstCursor = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
   /// <summary>Captured event work IDs (perspective_event row deletions).</summary>
   public ConcurrentQueue<Guid> EventWorkIds { get; } = new();
 
   /// <summary>Captured cursor advancements.</summary>
   public ConcurrentQueue<PerspectiveCursorCompletion> Cursors { get; } = new();
 
+  /// <summary>Completes when the first event-work-id row deletion is enqueued — a deterministic
+  /// signal for tests that assert the completion flush ran (vs. racing the worker's idle tick).</summary>
+  public Task FirstEventWorkId => _firstEventWorkId.Task;
+
+  /// <summary>Completes when the first cursor advancement is enqueued.</summary>
+  public Task FirstCursor => _firstCursor.Task;
+
   /// <inheritdoc />
   public ValueTask EnqueueEventWorkIdAsync(Guid eventWorkId, CancellationToken cancellationToken = default) {
     EventWorkIds.Enqueue(eventWorkId);
+    _firstEventWorkId.TrySetResult();
     return ValueTask.CompletedTask;
   }
 
   /// <inheritdoc />
   public ValueTask EnqueueCursorAsync(PerspectiveCursorCompletion cursor, CancellationToken cancellationToken = default) {
     Cursors.Enqueue(cursor);
+    _firstCursor.TrySetResult();
     return ValueTask.CompletedTask;
   }
 }

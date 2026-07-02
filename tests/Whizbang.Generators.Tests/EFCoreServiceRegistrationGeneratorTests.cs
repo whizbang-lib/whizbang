@@ -991,6 +991,51 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("_scope_gin");
   }
 
+  [Test]
+  public async Task Generator_SchemaExtensions_IncludesBtreeExpressionIndexForTenantScopeAsync() {
+    // §7: a gin(scope) index cannot serve `scope->>'t' = ?` btree equality — the tenant filter that both
+    // tenant-scoped lens queries AND every collective apply AND onto their WHERE. Without a btree EXPRESSION
+    // index over `((scope->>'t'))` those queries seq-scan the whole perspective table (the production hazard
+    // the apply-time index ensurer used to paper over). The schema generator must emit it at STARTUP so index
+    // creation never happens in a live apply path.
+    const string source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+      public record TestModel { public string Id { get; init; } = ""; }
+
+      public class TestPerspective : IPerspectiveFor<TestModel> {
+        private readonly IPerspectiveStore<TestModel> _store;
+        public TestPerspective(IPerspectiveStore<TestModel> store) => _store = store;
+        public Task UpdateAsync(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("(scope->>'t')")
+      .Because("A btree EXPRESSION index over scope->>'t' is what makes the planner index-scan the tenant " +
+        "filter (collective apply + lens) instead of seq-scanning; gin(scope) cannot serve ->> equality.");
+    await Assert.That(sourceText).Contains("_scope_tenant")
+      .Because("The tenant scope expression index follows the idx_<table>_scope_tenant naming convention.");
+  }
+
   /// <summary>
   /// Test that perspective DDL includes physical fields marked with [PhysicalField] attribute.
   /// Physical fields should be added as separate columns in the CREATE TABLE statement.

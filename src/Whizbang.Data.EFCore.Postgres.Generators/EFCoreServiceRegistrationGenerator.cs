@@ -2180,6 +2180,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin");
     sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
     sb.AppendLine();
+
+    // Btree EXPRESSION index over the tenant scope key. gin(scope) above serves containment (@>) but NOT
+    // `scope->>'t' = ?` btree equality — the filter both tenant-scoped lens queries and every collective
+    // apply (§2) AND onto their WHERE. Without this the planner seq-scans the whole perspective table (the
+    // production hazard the removed apply-time index ensurer used to paper over). Emitting it here means the
+    // index is created once at service startup through the normal schema-init path, never in a live apply.
+    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant");
+    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
+    sb.AppendLine();
   }
 
   /// <summary>
@@ -2309,6 +2318,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin ON {quotedSchema}.{perspective.TableName} USING gin (data);");
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
+    // Btree expression index over scope->>'t' — see _appendStandardIndexes for the rationale (gin can't
+    // serve ->> equality; the tenant filter of lens + collective apply needs a btree). Kept in sync here so
+    // the per-perspective schema-hash entries match the concatenated init SQL.
+    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
 
     foreach (var field in perspective.PhysicalFields) {
       if (field.IsIndexed) {
