@@ -970,6 +970,45 @@ public class AutoPopulateDiscoveryGeneratorTests {
   }
 
   /// <summary>
+  /// A base class that declares auto-populate properties plus several classes that inherit them (a consumer's shape:
+  /// one <c>BaseConsumerEvent</c>, many derived events). The populator must NOT emit a case for every derived type
+  /// (a base-typed case ahead of derived cases makes them unreachable — CS8120 — and bloats the output);
+  /// instead the base case populates all derived instances in place. Generated code must compile.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_ClassHierarchy_InheritedProps_GeneratesCompilableCodeAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class BaseEvent {
+              [PopulateFromIdentifier(IdentifierKind.CorrelationId)] public string? CorrelationId { get; set; }
+              [PopulateTimestamp(TimestampKind.SentAt)] public DateTimeOffset SentAt { get; set; }
+              [PopulateFromContext(ContextKind.UserId)] public Guid? AccountId { get; set; }
+            }
+
+            public class OrderCreated : BaseEvent { public Guid OrderId { get; set; } }
+            public class OrderShipped : BaseEvent { public Guid ShipmentId { get; set; } }
+            public class OrderDelivered : OrderShipped { public DateTimeOffset DeliveredAt { get; set; } }
+            """;
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>(source);
+    await Assert.That(errors).IsEmpty()
+      .Because($"A base class + inheriting classes must not produce unreachable (CS8120) cases; errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+    var populator = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(populator).IsNotNull();
+    await Assert.That(populator).Contains("case global::TestApp.BaseEvent m")
+      .Because("The declaring base type populates all inheriting instances in place.");
+    await Assert.That(populator!.Contains("global::TestApp.OrderCreated m")).IsFalse()
+      .Because("Derived types that only inherit the attributes must not get their own (redundant, unreachable) case.");
+  }
+
+  /// <summary>
   /// Mirrors a consumer's <c>BaseConsumerEvent</c> exactly — a CLASS with a string CorrelationId (from the Guid id), a
   /// non-null SentAt timestamp, a string OriginatingService (from ServiceName), and a <b>Guid?</b> AccountId
   /// populated from the <b>string</b> UserId context. The AccountId conversion (string→Guid) is the one that
