@@ -365,15 +365,23 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     public string Status { get; set; } = string.Empty;
   }
 
+  internal sealed class _overlayModel {
+    public Guid Id { get; set; }
+    public bool IsActive { get; set; }
+    public Guid GlobalTemplateId { get; set; }
+  }
+
   private sealed class _jobDbContext(DbContextOptions<_jobDbContext> options) : DbContext(options) {
     public DbSet<PerspectiveRow<_jobModel>> Jobs => Set<PerspectiveRow<_jobModel>>();
     public DbSet<PerspectiveRow<_jobStatusModel>> JobStatuses => Set<PerspectiveRow<_jobStatusModel>>();
     public DbSet<PerspectiveRow<_cellsModel>> CellsRows => Set<PerspectiveRow<_cellsModel>>();
+    public DbSet<PerspectiveRow<_overlayModel>> Overlays => Set<PerspectiveRow<_overlayModel>>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
       _mapRow<_jobModel>(modelBuilder, "wh_per_collective_job");
       _mapRow<_jobStatusModel>(modelBuilder, "wh_per_collective_job_status");
+      _mapRow<_overlayModel>(modelBuilder, "wh_per_collective_overlay");
       // POLYMORPHIC model mapping: Data is a SCALAR jsonb column (Property + HasColumnType), NOT
       // ComplexProperty().ToJson(). This is exactly what a consumer generates for perspective models with
       // [JsonPolymorphic] members (e.g. OrderTenantFields, whose field cells are polymorphic). EF Core 10
@@ -464,6 +472,15 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         updated_at TIMESTAMPTZ NOT NULL,
         version INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS wh_per_collective_overlay (
+        id UUID PRIMARY KEY,
+        data JSONB NOT NULL,
+        metadata JSONB NOT NULL,
+        scope JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        version INTEGER NOT NULL
+      );
       """);
   }
 
@@ -546,6 +563,93 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     private sealed record _spec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters)
       : ICollectiveSpec<_jobModel>;
+  }
+
+  // ── Computed comparison setter: single-active flip on the EF Core driver ───────────────────────────────
+
+  [Test]
+  public async Task DispatchAsync_ComputedComparisonSetter_FlipsSingleActive_AtomicallyAsync() {
+    var gid = Guid.NewGuid();
+    var otherGid = Guid.NewGuid();
+    var target = Guid.NewGuid();     // becomes active
+    var sibling = Guid.NewGuid();    // currently active → deactivated
+    var unrelated = Guid.NewGuid();  // different global template → untouched
+
+    await _seedOverlayAsync(target, "t-A", isActive: false, gid);
+    await _seedOverlayAsync(sibling, "t-A", isActive: true, gid);
+    await _seedOverlayAsync(unrelated, "t-A", isActive: true, otherGid);
+
+    var result = await _buildOverlayDispatcher().DispatchAsync(
+      evt: new _setActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+
+    await Assert.That(result.AffectedRowCount).IsEqualTo(2)
+      .Because("Both siblings under the global template are updated by the one computed set-based UPDATE.");
+    await Assert.That(await _readIsActiveAsync(target)).IsTrue()
+      .Because("SET IsActive = (Id == target) → true for the target on EF Core's ComplexProperty ToJson mapping.");
+    await Assert.That(await _readIsActiveAsync(sibling)).IsFalse()
+      .Because("Same computed setter → false for the sibling, atomically deactivating the prior active.");
+    await Assert.That(await _readIsActiveAsync(unrelated)).IsTrue()
+      .Because("A different global template is outside the Where cohort → untouched.");
+  }
+
+  private CollectiveDispatcher _buildOverlayDispatcher() {
+    var services = new ServiceCollection();
+    services.AddSingleton(new _overlayActivePerspective());
+    var entries = new CollectiveApplyEntry[] {
+      new(
+        ModelType: typeof(_overlayModel),
+        EventType: typeof(_setActiveEvent),
+        HandlerType: typeof(_overlayActivePerspective),
+        MethodName: nameof(_overlayActivePerspective.SetActive),
+        ScopeHandling: CollectiveScopeHandling.Custom,
+        SpecKind: CollectiveSpecKind.Linq,
+        Invoker: static (h, e, q) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e)),
+    };
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      entries,
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<_overlayModel>()]);
+  }
+
+  internal sealed class _overlayActivePerspective {
+    public ICollectiveSpec<_overlayModel> SetActive(_setActiveEvent e) =>
+      new _whereSpec(
+        s => s.SetProperty(o => o.IsActive, o => o.Id == e.OverlayId),
+        r => r.Data.GlobalTemplateId == e.GlobalTemplateId);
+
+    private sealed record _whereSpec(
+        Expression<Action<ICollectiveSetters<_overlayModel>>> Setters,
+        Expression<Func<PerspectiveRow<_overlayModel>, bool>>? Where) : ICollectiveSpec<_overlayModel>;
+  }
+
+  internal sealed record _setActiveEvent : ICollectiveEvent {
+    public required Guid OverlayId { get; init; }
+    public required Guid GlobalTemplateId { get; init; }
+    public required CollectiveScope Scope { get; init; }
+  }
+
+  private async Task _seedOverlayAsync(Guid id, string tenantId, bool isActive, Guid globalTemplateId) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    var dataJson = JsonSerializer.Serialize(new _overlayModel { Id = id, IsActive = isActive, GlobalTemplateId = globalTemplateId });
+    var scopeJson = JsonSerializer.Serialize(new PerspectiveScope { TenantId = tenantId });
+    await conn.ExecuteAsync("""
+      INSERT INTO wh_per_collective_overlay (id, data, metadata, scope, created_at, updated_at, version)
+      VALUES (@id, @data::jsonb, '{}'::jsonb, @scope::jsonb, @createdAt, @updatedAt, 1);
+      """, new { id, data = dataJson, scope = scopeJson, createdAt = DateTime.UtcNow, updatedAt = DateTime.UtcNow });
+  }
+
+  private async Task<bool> _readIsActiveAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT (data->>'IsActive')::bool FROM wh_per_collective_overlay WHERE id = @id;";
+    cmd.Parameters.AddWithValue("id", id);
+    return (bool)(await cmd.ExecuteScalarAsync())!;
   }
 
   private CollectiveDispatcher _buildDraftDispatcher(CollectiveScopeHandling handling) {

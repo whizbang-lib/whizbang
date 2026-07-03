@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Transports.HotChocolate.Middleware;
 
@@ -50,7 +52,23 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
     // Wrap in ImmutableScopeContext for Dispatcher compatibility
     scopeContextAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
 
+    // Adopt an inbound X-Correlation-ID (the client's token) into the ambient accessor so the HotChocolate
+    // resolver's dispatch uses it instead of minting a fresh trace-aligned root. This is seeded HERE — in the
+    // scope seam — because this is the middleware whose ambient state provably reaches the resolver; a separate
+    // outermost correlation middleware's AsyncLocal does not survive to the GraphQL execution.
+    _seedInboundCorrelation(context);
+
     await _next(context);
+  }
+
+  private void _seedInboundCorrelation(HttpContext context) {
+    if (context.Request.Headers.TryGetValue(_options.CorrelationIdHeaderName, out var header) &&
+        !string.IsNullOrEmpty(header) &&
+        Guid.TryParse(header!, out var correlationGuid)) {
+      // FromExternal accepts any 128-bit token (a client v4 UUID, a W3C trace-id) without UUIDv7 validation —
+      // a correlation id can originate outside the system.
+      InboundCorrelationAccessor.Current = CorrelationId.FromExternal(correlationGuid);
+    }
   }
 
   private PerspectiveScope _buildScope(HttpContext context) {
@@ -311,6 +329,14 @@ public class WhizbangScopeOptions {
   /// Header name for customer ID. Default: "X-Customer-Id".
   /// </summary>
   public string CustomerIdHeaderName { get; set; } = "X-Customer-Id";
+
+  /// <summary>
+  /// Header name for the inbound correlation id. Default: "X-Correlation-ID". When present and parseable as a
+  /// Guid/UUID, the scope middleware adopts it as the ambient inbound correlation so a client-supplied token
+  /// flows through the whole message graph (the HotChocolate resolver's dispatch adopts it instead of minting a
+  /// fresh trace-aligned root). HTTP header names are case-insensitive.
+  /// </summary>
+  public string CorrelationIdHeaderName { get; set; } = "X-Correlation-ID";
 
   /// <summary>
   /// Claim type for roles. Default: ClaimTypes.Role.

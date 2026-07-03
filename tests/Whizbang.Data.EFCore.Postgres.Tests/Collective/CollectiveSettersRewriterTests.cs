@@ -80,13 +80,33 @@ public class CollectiveSettersRewriterTests {
   // ── Computed-value SetProperty unsupported (matches Dapper compiler) ───
 
   [Test]
-  public async Task CollectAssignments_ComputedValue_ThrowsNotSupportedAsync() {
+  public async Task CollectAssignments_ComputedArithmetic_ThrowsNotSupportedAsync() {
     Expression<Action<ICollectiveSetters<_jobModel>>> source =
       s => s.SetProperty(j => j.ViewCount, j => j.ViewCount + 1);
 
     await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(source))
       .ThrowsExactly<NotSupportedException>()
-      .Because("v1.0 matches the Dapper compiler: constant-value SetProperty only. Computed expressions throw with a pointer to SpecKind = RawSql so the consumer is never silently surprised by an UPDATE that doesn't increment.");
+      .Because("Computed arithmetic (j => j.ViewCount + 1) is still RawSql-only — only property-vs-constant comparisons are compiled.");
+  }
+
+  [Test]
+  public async Task CollectAssignments_ComputedComparison_ProducesComparisonMetadataAsync() {
+    var target = Guid.NewGuid();
+    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+      s => s.SetProperty(j => j.IsActive, j => j.Id == target);
+
+    var assignments = CollectiveSettersRewriter.CollectAssignments(source);
+
+    await Assert.That(assignments).Count().IsEqualTo(1);
+    var a = assignments[0];
+    await Assert.That(a.PathName).IsEqualTo("IsActive")
+      .Because("The target property (the assigned column) is IsActive.");
+    await Assert.That(a.Comparison).IsNotNull()
+      .Because("A property-vs-constant comparison setter carries comparison metadata for the adapter's to_jsonb(...) shape.");
+    await Assert.That(a.Comparison!.ComparedProperty).IsEqualTo("Id");
+    await Assert.That(a.Comparison.SqlOperator).IsEqualTo("=");
+    await Assert.That(a.JsonValue).IsEqualTo($"\"{target}\"")
+      .Because("The RHS constant is serialized with the persistence profile — a Guid as a JSON string — so the jsonb comparison matches how the column stores Id.");
   }
 
   // ── Empty spec rejection ──────────────────────────────────────────────
@@ -128,6 +148,8 @@ public class CollectiveSettersRewriterTests {
   private sealed class _jobModel {
     public string? Status { get; set; } = string.Empty;
     public int ViewCount { get; set; }
+    public Guid Id { get; set; }
+    public bool IsActive { get; set; }
     public _nested Nested { get; set; } = new();
   }
 

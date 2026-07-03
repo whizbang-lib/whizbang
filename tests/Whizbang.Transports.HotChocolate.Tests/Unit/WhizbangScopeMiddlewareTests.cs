@@ -2,7 +2,9 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Transports.HotChocolate.Middleware;
 
 namespace Whizbang.Transports.HotChocolate.Tests.Unit;
@@ -27,6 +29,60 @@ public class WhizbangScopeMiddlewareTests {
 
     // Assert
     await Assert.That(accessor.Current).IsNotNull();
+  }
+
+  [Test]
+  [NotInParallel("InboundCorrelation")]
+  public async Task InvokeAsync_WithCorrelationHeader_SeedsInboundCorrelationAccessor_ForDownstreamAsync() {
+    // Arrange — the scope middleware is the seam that reaches the HotChocolate resolver (scope flows through it).
+    // It must ALSO adopt the inbound X-Correlation-ID so the resolver's dispatch uses the client's token, not a
+    // fresh trace-aligned root. Assert INSIDE next() — that's where the resolver/dispatch runs.
+    InboundCorrelationAccessor.Current = null;
+    var expected = CorrelationId.New();
+    CorrelationId? seenDownstream = null;
+    var middleware = new WhizbangScopeMiddleware(_ => {
+      seenDownstream = InboundCorrelationAccessor.Current;
+      return Task.CompletedTask;
+    });
+    var context = new DefaultHttpContext();
+    context.Request.Headers["X-Correlation-ID"] = expected.Value.ToString();
+    var accessor = new TestScopeContextAccessor();
+
+    try {
+      // Act
+      await middleware.InvokeAsync(context, accessor);
+
+      // Assert
+      await Assert.That(seenDownstream).IsEqualTo(expected)
+        .Because("The scope middleware must seed InboundCorrelationAccessor from X-Correlation-ID so the HotChocolate resolver's dispatch adopts the client's correlation token.");
+    } finally {
+      InboundCorrelationAccessor.Current = null;
+    }
+  }
+
+  [Test]
+  [NotInParallel("InboundCorrelation")]
+  public async Task InvokeAsync_WithoutCorrelationHeader_DoesNotSeedInboundCorrelationAsync() {
+    // Arrange — no header => leave the accessor null so the dispatch mints its own trace-aligned root.
+    InboundCorrelationAccessor.Current = null;
+    var seenDownstreamHadValue = true;
+    var middleware = new WhizbangScopeMiddleware(_ => {
+      seenDownstreamHadValue = InboundCorrelationAccessor.Current is not null;
+      return Task.CompletedTask;
+    });
+    var context = new DefaultHttpContext();
+    var accessor = new TestScopeContextAccessor();
+
+    try {
+      // Act
+      await middleware.InvokeAsync(context, accessor);
+
+      // Assert
+      await Assert.That(seenDownstreamHadValue).IsFalse()
+        .Because("With no inbound correlation header the middleware leaves InboundCorrelationAccessor unset.");
+    } finally {
+      InboundCorrelationAccessor.Current = null;
+    }
   }
 
   [Test]
