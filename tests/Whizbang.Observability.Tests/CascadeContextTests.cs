@@ -1,4 +1,7 @@
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
@@ -10,6 +13,82 @@ namespace Whizbang.Observability.Tests;
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs</tests>
 /// </summary>
 public class CascadeContextTests {
+
+  // ========================================
+  // RESOLVE CASCADE IDENTITY TESTS
+  // ========================================
+  // ResolveCascadeIdentity is the tracing-axis mirror of GetSecurityFromAmbient: it supplies the
+  // correlation/causation a "publish/store" hop builder must stamp so identity flows wherever scope flows.
+
+  [Test]
+  [NotInParallel("AmbientInitiatingContext")]
+  public async Task ResolveCascadeIdentity_WithAmbientInitiatingContext_UsesItsCorrelationAndCausationAsync() {
+    // Arrange — an inbound message is being handled (its context is the ambient initiating context).
+    var expectedCorrelation = CorrelationId.New();
+    var initiatingMessageId = MessageId.New();
+    ScopeContextAccessor.CurrentInitiatingContext = new MessageContext {
+      MessageId = initiatingMessageId,
+      CorrelationId = expectedCorrelation,
+      CausationId = MessageId.New()
+    };
+
+    try {
+      // Act
+      var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope: null);
+
+      // Assert — the emitted hop inherits the inbound correlation, and causation is the inbound message id.
+      await Assert.That(correlation).IsEqualTo(expectedCorrelation);
+      await Assert.That(causation).IsEqualTo(initiatingMessageId);
+    } finally {
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
+
+  [Test]
+  [NotInParallel("AmbientInitiatingContext")]
+  public async Task ResolveCascadeIdentity_NoAmbient_FallsBackToSourceEnvelopeAsync() {
+    // Arrange — no ambient initiating context, but a cascaded event carries a source (parent) envelope.
+    ScopeContextAccessor.CurrentInitiatingContext = null;
+    var sourceCorrelation = CorrelationId.New();
+    var sourceCausation = MessageId.New();
+    var sourceEnvelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "parent",
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow,
+          CorrelationId = sourceCorrelation,
+          CausationId = sourceCausation
+        }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act
+    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+
+    // Assert — the parent's correlation and causation flow onto the emitted hop.
+    await Assert.That(correlation).IsEqualTo(sourceCorrelation);
+    await Assert.That(causation).IsEqualTo(sourceCausation);
+  }
+
+  [Test]
+  [NotInParallel("AmbientInitiatingContext")]
+  public async Task ResolveCascadeIdentity_NoAmbientNoSource_MintsTraceAlignedRootAsync() {
+    // Arrange — a top-level publish with neither ambient context nor a source envelope.
+    ScopeContextAccessor.CurrentInitiatingContext = null;
+
+    // Act
+    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope: null);
+
+    // Assert — a fresh, non-default correlation is minted (never null on the hop); no parent => null causation.
+    await Assert.That(correlation.Value).IsNotEqualTo(Guid.Empty)
+      .Because("A published/stored hop must always carry a correlation, even at a root with no inbound context.");
+    await Assert.That(causation).IsNull()
+      .Because("A root emission has no parent message, so causation is null.");
+  }
 
   // ========================================
   // RECORD INITIALIZATION TESTS
