@@ -58,7 +58,15 @@ internal static class CollectiveSettersRewriter {
   /// <see cref="IsNull"/> is carried so a null setter serializes to JSON <c>null</c> (which EF Core 10
   /// cannot express against a <c>ComplexProperty().ToJson()</c> sub-property via <c>ExecuteUpdate</c>).
   /// </summary>
-  public sealed record CollectiveSetterAssignment(string PathName, string JsonValue, bool IsNull);
+  public sealed record CollectiveSetterAssignment(string PathName, string JsonValue, bool IsNull, CollectiveComputedComparison? Comparison = null);
+
+  /// <summary>
+  /// A computed setter of the shape <c>j =&gt; j.SomeProp == value</c> (or <c>!=</c>): the new value is a
+  /// jsonb-to-jsonb comparison of the row's <see cref="ComparedProperty"/> against the assignment's
+  /// (constant) <c>JsonValue</c>, wrapped by the adapter as
+  /// <c>to_jsonb((data-&gt;'ComparedProperty')::jsonb &lt;op&gt; @value::jsonb)</c>. Null for constant setters.
+  /// </summary>
+  public sealed record CollectiveComputedComparison(string ComparedProperty, string SqlOperator);
 
   /// <summary>
   /// Walk the spec setters and return each top-level assignment as (property name, JSON-serialized value,
@@ -80,13 +88,17 @@ internal static class CollectiveSettersRewriter {
 
     var result = new List<CollectiveSetterAssignment>(visitor.Assignments.Count);
     foreach (var a in visitor.Assignments) {
-      var json = JsonSerializer.Serialize(a.Value, a.Value?.GetType() ?? a.Property.PropertyType, _persistenceJsonOptions);
-      result.Add(new CollectiveSetterAssignment(a.Property.Name, json, a.Value is null));
+      // For a computed comparison the serialized value is the RHS constant; the adapter wraps it in the
+      // to_jsonb(...) comparison. For a constant setter it is the value itself. Serialize against the RHS's own
+      // runtime type (comparison) or the target property type (constant).
+      var valueType = a.Value?.GetType() ?? (a.Comparison is null ? a.Property.PropertyType : typeof(object));
+      var json = JsonSerializer.Serialize(a.Value, valueType, _persistenceJsonOptions);
+      result.Add(new CollectiveSetterAssignment(a.Property.Name, json, a.Value is null && a.Comparison is null, a.Comparison));
     }
     return result;
   }
 
-  private sealed record _propertyAssignment(PropertyInfo Property, object? Value);
+  private sealed record _propertyAssignment(PropertyInfo Property, object? Value, CollectiveComputedComparison? Comparison);
 
   /// <summary>
   /// Walks the spec body and accumulates one
@@ -113,17 +125,43 @@ internal static class CollectiveSettersRewriter {
       var selector = _unwrapLambda(node.Arguments[0]);
       var property = _extractScalarProperty(selector);
 
-      // Reject computed expressions — v1.0 supports only constant-value
-      // SetProperty, matching the Dapper compiler.
+      // Computed setter: currently a property-vs-constant comparison (j => j.SomeProp == value). The RHS
+      // constant becomes the assignment value; the comparison metadata tells the adapter to emit the
+      // to_jsonb((data->'X')::jsonb <op> @value::jsonb) shape. Arithmetic / string ops remain RawSql-only.
       var valueExpr = node.Arguments[1];
       if (_isLambda(valueExpr)) {
-        throw new NotSupportedException(
-          $"CollectiveSettersRewriter does not yet support computed SetProperty (j => j.{property.Name}, j => j.{property.Name} + 1). " +
-          "Use [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)] for computed mutations until the visitor learns the arithmetic shape.");
+        var (comparison, rhs) = _parseComputedComparison(valueExpr, property.Name);
+        Assignments.Add(new _propertyAssignment(property, rhs, comparison));
+        return node;
       }
 
-      Assignments.Add(new _propertyAssignment(property, _evaluateValue(valueExpr)));
+      Assignments.Add(new _propertyAssignment(property, _evaluateValue(valueExpr), Comparison: null));
       return node;
+    }
+
+    private (CollectiveComputedComparison Comparison, object? Rhs) _parseComputedComparison(Expression valueExpr, string targetProperty) {
+      var lambda = _unwrapLambda(valueExpr);
+      if (lambda.Body is BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } bin
+          && _tryComparedProperty(bin.Left) is { } comparedProperty) {
+        var op = bin.NodeType == ExpressionType.Equal ? "=" : "<>";
+        return (new CollectiveComputedComparison(comparedProperty, op), _evaluateValue(_stripConvert(bin.Right)));
+      }
+      throw new NotSupportedException(
+        $"CollectiveSettersRewriter supports computed SetProperty only as a property-vs-constant comparison " +
+        $"(j => j.{targetProperty}, j => j.SomeProp == value). Arithmetic, string, and other computed shapes require [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
+    }
+
+    private string? _tryComparedProperty(Expression e) =>
+      _stripConvert(e) is MemberExpression { Expression: ParameterExpression, Member: PropertyInfo prop }
+          && prop.DeclaringType == modelType
+        ? prop.Name
+        : null;
+
+    private static Expression _stripConvert(Expression e) {
+      while (e is UnaryExpression { NodeType: ExpressionType.Convert } convert) {
+        e = convert.Operand;
+      }
+      return e;
     }
 
     private static LambdaExpression _unwrapLambda(Expression e) =>

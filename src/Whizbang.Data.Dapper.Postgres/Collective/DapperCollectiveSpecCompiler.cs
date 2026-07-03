@@ -105,7 +105,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
   /// another <c>jsonb_set</c>.
   /// </summary>
   private static string _buildJsonbSetChain(List<_propertyAssignment> assignments) {
-    // jsonb_set(jsonb_set(data, '{A}', @p_A::jsonb), '{B}', @p_B::jsonb)
+    // jsonb_set(jsonb_set(data, '{A}', @p_A::jsonb), '{B}', to_jsonb((data->'X')::jsonb = @p_B::jsonb))
     var sb = new StringBuilder("data = ");
     foreach (var _ in assignments) {
       sb.Append("jsonb_set(");
@@ -114,14 +114,16 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
     foreach (var a in assignments) {
       sb.Append(", '{");
       sb.Append(a.JsonbPath);
-      sb.Append("}', @");
-      sb.Append(a.ParameterName);
-      sb.Append("::jsonb)");
+      sb.Append("}', ");
+      sb.Append(a.ValueSql);
+      sb.Append(')');
     }
     return sb.ToString();
   }
 
-  private sealed record _propertyAssignment(string JsonbPath, string ParameterName);
+  // ValueSql is the SQL for the new jsonb value: "@p::jsonb" for a constant, or a computed expression like
+  // "to_jsonb((data->'X')::jsonb = @p::jsonb)" for a property-vs-constant comparison.
+  private sealed record _propertyAssignment(string JsonbPath, string ValueSql);
 
   /// <summary>
   /// Walks the spec's expression body, collecting one
@@ -150,19 +152,10 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
         var propertyName = _extractScalarPropertyName(selector);
 
         var valueExpr = node.Arguments[1];
-        if (_isLambda(valueExpr)) {
-          throw new NotSupportedException(
-            $"DapperCollectiveSpecCompiler<{typeof(TModel).Name}> does not yet support computed SetProperty (j => j.{propertyName}, j => j.{propertyName} + 1). " +
-            "Use [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)] for computed mutations until the visitor learns the arithmetic shape.");
-        }
-
-        var value = _evaluateValue(valueExpr);
-        var paramName = $"{_parameterPrefix}_{_seq}_{propertyName.ToLowerInvariant()}";
-        _seq++;
-
-        var jsonValue = JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), _jsonOptions);
-        Parameters[paramName] = jsonValue;
-        Properties.Add(new _propertyAssignment(propertyName, paramName));
+        var valueSql = _isLambda(valueExpr)
+          ? _compileComputedValue(valueExpr, propertyName)
+          : _compileConstantValue(valueExpr, propertyName);
+        Properties.Add(new _propertyAssignment(propertyName, valueSql));
 
         // Continue visiting in case this is part of a chain — the visitor
         // call below recurses into the Object expression of the next
@@ -202,6 +195,52 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
         "DapperCollectiveSpecCompiler only supports scalar top-level property selectors " +
         "(j => j.PropertyName). Nested paths (j => j.Nested.X), indexed access, or computed " +
         "selectors require [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
+    }
+
+    // Constant value source → "@p::jsonb", with the value JSON-serialized into the parameter dictionary.
+    private string _compileConstantValue(Expression valueExpr, string propertyName) {
+      var value = _evaluateValue(valueExpr);
+      var paramName = _nextParam(propertyName);
+      Parameters[paramName] = JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), _jsonOptions);
+      return $"@{paramName}::jsonb";
+    }
+
+    // Computed value source. Supported shape: a property-vs-constant comparison (j => j.SomeProp == value),
+    // which compiles to a jsonb-to-jsonb comparison wrapped in to_jsonb() so the result is itself a jsonb
+    // boolean. Arithmetic, string, and other computed shapes remain RawSql-only.
+    private string _compileComputedValue(Expression valueExpr, string targetProperty) {
+      var lambda = _unwrapLambda(valueExpr);
+      if (lambda.Body is BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } bin
+          && _tryPropertyName(bin.Left) is { } comparedProperty) {
+        var rhs = _evaluateValue(_stripConvert(bin.Right));
+        var paramName = _nextParam(targetProperty);
+        Parameters[paramName] = JsonSerializer.Serialize(rhs, rhs?.GetType() ?? typeof(object), _jsonOptions);
+        var op = bin.NodeType == ExpressionType.Equal ? "=" : "<>";
+        // (data->'X') is already jsonb; the ::jsonb cast is explicit for readability + a stable SQL shape.
+        return $"to_jsonb((data->'{comparedProperty}')::jsonb {op} @{paramName}::jsonb)";
+      }
+
+      throw new NotSupportedException(
+        $"DapperCollectiveSpecCompiler<{typeof(TModel).Name}> supports computed SetProperty only as a property-vs-constant comparison " +
+        $"(j => j.{targetProperty}, j => j.SomeProp == value). Arithmetic, string, and other computed shapes require [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
+    }
+
+    private string _nextParam(string propertyName) {
+      var paramName = $"{_parameterPrefix}_{_seq}_{propertyName.ToLowerInvariant()}";
+      _seq++;
+      return paramName;
+    }
+
+    private static string? _tryPropertyName(Expression e) =>
+      _stripConvert(e) is MemberExpression { Expression: ParameterExpression, Member: PropertyInfo prop }
+        ? prop.Name
+        : null;
+
+    private static Expression _stripConvert(Expression e) {
+      while (e is UnaryExpression { NodeType: ExpressionType.Convert } convert) {
+        e = convert.Operand;
+      }
+      return e;
     }
 
     private static object? _evaluateValue(Expression valueExpr) {

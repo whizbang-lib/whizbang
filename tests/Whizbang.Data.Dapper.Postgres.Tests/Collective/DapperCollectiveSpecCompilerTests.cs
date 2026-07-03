@@ -92,14 +92,48 @@ public class DapperCollectiveSpecCompilerTests {
   }
 
   [Test]
-  public async Task Compile_ComputedValueExpression_ThrowsNotSupportedAsync() {
+  public async Task Compile_ComputedArithmeticExpression_ThrowsNotSupportedAsync() {
     Expression<Action<ICollectiveSetters<_jobModel>>> body =
       s => s.SetProperty(j => j.ViewCount, j => j.ViewCount + 1);
     var spec = new _stubSpec(body);
 
     await Assert.That(() => DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions))
       .ThrowsExactly<NotSupportedException>()
-      .Because("Slice 9 first cut supports constants only — computed expressions throw with a clear pointer to SpecKind = RawSql for the escape hatch.");
+      .Because("Computed arithmetic (j => j.ViewCount + 1) is still RawSql-only — only property-vs-constant comparisons are compiled.");
+  }
+
+  // ── Computed comparison (property vs constant => bool) ──────────────────
+
+  [Test]
+  public async Task Compile_ComputedPropertyEqualsConstant_EmitsToJsonbComparisonAsync() {
+    var target = Guid.NewGuid();
+    var spec = _spec(s => s.SetProperty(j => j.IsActive, j => j.Id == target));
+
+    var compiled = DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).Contains("jsonb_set(data, '{IsActive}'")
+      .Because("The target property is still a top-level jsonb path.");
+    await Assert.That(compiled.SqlFragment).Contains("to_jsonb(")
+      .Because("A computed boolean is wrapped in to_jsonb so the result is a jsonb value.");
+    await Assert.That(compiled.SqlFragment).Contains("data->'Id'")
+      .Because("The compared property is read from the data jsonb column as a jsonb value.");
+    await Assert.That(compiled.SqlFragment).Contains("::jsonb =")
+      .Because("Equality is a jsonb-to-jsonb comparison (type-agnostic), not a text compare.");
+    await Assert.That(compiled.Parameters).Count().IsEqualTo(1);
+    await Assert.That(compiled.Parameters.Values.Single()).IsEqualTo($"\"{target}\"")
+      .Because("The RHS constant is JSON-serialized the same way the column stores it (a Guid as a JSON string).");
+  }
+
+  [Test]
+  public async Task Compile_ComputedPropertyNotEqualsConstant_EmitsInequalityAsync() {
+    var target = Guid.NewGuid();
+    var spec = _spec(s => s.SetProperty(j => j.IsActive, j => j.Id != target));
+
+    var compiled = DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).Contains("<>")
+      .Because("!= compiles to the SQL inequality operator.");
+    await Assert.That(compiled.Parameters).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -144,6 +178,8 @@ public class DapperCollectiveSpecCompilerTests {
   private sealed class _jobModel {
     public string Status { get; set; } = string.Empty;
     public int ViewCount { get; set; }
+    public Guid Id { get; set; }
+    public bool IsActive { get; set; }
   }
 
   private sealed class _complexModel {

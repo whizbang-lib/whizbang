@@ -316,4 +316,101 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   private sealed record _archiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
   }
+
+  // ── Computed comparison setter: single-active flip (the overlay-activation shape) ──────────────────────
+
+  private const string OVERLAY_TABLE = "wh_per_collective_dapper_overlay";
+
+  private async Task _createOverlayTableAsync() {
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    await conn.ExecuteAsync($@"
+      CREATE TABLE IF NOT EXISTS {OVERLAY_TABLE} (
+        id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb, scope jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+        version bigint NOT NULL DEFAULT 1);
+      TRUNCATE {OVERLAY_TABLE};");
+  }
+
+  private async Task _seedOverlayAsync(Guid id, string tenantId, bool isActive, Guid globalTemplateId) {
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    await conn.ExecuteAsync(
+      $"INSERT INTO {OVERLAY_TABLE} (id, data, scope) VALUES (@id, @data::jsonb, @scope::jsonb)",
+      new {
+        id,
+        data = $"{{\"Id\": \"{id}\", \"IsActive\": {(isActive ? "true" : "false")}, \"GlobalTemplateId\": \"{globalTemplateId}\"}}",
+        scope = $"{{\"t\": \"{tenantId}\"}}"
+      });
+  }
+
+  private async Task<bool> _isActiveAsync(Guid id) {
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    return await conn.ExecuteScalarAsync<bool>($"SELECT (data->>'IsActive')::bool FROM {OVERLAY_TABLE} WHERE id = @id", new { id });
+  }
+
+  [Test]
+  public async Task ApplyAsync_ComputedComparisonSetter_FlipsSingleActive_AtomicallyAsync() {
+    // The overlay-activation shape: SET IsActive = (Id == @target) for every sibling under one global template.
+    // One computed set-based UPDATE activates the target AND deactivates its siblings — no read-before-write.
+    await _createOverlayTableAsync();
+    var gid = Guid.NewGuid();
+    var otherGid = Guid.NewGuid();
+    var target = Guid.NewGuid();     // becomes active
+    var sibling = Guid.NewGuid();    // currently active → must be deactivated
+    var unrelated = Guid.NewGuid();  // different global template → untouched
+
+    await _seedOverlayAsync(target, "t-A", isActive: false, gid);
+    await _seedOverlayAsync(sibling, "t-A", isActive: true, gid);
+    await _seedOverlayAsync(unrelated, "t-A", isActive: true, otherGid);
+
+    var affected = await DapperCollectiveEventApplier<_overlayModel>.ApplyAsync(
+      _setActiveEntry(),
+      new _overlayActivePerspective(),
+      new _setActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
+      new TenantCollectiveScopeResolver(),
+      ConnectionFactory,
+      OVERLAY_TABLE,
+      _noSiblings, CollectiveApplyOptions.Default,
+      default);
+
+    await Assert.That(affected).IsEqualTo(2)
+      .Because("Both siblings under the global template are updated (target set active, sibling set inactive).");
+    await Assert.That(await _isActiveAsync(target)).IsTrue()
+      .Because("The computed setter sets IsActive = (Id == target) → true for the target.");
+    await Assert.That(await _isActiveAsync(sibling)).IsFalse()
+      .Because("Same computed setter → false for the sibling (Id != target), atomically deactivating the prior active.");
+    await Assert.That(await _isActiveAsync(unrelated)).IsTrue()
+      .Because("A different global template is outside the cohort (Where GlobalTemplateId == gid) → untouched.");
+  }
+
+  private static CollectiveApplyEntry _setActiveEntry() => new(
+    ModelType: typeof(_overlayModel),
+    EventType: typeof(_setActiveEvent),
+    HandlerType: typeof(_overlayActivePerspective),
+    MethodName: nameof(_overlayActivePerspective.SetActive),
+    ScopeHandling: CollectiveScopeHandling.Custom,
+    SpecKind: CollectiveSpecKind.Linq,
+    Invoker: static (h, e, q) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e));
+
+  private sealed class _overlayModel {
+    public Guid Id { get; set; }
+    public bool IsActive { get; set; }
+    public Guid GlobalTemplateId { get; set; }
+  }
+
+  private sealed class _overlayActivePerspective {
+    public ICollectiveSpec<_overlayModel> SetActive(_setActiveEvent e) =>
+      new _whereSpec(
+        s => s.SetProperty(o => o.IsActive, o => o.Id == e.OverlayId),
+        r => r.Data.GlobalTemplateId == e.GlobalTemplateId);
+
+    private sealed record _whereSpec(
+        Expression<Action<ICollectiveSetters<_overlayModel>>> Setters,
+        Expression<Func<PerspectiveRow<_overlayModel>, bool>>? Where) : ICollectiveSpec<_overlayModel>;
+  }
+
+  private sealed record _setActiveEvent : ICollectiveEvent {
+    public required Guid OverlayId { get; init; }
+    public required Guid GlobalTemplateId { get; init; }
+    public required CollectiveScope Scope { get; init; }
+  }
 }

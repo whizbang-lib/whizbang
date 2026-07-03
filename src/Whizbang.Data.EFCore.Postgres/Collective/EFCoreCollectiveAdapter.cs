@@ -94,12 +94,17 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     var qualifiedTable = schema is null ? "\"" + table + "\"" : "\"" + schema + "\".\"" + table + "\"";
 
     // Nested jsonb_set: jsonb_set(jsonb_set(data, @path0, @p0::jsonb), …). The path is bound as a text[]
-    // parameter (no '{…}' brace literal) and the property name is parameterized, not concatenated.
+    // parameter (no '{…}' brace literal) and the property name is parameterized, not concatenated. A computed
+    // comparison setter substitutes to_jsonb((data->'X')::jsonb <op> @p::jsonb) for the plain @p::jsonb value —
+    // the compared property is compile-time model metadata (a C# identifier), so it's embedded, not injected.
     var setExpr = new StringBuilder("data");
     for (var i = 0; i < assignments.Count; i++) {
       var idx = i.ToString(CultureInfo.InvariantCulture);
+      var valueSql = assignments[i].Comparison is { } cmp
+        ? "to_jsonb((data->'" + cmp.ComparedProperty + "')::jsonb " + cmp.SqlOperator + " @p" + idx + "::jsonb)"
+        : "@p" + idx + "::jsonb";
       setExpr.Insert(0, "jsonb_set(")
-        .Append(", @path").Append(idx).Append(", @p").Append(idx).Append("::jsonb)");
+        .Append(", @path").Append(idx).Append(", ").Append(valueSql).Append(')');
     }
 
     // Compile the predicate straight to SQL (no SELECT-id seq scan). The bare table name qualifies the outer
