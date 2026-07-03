@@ -55,7 +55,8 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
       null, // tracingOptions
       null, // snapshotStore
       null, // snapshotOptions
-      null  // applyCoordinator
+      null, // applyCoordinator
+      null  // collectiveReplayApplier (added in ICollectiveReplayApplier rebuild-replay fix)
     ]);
   }
 

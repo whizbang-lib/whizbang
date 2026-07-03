@@ -49,7 +49,8 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
       null, // tracingOptions
       null, // snapshotStore
       null, // snapshotOptions
-      null  // applyCoordinator (added in IPerspectiveApplyCoordinator rewind-race fix)
+      null, // applyCoordinator (added in IPerspectiveApplyCoordinator rewind-race fix)
+      null  // collectiveReplayApplier (added in ICollectiveReplayApplier rebuild-replay fix)
     ]);
   }
 
