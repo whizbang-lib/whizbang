@@ -65,6 +65,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // wh_per_* row writes. See IPerspectiveApplyCoordinator for the full rationale
   // and the a consumer bulk-import 4-lost-increments incident that motivated it.
   private readonly global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? _applyCoordinator;
+  // Optional: folds collective events back into replay/rebuild so their set-based mutations survive a rebuild.
+  // Null when no driver registered it (or the model has no [CollectiveApplyFor] handler) — then the runner
+  // behaves exactly as before. See ICollectiveReplayApplier.
+  private readonly global::Whizbang.Core.Perspectives.ICollectiveReplayApplier? _collectiveReplayApplier;
   private int _eventsSinceLastSnapshot;
 
   public __RUNNER_CLASS_NAME__(
@@ -76,7 +80,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       IOptionsMonitor<TracingOptions>? tracingOptions = null,
       IPerspectiveSnapshotStore? snapshotStore = null,
       IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null,
-      global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? applyCoordinator = null) {
+      global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? applyCoordinator = null,
+      global::Whizbang.Core.Perspectives.ICollectiveReplayApplier? collectiveReplayApplier = null) {
     _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
@@ -86,6 +91,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     _snapshotStore = snapshotStore;
     _snapshotOptions = snapshotOptions;
     _applyCoordinator = applyCoordinator;
+    _collectiveReplayApplier = collectiveReplayApplier;
   }
 
   public async Task<PerspectiveCursorCompletion> RunAsync(
@@ -413,6 +419,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       var enableEventSpans = _tracingOptions?.CurrentValue.EnablePerspectiveEventSpans ?? false;
       var appliedEventTypes = new System.Collections.Generic.List<string>();
 
+      // Replay/rebuild only: interleave this tenant's collective events for the model into the stream's replay,
+      // ordered by message id among the per-stream events — so a set-based collective mutation is reproduced
+      // per-row and survives the rebuild. No-op during live drain, or when the model has no [CollectiveApplyFor]
+      // handler / no applier is registered (the call returns the same list unchanged).
+      if (_collectiveReplayApplier is not null && events.Count > 0) {
+        events = await _collectiveReplayApplier.InterleaveForReplayAsync(
+            typeof(__MODEL_TYPE_NAME__), events, cancellationToken);
+      }
+
       // Process all events in order
       foreach (var envelope in events) {
 
@@ -449,6 +464,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // and calling Apply would cause NullReferenceException.
         // We still advance the checkpoint so these events aren't reprocessed.
         if (pendingPurge) {
+          processedEvents.Add(envelope);
+          lastSuccessfulEventId = envelope.MessageId.Value;
+          eventsProcessed++;
+          continue;
+        }
+
+        // Collective events have no per-stream Apply() — during replay/rebuild they are folded into this one
+        // row by the in-memory applier (self-referential per WHIZ106). They were interleaved above only in
+        // rebuild/rewind mode, so this branch never runs during live drain.
+        if (@event is global::Whizbang.Core.Messaging.ICollectiveEvent) {
+          if (_collectiveReplayApplier is not null && updatedModel is not null) {
+            updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier.ApplyInMemory(
+                typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
+            hasWrittenUpdate = true;
+          }
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
           eventsProcessed++;

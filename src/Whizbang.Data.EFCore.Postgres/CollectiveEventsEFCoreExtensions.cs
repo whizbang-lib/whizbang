@@ -4,10 +4,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Collective;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Collective;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -59,6 +61,15 @@ public static class CollectiveEventsEFCoreExtensions {
       sp.GetServices<ICollectiveScopeResolver>().ToList(),
       sp.GetServices<ICollectiveEventExecutor>().ToList(),
       sp.GetService<EventCategoryMetrics>()));
+    // Replay/rebuild seam: folds these collective events back into each stream's per-row rebuild so the
+    // mutation survives a perspective rebuild (the rebuilder never runs the set-based SQL path). Scoped so it
+    // can resolve the request-scoped event-store query. Driver-neutral applier (lives in Whizbang.Data.Postgres).
+    services.TryAddScoped<ICollectiveReplayApplier>(sp => new CollectiveReplayApplier(
+      applyEntries,
+      sp,
+      sp.GetRequiredService<IEventStore>(),
+      sp.GetRequiredService<IEventStoreQuery>(),
+      sp.GetServices<ICollectiveInMemoryExecutor>().ToList()));
     return services;
   }
 
@@ -70,6 +81,9 @@ public static class CollectiveEventsEFCoreExtensions {
   public static IServiceCollection AddCollectiveExecutorEFCore<TModel>(this IServiceCollection services)
       where TModel : class {
     services.AddSingleton<ICollectiveEventExecutor, EFCoreCollectiveEventExecutor<TModel>>();
+    // In-memory twin used during replay/rebuild (driver-neutral). Same TModel as the SQL executor so a
+    // collective event that mutated this model is re-applied per-row on rebuild.
+    services.AddSingleton<ICollectiveInMemoryExecutor, CollectiveInMemoryExecutor<TModel>>();
     return services;
   }
 }

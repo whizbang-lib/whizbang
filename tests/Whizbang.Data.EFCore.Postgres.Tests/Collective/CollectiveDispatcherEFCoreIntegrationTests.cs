@@ -369,6 +369,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     public Guid Id { get; set; }
     public bool IsActive { get; set; }
     public Guid GlobalTemplateId { get; set; }
+    public bool Marked { get; set; }
   }
 
   private sealed class _jobDbContext(DbContextOptions<_jobDbContext> options) : DbContext(options) {
@@ -621,9 +622,63 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         s => s.SetProperty(o => o.IsActive, o => o.Id == e.OverlayId),
         r => r.Data.GlobalTemplateId == e.GlobalTemplateId);
 
+    // A SECOND apply for the SAME (event, model) — proves the dispatcher fans out to multiple
+    // [CollectiveApplyFor] methods per (event, model), which the a consumer overlay redesign (apply + clear on the
+    // jobs perspective off one event) depends on.
+    public ICollectiveSpec<_overlayModel> MarkAll(_setActiveEvent e) =>
+      new _whereSpec(
+        s => s.SetProperty(o => o.Marked, true),
+        r => r.Data.GlobalTemplateId == e.GlobalTemplateId);
+
     private sealed record _whereSpec(
         Expression<Action<ICollectiveSetters<_overlayModel>>> Setters,
         Expression<Func<PerspectiveRow<_overlayModel>, bool>>? Where) : ICollectiveSpec<_overlayModel>;
+  }
+
+  [Test]
+  public async Task DispatchAsync_TwoAppliesSameModelSameEvent_BothApplyAsync() {
+    var gid = Guid.NewGuid();
+    var target = Guid.NewGuid();
+    var sibling = Guid.NewGuid();
+    await _seedOverlayAsync(target, "t-A", isActive: false, gid);
+    await _seedOverlayAsync(sibling, "t-A", isActive: true, gid);
+
+    var services = new ServiceCollection();
+    services.AddSingleton(new _overlayActivePerspective());
+    // TWO entries, same event, same model, different methods.
+    var entries = new CollectiveApplyEntry[] {
+      new(typeof(_overlayModel), typeof(_setActiveEvent), typeof(_overlayActivePerspective),
+        nameof(_overlayActivePerspective.SetActive), CollectiveScopeHandling.Custom, CollectiveSpecKind.Linq,
+        static (h, e, q) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e)),
+      new(typeof(_overlayModel), typeof(_setActiveEvent), typeof(_overlayActivePerspective),
+        nameof(_overlayActivePerspective.MarkAll), CollectiveScopeHandling.Custom, CollectiveSpecKind.Linq,
+        static (h, e, q) => ((_overlayActivePerspective)h).MarkAll((_setActiveEvent)e)),
+    };
+    var dispatcher = new CollectiveDispatcher(
+      services.BuildServiceProvider(), entries,
+      [new TenantCollectiveScopeResolver()], [new EFCoreCollectiveEventExecutor<_overlayModel>()]);
+
+    var result = await dispatcher.DispatchAsync(
+      new _setActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
+      Guid.NewGuid(), _ctx!, default);
+
+    await Assert.That(result.HandlerCount).IsEqualTo(2)
+      .Because("Two [CollectiveApplyFor] entries for the same (event, model) both run.");
+    // SetActive fired:
+    await Assert.That(await _readIsActiveAsync(target)).IsTrue();
+    await Assert.That(await _readIsActiveAsync(sibling)).IsFalse();
+    // MarkAll fired too (proves BOTH applies on the same model+event landed):
+    await Assert.That(await _readMarkedAsync(target)).IsTrue();
+    await Assert.That(await _readMarkedAsync(sibling)).IsTrue();
+  }
+
+  private async Task<bool> _readMarkedAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT (data->>'Marked')::bool FROM wh_per_collective_overlay WHERE id = @id;";
+    cmd.Parameters.AddWithValue("id", id);
+    return (bool)(await cmd.ExecuteScalarAsync())!;
   }
 
   internal sealed record _setActiveEvent : ICollectiveEvent {

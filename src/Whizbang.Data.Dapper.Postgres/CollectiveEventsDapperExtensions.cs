@@ -3,10 +3,12 @@ using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Dapper.Postgres.Collective;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Collective;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -52,6 +54,15 @@ public static class CollectiveEventsDapperExtensions {
       sp.GetServices<ICollectiveScopeResolver>().ToList(),
       sp.GetServices<ICollectiveEventExecutor>().ToList(),
       sp.GetService<EventCategoryMetrics>()));
+    // Replay/rebuild seam — folds these collective events back into each stream's per-row rebuild so the
+    // mutation survives a perspective rebuild. Driver-neutral applier (Whizbang.Data.Postgres); scoped for the
+    // request-scoped event-store query.
+    services.TryAddScoped<ICollectiveReplayApplier>(sp => new CollectiveReplayApplier(
+      applyEntries,
+      sp,
+      sp.GetRequiredService<IEventStore>(),
+      sp.GetRequiredService<IEventStoreQuery>(),
+      sp.GetServices<ICollectiveInMemoryExecutor>().ToList()));
     return services;
   }
 
@@ -73,6 +84,8 @@ public static class CollectiveEventsDapperExtensions {
     services.AddSingleton<ICollectiveEventExecutor>(sp =>
       new DapperCollectiveEventExecutor<TModel>(tableName, registry.Tables, sp.GetService<CollectiveApplyOptions>(),
         sp.GetService<Microsoft.Extensions.Logging.ILogger<DapperCollectiveEventExecutor<TModel>>>()));
+    // In-memory twin used during replay/rebuild (driver-neutral). Same TModel as the SQL executor.
+    services.AddSingleton<ICollectiveInMemoryExecutor, CollectiveInMemoryExecutor<TModel>>();
     return services;
   }
 

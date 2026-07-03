@@ -64,7 +64,8 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       null, // tracingOptions
       snapshotStore, // optional snapshot store
       snapshotOptions, // optional snapshot options
-      null  // applyCoordinator
+      null, // applyCoordinator
+      null  // collectiveReplayApplier (added in ICollectiveReplayApplier rebuild-replay fix)
     ]);
   }
 
