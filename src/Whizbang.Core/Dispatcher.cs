@@ -3582,13 +3582,6 @@ public abstract partial class Dispatcher(
   /// Includes scope propagation from ambient context or source envelope.
   /// </summary>
   private MessageEnvelope<TEvent> _createOutboxEnvelopeWithHop<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope, string? destination) {
-    var envelope = new MessageEnvelope<TEvent> {
-      MessageId = messageId,
-      Payload = eventData,
-      Hops = [],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
-    };
-
     // Extract aggregate ID and add to hop metadata (for streamId extraction)
     var hopMetadata = _createHopMetadata(eventData!, eventType);
 
@@ -3599,6 +3592,10 @@ public abstract partial class Dispatcher(
       : null;
     var finalScope = propagatedScope ?? sourceScope;
 
+    // Cascade identity (correlation + causation) rides the outbox hop just like scope does — resolved from the
+    // same ambient/source context. Without this the persisted hop keeps `sc` but loses `co`/`ca`.
+    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
@@ -3606,7 +3603,21 @@ public abstract partial class Dispatcher(
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
       Scope = finalScope,
+      CorrelationId = correlation,
+      CausationId = causation,
       TraceParent = System.Diagnostics.Activity.Current?.Id
+    };
+
+    // Populate SentAt-phase properties (SentAt, CorrelationId, identifiers) onto the event object so a PUBLISHED
+    // event carries them exactly like a dispatched one — the SignalR notification hook and audit read these off
+    // the object, not the hop. Parity with _createEnvelope; runs after the hop so it reads the resolved identity.
+    var populatedPayload = (TEvent)AutoPopulatePopulatorRegistry.PopulateSent(eventData!, hop, messageId);
+
+    var envelope = new MessageEnvelope<TEvent> {
+      MessageId = messageId,
+      Payload = populatedPayload,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
     envelope.AddHop(hop);
 
@@ -3805,6 +3816,9 @@ public abstract partial class Dispatcher(
       ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc.Scope?.TenantId, UserId = sc.Scope?.UserId })
       : null;
 
+    // Cascade identity rides the outbox hop alongside scope (see ResolveCascadeIdentity).
+    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
@@ -3812,6 +3826,8 @@ public abstract partial class Dispatcher(
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
       Scope = propagatedScope ?? sourceScope,
+      CorrelationId = correlation,
+      CausationId = causation,
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
     jsonEnvelope.AddHop(hop);
@@ -4856,23 +4872,18 @@ public abstract partial class Dispatcher(
     // 1. Resolve destination topic
     string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
 
-    // 2. Create MessageEnvelope wrapping the event
-    var envelope = new MessageEnvelope<TEvent> {
-      MessageId = messageId,
-      Payload = eventData,
-      Hops = [],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
-    };
-
-    // 3. Extract aggregate ID and add to hop metadata
+    // 2. Extract aggregate ID and add to hop metadata
     var hopMetadata = _createHopMetadata(eventData!, eventType);
 
-    // 4. Add hop indicating message is being deferred
+    // 3. Add hop indicating message is being deferred
     var propagatedScope3 = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
     var sourceScope3 = sourceEnvelope?.GetCurrentScope() is { } sc3
       ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc3.Scope?.TenantId, UserId = sc3.Scope?.UserId })
       : null;
     var finalScope3 = propagatedScope3 ?? sourceScope3;
+
+    // Cascade identity rides the deferred outbox hop alongside scope (see ResolveCascadeIdentity).
+    var (correlation3, causation3) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
 
     var hop = new MessageHop {
       Type = HopType.Current,
@@ -4881,12 +4892,25 @@ public abstract partial class Dispatcher(
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
       Scope = finalScope3,
+      CorrelationId = correlation3,
+      CausationId = causation3,
       TraceParent = System.Diagnostics.Activity.Current?.Id
+    };
+
+    // 4. Populate SentAt-phase properties onto the event object (parity with _createEnvelope) so a deferred
+    // published event carries SentAt/CorrelationId/identifiers just like a dispatched one.
+    var populatedPayload = (TEvent)AutoPopulatePopulatorRegistry.PopulateSent(eventData!, hop, messageId);
+
+    var envelope = new MessageEnvelope<TEvent> {
+      MessageId = messageId,
+      Payload = populatedPayload,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
     envelope.AddHop(hop);
 
     // 5. Serialize to OutboxMessage
-    var outboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination);
+    var outboxMessage = _serializeToNewOutboxMessage(envelope, populatedPayload, eventType, destination);
 
     // 6. Queue to deferred channel (NOT direct DB write)
     await deferredChannel.QueueAsync(outboxMessage);

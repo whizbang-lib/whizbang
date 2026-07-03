@@ -118,6 +118,46 @@ public sealed record CascadeContext {
   }
 
   /// <summary>
+  /// Resolves the cascade identity (<see cref="CorrelationId"/> + causation <see cref="MessageId"/>) to stamp
+  /// on a hop that is being published to the outbox or written to the event store — the mirror of
+  /// <see cref="GetSecurityFromAmbient"/> for the tracing/lineage axis.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The "publish/store" hop builders re-derive <em>scope</em> from ambient context but historically dropped
+  /// the correlation/causation pair, so a persisted hop carried <c>sc</c> (scope) yet no <c>co</c>/<c>ca</c> —
+  /// the notification's correlationId came back null and downstream consumers lost the chain. This resolves the
+  /// pair the same way scope is resolved, so identity flows wherever scope flows.
+  /// </para>
+  /// <para>Priority:
+  /// <list type="number">
+  /// <item><description>the ambient initiating context — the inbound message whose handler is emitting this event;</description></item>
+  /// <item><description>the source envelope — a cascaded event inherits its parent's correlation from the source hop;</description></item>
+  /// <item><description>a new id aligned to the ambient W3C trace (so Whizbang correlation lines up with the OTel trace).</description></item>
+  /// </list>
+  /// </para>
+  /// </remarks>
+  /// <param name="sourceEnvelope">The parent message's envelope when cascading, or <see langword="null"/> for a top-level publish/store.</param>
+  /// <returns>The correlation id (never default) and the causation id (null when there is no parent).</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveCascadeIdentity_WithAmbientInitiatingContext_UsesItsCorrelationAndCausationAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveCascadeIdentity_NoAmbient_FallsBackToSourceEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveCascadeIdentity_NoAmbientNoSource_MintsTraceAlignedRootAsync</tests>
+  public static (CorrelationId Correlation, MessageId? Causation) ResolveCascadeIdentity(IMessageEnvelope? sourceEnvelope) {
+    // 1. Ambient initiating context — the inbound message whose handler is emitting this event.
+    if (ScopeContextAccessor.CurrentInitiatingContext is { } initiating && initiating.CorrelationId.Value != Guid.Empty) {
+      return (initiating.CorrelationId, initiating.MessageId);
+    }
+
+    // 2. Source envelope — a cascaded event carries its parent's correlation on the source hop.
+    if (sourceEnvelope?.GetCorrelationId() is { } sourceCorrelation && sourceCorrelation.Value != Guid.Empty) {
+      return (sourceCorrelation, sourceEnvelope.GetCausationId());
+    }
+
+    // 3. New root — align to the ambient trace so Whizbang correlation == the OTel trace.
+    return (CorrelationId.NewRootAligned(), null);
+  }
+
+  /// <summary>
   /// Creates a new CascadeContext with the specified metadata added/updated.
   /// </summary>
   /// <param name="key">The metadata key</param>

@@ -60,8 +60,10 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEve
       where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
 
-    // Use unified security extraction via CascadeContext
+    // Use unified security extraction via CascadeContext, and resolve the cascade identity the same way so
+    // a raw event stored through this path keeps its correlation/causation (not just its scope).
     var securityContext = CascadeContext.GetSecurityFromAmbient();
+    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope: null);
 
     var envelope = new MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
@@ -72,6 +74,8 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEve
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = Activity.Current?.Id,
           Scope = ScopeDelta.FromSecurityContext(securityContext),
+          CorrelationId = correlation,
+          CausationId = causation,
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
