@@ -99,15 +99,10 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     // Calculate DATABASE FORMAT (TypeName, AssemblyName - no global:: prefix)
     // This generator doesn't use database registration, but we need to provide the parameter
     var eventTypeSymbols = perspectiveInterface.TypeArguments.Skip(1).ToArray();
+    // Shared runtime formatter ("Ns.Outer+Nested, Assembly") — consistent with every other
+    // generator that renders a database type-name (CLR '+' for nested types).
     var messageTypeNames = eventTypeSymbols
-        .Select(t => {
-          var typeName = t.ToDisplayString(new SymbolDisplayFormat(
-              typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-              genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
-          ));
-          var assemblyName = t.ContainingAssembly.Name;
-          return $"{typeName}, {assemblyName}";
-        })
+        .Select(TypeNameUtilities.FormatTypeNameForRuntime)
         .ToArray();
 
     // Compute nested-aware simple name

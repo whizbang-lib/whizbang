@@ -432,6 +432,42 @@ public class TypeNameFormatterTests {
     }
   }
 
+  // ==========================================================================
+  // FormatClrTypeName tests — the no-assembly CLR type-identity form written to
+  // aggregate_type / clr_type_name columns (runtime mirror of BuildClrTypeName).
+  // ==========================================================================
+
+  [Test]
+  public async Task FormatClrTypeName_TopLevelType_ReturnsFullNameAsync() {
+    var result = TypeNameFormatter.FormatClrTypeName(typeof(TypeNameFormatterTests));
+    await Assert.That(result).IsEqualTo(typeof(TypeNameFormatterTests).FullName);
+    // No assembly qualifier — this is the CLR full name, not the "Type, Assembly" form.
+    await Assert.That(result).DoesNotContain(", ");
+  }
+
+  [Test]
+  public async Task FormatClrTypeName_NestedType_UsesPlusSeparatorAsync() {
+    var result = TypeNameFormatter.FormatClrTypeName(typeof(NestedTestClass));
+    await Assert.That(result).Contains("+NestedTestClass");
+    await Assert.That(result).IsEqualTo(typeof(NestedTestClass).FullName);
+  }
+
+  [Test]
+  public async Task FormatClrTypeName_NullType_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => TypeNameFormatter.FormatClrTypeName(null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task FormatClrTypeName_GetPerspectiveName_AreEquivalentAsync() {
+    // GetPerspectiveName delegates to FormatClrTypeName; lock that they never diverge.
+    var types = new[] { typeof(string), typeof(TypeNameFormatterTests), typeof(NestedTestClass), typeof(DeeplyNested.Inner) };
+    foreach (var type in types) {
+      await Assert.That(TypeNameFormatter.FormatClrTypeName(type))
+        .IsEqualTo(TypeNameFormatter.GetPerspectiveName(type));
+    }
+  }
+
   // Helper nested class for testing
   private sealed class NestedTestClass { }
 

@@ -714,15 +714,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Builds message type names in database format (TypeName, AssemblyName).
   /// </summary>
   private static string[] _buildMessageTypeNames(List<ITypeSymbol> eventTypeSymbols) {
-    return [.. eventTypeSymbols
-        .Select(t => {
-          var typeName = t.ToDisplayString(new SymbolDisplayFormat(
-              typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-              genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
-          ));
-          var assemblyName = t.ContainingAssembly.Name;
-          return $"{typeName}, {assemblyName}";
-        })];
+    // Shared runtime formatter ("Ns.Outer+Nested, Assembly") — the same builder
+    // PerspectiveDiscoveryGenerator uses for the emitted MessageAssociation keys, so every
+    // generator renders the database type-name identically (CLR '+' for nested types).
+    return [.. eventTypeSymbols.Select(TypeNameUtilities.FormatTypeNameForRuntime)];
   }
 
   /// <summary>

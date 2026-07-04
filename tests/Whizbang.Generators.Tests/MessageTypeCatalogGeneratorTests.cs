@@ -152,6 +152,41 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_NestedMessageType_ClrTypeNameUsesPlusNotDotAsync() {
+    // The catalog's ClrTypeName seeds wh_message_type_registry.clr_type_name (via reconcile
+    // migration 040) and drives DapperEventTypeRenameTool drift detection. Every other writer of
+    // a clr_type_name — PerspectiveDiscoveryGenerator, PerspectiveRunnerRegistryGenerator — uses
+    // TypeNameUtilities.BuildClrTypeName, which renders nested types with '+' (CLR format). The
+    // catalog must agree, or a NESTED message type is registered as "Ns.Outer.Nested" here but
+    // stored/compared as "Ns.Outer+Nested" everywhere else, so drift detection and rename never
+    // match. Lock the '+' (CLR) form.
+    const string source = """
+
+      using Whizbang.Core;
+
+      namespace MyApp;
+
+      public static class OrderContracts {
+        public record OrderPlacedEvent : IEvent;
+      }
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+
+    var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
+    await Assert.That(errors).IsEmpty();
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // ClrTypeName is emitted as the quoted 2nd ctor arg: new(typeof(...), "<ClrTypeName>", ...).
+    // The quoted form must use '+' for the nested type — NOT the C# '.' display form.
+    await Assert.That(code!).Contains("\"MyApp.OrderContracts+OrderPlacedEvent\"");
+    await Assert.That(code!).DoesNotContain("\"MyApp.OrderContracts.OrderPlacedEvent\"");
+  }
+
+  [Test]
   public async Task Generator_EntryContainsNullWhenUnpinnedAsync() {
     const string source = """
 

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
@@ -76,7 +77,11 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     }
 
     var fullTypeName = TypeNameHelper.GetFullyQualifiedName(typeSymbol);
-    var clrTypeName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.WithGlobalNamespaceStyle(SymbolDisplayGlobalNamespaceStyle.Omitted));
+    // CLR type name (no assembly, '+' for nested types) — the SAME shared builder used by
+    // PerspectiveDiscoveryGenerator / PerspectiveRunnerRegistryGenerator for perspective
+    // clr_type_name, so a nested MESSAGE type registers as "Ns.Outer+Nested" and matches the
+    // registry/rename-tool comparison instead of the C# '.' display form.
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(typeSymbol);
 
     var messageKind = isCommand ? "command" : "event";
     var kind = isPerspective ? "perspective" : messageKind;

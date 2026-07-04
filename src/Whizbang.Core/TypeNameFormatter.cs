@@ -43,6 +43,32 @@ public static class TypeNameFormatter {
   }
 
   /// <summary>
+  /// Formats a type to its CLR full name (namespace + '+'-nested type chain), WITHOUT the assembly
+  /// qualifier — the runtime mirror of the generator-side <c>TypeNameUtilities.BuildClrTypeName</c>.
+  /// </summary>
+  /// <remarks>
+  /// This is the canonical no-assembly type-identity form used by the columns that store a
+  /// <c>clr_type_name</c>: the event store's <c>aggregate_type</c>,
+  /// <c>wh_message_type_registry.clr_type_name</c>, and <c>wh_perspective_registry.clr_type_name</c>.
+  /// Both the EF Core and Dapper event stores write <c>aggregate_type</c> through this method so the
+  /// value is identical across drivers and matchable by <c>IEventTypeRenameTool</c> (which keys on the
+  /// no-assembly clr_type_name form). For the assembly-qualified wire/lookup form used by
+  /// <c>event_type</c> and message routing, use <see cref="Format"/> instead.
+  /// </remarks>
+  /// <example>
+  /// typeof(MyApp.Events.OrderCreated) → "MyApp.Events.OrderCreated"
+  /// typeof(MyApp.OrderContracts.OrderPlaced) → "MyApp.OrderContracts+OrderPlaced" (nested)
+  /// </example>
+  /// <param name="type">The type to format.</param>
+  /// <returns>The CLR full type name without an assembly qualifier.</returns>
+  /// <exception cref="InvalidOperationException">If the type has no FullName.</exception>
+  public static string FormatClrTypeName(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.FullName
+      ?? throw new InvalidOperationException($"Type {type.Name} does not have a FullName");
+  }
+
+  /// <summary>
   /// Parses a type name string to extract "TypeName, AssemblyName" format, handling various input formats defensively.
   /// Supports:
   /// - Short form: "TypeName, AssemblyName" (returned as-is)
@@ -172,11 +198,7 @@ public static class TypeNameFormatter {
   /// </example>
   /// <param name="perspectiveType">The perspective type.</param>
   /// <returns>CLR-format type name suitable for database storage and sync tracking.</returns>
-  public static string GetPerspectiveName(Type perspectiveType) {
-    ArgumentNullException.ThrowIfNull(perspectiveType);
-    return perspectiveType.FullName
-        ?? throw new InvalidOperationException($"Type {perspectiveType.Name} does not have a FullName");
-  }
+  public static string GetPerspectiveName(Type perspectiveType) => FormatClrTypeName(perspectiveType);
 
   /// <summary>
   /// Extracts the payload namespace from a generic envelope type string.

@@ -19,6 +19,7 @@ DECLARE
   v_dedup_retention_days INTEGER;
   v_stuck_inbox_retention_days INTEGER;
   v_debug_mode BOOLEAN;
+  v_abandoned_stream_hours INTEGER;
 BEGIN
   -- Read debug_mode flag once for the cycle. When true, the complete_* functions
   -- retain rows for forensics with processed_at stamped — this maintenance pass
@@ -27,6 +28,14 @@ BEGIN
     (SELECT setting_value::BOOLEAN FROM wh_settings WHERE setting_key = 'debug_mode'),
     FALSE
   ) INTO v_debug_mode;
+
+  -- Grace period before an owner-less active-stream row is purged (Task 6). Configurable via
+  -- wh_settings; default 1 hour preserves the transient-NULL race window between
+  -- cleanup_stale_instances nulling the owner and the next claim cycle re-assigning it.
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'abandoned_stream_hours'),
+    1
+  ) INTO v_abandoned_stream_hours;
 
   -- ========================================
   -- Task 1: Purge completed outbox messages
@@ -147,7 +156,7 @@ BEGIN
     )
     OR (
       assigned_instance_id IS NULL
-      AND last_activity_at < NOW() - INTERVAL '1 hour'
+      AND last_activity_at < NOW() - (v_abandoned_stream_hours * INTERVAL '1 hour')
     );
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   RETURN QUERY SELECT
@@ -195,7 +204,14 @@ INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
 VALUES ('debug_mode', 'false', 'boolean', 'When true, complete_* functions retain rows and perform_maintenance skips purge of completed messages.')
 ON CONFLICT (setting_key) DO NOTHING;
 
+-- Grace period (hours) before an OWNER-LESS active-stream row is purged. Rows whose owning
+-- wh_service_instances row is gone are purged immediately regardless; this knob only governs the
+-- transient-NULL race window (owner nulled, not yet re-claimed). Default 1.
+INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+VALUES ('abandoned_stream_hours', '1', 'integer', 'Hours an owner-less active-stream row must be idle before perform_maintenance purges it (transient-NULL race grace window).')
+ON CONFLICT (setting_key) DO NOTHING;
+
 COMMENT ON FUNCTION __SCHEMA__.perform_maintenance IS
 'Runs maintenance tasks: purges completed messages, old deduplication entries, stuck inbox messages, and abandoned active-stream ownership rows.
 Returns a result set with task name, rows affected, duration, and status.
-Retention periods configurable via wh_settings (dedup_retention_days, stuck_inbox_retention_days). Abandoned active-streams purge has no retention knob — a missing wh_service_instances row is sufficient evidence that the owner is gone.';
+Retention periods configurable via wh_settings (dedup_retention_days, stuck_inbox_retention_days, abandoned_stream_hours). Abandoned active-streams whose owner row is gone are purged immediately; abandoned_stream_hours only governs the owner-less transient-NULL race grace window.';

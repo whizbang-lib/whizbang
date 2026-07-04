@@ -91,7 +91,9 @@ public sealed class EFCoreEventStore<TDbContext>(
       Id = envelope.MessageId.Value,  // Use MessageId from envelope as event_id (matches outbox message_id)
       StreamId = streamId,
       AggregateId = streamId,  // Backwards compatibility: AggregateId = StreamId
-      AggregateType = typeof(TMessage).FullName ?? "Unknown",  // Aggregate type from event type
+      // CLR full type name (no assembly, '+'-nested) via the shared formatter — identical across
+      // EF Core and Dapper stores and matchable by IEventTypeRenameTool's clr_type_name UPDATE.
+      AggregateType = TypeNameFormatter.FormatClrTypeName(typeof(TMessage)),
       Version = (int)nextSequence,  // Version for optimistic concurrency
       // Use centralized formatter for consistent type name format across all event stores
       // Format: "TypeName, AssemblyName" (medium form)

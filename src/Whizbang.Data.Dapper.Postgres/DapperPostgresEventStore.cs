@@ -296,7 +296,10 @@ public class DapperPostgresEventStore(
       EventId = envelope.MessageId.Value,
       StreamId = streamId,
       AggregateId = streamId,
-      AggregateType = typeof(TMessage).Name,
+      // CLR full type name (no assembly, '+'-nested) via the shared formatter — identical to the
+      // EF Core store and matchable by IEventTypeRenameTool's clr_type_name UPDATE. Previously this
+      // wrote the bare simple name (typeof(TMessage).Name), diverging from EF Core and the rename tool.
+      AggregateType = TypeNameFormatter.FormatClrTypeName(typeof(TMessage)),
       Version = (int)nextSequence,
       EventType = TypeNameFormatter.Format(typeof(TMessage)),
       EventData = jsonb.DataJson,
