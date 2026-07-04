@@ -3206,7 +3206,9 @@ public partial class PerspectiveWorker(
 #pragma warning disable S3267
       foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
         var eventType = envelope.Payload.GetType();
-        var eventTypeKey = $"{eventType.FullName}, {eventType.Assembly.GetName().Name}";
+        // Shared formatter — same "FullName, Assembly" key the registry is built with (see the
+        // drain-mode twin at _buildDrainModeTypeNameCache). Hand-building it risked drift.
+        var eventTypeKey = TypeNameFormatter.Format(eventType);
         if (_perspectivesPerEventType.TryGetValue(eventTypeKey, out var expected)) {
           lifecycleCoordinator.ExpectPerspectiveCompletions(eventId, expected);
         } else {

@@ -1619,6 +1619,29 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task AppendAsync_SetsAggregateTypeToClrFullNameAsync() {
+    // aggregate_type is the CLR full type name (no assembly, '+'-nested) via the shared formatter —
+    // IDENTICAL to what DapperPostgresEventStore writes and to the no-assembly clr_type_name family
+    // IEventTypeRenameTool keys on. Lock the format so it never drifts back to a bare/assembly-qualified form.
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+
+    var streamId = Guid.NewGuid();
+    var envelope = new MessageEnvelope<OrderCreatedEvent> {
+      MessageId = MessageId.New(),
+      Payload = new OrderCreatedEvent { OrderId = Guid.NewGuid(), CustomerName = "Test" },
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    await eventStore.AppendAsync(streamId, envelope);
+
+    var record = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
+    await Assert.That(record.AggregateType).IsEqualTo(TypeNameFormatter.FormatClrTypeName(typeof(OrderCreatedEvent)));
+    await Assert.That(record.AggregateType).IsEqualTo(typeof(OrderCreatedEvent).FullName);
+  }
+
+  [Test]
   public async Task AppendAsync_SetsAggregateIdToStreamIdAsync() {
     // Arrange
     await using var context = CreateDbContext();

@@ -1189,7 +1189,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       var eventTypes = eventTypeProvider.GetEventTypes();
       _knownEventTypeNames = new HashSet<string>(
         eventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(
-          t.FullName + ", " + t.Assembly.GetName().Name)),
+          TypeNameFormatter.Format(t))),
         StringComparer.Ordinal);
     } else {
       _knownEventTypeNames = [];  // Empty = no filtering (allow all through)

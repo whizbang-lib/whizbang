@@ -57,7 +57,9 @@ public static class SagasJsonContextInitializer {
   /// </remarks>
   private static void _registerEventRoutes<TEvent>(string fullName) where TEvent : class, IEvent {
     JsonContextRegistry.RegisterTypeName(
-      $"{fullName}, Whizbang.Sagas",
+      // Shared formatter derives "FullName, AssemblyName" from the type itself rather than
+      // hardcoding the assembly — canonical '+'-nested form, consistent with every other wire key.
+      TypeNameFormatter.Format(typeof(TEvent)),
       typeof(TEvent),
       SagasJsonContext.Default);
     JsonContextRegistry.RegisterDerivedType<IEvent, TEvent>(fullName);
