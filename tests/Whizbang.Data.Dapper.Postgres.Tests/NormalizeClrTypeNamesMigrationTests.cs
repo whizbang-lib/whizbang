@@ -113,6 +113,34 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
     await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("2");
   }
 
+  [Test]
+  public async Task Migration063_UnderNonPublicSchema_ReferencesWhSettingsUnqualifiedAsync() {
+    // Regression: wh_settings is created UNqualified in migration 028, so it lives in the
+    // search_path schema (public), NOT __SCHEMA__. A qualified __SCHEMA__.wh_settings reference
+    // throws 42P01 ("relation \"inventory.wh_settings\" does not exist") whenever __SCHEMA__ is a
+    // non-public schema — exactly what the ECommerce sample (schema 'inventory') hit in CI. This
+    // reproduces that: the qualified core tables live in 'inventory', wh_settings stays in public.
+    const string schema = "inv_test";
+    await _execAsync($@"
+      CREATE SCHEMA IF NOT EXISTS {schema};
+      CREATE TABLE {schema}.wh_event_store (event_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), stream_id uuid, aggregate_id uuid, aggregate_type text, event_type text, event_data jsonb DEFAULT '{{}}', metadata jsonb DEFAULT '{{}}', version int DEFAULT 1, created_at timestamptz DEFAULT now());
+      CREATE TABLE {schema}.wh_message_type_registry (clr_type_name text PRIMARY KEY, pinned_id uuid, kind text, updated_at timestamptz DEFAULT now());
+      CREATE TABLE {schema}.wh_outbox (message_id uuid DEFAULT gen_random_uuid(), message_type text, envelope_type text);
+      CREATE TABLE {schema}.wh_inbox (message_id uuid DEFAULT gen_random_uuid(), message_type text);
+      CREATE TABLE {schema}.wh_message_associations (message_type text, association_type text, target_name text, service_name text);");
+
+    // Reset the (public) version marker so the migration acts.
+    await _execAsync("UPDATE wh_settings SET setting_value = '1' WHERE setting_key = 'clr_type_name_format_version'");
+
+    // Run migration 063 with __SCHEMA__ resolved to the non-public schema.
+    var sql063 = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, schema)
+      .GetMigration("063_NormalizeClrTypeNamesV2")!.Sql;
+
+    // Must NOT throw 42P01 — and must still write the marker to the unqualified (public) wh_settings.
+    await _execAsync(sql063);
+    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("2");
+  }
+
   // ── helpers ──
 
   private async Task<string?> _settingAsync(string key) =>

@@ -37,9 +37,12 @@ DECLARE
   v_registry_upd    BIGINT := 0;
 BEGIN
   -- Legacy installs have no row -> treat as version 1.
+  -- wh_settings is created UNqualified in migration 028 (lives in the search_path schema, not
+  -- __SCHEMA__), so it must be referenced bare here — exactly as 028/032 do — or a non-public
+  -- __SCHEMA__ (e.g. 'inventory') resolves to a table that does not exist (42P01).
   SELECT setting_value::INTEGER
   INTO v_current_version
-  FROM __SCHEMA__.wh_settings
+  FROM wh_settings
   WHERE setting_key = 'clr_type_name_format_version';
 
   v_current_version := COALESCE(v_current_version, 1);
@@ -88,7 +91,8 @@ BEGIN
   GET DIAGNOSTICS v_registry_upd = ROW_COUNT;
 
   -- Record the new data-format version so this never re-scans on subsequent startups.
-  INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
+  -- Bare wh_settings (unqualified) — see the read above.
+  INSERT INTO wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
   VALUES (
     'clr_type_name_format_version', '2', 'integer',
     'Encoding version of stored CLR type names (wh_event_store.aggregate_type, wh_message_type_registry.clr_type_name). 2 = canonical ''+''-nested CLR full name (Type.FullName). Gates the one-time normalization in migration 063.',
