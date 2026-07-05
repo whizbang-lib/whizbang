@@ -1429,4 +1429,152 @@ public class ServiceCollectionExtensionsTests {
       return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
+
+  // ==========================================================================
+  // Factory Lambda Resolution Tests
+  // These resolve services whose registrations use factory lambdas that only
+  // execute at resolution time (IWorkFlusher, ILifecycleMessageDeserializer,
+  // IServiceInstanceProvider).
+  // ==========================================================================
+
+  [Test]
+  public async Task AddWhizbang_WorkFlusher_ResolvesToSameInstanceAsWorkCoordinatorStrategyAsync() {
+    // Arrange - IWorkCoordinatorStrategy is normally registered by the storage driver
+    var services = new ServiceCollection();
+    _ = services.AddWhizbang();
+    services.AddScoped<IWorkCoordinatorStrategy, StubWorkCoordinatorStrategy>();
+    var provider = services.BuildServiceProvider();
+
+    // Act - resolving IWorkFlusher executes the factory lambda that casts the strategy
+    using var scope = provider.CreateScope();
+    var flusher = scope.ServiceProvider.GetService<IWorkFlusher>();
+    var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+
+    // Assert - same object: manual flush goes through the strategy instance
+    await Assert.That(flusher).IsNotNull();
+    await Assert.That(flusher).IsSameReferenceAs(strategy);
+
+    // Flushing through IWorkFlusher hits the strategy's manual-flush path
+    await flusher!.FlushAsync();
+    await Assert.That(((StubWorkCoordinatorStrategy)strategy).ManualFlushCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AddWhizbang_RegistersLifecycleMessageDeserializer_AsJsonSingletonAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Act - resolving executes the factory lambda (JsonSerializerOptions is optional)
+    var deserializer1 = provider.GetService<ILifecycleMessageDeserializer>();
+    var deserializer2 = provider.GetService<ILifecycleMessageDeserializer>();
+
+    // Assert
+    await Assert.That(deserializer1).IsNotNull();
+    await Assert.That(deserializer1).IsTypeOf<JsonLifecycleMessageDeserializer>();
+    await Assert.That(deserializer1).IsSameReferenceAs(deserializer2); // Singleton
+  }
+
+  [Test]
+  public async Task AddWhizbang_ServiceInstanceProvider_UsesConfiguredServiceNameAsync() {
+    // Arrange - the factory lambda passes IConfiguration through to the provider
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["Whizbang:ServiceName"] = "ConfiguredService"
+      })
+      .Build();
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Act
+    var instanceProvider = provider.GetService<IServiceInstanceProvider>();
+
+    // Assert - configuration key wins over assembly-name fallback
+    await Assert.That(instanceProvider).IsNotNull();
+    await Assert.That(instanceProvider).IsTypeOf<ServiceInstanceProvider>();
+    await Assert.That(instanceProvider!.ServiceName).IsEqualTo("ConfiguredService");
+  }
+
+  [Test]
+  public async Task AddWhizbang_ServiceInstanceProvider_WithoutConfiguration_IsSingletonWithFallbackNameAsync() {
+    // Arrange - no IConfiguration registered; factory passes null through
+    var services = new ServiceCollection();
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Act
+    var instanceProvider1 = provider.GetService<IServiceInstanceProvider>();
+    var instanceProvider2 = provider.GetService<IServiceInstanceProvider>();
+
+    // Assert - singleton, and falls back to entry assembly name (or "Unknown")
+    await Assert.That(instanceProvider1).IsNotNull();
+    await Assert.That(instanceProvider1).IsTypeOf<ServiceInstanceProvider>();
+    await Assert.That(instanceProvider1).IsSameReferenceAs(instanceProvider2);
+    await Assert.That(string.IsNullOrEmpty(instanceProvider1!.ServiceName)).IsFalse();
+  }
+
+  [Test]
+  public async Task AddWhizbang_TracingOptions_ComponentsBoundFromConfigurationAsync() {
+    // Arrange - valid flags value exercises the _bindComponents success path
+    var configData = new Dictionary<string, string?> {
+      // Verbosity must be non-Off for IsEnabled: the default is Off, and IsEnabled
+      // gates on Verbosity != Off && Components.HasFlag(component)
+      ["Whizbang:Tracing:Verbosity"] = "Normal",
+      ["Whizbang:Tracing:Components"] = "Handlers, Lifecycle"
+    };
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(configData)
+      .Build();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert - Components parsed from configuration as combined flags
+    var tracingOptions = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+    await Assert.That(tracingOptions.Components).IsEqualTo(TraceComponents.Handlers | TraceComponents.Lifecycle);
+    await Assert.That(tracingOptions.IsEnabled(TraceComponents.Handlers)).IsTrue();
+    await Assert.That(tracingOptions.IsEnabled(TraceComponents.Lifecycle)).IsTrue();
+    await Assert.That(tracingOptions.IsEnabled(TraceComponents.Outbox)).IsFalse();
+  }
+
+  /// <summary>
+  /// Stub strategy implementing both IWorkCoordinatorStrategy and IWorkFlusher,
+  /// mirroring how real strategies expose manual flush support.
+  /// </summary>
+  private sealed class StubWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher {
+    public int ManualFlushCount { get; private set; }
+
+    public void QueueOutboxMessage(OutboxMessage message) { }
+
+    public void QueueInboxMessage(InboxMessage message) { }
+
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) =>
+      Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+
+    public Task FlushAsync(CancellationToken ct = default) {
+      ManualFlushCount++;
+      return Task.CompletedTask;
+    }
+  }
 }
