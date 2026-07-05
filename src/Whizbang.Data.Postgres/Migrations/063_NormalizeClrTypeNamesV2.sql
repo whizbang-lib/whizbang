@@ -37,6 +37,7 @@ DECLARE
   v_current_version INTEGER;
   v_agg_updated     BIGINT := 0;
   v_registry_upd    BIGINT := 0;
+  v_registry_dedup  BIGINT := 0;
 BEGIN
   -- Legacy installs have no row -> treat as version 1.
   -- wh_settings is created UNqualified in migration 028 (lives in the search_path schema, not
@@ -64,40 +65,44 @@ BEGIN
     AND aggregate_type IS DISTINCT FROM split_part(event_type, ',', 1);
   GET DIAGNOSTICS v_agg_updated = ROW_COUNT;
 
-  -- 2. wh_message_type_registry.clr_type_name : dotted-nested -> plus-nested, matched via the
-  --    '+'-nested oracle set. Only NESTED names (containing '+') can differ between the two forms.
-  WITH plus_forms AS (
-    SELECT DISTINCT split_part(event_type, ',', 1) AS clr
-      FROM __SCHEMA__.wh_event_store
-      WHERE event_type LIKE '%+%' AND event_type NOT LIKE '%[[%'
-    UNION
-    SELECT DISTINCT split_part(message_type, ',', 1)
-      FROM __SCHEMA__.wh_outbox
-      WHERE message_type LIKE '%+%' AND message_type NOT LIKE '%[[%'
-    UNION
-    SELECT DISTINCT split_part(message_type, ',', 1)
-      FROM __SCHEMA__.wh_inbox
-      WHERE message_type LIKE '%+%' AND message_type NOT LIKE '%[[%'
-    UNION
-    SELECT DISTINCT split_part(message_type, ',', 1)
-      FROM __SCHEMA__.wh_message_associations
-      WHERE message_type LIKE '%+%' AND message_type NOT LIKE '%[[%'
-    UNION
-    -- Perspective TYPES (e.g. Domain.X+Projection): their '+'-nested name never appears in an
-    -- event/message column, only as the association TARGET (written via TypeNameUtilities.BuildClrTypeName).
-    -- Without this source the registry's perspective entries stay '.'-nested and reconcile logs a
-    -- 'drift_detected' warning for each on every startup.
-    SELECT DISTINCT split_part(target_name, ',', 1)
-      FROM __SCHEMA__.wh_message_associations
-      WHERE target_name LIKE '%+%' AND target_name NOT LIKE '%[[%'
-  ),
-  type_map AS (
-    SELECT clr AS plus_form, replace(clr, '+', '.') AS dotted_form
-    FROM plus_forms
-  )
+  -- 2. wh_message_type_registry.clr_type_name : dotted-nested -> plus-nested. The '+'-nested oracle
+  --    set = every column that stores a '+'-nested type name: message/command PAYLOAD types
+  --    (event_store.event_type, outbox/inbox.message_type, message_associations.message_type) plus
+  --    perspective TYPES (message_associations.target_name — a perspective's '+'-name never appears in
+  --    a payload column, only as the association target, written via TypeNameUtilities.BuildClrTypeName).
+  --    Guards: '%+%' restricts to nested names (identical in both forms otherwise); NOT LIKE '%[[%'
+  --    skips generics whose inner commas break split_part.
+  DROP TABLE IF EXISTS _clr_type_name_map;
+  CREATE TEMP TABLE _clr_type_name_map ON COMMIT DROP AS
+    SELECT DISTINCT clr AS plus_form, replace(clr, '+', '.') AS dotted_form
+    FROM (
+      SELECT split_part(event_type, ',', 1) AS clr FROM __SCHEMA__.wh_event_store
+        WHERE event_type LIKE '%+%' AND event_type NOT LIKE '%[[%'
+      UNION SELECT split_part(message_type, ',', 1) FROM __SCHEMA__.wh_outbox
+        WHERE message_type LIKE '%+%' AND message_type NOT LIKE '%[[%'
+      UNION SELECT split_part(message_type, ',', 1) FROM __SCHEMA__.wh_inbox
+        WHERE message_type LIKE '%+%' AND message_type NOT LIKE '%[[%'
+      UNION SELECT split_part(message_type, ',', 1) FROM __SCHEMA__.wh_message_associations
+        WHERE message_type LIKE '%+%' AND message_type NOT LIKE '%[[%'
+      UNION SELECT split_part(target_name, ',', 1) FROM __SCHEMA__.wh_message_associations
+        WHERE target_name LIKE '%+%' AND target_name NOT LIKE '%[[%'
+    ) s;
+
+  -- A type may already have BOTH a stale '.'-row and the canonical '+'-row: on the previous deploy
+  -- reconcile_message_type_registry inserted the '+' form (new catalog) while the pre-existing '.' row
+  -- lingered. Renaming the '.' row to '+' would then violate the clr_type_name PRIMARY KEY and abort the
+  -- whole migration — blocking service startup. Drop the stale '.' duplicates first (the '+' row is the
+  -- canonical keeper), then rename the rest.
+  DELETE FROM __SCHEMA__.wh_message_type_registry r
+  USING _clr_type_name_map m
+  WHERE r.clr_type_name = m.dotted_form
+    AND m.dotted_form <> m.plus_form
+    AND EXISTS (SELECT 1 FROM __SCHEMA__.wh_message_type_registry e WHERE e.clr_type_name = m.plus_form);
+  GET DIAGNOSTICS v_registry_dedup = ROW_COUNT;
+
   UPDATE __SCHEMA__.wh_message_type_registry r
   SET clr_type_name = m.plus_form, updated_at = NOW()
-  FROM type_map m
+  FROM _clr_type_name_map m
   WHERE r.clr_type_name = m.dotted_form
     AND r.clr_type_name <> m.plus_form;
   GET DIAGNOSTICS v_registry_upd = ROW_COUNT;
@@ -116,7 +121,7 @@ BEGIN
         updated_at    = NOW(),
         updated_by    = EXCLUDED.updated_by;
 
-  RAISE NOTICE 'Normalized CLR type names to v3 (aggregate_type rows: %, registry clr_type_name rows: %).',
-    v_agg_updated, v_registry_upd;
+  RAISE NOTICE 'Normalized CLR type names to v3 (aggregate_type rows: %, registry renamed: %, registry stale-dupes dropped: %).',
+    v_agg_updated, v_registry_upd, v_registry_dedup;
 END
 $migrate$;

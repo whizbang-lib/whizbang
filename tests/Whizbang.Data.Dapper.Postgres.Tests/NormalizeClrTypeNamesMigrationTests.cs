@@ -150,6 +150,45 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
   }
 
   [Test]
+  public async Task Migration063_WhenBothDottedAndPlusRowsExist_DedupsInsteadOfCollidingAsync() {
+    // Regression for the production DEPLOY FAILURE: a type can already have BOTH a stale '.'-row and the
+    // canonical '+'-row (on the prior deploy reconcile inserted the '+' form while the pre-existing
+    // '.' row lingered). A plain UPDATE '.'->'+' then violates the clr_type_name PRIMARY KEY
+    // ('duplicate key value violates unique constraint') — the migration aborts and service startup
+    // fails. The migration must drop the stale '.' duplicate instead of renaming into a collision.
+    const string plus = "Acme.Job.Domain.JobArch+Projection";
+    const string dotted = "Acme.Job.Domain.JobArch.Projection";
+
+    await using (var conn = new NpgsqlConnection(_connectionString)) {
+      await conn.OpenAsync();
+      await conn.ExecuteAsync(
+        "UPDATE wh_settings SET setting_value = '2' WHERE setting_key = 'clr_type_name_format_version'");
+      await conn.ExecuteAsync(
+        @"INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name)
+          VALUES ('Acme.Job.Contracts.JobContracts+CreatedEvent, Acme.Job.Contracts', 'perspective', @Plus, 'JobService')",
+        new { Plus = plus });
+      // BOTH forms already present, both pinned — the exact production collision.
+      await conn.ExecuteAsync(
+        @"INSERT INTO wh_message_type_registry (clr_type_name, pinned_id, kind, updated_at)
+          VALUES (@Plus, gen_random_uuid(), 'perspective', NOW()),
+                 (@Dotted, gen_random_uuid(), 'perspective', NOW())",
+        new { Plus = plus, Dotted = dotted });
+    }
+
+    var sql063 = new PostgresMigrationProvider().GetMigration("063_NormalizeClrTypeNamesV2")!.Sql;
+
+    // Must NOT throw a duplicate-key violation.
+    await _execAsync(sql063);
+
+    // Stale '.' row dropped; canonical '+' row kept exactly once; version -> 3.
+    await Assert.That(await _scalarAsync(
+      "SELECT count(*)::text FROM wh_message_type_registry WHERE clr_type_name = @D", new { D = dotted })).IsEqualTo("0");
+    await Assert.That(await _scalarAsync(
+      "SELECT count(*)::text FROM wh_message_type_registry WHERE clr_type_name = @P", new { P = plus })).IsEqualTo("1");
+    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("3");
+  }
+
+  [Test]
   public async Task Migration063_UnderNonPublicSchema_ReferencesWhSettingsUnqualifiedAsync() {
     // Regression: wh_settings is created UNqualified in migration 028, so it lives in the
     // search_path schema (public), NOT __SCHEMA__. A qualified __SCHEMA__.wh_settings reference
