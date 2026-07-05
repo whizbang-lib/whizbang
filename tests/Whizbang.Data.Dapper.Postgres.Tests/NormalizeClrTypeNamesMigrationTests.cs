@@ -61,9 +61,9 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
 
   [Test]
   public async Task FreshInit_SeedsFormatVersionAndAbandonedStreamHoursSettingsAsync() {
-    // A clean migration chain leaves the data on format v2 (063 sets it after a no-op normalization)
+    // A clean migration chain leaves the data on format v3 (063 sets it after a no-op normalization)
     // and seeds the new abandoned_stream_hours knob (032).
-    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("2");
+    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("3");
     await Assert.That(await _settingAsync("abandoned_stream_hours")).IsEqualTo("1");
   }
 
@@ -96,21 +96,57 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
     // Act — run the migration body.
     await _execAsync(sql063);
 
-    // Registry '.' -> '+', aggregate_type bare -> full '+', and the version marker advances to 2.
+    // Registry '.' -> '+', aggregate_type bare -> full '+', and the version marker advances to 3.
     await Assert.That(await _scalarAsync(
       "SELECT clr_type_name FROM wh_message_type_registry WHERE pinned_id = @Id::uuid", new { Id = pinnedId }))
       .IsEqualTo(plusForm);
     await Assert.That(await _scalarAsync(
       "SELECT aggregate_type FROM wh_event_store WHERE event_type LIKE @Like", new { Like = plusForm + ",%" }))
       .IsEqualTo(plusForm);
-    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("2");
+    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("3");
 
-    // Idempotent: at v2 the gate short-circuits — a second run neither errors nor un-does the fix.
+    // Idempotent: at v3 the gate short-circuits — a second run neither errors nor un-does the fix.
     await _execAsync(sql063);
     await Assert.That(await _scalarAsync(
       "SELECT clr_type_name FROM wh_message_type_registry WHERE pinned_id = @Id::uuid", new { Id = pinnedId }))
       .IsEqualTo(plusForm);
-    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("2");
+    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("3");
+  }
+
+  [Test]
+  public async Task Migration063_NormalizesPerspectiveTypeRegistryEntries_ViaAssociationTargetNameAsync() {
+    // Regression for the production gap: wh_message_type_registry is dominated by PERSPECTIVE types
+    // (e.g. Domain.X+Projection), whose '+'-name never appears in an event/message column — only as
+    // wh_message_associations.target_name. v2's oracle missed them, so they stayed '.'-nested and
+    // reconcile logged a drift warning for each on every startup. v3 adds target_name as an oracle.
+    const string plusPersp = "Acme.Job.Domain.BulkOperation+Projection";
+    const string dottedPersp = "Acme.Job.Domain.BulkOperation.Projection";
+    var pinnedId = Guid.NewGuid();
+
+    await using (var conn = new NpgsqlConnection(_connectionString)) {
+      await conn.OpenAsync();
+      await conn.ExecuteAsync(
+        "UPDATE wh_settings SET setting_value = '2' WHERE setting_key = 'clr_type_name_format_version'");
+      // The '+'-form of the perspective type exists ONLY as an association target (BuildClrTypeName form).
+      await conn.ExecuteAsync(
+        @"INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name)
+          VALUES ('Acme.Job.Contracts.JobContracts+CreatedEvent, Acme.Job.Contracts', 'perspective', @Plus, 'JobService')",
+        new { Plus = plusPersp });
+      // Stale '.'-nested perspective registry row (pinned — reconcile can't self-heal it).
+      await conn.ExecuteAsync(
+        @"INSERT INTO wh_message_type_registry (clr_type_name, pinned_id, kind, updated_at)
+          VALUES (@Dotted, @PinnedId::uuid, 'perspective', NOW())",
+        new { Dotted = dottedPersp, PinnedId = pinnedId });
+    }
+
+    var sql063 = new PostgresMigrationProvider().GetMigration("063_NormalizeClrTypeNamesV2")!.Sql;
+    await _execAsync(sql063);
+
+    // The perspective registry row is normalized to '+' via the target_name oracle; version -> 3.
+    await Assert.That(await _scalarAsync(
+      "SELECT clr_type_name FROM wh_message_type_registry WHERE pinned_id = @Id::uuid", new { Id = pinnedId }))
+      .IsEqualTo(plusPersp);
+    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("3");
   }
 
   [Test]
@@ -138,7 +174,7 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
 
     // Must NOT throw 42P01 — and must still write the marker to the unqualified (public) wh_settings.
     await _execAsync(sql063);
-    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("2");
+    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("3");
   }
 
   // ── helpers ──
