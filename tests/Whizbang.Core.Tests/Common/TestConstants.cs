@@ -73,7 +73,11 @@ public static class TestConstants {
   ///     gates local-receptor invocation on scheduled time, fixing the production saga watchdog
   ///     cascade-abandon)</para>
   ///
-  /// <para>Total: 119 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 1 receptor from DispatcherErrorBranchTests.cs
+  ///     (ErrorBranchCommandReceptor — target for RoutedNone rejection and Routed&lt;T&gt;
+  ///     unwrap tests on the IMessageContext-taking dispatcher overloads)</para>
+  ///
+  /// <para>Total: 120 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 119;
+  public const int EXPECTED_RECEPTOR_COUNT = 120;
 }

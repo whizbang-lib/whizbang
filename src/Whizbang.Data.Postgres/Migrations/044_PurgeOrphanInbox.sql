@@ -35,7 +35,9 @@ BEGIN
   WHERE i.message_type <> ALL(p_handled_types)
     AND i.processed_at IS NULL
     AND i.instance_id IS NULL
-  RETURNING i.message_id, i.message_type, i.handler_name;
+  -- ::TEXT casts required: the columns are VARCHAR(500) but the RETURNS TABLE
+  -- declares TEXT, and plpgsql RETURN QUERY rejects the varchar->text mismatch (42804)
+  RETURNING i.message_id, i.message_type::TEXT, i.handler_name::TEXT;
 END;
 $$ LANGUAGE plpgsql;
 
