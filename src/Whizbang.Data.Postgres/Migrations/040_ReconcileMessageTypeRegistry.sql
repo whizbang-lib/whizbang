@@ -66,8 +66,21 @@ BEGIN
           SET kind = v_kind, updated_at = NOW()
           WHERE r.pinned_id = v_pinned::uuid;
           v_action := 'updated';
+        ELSIF replace(v_clr, '+', '.') = v_stored_clr THEN
+          -- Same pinned type, but the stored value is the legacy '.'-nested spelling of what the catalog
+          -- now reports as the CLR '+'-nested form (Type.FullName). This is a nesting-separator
+          -- NORMALIZATION, not a rename, so migrate it in place. Drop any pre-existing '+' row belonging
+          -- to a different identity first so renaming the clr_type_name primary key cannot collide.
+          -- (Data migration 063 normalizes rows it can derive a '+' oracle for; this reaches the rest —
+          -- e.g. perspective types with no message associations — using the compile-time catalog.)
+          DELETE FROM __SCHEMA__.wh_message_type_registry
+            WHERE clr_type_name = v_clr AND pinned_id IS DISTINCT FROM v_pinned::uuid;
+          UPDATE __SCHEMA__.wh_message_type_registry r
+          SET clr_type_name = v_clr, kind = v_kind, updated_at = NOW()
+          WHERE r.pinned_id = v_pinned::uuid;
+          v_action := 'updated';
         ELSE
-          -- Drift: do not overwrite
+          -- Genuine drift (rename): do not overwrite
           v_action := 'drift_detected';
         END IF;
       ELSE
@@ -83,7 +96,12 @@ BEGIN
         v_action := 'inserted';
       END IF;
     ELSE
-      -- Unpinned entry: upsert by clr_type_name
+      -- Unpinned entry: upsert by clr_type_name. First drop any legacy '.'-nested encoding of this
+      -- same type (unpinned only) so the canonical '+'-form doesn't leave an orphan duplicate beside it.
+      DELETE FROM __SCHEMA__.wh_message_type_registry
+        WHERE clr_type_name = replace(v_clr, '+', '.')
+          AND replace(v_clr, '+', '.') <> v_clr
+          AND pinned_id IS NULL;
       INSERT INTO __SCHEMA__.wh_message_type_registry (clr_type_name, kind, updated_at)
       VALUES (v_clr, v_kind, NOW())
       ON CONFLICT (clr_type_name) DO UPDATE
