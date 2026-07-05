@@ -138,6 +138,52 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   }
 
   [Test]
+  public async Task PopulateAsync_PinnedDottedEncoding_NormalizedToPlusAsync() {
+    const string id = "11111111-1111-1111-1111-111111111111";
+    // Legacy state: stored '.'-nested (the old MessageTypeCatalogGenerator wrote the C# display form).
+    await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Acme.Domain.OrderContracts.Projection", "perspective", id),
+    ]), _connectionFactory!).PopulateAsync();
+
+    // Current catalog reports the CLR '+'-nested form for the SAME pinned type.
+    await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Acme.Domain.OrderContracts+Projection", "perspective", id),
+    ]), _connectionFactory!).PopulateAsync();
+
+    // Reconciled in place ('.'-encoding -> '+'), NOT flagged as drift. This is what closes the last gap:
+    // perspective types with no message association (no DB '+' oracle) are still normalized via the catalog.
+    var rows = await _queryRegistryAsync();
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Acme.Domain.OrderContracts+Projection");
+    await Assert.That(rows[0].PinnedId).IsEqualTo(new Guid(id));
+  }
+
+  [Test]
+  public async Task PopulateAsync_DottedEncoding_WithPreexistingPlusRow_DedupsWithoutCollisionAsync() {
+    const string dottedId = "11111111-1111-1111-1111-111111111111";
+    // A stale '.'-row (this pinned id) AND the canonical '+'-row (a different identity) already coexist —
+    // the exact production shape. A naive rename '.'->'+' would violate the clr_type_name primary key.
+    await using (var conn = new NpgsqlConnection(_connectionString)) {
+      await conn.OpenAsync();
+      await conn.ExecuteAsync(
+        @"INSERT INTO wh_message_type_registry (clr_type_name, pinned_id, kind, updated_at) VALUES
+          ('Acme.Domain.OrderContracts.Projection', @Dotted::uuid, 'perspective', NOW()),
+          ('Acme.Domain.OrderContracts+Projection', gen_random_uuid(), 'perspective', NOW())",
+        new { Dotted = dottedId });
+    }
+
+    await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Acme.Domain.OrderContracts+Projection", "perspective", dottedId),
+    ]), _connectionFactory!).PopulateAsync();
+
+    // The stale '+' duplicate is dropped and the pinned row is normalized — exactly one '+' row remains.
+    var rows = await _queryRegistryAsync();
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Acme.Domain.OrderContracts+Projection");
+    await Assert.That(rows[0].PinnedId).IsEqualTo(new Guid(dottedId));
+  }
+
+  [Test]
   public async Task PopulateAsync_MixedPinnedAndUnpinned_BothInsertedAsync() {
     var catalog = new FakeCatalog([
       new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned, Sample", "event", "11111111-1111-1111-1111-111111111111"),
