@@ -441,13 +441,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // Use a task-based timeout instead of CancellationToken (which also hangs)
       // Increased to 30 seconds for emulator (originally 5s, too short for slow emulator with many topics)
       var sendTask = sender.SendMessageAsync(message, cancellationToken);
-      var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+      var timeoutTask = Task.Delay(_options.SendTimeout, cancellationToken);
 
       var completedTask = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
 
       if (completedTask == timeoutTask) {
-        _logger.LogError("DIAGNOSTIC [PublishAsync]: SendMessageAsync timed out after 30 seconds for {MessageId} - emulator may not be ready", envelope.MessageId);
-        throw new TimeoutException($"SendMessageAsync timed out after 30 seconds for message {envelope.MessageId}. The Azure Service Bus emulator may not be ready or topics/subscriptions may not exist.");
+        _logger.LogError("DIAGNOSTIC [PublishAsync]: SendMessageAsync timed out after {SendTimeout} for {MessageId} - emulator may not be ready", _options.SendTimeout, envelope.MessageId);
+        throw new TimeoutException($"SendMessageAsync timed out after {_options.SendTimeout} for message {envelope.MessageId}. The Azure Service Bus emulator may not be ready or topics/subscriptions may not exist.");
       }
 
       await sendTask; // Re-await to propagate exceptions

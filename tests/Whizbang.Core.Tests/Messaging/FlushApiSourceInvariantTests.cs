@@ -45,9 +45,13 @@ public class FlushApiSourceInvariantTests {
 
   [Test]
   public async Task InboxDedupSites_UseFlushAndGetBatchAsync_NotFireAndForgetFlushAsyncAsync() {
+    // TransportConsumerWorker is no longer in this list: the pump-then-process refactor
+    // moved its inbox-dedup responsibility into the batch pipeline, and the leftover
+    // in-worker dedup method (never called) was deleted in v0.813. Until then this
+    // invariant was satisfied vacuously by that dead code — ServiceBusConsumerWorker
+    // holds the only live in-worker dedup site.
     foreach (var workerFile in new[] {
-      "src/Whizbang.Core/Workers/ServiceBusConsumerWorker.cs",
-      "src/Whizbang.Core/Workers/TransportConsumerWorker.cs"
+      "src/Whizbang.Core/Workers/ServiceBusConsumerWorker.cs"
     }) {
       var worker = await File.ReadAllTextAsync(Path.Combine(_repoRoot, workerFile));
       // Each consumer worker has exactly one inbox-dedup flush that consumes the WorkBatch
