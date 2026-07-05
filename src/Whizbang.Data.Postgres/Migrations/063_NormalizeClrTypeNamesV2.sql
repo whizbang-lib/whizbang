@@ -7,28 +7,30 @@
 --   wh_schema_migrations.content_hash — a hash of the *DDL / object shape*. That answers "did the
 --   schema change?", which is the wrong question for a data fix: the object shape does NOT change
 --   here, so a hash can't tell whether the *rows* still need normalizing. Instead we gate on the
---   wh_settings row 'clr_type_name_format_version' (absent / <2 = legacy, 2 = normalized). That makes
---   startup an O(1) flag read rather than a full-table scan, and gives a queryable "the data is on
---   format v2" fact that survives migration-hash churn.
+--   wh_settings row 'clr_type_name_format_version' (absent / <3 = needs normalizing, 3 = normalized).
+--   That makes startup an O(1) flag read rather than a full-table scan, and gives a queryable "the data
+--   is on format v3" fact that survives migration-hash churn.
 --
---   What v1 (legacy) looked wrong:
---     * wh_message_type_registry.clr_type_name for NESTED message types was written '.'-nested by the
---       old MessageTypeCatalogGenerator (C# display form) instead of the CLR '+'-nested form that
+--   What the legacy form looked wrong (both message AND perspective types):
+--     * wh_message_type_registry.clr_type_name for NESTED types was written '.'-nested by the old
+--       MessageTypeCatalogGenerator (C# display form) instead of the CLR '+'-nested form that
 --       Type.FullName / TypeNameUtilities.BuildClrTypeName produce — inconsistent with the perspective
 --       registry and undetectable/uncorrectable by reconcile_message_type_registry (pinned rows log
---       'drift_detected' and keep the stale value; unpinned rows insert a duplicate '+' row).
+--       'drift_detected' and keep the stale value; unpinned rows insert a duplicate '+' row). This
+--       covers MESSAGE types (v2) and PERSPECTIVE types like X+Projection (v3).
 --     * aggregate_type written by the Dapper store as the bare simple name (typeof(T).Name) instead of
 --       the CLR full name. (EF Core already wrote the full name, so that path is a no-op here.)
 --
---   How the '.'->'+' conversion is reliable (no namespace-vs-nesting guessing): wh_event_store.event_type
---   already holds the correct '+'-nested full name (Type.FullName uses '+'). The dotted spelling of a
---   known-good '+' name is exactly replace(name,'+','.'), so a stale registry row is matched precisely.
---   The oracle set is the union of every column that stores a payload type name (event_store, outbox,
---   inbox, message_associations) so commands (never in the event store) are covered too. Guards:
---   '%+%' restricts to nested names (non-nested names are identical in both forms); NOT LIKE '%[[%'
+--   How the '.'->'+' conversion is reliable (no namespace-vs-nesting guessing): the '+'-nested form is
+--   read from columns that already store it, and the dotted spelling of a known-good '+' name is exactly
+--   replace(name,'+','.'), so a stale registry row is matched precisely. The oracle set unions every
+--   column that stores a '+'-nested type name: event_store.event_type + outbox/inbox.message_type +
+--   message_associations.message_type (message/command PAYLOAD types) and message_associations.target_name
+--   (perspective TYPES — their name never appears in a payload column, only as the association target).
+--   Guards: '%+%' restricts to nested names (non-nested names are identical in both forms); NOT LIKE '%[[%'
 --   skips generic type names whose inner commas would break split_part.
 --
--- Idempotent: gated on the version; re-running after v2 is a no-op RETURN.
+-- Idempotent: gated on the version; re-running after v3 is a no-op RETURN.
 
 DO $migrate$
 DECLARE
@@ -47,7 +49,9 @@ BEGIN
 
   v_current_version := COALESCE(v_current_version, 1);
 
-  IF v_current_version >= 2 THEN
+  -- v3 adds perspective-TYPE registry normalization (via the association target_name oracle) on top of
+  -- v2's message-type + aggregate_type normalization. Anything below 3 re-runs the full pass (idempotent).
+  IF v_current_version >= 3 THEN
     RAISE NOTICE 'clr_type_name_format_version already % — CLR type names already normalized, skipping.', v_current_version;
     RETURN;
   END IF;
@@ -78,6 +82,14 @@ BEGIN
     SELECT DISTINCT split_part(message_type, ',', 1)
       FROM __SCHEMA__.wh_message_associations
       WHERE message_type LIKE '%+%' AND message_type NOT LIKE '%[[%'
+    UNION
+    -- Perspective TYPES (e.g. Domain.X+Projection): their '+'-nested name never appears in an
+    -- event/message column, only as the association TARGET (written via TypeNameUtilities.BuildClrTypeName).
+    -- Without this source the registry's perspective entries stay '.'-nested and reconcile logs a
+    -- 'drift_detected' warning for each on every startup.
+    SELECT DISTINCT split_part(target_name, ',', 1)
+      FROM __SCHEMA__.wh_message_associations
+      WHERE target_name LIKE '%+%' AND target_name NOT LIKE '%[[%'
   ),
   type_map AS (
     SELECT clr AS plus_form, replace(clr, '+', '.') AS dotted_form
@@ -94,8 +106,8 @@ BEGIN
   -- Bare wh_settings (unqualified) — see the read above.
   INSERT INTO wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
   VALUES (
-    'clr_type_name_format_version', '2', 'integer',
-    'Encoding version of stored CLR type names (wh_event_store.aggregate_type, wh_message_type_registry.clr_type_name). 2 = canonical ''+''-nested CLR full name (Type.FullName). Gates the one-time normalization in migration 063.',
+    'clr_type_name_format_version', '3', 'integer',
+    'Encoding version of stored CLR type names (wh_event_store.aggregate_type, wh_message_type_registry.clr_type_name). 3 = canonical ''+''-nested CLR full name (Type.FullName) for message AND perspective types. Gates the one-time normalization in migration 063.',
     NOW(), 'migration:063_NormalizeClrTypeNamesV2')
   ON CONFLICT (setting_key) DO UPDATE
     SET setting_value = EXCLUDED.setting_value,
@@ -104,7 +116,7 @@ BEGIN
         updated_at    = NOW(),
         updated_by    = EXCLUDED.updated_by;
 
-  RAISE NOTICE 'Normalized CLR type names to v2 (aggregate_type rows: %, registry clr_type_name rows: %).',
+  RAISE NOTICE 'Normalized CLR type names to v3 (aggregate_type rows: %, registry clr_type_name rows: %).',
     v_agg_updated, v_registry_upd;
 END
 $migrate$;
