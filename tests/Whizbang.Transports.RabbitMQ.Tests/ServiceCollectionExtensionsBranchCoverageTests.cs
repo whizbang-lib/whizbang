@@ -357,7 +357,7 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
     public Task CloseAsync(ushort reasonCode, string reasonText, TimeSpan timeout, bool abort, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 
-    public Task CloseAsync(ShutdownEventArgs reason, bool abort, CancellationToken cancellationToken = default) =>
+    public Task CloseAsync(ShutdownEventArgs _, bool __, CancellationToken ___ = default) =>
       Task.CompletedTask;
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

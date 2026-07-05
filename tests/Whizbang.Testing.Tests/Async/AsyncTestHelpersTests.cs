@@ -329,7 +329,7 @@ public class AsyncTestHelpersTests {
   [Test]
   public async Task WaitForValue_NullGetValue_ThrowsAsync() {
     var ex = await Assert.ThrowsAsync<ArgumentNullException>(async () =>
-      await AsyncTestHelpers.WaitForValueAsync<int>(null!, v => true, _longTimeout));
+      await AsyncTestHelpers.WaitForValueAsync<int>(null!, _ => true, _longTimeout));
 
     await Assert.That(ex!.ParamName).IsEqualTo("getValue");
   }

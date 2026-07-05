@@ -16,7 +16,7 @@ public class TraceSnapshotComparerTests {
     ActivityKind kind = ActivityKind.Internal,
     ActivityStatusCode status = ActivityStatusCode.Unset,
     IReadOnlyDictionary<string, object?>? tags = null) {
-    return SpanFactory.Create(name, spanId: "s-root", kind: kind, status: status, tags: tags);
+    return SpanFactory.Create(name, spanId: "s-root", tags: tags, kind: kind, status: status);
   }
 
   private static CapturedSpan _child(string name, string spanId, int startSecond) {

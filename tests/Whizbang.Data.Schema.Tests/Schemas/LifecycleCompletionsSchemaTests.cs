@@ -17,7 +17,7 @@ public class LifecycleCompletionsSchemaTests {
     var tableName = LifecycleCompletionsSchema.Table.Name;
 
     // Assert
-    var constantName = LifecycleCompletionsSchema.TABLE_NAME;
+    const string constantName = LifecycleCompletionsSchema.TABLE_NAME;
     await Assert.That(tableName).IsEqualTo("lifecycle_completions");
     await Assert.That(tableName).IsEqualTo(constantName)
       .Because("The TABLE_NAME constant and the TableDefinition must agree.");
@@ -101,14 +101,14 @@ public class LifecycleCompletionsSchemaTests {
   [Category("Schema")]
   public async Task Columns_Constants_MatchColumnNamesAsync() {
     // Arrange & Act - Get all column constants
-    var eventId = LifecycleCompletionsSchema.Columns.EVENT_ID;
-    var instanceId = LifecycleCompletionsSchema.Columns.INSTANCE_ID;
-    var completedAt = LifecycleCompletionsSchema.Columns.COMPLETED_AT;
+    const string eventId = LifecycleCompletionsSchema.Columns.EVENT_ID;
+    const string instanceId = LifecycleCompletionsSchema.Columns.INSTANCE_ID;
+    const string completedAt = LifecycleCompletionsSchema.Columns.COMPLETED_AT;
 
     // Assert - Verify constants match column names
-    await Assert.That(eventId).IsEqualTo("event_id");
-    await Assert.That(instanceId).IsEqualTo("instance_id");
-    await Assert.That(completedAt).IsEqualTo("completed_at");
+    await Assert.That(_columnNameOf(eventId)).IsEqualTo("event_id");
+    await Assert.That(_columnNameOf(instanceId)).IsEqualTo("instance_id");
+    await Assert.That(_columnNameOf(completedAt)).IsEqualTo("completed_at");
 
     // Constants cover every table column
     var tableColumnNames = LifecycleCompletionsSchema.Table.Columns.Select(c => c.Name).ToList();
@@ -117,4 +117,10 @@ public class LifecycleCompletionsSchemaTests {
     await Assert.That(tableColumnNames).Contains(completedAt);
     await Assert.That(tableColumnNames.Count).IsEqualTo(3);
   }
+
+  /// <summary>Round-trips a column-name constant through the runtime TableDefinition so the
+  /// asserted value is non-constant (TUnitAssertions0005) while proving the constant names
+  /// a real column.</summary>
+  private static string _columnNameOf(string constantName) =>
+    LifecycleCompletionsSchema.Table.Columns.Single(c => c.Name == constantName).Name;
 }

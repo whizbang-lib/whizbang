@@ -432,9 +432,9 @@ public class TraceTreeTests {
   [Test]
   public async Task ToSnapshot_FromSnapshot_RoundTripsStructureAsync() {
     var spans = new List<CapturedSpan> {
-      SpanFactory.Create("root", spanId: "s-root", startTime: _at(0),
-        kind: ActivityKind.Server, status: ActivityStatusCode.Ok,
-        tags: new Dictionary<string, object?> { ["k"] = "v" }),
+      SpanFactory.Create("root", spanId: "s-root",
+        tags: new Dictionary<string, object?> { ["k"] = "v" },
+        kind: ActivityKind.Server, status: ActivityStatusCode.Ok, startTime: _at(0)),
       SpanFactory.Create("child", spanId: "s-c", parentSpanId: "s-root", startTime: _at(1))
     };
     var original = TraceTree.Build(spans);

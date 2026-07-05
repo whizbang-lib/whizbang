@@ -131,7 +131,7 @@ public class ServiceCollectionExtensions_FullOverloadValidationTests {
 
     services.AddWhizbangPostgresHealthChecks();
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var healthCheckService = provider.GetService<HealthCheckService>();
     await Assert.That(healthCheckService).IsNotNull();
@@ -151,12 +151,13 @@ public class ServiceCollectionExtensions_FullOverloadValidationTests {
 /// perspectiveEntries convenience overload. Both full overloads eagerly wait for a live
 /// PostgreSQL connection at registration time (PostgresConnectionRetry.WaitForConnectionAsync),
 /// so these tests use the shared container with per-test database isolation.
-///
+/// <para>
 /// Registration-time lines are covered by calling the overloads; the deferred factory
 /// lambdas (IDbConnectionFactory, IWorkCoordinator, snapshot store, stream locker,
 /// checkpoint completer, dead-letter store) only execute on RESOLUTION, so these tests
 /// build a provider and resolve each service, asserting the concrete implementation type.
 /// All of those constructors only stash the connection string — no I/O at resolution.
+/// </para>
 /// </summary>
 [Category("Integration")]
 public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncDisposable {
@@ -222,7 +223,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
 
     await Assert.That(returned).IsSameReferenceAs(services);
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<PostgresOptions>();
     await Assert.That(options.CommandTimeoutSeconds).IsEqualTo(5)
       .Because("configureOptions is null on the convenience path, so defaults apply.");
@@ -287,7 +288,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
     services.AddWhizbangPostgres(
       _connectionString!, jsonOptions, initializeSchema: false, _emptyEntries, configureOptions: null);
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetRequiredService<IDbConnectionFactory>()).IsTypeOf<PostgresConnectionFactory>();
     await Assert.That(provider.GetRequiredService<IDbExecutor>()).IsTypeOf<DapperDbExecutor>();
@@ -333,10 +334,10 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
     await Assert.That(invoked).IsTrue()
       .Because("The configureOptions callback must run during registration, before the connection wait.");
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var resolved = provider.GetRequiredService<PostgresOptions>();
 
-    await Assert.That(resolved).IsSameReferenceAs(configuredInstance!)
+    await Assert.That(resolved).IsSameReferenceAs(configuredInstance)
       .Because("The exact PostgresOptions instance passed to configureOptions must be the registered singleton.");
     await Assert.That(resolved.CommandTimeoutSeconds).IsEqualTo(42);
     await Assert.That(resolved.MaxInFlightCommands).IsEqualTo(7);
@@ -379,7 +380,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
 
     await Assert.That(invoked).IsTrue();
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetRequiredService<PostgresOptions>().CommandTimeoutSeconds).IsEqualTo(33);
     await Assert.That(provider.GetRequiredService<JsonSerializerOptions>()).IsSameReferenceAs(jsonOptions);
@@ -421,7 +422,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
       d.ImplementationType == typeof(MessageTypeRegistryReconciliationHostedService));
     await Assert.That(reconciliationHostedService).IsNotNull();
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     await Assert.That(provider.GetRequiredService<PostgresOptions>().InitialRetryAttempts).IsEqualTo(3);
   }
 
@@ -438,7 +439,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
         WHERE table_schema = 'public'
         AND table_name = @tableName
       );";
-    command.Parameters.AddWithValue("tableName", tableName);
+    command.Parameters.AddWithValue(nameof(tableName), tableName);
     return (bool)(await command.ExecuteScalarAsync())!;
   }
 
