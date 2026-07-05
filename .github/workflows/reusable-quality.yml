@@ -90,9 +90,10 @@ jobs:
           echo "Coverage files to merge: $COVERAGE_FILES"
 
           # File filters to exclude from coverage reports
-          # Only exclude source-generated files (*.g.cs, .whizbang-generated)
-          # Note: samples/benchmarks/tools are excluded via sonar.coverage.exclusions in SonarCloud
-          FILE_FILTERS="-*.g.cs;-**/.whizbang-generated/*"
+          # Exclude source-generated files (*.g.cs, .whizbang-generated) plus
+          # test and tool code so the gate measures library (src/) coverage only,
+          # matching the codecov.yml ignore list
+          FILE_FILTERS="-*.g.cs;-**/.whizbang-generated/*;-*/tests/*;-*/tools/*"
 
           # Generate merged report in SonarQube format
           reportgenerator \

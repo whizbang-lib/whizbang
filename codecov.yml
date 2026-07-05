@@ -16,3 +16,5 @@ ignore:
   - "benchmarks/**"
   - "test-diagnostics/**"
   - "src/Whizbang.Testing/Containers/**"
+  - "tests/**"
+  - "tools/**"
