@@ -225,6 +225,103 @@ public class UnobservedExceptionDiagnosticsTests {
       $"UnobservedTaskException did not fire for marker '{marker}' within deadline. Captured {logger.Entries.Count} log entries; none contained the marker.");
   }
 
+  /// <summary>
+  /// The warm-up hosted service resolves the diagnostics dependency so the process-wide
+  /// hooks are wired at startup. Its Start/Stop are trivial no-ops that must not throw.
+  /// Covers the WarmUp ctor, StartAsync, and StopAsync.
+  /// </summary>
+  [Test]
+  public async Task WarmUp_StartAndStop_CompleteWithoutThrowingAsync() {
+    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var options = Options.Create(new UnobservedExceptionDiagnosticsOptions());
+    using var diagnostics = new UnobservedExceptionDiagnostics(logger, options);
+
+    var warmUp = new UnobservedExceptionDiagnosticsWarmUp(diagnostics);
+    await warmUp.StartAsync(CancellationToken.None);
+    await warmUp.StopAsync(CancellationToken.None);
+
+    // Both lifecycle methods returned completed tasks; reaching here is the success signal.
+    await Assert.That(logger.Entries).IsNotNull();
+  }
+
+  /// <summary>
+  /// The warm-up service rejects a null dependency — fail-fast on bad DI wiring.
+  /// </summary>
+  [Test]
+  public async Task WarmUp_NullDiagnostics_ThrowsArgumentNullExceptionAsync() {
+    var caught = await Assert.That(() => {
+      _ = new UnobservedExceptionDiagnosticsWarmUp(null!);
+      return Task.CompletedTask;
+    }).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(caught!.ParamName).IsEqualTo("diagnostics");
+  }
+
+  /// <summary>
+  /// End-to-end first-chance path: with FirstChanceException logging enabled and an
+  /// allow-list naming a marker exception type, throwing+catching an instance of that type
+  /// drives the live <c>_onFirstChanceException</c> handler through its allow-match and
+  /// Debug-enabled log. The handler subscription (constructor) and unsubscription (Dispose)
+  /// are exercised by construction/disposal here. A Debug-enabled logger is required so the
+  /// IsEnabled(Debug) gate opens.
+  /// </summary>
+  [Test]
+  public async Task FirstChanceException_EnabledWithMatchingAllowList_LogsAtDebugAsync() {
+    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var options = Options.Create(new UnobservedExceptionDiagnosticsOptions {
+      EnableFirstChanceExceptionLogging = true,
+      FirstChanceExceptionTypeAllowList = [typeof(_FirstChanceMarkerException).FullName!],
+    });
+
+    var marker = $"WhizbangFirstChanceTest-{Guid.NewGuid():N}";
+    using (var diagnostics = new UnobservedExceptionDiagnostics(logger, options)) {
+      // Throwing then catching the marker type triggers FirstChanceException synchronously
+      // on this thread, driving the handler while the diagnostics owns the subscription.
+      try {
+        throw new _FirstChanceMarkerException(marker);
+      } catch (_FirstChanceMarkerException) {
+        // Expected — the first-chance handler already fired before we caught it.
+      }
+    }
+
+    var hit = logger.Entries.FirstOrDefault(e =>
+      e.Level == LogLevel.Debug && e.Exception?.Message.Contains(marker, StringComparison.Ordinal) == true);
+    await Assert.That(hit is not null).IsTrue()
+      .Because("an allow-listed first-chance exception must be logged at Debug carrying the original exception");
+  }
+
+  /// <summary>
+  /// The first-chance handler filters out <see cref="OperationCanceledException"/> — these
+  /// are high-volume and low-signal, so they must never be logged even when first-chance
+  /// logging is enabled with a wide-open allow-list. Covers the OCE early-return arm.
+  /// </summary>
+  [Test]
+  public async Task FirstChanceException_OperationCanceled_IsNotLoggedAsync() {
+    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var options = Options.Create(new UnobservedExceptionDiagnosticsOptions {
+      EnableFirstChanceExceptionLogging = true,
+      FirstChanceExceptionTypeAllowList = null, // wide open — only the OCE filter can exclude
+    });
+
+    var marker = $"WhizbangOceTest-{Guid.NewGuid():N}";
+    using (var diagnostics = new UnobservedExceptionDiagnostics(logger, options)) {
+      try {
+        throw new OperationCanceledException(marker);
+      } catch (OperationCanceledException) {
+        // Expected — the handler saw it first and returned early.
+      }
+    }
+
+    var oceHit = logger.Entries.FirstOrDefault(e => e.Exception?.Message.Contains(marker, StringComparison.Ordinal) == true);
+    await Assert.That(oceHit is null).IsTrue()
+      .Because("OperationCanceledException is filtered out of first-chance logging as low-signal noise");
+  }
+
+  private sealed class _FirstChanceMarkerException : Exception {
+    public _FirstChanceMarkerException() { }
+    public _FirstChanceMarkerException(string message) : base(message) { }
+    public _FirstChanceMarkerException(string message, Exception innerException) : base(message, innerException) { }
+  }
+
   private static void _spawnAndAbandonFaultedTask(string marker) {
     // Allocate the faulted Task in a separate stack frame so the local doesn't
     // pin the reference in the caller's frame across GC. The async lambda

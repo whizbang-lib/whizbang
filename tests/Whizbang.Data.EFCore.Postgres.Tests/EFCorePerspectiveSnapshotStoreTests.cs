@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -496,6 +497,170 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
   [Test]
   public async Task DeleteAllSnapshotsAsync_NoSnapshots_DoesNotThrowAsync() {
     await _store.DeleteAllSnapshotsAsync(Guid.CreateVersion7(), "TestPerspective");
+  }
+
+  #endregion
+
+  #region GetLatestSnapshotBeforeCommitSequenceAsync Tests
+
+  /// <summary>
+  /// Slice 26.11: the commit-sequence-anchored lookup returns the latest snapshot whose
+  /// snapshot_commit_sequence is strictly less than the requested anchor.
+  /// </summary>
+  [Test]
+  public async Task GetLatestSnapshotBeforeCommitSequenceAsync_ReturnsLatestBeforeAnchorAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "OrderPerspective";
+
+    using var d1 = JsonDocument.Parse("""{"v": 1}""");
+    using var d2 = JsonDocument.Parse("""{"v": 2}""");
+    using var d3 = JsonDocument.Parse("""{"v": 3}""");
+    var eventId2 = Guid.CreateVersion7();
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(), 100L, d1);
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, eventId2, 200L, d2);
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(), 300L, d3);
+
+    // Anchor 250 → latest strictly before is commit sequence 200 (v=2).
+    var result = await _store.GetLatestSnapshotBeforeCommitSequenceAsync(streamId, perspectiveName, 250L);
+
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(eventId2);
+    await Assert.That(result.Value.SnapshotCommitSequence).IsEqualTo(200L);
+    await Assert.That(result.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(2);
+    result.Value.SnapshotData.Dispose();
+  }
+
+  /// <summary>
+  /// When no snapshot has a commit sequence strictly below the anchor, the anchored lookup
+  /// returns null (reader has no rows).
+  /// </summary>
+  [Test]
+  public async Task GetLatestSnapshotBeforeCommitSequenceAsync_NoQualifyingRow_ReturnsNullAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "OrderPerspective";
+
+    using var data = JsonDocument.Parse("""{"v": 1}""");
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(), 500L, data);
+
+    // Anchor 500 → nothing strictly before 500.
+    var result = await _store.GetLatestSnapshotBeforeCommitSequenceAsync(streamId, perspectiveName, 500L);
+    await Assert.That(result).IsNull();
+  }
+
+  /// <summary>
+  /// Snapshots written via the legacy 4-arg overload have a NULL commit sequence and are excluded
+  /// from the anchored lookup entirely (the WHERE clause requires a non-null commit sequence).
+  /// </summary>
+  [Test]
+  public async Task GetLatestSnapshotBeforeCommitSequenceAsync_NullCommitSequence_ExcludedAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "OrderPerspective";
+
+    using var data = JsonDocument.Parse("""{"v": 1}""");
+    // Legacy overload → snapshot_commit_sequence is NULL.
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(), data);
+
+    var result = await _store.GetLatestSnapshotBeforeCommitSequenceAsync(streamId, perspectiveName, long.MaxValue);
+    await Assert.That(result).IsNull()
+      .Because("snapshots with a NULL commit sequence are not anchored lookups");
+  }
+
+  /// <summary>
+  /// GetLatestSnapshotWithCommitSequenceAsync returns null when the stream/perspective has no
+  /// snapshot at all — the reader-read-false arm.
+  /// </summary>
+  [Test]
+  public async Task GetLatestSnapshotWithCommitSequenceAsync_NoSnapshot_ReturnsNullAsync() {
+    var result = await _store.GetLatestSnapshotWithCommitSequenceAsync(Guid.CreateVersion7(), "Nonexistent");
+    await Assert.That(result).IsNull();
+  }
+
+  /// <summary>
+  /// GetLatestSnapshotWithCommitSequenceAsync surfaces a NULL commit sequence for snapshots written
+  /// via the legacy 4-arg overload.
+  /// </summary>
+  [Test]
+  public async Task GetLatestSnapshotWithCommitSequenceAsync_LegacySnapshot_NullCommitSequenceAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "OrderPerspective";
+    var snapshotEventId = Guid.CreateVersion7();
+
+    using var data = JsonDocument.Parse("""{"v": 1}""");
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, data);
+
+    var result = await _store.GetLatestSnapshotWithCommitSequenceAsync(streamId, perspectiveName);
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(snapshotEventId);
+    await Assert.That(result.Value.SnapshotCommitSequence).IsNull()
+      .Because("legacy 4-arg snapshots carry no commit sequence");
+    result.Value.SnapshotData.Dispose();
+  }
+
+  #endregion
+
+  #region Debug Logging Tests
+
+  /// <summary>
+  /// When a debug-enabled logger is supplied, CreateSnapshotAsync emits the
+  /// "Snapshot created" debug message (LogSnapshotCreated branch).
+  /// </summary>
+  [Test]
+  public async Task CreateSnapshotAsync_DebugLogger_LogsSnapshotCreatedAsync() {
+    var logger = new CapturingLogger();
+    var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var store = new EFCorePerspectiveSnapshotStore(dataSource, logger);
+
+    using var data = JsonDocument.Parse("""{"v": 1}""");
+    await store.CreateSnapshotAsync(Guid.CreateVersion7(), "OrderPerspective", Guid.CreateVersion7(), data);
+
+    await Assert.That(logger.Entries.Count(e => e.Contains("Snapshot created"))).IsEqualTo(1)
+      .Because("a debug-enabled logger records the snapshot-created message");
+  }
+
+  /// <summary>
+  /// When a debug-enabled logger is supplied and rows are actually deleted, PruneOldSnapshotsAsync
+  /// emits the "Pruned" debug message (LogSnapshotsPruned branch guarded by deleted &gt; 0).
+  /// </summary>
+  [Test]
+  public async Task PruneOldSnapshotsAsync_DebugLogger_LogsPrunedWhenRowsDeletedAsync() {
+    var logger = new CapturingLogger();
+    var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var store = new EFCorePerspectiveSnapshotStore(dataSource, logger);
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "OrderPerspective";
+
+    // sequence_number is assigned monotonically by the store (MAX+1), so three inserts yield
+    // three distinct sequence numbers — no timing dependency needed for prune ordering.
+    for (var i = 0; i < 3; i++) {
+      using var data = JsonDocument.Parse($$$"""{"v": {{{i + 1}}}}""");
+      await store.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(), data);
+    }
+
+    await store.PruneOldSnapshotsAsync(streamId, perspectiveName, keepCount: 1);
+
+    await Assert.That(logger.Entries.Count(e => e.Contains("Pruned"))).IsEqualTo(1)
+      .Because("pruning that deletes rows logs the prune message when debug is enabled");
+  }
+
+  /// <summary>
+  /// Minimal capturing logger with Debug enabled, used to assert the source-generated
+  /// LoggerMessage debug branches fire.
+  /// </summary>
+  private sealed class CapturingLogger : ILogger<EFCorePerspectiveSnapshotStore> {
+    public List<string> Entries { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Debug;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      Entries.Add(formatter(state, exception));
+    }
   }
 
   #endregion
