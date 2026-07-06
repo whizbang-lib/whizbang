@@ -447,3 +447,6 @@ local-packages/
 
 # Archive files
 *.zip
+
+# Stryker.NET mutation testing output
+**/StrykerOutput/

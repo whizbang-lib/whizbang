@@ -1,5 +1,5 @@
 ---
-argument-hint: test | coverage | format | build | release-check | diagnostics | benchmarks | context-tdd | context-testing | context-generators | context-standards
+argument-hint: test | coverage | mutate | format | build | release-check | diagnostics | benchmarks | context-tdd | context-testing | context-generators | context-standards
 ---
 
 # Whizbang Command Menu
@@ -21,6 +21,7 @@ Welcome to the Whizbang command center! You can run `/whizbang <command>` or jus
 
 ### Context Loading (Documentation)
 - **context-tdd** - Load TDD (Test-Driven Development) documentation
+- **mutate** - Run Stryker.NET mutation testing (verifies tests catch bugs, not just execute code)
 - **context-testing** - Load testing framework documentation (TUnit, Rocks, Bogus)
 - **context-generators** - Load source generator documentation
 - **context-standards** - Load code standards and conventions
@@ -78,6 +79,11 @@ Runs all tests in the solution. Execute: `dotnet test`
 ### /whizbang coverage
 Runs all test projects with coverage collection using the PowerShell script.
 Goal: Work toward 100% branch coverage.
+
+### /whizbang mutate
+Run Stryker.NET mutation testing. Introduces small bugs into source and checks if tests
+catch them; surviving mutants indicate weak or missing assertions. Use
+`-Mutate "**/FileName.cs"` for fast per-file feedback. See ai-docs/mutation-testing.md.
 
 ### /whizbang format
 Formats code using `dotnet format`. ALWAYS run before claiming work complete.
