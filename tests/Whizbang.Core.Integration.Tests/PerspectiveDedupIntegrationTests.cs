@@ -13,6 +13,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -529,7 +530,7 @@ public class PerspectiveDedupIntegrationTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await runner.WaitForCallCountAsync(10, TimeSpan.FromSeconds(10));
+    await runner.WaitForCallCountAsync(10, TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 

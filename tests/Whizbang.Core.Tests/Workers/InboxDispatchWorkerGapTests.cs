@@ -381,8 +381,13 @@ public class InboxDispatchWorkerGapTests {
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(executeTask is not null).IsTrue();
-    await Assert.That(executeTask!.IsCompletedSuccessfully).IsTrue()
-      .Because("cancellation while awaiting the schema gate is an expected shutdown path — ExecuteAsync must return, not fault");
+    // Graceful shutdown = completed without faulting. Depending on where the OCE surfaces
+    // relative to the catch, the task may end RanToCompletion or Canceled — both are clean.
+    // IsCompletedSuccessfully excludes Canceled and so flakes under CI timing.
+    await Assert.That(executeTask!.IsCompleted).IsTrue()
+      .Because("cancellation while awaiting the schema gate must complete ExecuteAsync");
+    await Assert.That(executeTask!.IsFaulted).IsFalse()
+      .Because("the schema-gate shutdown path must return, not fault");
     await Assert.That(handlerCommit.All).IsEmpty()
       .Because("the dispatch loop never started, so the queued work must not have been consumed");
   }
