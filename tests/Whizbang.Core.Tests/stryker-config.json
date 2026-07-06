@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stryker-mutator/stryker-net/master/src/Stryker.Core/Stryker.Core/stryker-config.schema.json",
+  "stryker-config": {
+    "project": "Whizbang.Core.csproj",
+    "test-projects": ["./Whizbang.Core.Tests.csproj"],
+    "target-framework": "net10.0",
+    "test-runner": "mtp",
+    "reporters": ["html", "progress", "cleartext"],
+    "verbosity": "info",
+    "concurrency": 1,
+    "coverage-analysis": "off",
+    "thresholds": {
+      "high": 80,
+      "low": 60,
+      "break": 0
+    },
+    "mutate": [
+      "!**/.whizbang-generated/**",
+      "!**/*.g.cs",
+      "!**/obj/**",
+      "!**/bin/**",
+      "!**/Generated/**",
+      "!**/AssemblyInfo.cs"
+    ],
+    "ignore-mutations": [
+      "string",
+      "linq"
+    ]
+  }
+}

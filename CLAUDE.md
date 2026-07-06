@@ -121,6 +121,11 @@ Navigation hub with scenario-based guidance. **Read this first** when unsure whi
 - Writing tests for the first time
 - Need RED/GREEN/REFACTOR cycle guidance
 
+### 📖 **[mutation-testing.md](ai-docs/mutation-testing.md)**
+**Read when**: running or interpreting Stryker.NET mutation tests, or adding mutation
+testing to a project. Mutation testing verifies tests actually catch bugs (kills mutants),
+complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-mutation-tests.ps1.
+
 ### 📖 **[testing-tunit.md](ai-docs/testing-tunit.md)** - CRITICAL
 **Read when**:
 - Writing or debugging tests
