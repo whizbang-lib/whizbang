@@ -1265,4 +1265,200 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
     await Assert.That(cursor.LastEventId).IsEqualTo(lastEventId);
   }
+
+  /// <summary>
+  /// ExcludeStreamIds path: with no IncludeStreamIds but a non-empty ExcludeStreamIds, the
+  /// receptor fetches the full stream set from IEventStoreQuery, subtracts the excluded ids, and
+  /// rebuilds only the survivors. Exercises _resolveStreamFilterAsync's exclude branch
+  /// (IAsyncEnumerable enumeration + HashSet subtraction) plus the "stream filter applied
+  /// (Exclude)" log. Previously untested — the include and mode-based branches had coverage but
+  /// the exclude branch did not.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithExcludeStreamIds_RebuildsAllButExcludedAsync() {
+    var streams = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var streamId in streams) {
+        await _appendEventAsync(eventStore, streamId,
+            new RebuildCreditedEvent { StreamId = streamId, Amount = 10m });
+      }
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    var excluded = new[] { streams[1], streams[3] };
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName],
+        ExcludeStreamIds: excluded));
+
+    // The two non-excluded streams must have cursors; the two excluded streams must not.
+    await using var verifyContext = CreateDbContext();
+    var excludedSet = new HashSet<Guid>(excluded);
+    foreach (var streamId in streams) {
+      var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+          .AsNoTracking()
+          .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+      if (excludedSet.Contains(streamId)) {
+        await Assert.That(cursor).IsNull();
+      } else {
+        await Assert.That(cursor).IsNotNull();
+        await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+      }
+    }
+  }
+
+  /// <summary>
+  /// ExcludeStreamIds that names every stream leaves nothing to rebuild — the survivor set is
+  /// empty, so RebuildStreamsAsync runs with an empty filter and no cursors are written.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithExcludeStreamIdsCoveringAll_WritesNoCursorsAsync() {
+    var streams = Enumerable.Range(0, 3).Select(_ => Guid.NewGuid()).ToArray();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var streamId in streams) {
+        await _appendEventAsync(eventStore, streamId,
+            new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
+      }
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName],
+        ExcludeStreamIds: streams));
+
+    await using var verifyContext = CreateDbContext();
+    var anyCursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .AnyAsync(c => c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(anyCursor).IsFalse();
+  }
+
+  /// <summary>
+  /// Trace-level logging enabled: drives every IsEnabled-guarded diagnostic arm the receptor
+  /// owns — command-received (Information), perspectives-skipped-not-owned (a foreign name is
+  /// mixed in), perspectives-selected, stream-filter-applied (Include), and the FromEventId
+  /// unsupported warning. Pins that those log branches execute without throwing when logging is
+  /// on, which the default-config integration tests don't guarantee.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithTraceLogging_ExecutesAllDiagnosticArmsAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 3m });
+    }
+
+    var recorded = new List<(LogLevel Level, string Message)>();
+    using var loggerFactory = LoggerFactory.Create(builder => {
+      builder.SetMinimumLevel(LogLevel.Trace);
+      builder.AddProvider(new RecordingLoggerProvider(recorded));
+    });
+    var logger = loggerFactory.CreateLogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>();
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    // Mix in a foreign perspective (drives the skipped-not-owned arm), an Include filter
+    // (drives the stream-filter-applied Include arm), and FromEventId (drives the unsupported
+    // warning arm).
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName, "Foreign.Service.NotOwnedPerspective"],
+        IncludeStreamIds: [streamId],
+        FromEventId: 123));
+
+    await Assert.That(recorded.Exists(e => e.Message.Contains("RebuildPerspectiveCommand received", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(recorded.Exists(e => e.Message.Contains("skipped", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(recorded.Exists(e => e.Message.Contains("Selected", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(recorded.Exists(e => e.Message.Contains("stream filter", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(recorded.Exists(e => e.Message.Contains("FromEventId", StringComparison.Ordinal))).IsTrue();
+
+    // The owned perspective was still rebuilt.
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+  }
+
+  /// <summary>
+  /// With trace logging enabled and only foreign perspective names, the receptor resolves to an
+  /// empty selection and emits the "nothing to rebuild" warning arm (fanout=false branch), then
+  /// returns without writing cursors.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithOnlyForeignNamesAndTraceLogging_LogsNothingToRebuildAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
+    }
+
+    var recorded = new List<(LogLevel Level, string Message)>();
+    using var loggerFactory = LoggerFactory.Create(builder => {
+      builder.SetMinimumLevel(LogLevel.Trace);
+      builder.AddProvider(new RecordingLoggerProvider(recorded));
+    });
+    var logger = loggerFactory.CreateLogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>();
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: ["Foreign.A", "Foreign.B"]));
+
+    await Assert.That(recorded.Exists(e =>
+        e.Level == LogLevel.Warning && e.Message.Contains("nothing to rebuild", StringComparison.Ordinal))).IsTrue();
+
+    await using var verifyContext = CreateDbContext();
+    var anyCursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .AnyAsync(c => c.StreamId == streamId);
+    await Assert.That(anyCursor).IsFalse();
+  }
+
+  /// <summary>Minimal ILogger provider that captures formatted messages for the trace-logging
+  /// receptor tests. Kept local — no production value.</summary>
+  private sealed class RecordingLoggerProvider(List<(LogLevel Level, string Message)> sink) : ILoggerProvider {
+    public ILogger CreateLogger(string categoryName) => new RecordingLogger(sink);
+    public void Dispose() { }
+
+    private sealed class RecordingLogger(List<(LogLevel Level, string Message)> sink) : ILogger {
+      private readonly Lock _gate = new();
+      public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+      public bool IsEnabled(LogLevel logLevel) => true;
+
+      public void Log<TState>(
+          LogLevel logLevel,
+          Microsoft.Extensions.Logging.EventId eventId,
+          TState state,
+          Exception? exception,
+          Func<TState, Exception?, string> formatter) {
+        lock (_gate) {
+          sink.Add((logLevel, formatter(state, exception)));
+        }
+      }
+
+      private sealed class NullScope : IDisposable {
+        public static readonly NullScope Instance = new();
+        public void Dispose() { }
+      }
+    }
+  }
 }

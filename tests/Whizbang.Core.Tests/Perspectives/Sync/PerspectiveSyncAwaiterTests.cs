@@ -1234,4 +1234,149 @@ public class PerspectiveSyncAwaiterTests {
   private sealed class TestLifecycleContextAccessor : ILifecycleContextAccessor {
     public ILifecycleContext? Current { get; set; }
   }
+
+  // ==========================================================================
+  // Debug-logging path coverage
+  // The suite above uses NullLogger (IsEnabled(Debug) == false), so the
+  // Debug-gated branches never format. These drive the same behavior with a
+  // Debug-enabled logger to exercise the [SYNC_DEBUG] logging arms.
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitAsync_WithDebugLogger_LogsExpectedEventIdsAndCompletesAsync() {
+    // Arrange - Debug enabled so the per-inquiry "waiting" log loop runs (WaitAsync debug arm)
+    var logger = new DebugCapturingLogger<PerspectiveSyncAwaiter>();
+    var tracker = new ScopedEventTracker();
+    var syncEventTracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    var perspectiveName = typeof(TestPerspective).FullName!;
+
+    tracker.TrackEmittedEvent(streamId, typeof(string), eventId);
+    syncEventTracker.TrackEvent(typeof(string), eventId, streamId, perspectiveName);
+    syncEventTracker.MarkProcessedByPerspective([eventId], perspectiveName);
+
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, syncEventTracker, tracker);
+
+    var options = SyncFilter.All().WithTimeout(TimeSpan.FromSeconds(5)).Build();
+
+    // Act
+    var result = await awaiter.WaitAsync(typeof(TestPerspective), options);
+
+    // Assert - synced and the debug "waiting" arm produced output
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(logger.Messages.Count).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task WaitForStreamAsync_WithDebugLoggerAndExplicitEventId_LogsAndSyncsAsync() {
+    // Arrange - explicit eventId → priority-1 debug log (line 264) + event-driven wait debug (293-294)
+    var logger = new DebugCapturingLogger<PerspectiveSyncAwaiter>();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
+
+    // Act - explicit event not tracked → WaitForPerspectiveEventsAsync returns true immediately → Synced
+    var result = await awaiter.WaitForStreamAsync(
+        typeof(TestPerspective),
+        streamId,
+        eventTypes: null,
+        timeout: TimeSpan.FromSeconds(5),
+        eventIdToAwait: eventId);
+
+    // Assert
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(logger.Messages.Any(m => m.Contains("[SYNC_DEBUG]"))).IsTrue();
+    await Assert.That(logger.Messages.Any(m => m.Contains("Using explicit eventIdToAwait"))).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForStreamAsync_WithDebugLoggerAndTrackedEvents_LogsQueryResultsAsync() {
+    // Arrange - no explicit eventId → priority-2 singleton-tracker query debug arm (274-279)
+    var logger = new DebugCapturingLogger<PerspectiveSyncAwaiter>();
+    var syncEventTracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    var perspectiveName = typeof(TestPerspective).FullName!;
+
+    // Track (but do not pre-mark) so GetPendingEvents in _resolveExpectedEventIds finds it.
+    syncEventTracker.TrackEvent(typeof(string), eventId, streamId, perspectiveName);
+
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, syncEventTracker);
+
+    // Act - start the wait, then signal processing so the event-driven wait completes
+    var waitTask = awaiter.WaitForStreamAsync(
+        typeof(TestPerspective),
+        streamId,
+        eventTypes: [typeof(string)],
+        timeout: TimeSpan.FromSeconds(5),
+        eventIdToAwait: null);
+    syncEventTracker.MarkProcessedByPerspective([eventId], perspectiveName);
+    var result = await waitTask;
+
+    // Assert - event processed → Synced; debug query arm logged the found count + events
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(logger.Messages.Any(m => m.Contains("Queried singleton tracker"))).IsTrue();
+    await Assert.That(logger.Messages.Any(m => m.Contains("Tracked events"))).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForStreamAsync_WithDebugLogger_TimeoutLogsTimedOutArmAsync() {
+    // Arrange - tracked-but-never-processed event → event-driven wait times out (309-310 debug arm)
+    var logger = new DebugCapturingLogger<PerspectiveSyncAwaiter>();
+    var syncEventTracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    var perspectiveName = typeof(TestPerspective).FullName!;
+
+    syncEventTracker.TrackEvent(typeof(string), eventId, streamId, perspectiveName);
+
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, syncEventTracker);
+
+    // Act - never mark processed → times out
+    var result = await awaiter.WaitForStreamAsync(
+        typeof(TestPerspective),
+        streamId,
+        eventTypes: [typeof(string)],
+        timeout: TimeSpan.FromMilliseconds(150),
+        eventIdToAwait: null);
+
+    // Assert - timed out, and the debug timeout arm logged
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut);
+    await Assert.That(logger.Messages.Any(m => m.Contains("TIMED OUT"))).IsTrue();
+  }
+
+  // ILogger that reports Debug enabled and captures formatted messages.
+  private sealed class DebugCapturingLogger<T> : Microsoft.Extensions.Logging.ILogger<T> {
+    public List<string> Messages { get; } = [];
+
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public void Log<TState>(
+      Microsoft.Extensions.Logging.LogLevel logLevel,
+      Microsoft.Extensions.Logging.EventId eventId,
+      TState state,
+      Exception? exception,
+      Func<TState, Exception?, string> formatter) {
+      lock (Messages) {
+        Messages.Add(formatter(state, exception));
+      }
+    }
+
+    private sealed class NullScope : IDisposable {
+      public static NullScope Instance { get; } = new();
+      public void Dispose() { }
+    }
+  }
 }
