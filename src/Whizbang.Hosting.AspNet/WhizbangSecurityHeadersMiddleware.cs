@@ -40,6 +40,12 @@ public class WhizbangSecurityHeadersMiddleware {
   /// <c>405</c> (plus an <c>Allow</c> header) or invokes the rest of the pipeline.
   /// </summary>
   public Task InvokeAsync(HttpContext context) {
+    // Opt-out: turnkey registration means every consumer gets this middleware, so a disabled instance
+    // must be a transparent pass-through.
+    if (!_options.Enabled) {
+      return _next(context);
+    }
+
     // Static callback + explicit state keeps this allocation-light and reflection-free.
     context.Response.OnStarting(static state => {
       var (middleware, httpContext) = ((WhizbangSecurityHeadersMiddleware, HttpContext))state;
@@ -47,7 +53,9 @@ public class WhizbangSecurityHeadersMiddleware {
       return Task.CompletedTask;
     }, (this, context));
 
-    if (!_allowedMethods.Contains(context.Request.Method)) {
+    // Method filtering is opt-in: only enforced when an allowlist is configured. Empty = allow all verbs,
+    // so turnkey wiring never 405s a service that legitimately serves PUT/PATCH/DELETE.
+    if (_allowedMethods.Count > 0 && !_allowedMethods.Contains(context.Request.Method)) {
       context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
       context.Response.Headers.Allow = _allowHeaderValue;
       return Task.CompletedTask;

@@ -145,9 +145,17 @@ public class WhizbangSecurityHeadersMiddlewareTests {
       .IsEqualTo("frame-ancestors 'self'");
   }
 
+  // The default allowlist is empty (method filtering off); configure it to exercise the 405 path.
+  private static void _restrictMethods(WhizbangSecurityHeadersOptions o) {
+    o.AllowedMethods.Add("GET");
+    o.AllowedMethods.Add("HEAD");
+    o.AllowedMethods.Add("POST");
+    o.AllowedMethods.Add("OPTIONS");
+  }
+
   [Test]
-  public async Task Invoke_DisallowedMethod_Returns405WithoutInvokingNextAsync() {
-    var (middleware, context, response, nextCalls) = _create(method: "PUT");
+  public async Task Invoke_DisallowedMethod_WhenAllowlistConfigured_Returns405WithoutInvokingNextAsync() {
+    var (middleware, context, response, nextCalls) = _create(_restrictMethods, method: "PUT");
 
     await middleware.InvokeAsync(context);
     await response.FireOnStartingAsync();
@@ -160,7 +168,7 @@ public class WhizbangSecurityHeadersMiddlewareTests {
 
   [Test]
   public async Task Invoke_DisallowedMethod_StillGetsSecurityHeadersAsync() {
-    var (middleware, context, response, _) = _create(method: "TRACE");
+    var (middleware, context, response, _) = _create(_restrictMethods, method: "TRACE");
 
     await middleware.InvokeAsync(context);
     await response.FireOnStartingAsync();
@@ -170,8 +178,21 @@ public class WhizbangSecurityHeadersMiddlewareTests {
   }
 
   [Test]
+  public async Task Invoke_EmptyAllowlist_AllowsEveryMethodAsync() {
+    // Turnkey default: no allowlist configured → method filtering is OFF, so PUT/DELETE pass through.
+    // This is what keeps auto-wiring from 405ing services that legitimately serve those verbs.
+    var (middleware, context, _, nextCalls) = _create(method: "DELETE");
+
+    await middleware.InvokeAsync(context);
+
+    await Assert.That(nextCalls.Count).IsEqualTo(1)
+      .Because("With no allowlist, every method must pass — turnkey wiring must not break PUT/PATCH/DELETE.");
+    await Assert.That(context.Response.StatusCode).IsEqualTo(StatusCodes.Status200OK);
+  }
+
+  [Test]
   public async Task Invoke_AllowedMethod_InvokesNextAsync() {
-    var (middleware, context, _, nextCalls) = _create(method: "POST");
+    var (middleware, context, _, nextCalls) = _create(_restrictMethods, method: "POST");
 
     await middleware.InvokeAsync(context);
 
@@ -181,7 +202,7 @@ public class WhizbangSecurityHeadersMiddlewareTests {
 
   [Test]
   public async Task Invoke_MethodComparison_IsCaseInsensitiveAsync() {
-    var (middleware, context, _, nextCalls) = _create(method: "get");
+    var (middleware, context, _, nextCalls) = _create(_restrictMethods, method: "get");
 
     await middleware.InvokeAsync(context);
 
@@ -190,12 +211,19 @@ public class WhizbangSecurityHeadersMiddlewareTests {
   }
 
   [Test]
-  public async Task Invoke_ExtendedAllowedMethods_PassesThroughAsync() {
-    var (middleware, context, _, nextCalls) = _create(o => o.AllowedMethods.Add("DELETE"), method: "DELETE");
+  public async Task Invoke_Disabled_IsTransparentPassThroughAsync() {
+    // Enabled = false is the turnkey opt-out: no headers, no method filtering, even for a disallowed method.
+    var (middleware, context, response, nextCalls) = _create(o => {
+      o.Enabled = false;
+      _restrictMethods(o);
+    }, method: "PUT");
 
     await middleware.InvokeAsync(context);
+    await response.FireOnStartingAsync();
 
-    await Assert.That(nextCalls.Count).IsEqualTo(1);
+    await Assert.That(nextCalls.Count).IsEqualTo(1)
+      .Because("A disabled instance must pass through even a would-be-disallowed method.");
+    await Assert.That(context.Response.Headers.ContainsKey("X-Content-Type-Options")).IsFalse();
     await Assert.That(context.Response.StatusCode).IsEqualTo(StatusCodes.Status200OK);
   }
 
@@ -203,12 +231,14 @@ public class WhizbangSecurityHeadersMiddlewareTests {
   public async Task Options_Defaults_MatchHardenedBaselineAsync() {
     var options = new WhizbangSecurityHeadersOptions();
 
+    await Assert.That(options.Enabled).IsTrue();
     await Assert.That(options.StrictTransportSecurity).IsEqualTo("max-age=31536000; includeSubDomains; preload");
     await Assert.That(options.XContentTypeOptions).IsEqualTo("nosniff");
     await Assert.That(options.XFrameOptions).IsEqualTo("DENY");
     await Assert.That(options.ContentSecurityPolicy).IsEqualTo("frame-ancestors 'none'");
     await Assert.That(options.ReferrerPolicy).IsEqualTo("strict-origin-when-cross-origin");
     await Assert.That(options.PermissionsPolicy).IsEqualTo("camera=(), microphone=(), geolocation=()");
-    await Assert.That(options.AllowedMethods).IsEquivalentTo(["GET", "HEAD", "POST", "OPTIONS"]);
+    await Assert.That(options.AllowedMethods).IsEmpty()
+      .Because("Method filtering is opt-in so turnkey wiring never 405s PUT/PATCH/DELETE by default.");
   }
 }

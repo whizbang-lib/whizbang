@@ -10,6 +10,12 @@ namespace Whizbang.Hosting.AspNet;
 /// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangSecurityHeadersMiddlewareTests.cs</tests>
 public sealed class WhizbangSecurityHeadersOptions {
   /// <summary>
+  /// Master switch. When <c>false</c>, the turnkey middleware becomes a pass-through (no headers, no method
+  /// filtering) — the opt-out for a service that manages its own response headers. Defaults to <c>true</c>.
+  /// </summary>
+  public bool Enabled { get; set; } = true;
+
+  /// <summary>
   /// Value for <c>Strict-Transport-Security</c>. Only emitted when the request is HTTPS or arrived through
   /// a TLS-terminating proxy (<c>X-Forwarded-Proto: https</c>). <c>null</c> suppresses the header.
   /// </summary>
@@ -36,6 +42,12 @@ public sealed class WhizbangSecurityHeadersOptions {
   /// <summary>
   /// HTTP methods the service accepts; any other method is rejected with <c>405 Method Not Allowed</c>
   /// before reaching routing. Comparison is case-insensitive.
+  /// <para>
+  /// <b>Empty by default</b> — method filtering is OFF unless you populate this list. This keeps the
+  /// turnkey wiring safe: auto-enabling a GET/HEAD/POST/OPTIONS allowlist would 405 every service that
+  /// legitimately serves PUT/PATCH/DELETE. Set it explicitly (e.g. <c>["GET","HEAD","POST","OPTIONS"]</c>)
+  /// on a service that should reject other verbs at the origin.
+  /// </para>
   /// </summary>
-  public IList<string> AllowedMethods { get; } = new List<string> { "GET", "HEAD", "POST", "OPTIONS" };
+  public IList<string> AllowedMethods { get; } = new List<string>();
 }

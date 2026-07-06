@@ -29,6 +29,13 @@ public static class ServiceCollectionExtensions {
     // the request's first dispatch adopts it. Configure headers via WhizbangCorrelationOptions.
     services.TryAddEnumerable(
       ServiceDescriptor.Singleton<IStartupFilter, WhizbangCorrelationStartupFilter>());
+    // Turnkey: hardened HTTP response headers (HSTS on TLS/forwarded-TLS, nosniff, X-Frame-Options,
+    // CSP frame-ancestors, Referrer-Policy, Permissions-Policy) on every response, applied idempotently
+    // (an edge-set header wins). Method filtering is OFF by default — opt in per service via
+    // WhizbangSecurityHeadersOptions.AllowedMethods; opt out entirely via Enabled = false. Configure with
+    // services.Configure<WhizbangSecurityHeadersOptions>(...).
+    services.TryAddEnumerable(
+      ServiceDescriptor.Singleton<IStartupFilter, WhizbangSecurityHeadersStartupFilter>());
     return services;
   }
 }

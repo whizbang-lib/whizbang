@@ -49,6 +49,24 @@ public class ServiceCollectionExtensionsTests {
   }
 
   [Test]
+  public async Task AddWhizbangAspNet_RegistersSecurityHeadersStartupFilter_TurnkeyAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    services.AddWhizbangAspNet();
+
+    // Assert — hardened response headers are wired without any manual UseWhizbangSecurityHeaders() call.
+    var descriptor = services.FirstOrDefault(d =>
+      d.ServiceType == typeof(IStartupFilter) &&
+      d.ImplementationType == typeof(WhizbangSecurityHeadersStartupFilter));
+
+    await Assert.That(descriptor).IsNotNull()
+      .Because("AddWhizbangAspNet should turnkey-register the security-headers startup filter");
+    await Assert.That(descriptor!.Lifetime).IsEqualTo(ServiceLifetime.Singleton);
+  }
+
+  [Test]
   public async Task AddWhizbangAspNet_CalledMultipleTimes_RegistersOnceAsync() {
     // Arrange
     var services = new ServiceCollection();
