@@ -426,6 +426,105 @@ public class PolicyContextTests {
         .Throws<InvalidOperationException>();
   }
 
+  [Test]
+  [RequiresDynamicCode("")]
+  public async Task HasTag_ReturnsFalse_WhenTagsJsonElementIsNotAnArrayAsync() {
+    // Arrange - tags stored as a JSON object (not an array). Covers the
+    // "ValueKind != Array → false" guard in HasTag.
+    var message = new TestMessage("test");
+    var metadata = new Dictionary<string, JsonElement> {
+      ["tags"] = JsonSerializer.SerializeToElement(new { unexpected = "shape" })
+    };
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Metadata = metadata
+    };
+    var context = new PolicyContext(message, envelope);
+
+    // Act & Assert - a non-array tags element must not match any tag
+    await Assert.That(context.HasTag("high-priority")).IsFalse()
+      .Because("tags stored as a non-array JsonElement cannot contain tags, so HasTag returns false");
+  }
+
+  [Test]
+  [RequiresDynamicCode("")]
+  public async Task HasFlag_ReturnsFalse_WhenFlagsJsonElementIsNotANumberAsync() {
+    // Arrange - flags stored as a JSON string (not a number). Covers the
+    // "ValueKind != Number → false" guard in HasFlag.
+    var message = new TestMessage("test");
+    var metadata = new Dictionary<string, JsonElement> {
+      ["flags"] = JsonSerializer.SerializeToElement("not-a-number")
+    };
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Metadata = metadata
+    };
+    var context = new PolicyContext(message, envelope);
+
+    // Act & Assert - a non-number flags element cannot have any flag set
+    await Assert.That(context.HasFlag(WhizbangOptions.LoadTesting)).IsFalse()
+      .Because("flags stored as a non-number JsonElement cannot represent a bitmask, so HasFlag returns false");
+  }
+
+  [Test]
+  public async Task GetAggregateId_WithoutServiceProvider_ThrowsInvalidOperationAsync() {
+    // Arrange - no service provider means no extractor can be resolved.
+    // Covers the Services-is-null guard at the top of GetAggregateId.
+    var message = new CreateOrder(Guid.NewGuid(), "Widget");
+    var context = new PolicyContext(message);
+
+    // Act & Assert
+    var exception = await Assert.That(() => context.GetAggregateId())
+        .Throws<InvalidOperationException>();
+    await Assert.That(exception!.Message).Contains("ServiceProvider is not configured");
+  }
+
+  [Test]
+  public async Task GetAggregateId_WhenExtractorNotRegistered_ThrowsInvalidOperationAsync() {
+    // Arrange - a service provider WITHOUT an IStreamIdExtractor registered.
+    // Covers the "extractor not registered" throw branch.
+    var services = new ServiceCollection().BuildServiceProvider();
+    var message = new CreateOrder(Guid.NewGuid(), "Widget");
+    var context = new PolicyContext(message, services: services);
+
+    // Act & Assert
+    var exception = await Assert.That(() => context.GetAggregateId())
+        .Throws<InvalidOperationException>();
+    await Assert.That(exception!.Message).Contains("IStreamIdExtractor is not registered");
+  }
+
+  [Test]
+  public async Task GetAggregateId_WithStreamIdAttribute_ReturnsExtractedIdAsync() {
+    // Arrange - an extractor that resolves the [StreamId] value for the message.
+    // Covers the happy path: extractor returns a value, GetAggregateId returns it.
+    // A fake extractor is used instead of the source-generated composite because the
+    // composite only registers extractors for types in assemblies that ran the generator;
+    // this test-assembly type is not in that set, so the composite would return null.
+    var expectedId = Guid.NewGuid();
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new FakeStreamIdExtractor(expectedId));
+    var serviceProvider = services.BuildServiceProvider();
+
+    var message = new CreateProduct(expectedId, "Gadget");
+    var context = new PolicyContext(message, services: serviceProvider);
+
+    // Act
+    var aggregateId = context.GetAggregateId();
+
+    // Assert
+    await Assert.That(aggregateId).IsEqualTo(expectedId)
+      .Because("the extractor reads the [StreamId] ProductId property and GetAggregateId returns it");
+  }
+
+  private sealed class FakeStreamIdExtractor(Guid streamId) : IStreamIdExtractor {
+    public Guid? ExtractStreamId(object message, Type messageType) =>
+        message is CreateProduct ? streamId : null;
+  }
+
   // Test helper types
   private interface ITestService;
   private sealed class TestService : ITestService;
