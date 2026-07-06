@@ -86,6 +86,33 @@ public class WhizbangScopeMiddlewareTests {
   }
 
   [Test]
+  [NotInParallel("InboundCorrelation")]
+  public async Task InvokeAsync_WithNonGuidCorrelationHeader_DoesNotSeedInboundCorrelationAsync() {
+    // Arrange — a header that is present but not a parseable Guid must be ignored:
+    // the dispatch mints its own trace-aligned root instead of adopting garbage.
+    InboundCorrelationAccessor.Current = null;
+    var seenDownstreamHadValue = true;
+    var middleware = new WhizbangScopeMiddleware(_ => {
+      seenDownstreamHadValue = InboundCorrelationAccessor.Current is not null;
+      return Task.CompletedTask;
+    });
+    var context = new DefaultHttpContext();
+    context.Request.Headers["X-Correlation-ID"] = "not-a-guid";
+    var accessor = new TestScopeContextAccessor();
+
+    try {
+      // Act
+      await middleware.InvokeAsync(context, accessor);
+
+      // Assert
+      await Assert.That(seenDownstreamHadValue).IsFalse()
+        .Because("A malformed correlation token must not be adopted — Guid.TryParse gates the seeding.");
+    } finally {
+      InboundCorrelationAccessor.Current = null;
+    }
+  }
+
+  [Test]
   public async Task InvokeAsync_ShouldSetImmutableScopeContext_ForDispatcherCompatibilityAsync() {
     // Arrange - This test verifies the fix for the ImmutableScopeContext requirement
     // The Dispatcher checks: if (ScopeContextAccessor.CurrentContext is not ImmutableScopeContext ctx)
@@ -651,6 +678,24 @@ public class WhizbangScopeMiddlewareTests {
 
     // Assert
     await Assert.That(accessor.Current!.Permissions.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithEmptiedPermissionsClaimTypesList_ProducesNoPermissionsAsync() {
+    // Arrange - an explicitly emptied claim-type list disables permission
+    // extraction entirely, even when matching claims are present on the user.
+    var options = new WhizbangScopeOptions { PermissionsClaimTypes = [] };
+    var (middleware, accessor) = _createMiddleware(options);
+    var context = _createContextWithClaims(
+      ("permissions", "orders:read"),
+      ("permissions", "orders:write")
+    );
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    await Assert.That(accessor.Current!.Permissions.Count).IsEqualTo(0);
   }
 
   #endregion

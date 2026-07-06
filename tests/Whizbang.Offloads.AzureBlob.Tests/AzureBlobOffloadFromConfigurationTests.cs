@@ -92,4 +92,101 @@ public class AzureBlobOffloadFromConfigurationTests {
     var monitor = provider.GetRequiredService<IOptionsMonitor<AzureBlobOffloadOptions>>();
     await Assert.That(monitor.Get("azure-blob-archive").DefaultAccessTier).IsEqualTo(AccessTier.Archive);
   }
+
+  [Test]
+  public async Task FromConfiguration_NullServices_ThrowsAsync() {
+    var configuration = _config(new());
+
+    Action act = () => ((IServiceCollection)null!).AddWhizbangAzureBlobOffloadsFromConfiguration(configuration);
+
+    var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(ex!.ParamName).IsEqualTo("services");
+  }
+
+  [Test]
+  public async Task FromConfiguration_NullConfiguration_ThrowsAsync() {
+    var services = new ServiceCollection();
+
+    Action act = () => services.AddWhizbangAzureBlobOffloadsFromConfiguration(null!);
+
+    var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(ex!.ParamName).IsEqualTo("configuration");
+  }
+
+  [Test]
+  public async Task FromConfiguration_WhitespaceProviderKey_IsSkippedWithoutDisablingOthersAsync() {
+    // Config section keys are environment-supplied; a whitespace-only key cannot
+    // serve as a DI key and must be skipped — WITHOUT turning offload off for the
+    // well-formed providers alongside it.
+    var configuration = _config(new() {
+      ["Whizbang:Offloads:AzureBlob:   :ConnectionString"] = "UseDevelopmentStorage=true",
+      ["Whizbang:Offloads:AzureBlob:good-provider:ConnectionString"] = "UseDevelopmentStorage=true",
+      ["Whizbang:BodyOffload:ProviderName"] = "good-provider",
+    });
+
+    var services = new ServiceCollection();
+    services.AddWhizbangAzureBlobOffloadsFromConfiguration(configuration);
+    var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetKeyedService<IMessageBodyStore>("good-provider")).IsNotNull()
+      .Because("A malformed sibling key must not take down the valid provider registrations.");
+    await Assert.That(provider.GetKeyedService<IMessageBodyStore>("   ")).IsNull()
+      .Because("The whitespace key is skipped — no store may be registered under it.");
+    await Assert.That(provider.GetService<PostSerializeHookChain>()).IsNotNull()
+      .Because("One valid provider is enough to enable the send-side claim-check hook.");
+  }
+
+  [Test]
+  public async Task FromConfiguration_NoBodyOffloadSection_HookRegisteredWithSelectorDefaultsAsync() {
+    // A provider without the Whizbang:BodyOffload section still wires the hook chain,
+    // and the selector keeps its compiled defaults (no ProviderName, 64 KiB threshold,
+    // passive cleanup) — the receive side can resolve claims even when this service
+    // never offloads on send.
+    var configuration = _config(new() {
+      ["Whizbang:Offloads:AzureBlob:receive-only:ConnectionString"] = "UseDevelopmentStorage=true",
+    });
+
+    var services = new ServiceCollection();
+    services.AddWhizbangAzureBlobOffloadsFromConfiguration(configuration);
+    var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetService<PostSerializeHookChain>()).IsNotNull();
+    var bodyOptions = provider.GetRequiredService<IOptionsMonitor<MessageBodyOffloadOptions>>().CurrentValue;
+    await Assert.That(bodyOptions.ProviderName).IsNull()
+      .Because("No Whizbang:BodyOffload:ProviderName means no active send-side target — the selector must stay unbound.");
+    await Assert.That(bodyOptions.SizeThresholdBytes).IsEqualTo(64L * 1024L);
+    await Assert.That(bodyOptions.ActiveCleanup).IsFalse();
+  }
+
+  [Test]
+  public async Task FromConfiguration_UnparseableOrBlankValues_LeaveOptionDefaultsAsync() {
+    // Every binding branch is guarded: blank strings and unparseable numerics/bools
+    // are ignored rather than bound — the options keep their compiled defaults so a
+    // half-broken environment fails at the ConnectionString-required check, not with
+    // a garbage configuration silently applied.
+    var configuration = _config(new() {
+      ["Whizbang:Offloads:AzureBlob:sparse:ConnectionString"] = "   ",
+      ["Whizbang:Offloads:AzureBlob:sparse:ContainerName"] = "",
+      ["Whizbang:Offloads:AzureBlob:sparse:DefaultAccessTier"] = "",
+      ["Whizbang:Offloads:AzureBlob:sparse:MaxDownloadBytes"] = "not-a-number",
+      ["Whizbang:BodyOffload:ProviderName"] = "",
+      ["Whizbang:BodyOffload:SizeThresholdBytes"] = "NaN",
+      ["Whizbang:BodyOffload:ActiveCleanup"] = "not-a-bool",
+    });
+
+    var services = new ServiceCollection();
+    services.AddWhizbangAzureBlobOffloadsFromConfiguration(configuration);
+    var provider = services.BuildServiceProvider();
+
+    var blobOptions = provider.GetRequiredService<IOptionsMonitor<AzureBlobOffloadOptions>>().Get("sparse");
+    await Assert.That(blobOptions.ConnectionString).IsNull();
+    await Assert.That(blobOptions.ContainerName).IsEqualTo("whizbang-offload-bodies");
+    await Assert.That(blobOptions.DefaultAccessTier).IsNull();
+    await Assert.That(blobOptions.MaxDownloadBytes).IsNull();
+
+    var bodyOptions = provider.GetRequiredService<IOptionsMonitor<MessageBodyOffloadOptions>>().CurrentValue;
+    await Assert.That(bodyOptions.ProviderName).IsNull();
+    await Assert.That(bodyOptions.SizeThresholdBytes).IsEqualTo(64L * 1024L);
+    await Assert.That(bodyOptions.ActiveCleanup).IsFalse();
+  }
 }

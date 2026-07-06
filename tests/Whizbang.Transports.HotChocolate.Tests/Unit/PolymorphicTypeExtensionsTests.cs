@@ -42,6 +42,13 @@ public class PolymorphicTypeExtensionsTests {
 
   public sealed class ConcreteType : NonPolymorphicBase;
 
+  // Test type with [JsonPolymorphic] but no [JsonDerivedType] attributes -
+  // auto-discovery has nothing to discover and must fail loudly
+  [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
+  public abstract class PolymorphicWithoutDerivedTypes {
+    public string Name { get; set; } = "";
+  }
+
   [Test]
   public async Task AddPolymorphicType_WithExplicitDerivedTypes_ReturnsBuilderAsync() {
     // Arrange
@@ -133,6 +140,24 @@ public class PolymorphicTypeExtensionsTests {
     // Act & Assert
     await Assert.That(() => builder.AddPolymorphicType<NonPolymorphicBase>())
         .ThrowsException().WithMessageContaining("JsonPolymorphic");
+  }
+
+  [Test]
+  public async Task AddPolymorphicType_WithoutJsonDerivedTypeAttributes_ThrowsExceptionAsync() {
+    // Arrange - [JsonPolymorphic] alone is not enough for auto-discovery; without
+    // at least one [JsonDerivedType] there are no implementations to register.
+    var services = new ServiceCollection();
+    var builder = services
+        .AddGraphQL()
+        .AddQueryType(d => d
+            .Name("Query")
+            .Field("test")
+            .Type<StringType>()
+            .Resolve("test"));
+
+    // Act & Assert
+    await Assert.That(() => builder.AddPolymorphicType<PolymorphicWithoutDerivedTypes>())
+        .ThrowsException().WithMessageContaining("JsonDerivedType");
   }
 
   [Test]

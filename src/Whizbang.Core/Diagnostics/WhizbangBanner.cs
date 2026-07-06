@@ -168,17 +168,21 @@ public static partial class WhizbangBanner {
       string? version = null,
       IDictionary<string, string>? parameters = null,
       string? whizbangVersion = null,
-      bool enabled = true) {
+      bool enabled = true,
+      TextWriter? writer = null) {
     if (!enabled) {
       return;
     }
+
+    // Mirrors Print(): defaults to Console.Out, injectable for tests/log capture
+    writer ??= Console.Out;
 
     // Auto-detect versions if not provided (compile-time constant, no reflection)
     version ??= "0.0.0";
     whizbangVersion ??= WhizbangVersionInfo.Version;
 
     // Print the ASCII art banner (auto-detects color support)
-    Print();
+    Print(writer);
 
     // Build config line
     var configParts = new List<string>();
@@ -197,15 +201,15 @@ public static partial class WhizbangBanner {
         ? $"  {name} v{version} (Whizbang v{whizbangVersion})"
         : $"  {name} v{version}";
 
-    Console.WriteLine($"  ╔{new string('═', innerWidth)}╗");
-    Console.WriteLine($"  ║{titleLine.PadRight(innerWidth)}║");
+    writer.WriteLine($"  ╔{new string('═', innerWidth)}╗");
+    writer.WriteLine($"  ║{titleLine.PadRight(innerWidth)}║");
 
     if (!string.IsNullOrEmpty(configLine)) {
-      Console.WriteLine($"  ║{"  " + configLine.PadRight(innerWidth - 2)}║");
+      writer.WriteLine($"  ║{"  " + configLine.PadRight(innerWidth - 2)}║");
     }
 
-    Console.WriteLine($"  ╚{new string('═', innerWidth)}╝");
-    Console.WriteLine();
+    writer.WriteLine($"  ╚{new string('═', innerWidth)}╝");
+    writer.WriteLine();
   }
 
   /// <summary>

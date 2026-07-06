@@ -2278,4 +2278,381 @@ namespace TestNamespace {
   }
 
   #endregion
+
+  #region Split Storage Mode Tests
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_SplitModeRecordModel_StripsPhysicalFieldsWithExpressionAsync() {
+    // Arrange - record model with [PerspectiveStorage(Split)]: physical fields are stripped
+    // from the JSONB payload using an immutable 'with' expression
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class ProductUpdatedEvent : IEvent {
+    public Guid Id { get; set; }
+    public string Status { get; set; } = "";
+  }
+
+  [PerspectiveStorage(FieldStorageMode.Split)]
+  public record ProductModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [PhysicalField]
+    public string Status { get; init; } = "";
+
+    [VectorField(1536)]
+    public float[]? Embedding { get; init; }
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductUpdatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductUpdatedEvent @event) {
+      return currentData with { Status = @event.Status };
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - split mode with a record uses a 'with' expression to strip physical fields
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("model = model with {");
+    await Assert.That(runnerSource).Contains("Status = default!");
+    await Assert.That(runnerSource).Contains("Embedding = System.Array.Empty<float>()");
+    await Assert.That(runnerSource).Contains("UpsertWithPhysicalFieldsAsync");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_SplitModeClassModel_StripsPhysicalFieldsByMutationAsync() {
+    // Arrange - class (non-record) model with [PerspectiveStorage(Split)]: physical fields are
+    // stripped by mutating the model in place (no 'with' expression available)
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class ProductUpdatedEvent : IEvent {
+    public Guid Id { get; set; }
+    public string Status { get; set; } = "";
+  }
+
+  [PerspectiveStorage(FieldStorageMode.Split)]
+  public class ProductModel {
+    [StreamId]
+    public Guid Id { get; set; }
+
+    [PhysicalField]
+    public string Status { get; set; } = "";
+
+    [VectorField(1536)]
+    public float[]? Embedding { get; set; }
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductUpdatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductUpdatedEvent @event) {
+      currentData.Status = @event.Status;
+      return currentData;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - split mode with a class mutates properties directly
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("model.Status = default!;");
+    await Assert.That(runnerSource).Contains("model.Embedding = System.Array.Empty<float>();");
+    await Assert.That(runnerSource).DoesNotContain("model = model with {");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_JsonOnlyMode_DoesNotStripPhysicalFieldsAsync() {
+    // Arrange - explicit JsonOnly storage mode keeps physical fields in the JSONB payload
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class ProductUpdatedEvent : IEvent {
+    public Guid Id { get; set; }
+    public string Status { get; set; } = "";
+  }
+
+  [PerspectiveStorage(FieldStorageMode.JsonOnly)]
+  public class ProductModel {
+    [StreamId]
+    public Guid Id { get; set; }
+
+    [PhysicalField]
+    public string Status { get; set; } = "";
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductUpdatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductUpdatedEvent @event) {
+      currentData.Status = @event.Status;
+      return currentData;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - physical field dictionary is still built, but no stripping happens
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource).DoesNotContain("model.Status = default!;");
+    await Assert.That(runnerSource).DoesNotContain("model = model with {");
+  }
+
+  #endregion
+
+  #region InheritScope Tests
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_InheritScopeWithOnCreate_UsesConfiguredFlagsAsync() {
+    // Arrange - [InheritScope(OnCreate = Tenant | User)] should emit flag value 3
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class OrderCreatedEvent : IEvent {
+    public Guid Id { get; set; }
+  }
+
+  [InheritScope(OnCreate = ScopeFields.Tenant | ScopeFields.User)]
+  public class OrderModel {
+    [StreamId]
+    public Guid Id { get; set; }
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Tenant (1) | User (2) == 3
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("_inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)3;");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_InheritScopeWithoutOnCreate_DefaultsToTenantAsync() {
+    // Arrange - [InheritScope] with only Always set: OnCreate falls back to the attribute
+    // default (ScopeFields.Tenant == 1)
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class OrderCreatedEvent : IEvent {
+    public Guid Id { get; set; }
+  }
+
+  [InheritScope(Always = ScopeFields.User)]
+  public class OrderModel {
+    [StreamId]
+    public Guid Id { get; set; }
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - attribute present without OnCreate override -> Tenant (1)
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("_inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)1;");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_NoInheritScope_DefaultsToAllFieldsAsync() {
+    // Arrange - no [InheritScope] attribute: legacy behavior copies every scope field (63)
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class OrderCreatedEvent : IEvent {
+    public Guid Id { get; set; }
+  }
+
+  public class OrderModel {
+    [StreamId]
+    public Guid Id { get; set; }
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - ScopeFields.All == 63
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("_inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)63;");
+  }
+
+  #endregion
+
+  #region Global Perspective Tests
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_GlobalPerspective_GeneratesRunnerAsync() {
+    // Arrange - IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1> multi-stream perspective
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class RegionSaleEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; set; }
+    public string Region { get; set; } = "";
+  }
+
+  public class RegionSummaryModel {
+    [StreamId]
+    public string Region { get; set; } = "";
+    public int SaleCount { get; set; }
+  }
+
+  public class RegionSummaryPerspective : IGlobalPerspectiveFor<RegionSummaryModel, string, RegionSaleEvent> {
+    public string GetPartitionKey(RegionSaleEvent eventData) {
+      return eventData.Region;
+    }
+
+    public RegionSummaryModel Apply(RegionSummaryModel currentData, RegionSaleEvent eventData) {
+      currentData.SaleCount++;
+      return currentData;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - global perspective produces a runner; events come from type args after
+    // TModel and TPartitionKey
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "RegionSummaryPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("class RegionSummaryPerspectiveRunner");
+    await Assert.That(runnerSource).Contains("RegionSaleEvent");
+    await Assert.That(runnerSource).Contains("RegionSummaryModel");
+  }
+
+  #endregion
+
+  #region Inherited StreamId Tests
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_EventWithInheritedStreamId_GeneratesExtractStreamIdAsync() {
+    // Arrange - the [StreamId] property lives on the event's base class; the generator must
+    // walk the inheritance chain to find it
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public abstract class BaseSagaEvent : IEvent {
+    [StreamId]
+    public Guid SagaId { get; set; }
+  }
+
+  public class StepCompletedEvent : BaseSagaEvent {
+    public string StepName { get; set; } = "";
+  }
+
+  public class SagaModel {
+    [StreamId]
+    public Guid SagaId { get; set; }
+    public string LastStep { get; set; } = "";
+  }
+
+  public class SagaPerspective : IPerspectiveFor<SagaModel, StepCompletedEvent> {
+    public SagaModel Apply(SagaModel currentData, StepCompletedEvent @event) {
+      currentData.LastStep = @event.StepName;
+      return currentData;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - ExtractStreamId is generated using the inherited SagaId property
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SagaPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("ExtractStreamId");
+    await Assert.That(runnerSource).Contains("@event.SagaId");
+  }
+
+  #endregion
 }
