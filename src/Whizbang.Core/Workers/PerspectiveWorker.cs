@@ -147,10 +147,14 @@ public partial class PerspectiveWorker(
   // Perspective event completions (WorkIds to delete from wh_perspective_events)
   private readonly System.Collections.Concurrent.ConcurrentQueue<PerspectiveEventCompletion> _pendingEventCompletions = new();
 
-  // Phase C channel dependencies — when wired, perspective work flows through ClaimWorker → these channels
-  // instead of being polled directly via ProcessWorkBatchAsync. Currently dormant; ExecuteAsync still uses
-  // the legacy poll path until commit B switches the main loop. See plans/we-need-to-study-iridescent-gem.md
-  // for the multi-commit migration sequence.
+  // Phase C channel dependencies — perspective work flows through ClaimWorker → these channels;
+  // ExecuteAsync now runs _runChannelConsumerLoopAsync off them and throws if they are unwired
+  // (the legacy ProcessWorkBatchAsync poll path was removed — see the guard at the top of
+  // ExecuteAsync). The perspective work channel currently carries no items in production: the
+  // live claim_work SQL emits drain stream-ids only, so WorkBatch.PerspectiveWork is always empty
+  // and the standard per-event path is a dormant fallback. See
+  // plans/we-need-to-study-iridescent-gem.md for the remaining migration steps (removing the
+  // now-empty PerspectiveWork field + standard path).
   private readonly IPerspectiveChannelWriter? _perspectiveChannelWriter = perspectiveChannelWriter;
   private readonly IPerspectiveCompletionChannel? _perspectiveCompletionChannel = perspectiveCompletionChannel;
   private readonly IFailureChannel? _failureChannel = failureChannel;
