@@ -659,6 +659,148 @@ public class OrderedStreamProcessorTests {
     await Assert.That(reportedError).Contains("Publishing failed");
   }
 
+  // ========================================
+  // Logger-path coverage tests
+  // These drive the `if (_logger != null)` branches and the static log
+  // helper methods (inbox/outbox success + failure loggers) that the
+  // logger-less tests above never reach.
+  // ========================================
+
+  [Test]
+  public async Task ProcessInboxWorkAsync_WithLogger_LogsGroupingAndPerMessageSuccessAsync() {
+    // Arrange
+    var logger = new CapturingLogger<OrderedStreamProcessor>();
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: logger);
+    var stream1 = _idProvider.NewGuid();
+    var stream2 = _idProvider.NewGuid();
+
+    var messages = new List<InboxWork> {
+      _createInboxWork(stream1),
+      _createInboxWork(stream1),
+      _createInboxWork(stream2)
+    };
+
+    // Act
+    await sut.ProcessInboxWorkAsync(
+      messages,
+      processor: async _ => await Task.FromResult(MessageProcessingStatus.EventStored),
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - logger observed the "processing" and "grouped" entries plus one success per message
+    await Assert.That(logger.Messages.Any(m => m.Contains("Processing 3 inbox messages"))).IsTrue();
+    await Assert.That(logger.Messages.Any(m => m.Contains("Grouped into 2 streams"))).IsTrue();
+    await Assert.That(logger.Messages.Count(m => m.Contains("Successfully processed message"))).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task ProcessInboxWorkAsync_WithLogger_OnFailure_LogsFailureAndStopAsync() {
+    // Arrange
+    var logger = new CapturingLogger<OrderedStreamProcessor>();
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: logger);
+    var streamId = _idProvider.NewGuid();
+
+    var failing = _createInboxWork(streamId);
+    var afterFailure = _createInboxWork(streamId);  // Should NOT be processed (stream stops)
+    var messages = new List<InboxWork> { failing, afterFailure };
+
+    var processedCount = 0;
+
+    // Act
+    await sut.ProcessInboxWorkAsync(
+      messages,
+      processor: async work => {
+        if (work.MessageId == failing.MessageId) {
+          throw new InvalidOperationException("boom");
+        }
+        Interlocked.Increment(ref processedCount);
+        return await Task.FromResult(MessageProcessingStatus.EventStored);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - failure logger + stop-processing warning fired; second message never ran
+    await Assert.That(processedCount).IsEqualTo(0);
+    await Assert.That(logger.Messages.Any(m => m.Contains("Failed to process message"))).IsTrue();
+    await Assert.That(logger.Messages.Any(m => m.Contains("Stopping stream"))).IsTrue();
+  }
+
+  [Test]
+  public async Task ProcessInboxWorkAsync_WithLogger_NullStreamLogsNullLabelAsync() {
+    // Arrange
+    var logger = new CapturingLogger<OrderedStreamProcessor>();
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: logger);
+
+    var messages = new List<InboxWork> {
+      _createInboxWorkWithoutStream(),
+      _createInboxWorkWithoutStream()
+    };
+
+    // Act
+    await sut.ProcessInboxWorkAsync(
+      messages,
+      processor: async _ => await Task.FromResult(MessageProcessingStatus.EventStored),
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - the Guid.Empty stream key logs the "NULL" label
+    await Assert.That(logger.Messages.Any(m => m.Contains("Processing stream NULL"))).IsTrue();
+  }
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_WithLogger_LogsGroupingAndPerMessageSuccessAsync() {
+    // Arrange
+    var logger = new CapturingLogger<OrderedStreamProcessor>();
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: logger);
+    var streamId = _idProvider.NewGuid();
+
+    var messages = new List<OutboxWork> {
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId)
+    };
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      messages,
+      processor: async _ => await Task.FromResult(MessageProcessingStatus.Published),
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - outbox logging surfaces including per-message success
+    await Assert.That(logger.Messages.Any(m => m.Contains("Processing 2 outbox messages"))).IsTrue();
+    await Assert.That(logger.Messages.Any(m => m.Contains("Processing outbox stream"))).IsTrue();
+    await Assert.That(logger.Messages.Count(m => m.Contains("Successfully processed outbox message"))).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_WithLogger_OnFailure_LogsFailureAsync() {
+    // Arrange
+    var logger = new CapturingLogger<OrderedStreamProcessor>();
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: logger);
+    var streamId = _idProvider.NewGuid();
+
+    var failing = _createOutboxWork(streamId);
+    var messages = new List<OutboxWork> { failing };
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      messages,
+      processor: async _ => {
+        await Task.Yield();
+        throw new InvalidOperationException("publish boom");
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - outbox failure logger fired
+    await Assert.That(logger.Messages.Any(m => m.Contains("Failed to process outbox message"))).IsTrue();
+  }
+
   // Helper methods
 
   private InboxWork _createInboxWorkWithoutStream() {
@@ -766,5 +908,29 @@ public class OrderedStreamProcessorTests {
 
     public SecurityContext? GetCurrentSecurityContext() => null;
     public ScopeContext? GetCurrentScope() => null;
+  }
+
+  // Minimal ILogger that captures formatted messages; enabled at all levels so
+  // the source-generated LoggerMessage helpers actually format and emit.
+  private sealed class CapturingLogger<T> : ILogger<T> {
+    public List<string> Messages { get; } = [];
+
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+      LogLevel logLevel,
+      Microsoft.Extensions.Logging.EventId eventId,
+      TState state,
+      Exception? exception,
+      Func<TState, Exception?, string> formatter) {
+      Messages.Add(formatter(state, exception));
+    }
+
+    private sealed class NullScope : IDisposable {
+      public static NullScope Instance { get; } = new();
+      public void Dispose() { }
+    }
   }
 }

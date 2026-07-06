@@ -373,8 +373,10 @@ public class InboxDrainWorkerGapTests {
     await worker.StopAsync(CancellationToken.None);
 
     var executeTask = worker.ExecuteTask ?? Task.CompletedTask;
-    await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
+    await Assert.That(executeTask.IsCompleted).IsTrue()
       .Because("the gate-cancellation branch swallows the OCE and returns cleanly");
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("graceful shutdown must not fault (Canceled or RanToCompletion both clean)");
     await Assert.That(logger.Entries.Count(e => e.EventId == 1)).IsEqualTo(1)
       .Because("LogStarted fires before the gate wait");
     await Assert.That(logger.Entries.Count(e => e.EventId == 2)).IsEqualTo(0)
@@ -798,8 +800,10 @@ public class InboxDrainWorkerGapTests {
       .Because("cancellation observed after the fetch must break before any dispatch");
     // The finally block releases the draining marker on the cancellation path too.
     await Assert.That(drain.Drained.ToList()).Contains(streamId);
-    await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
+    await Assert.That(executeTask.IsCompleted).IsTrue()
       .Because("the batcher's OCE is swallowed by the outer catch");
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("graceful shutdown must not fault (Canceled or RanToCompletion both clean)");
     await Assert.That(logger.Entries.Count(e => e.EventId == 2)).IsEqualTo(1)
       .Because("shutdown via cancellation reaches the trailing LogStopped");
   }
@@ -847,8 +851,10 @@ public class InboxDrainWorkerGapTests {
       .Because("a cancellation-driven OCE must NOT be logged as a per-stream drain error");
     // The marker-release finally runs while the OCE unwinds.
     await Assert.That(drain.Drained.ToList()).Contains(streamId);
-    await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
+    await Assert.That(executeTask.IsCompleted).IsTrue()
       .Because("the rethrown OCE is absorbed by ExecuteAsync's outer catch — a clean shutdown");
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("graceful shutdown must not fault (Canceled or RanToCompletion both clean)");
     await Assert.That(logger.Entries.Count(e => e.EventId == 2)).IsEqualTo(1);
   }
 

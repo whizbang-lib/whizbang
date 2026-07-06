@@ -421,6 +421,57 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
   }
 
   [Test]
+  public async Task DisposeAsync_WhenRunning_StopsExecutorAndSucceedsAsync() {
+    // Arrange - a running executor with in-flight work
+    var executor = new SerialExecutor();
+    await executor.StartAsync();
+    var envelope = CreateTestEnvelope("test");
+    var context = CreateTestContext();
+
+    var result = await executor.ExecuteAsync<int>(
+      envelope,
+      (env, ctx) => ValueTask.FromResult(7),
+      context
+    );
+    await Assert.That(result).IsEqualTo(7);
+
+    // Act - DisposeAsync should stop the executor and dispose the worker CTS (lines 259-271)
+    await executor.DisposeAsync();
+
+    // Assert - executor is stopped; further executions are rejected
+    await Assert.That(async () => await executor.ExecuteAsync<int>(
+      envelope,
+      (env, ctx) => ValueTask.FromResult(0),
+      context
+    )).Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task DisposeAsync_CalledTwice_IsIdempotentAsync() {
+    // Arrange
+    var executor = new SerialExecutor();
+    await executor.StartAsync();
+
+    // Act - second dispose should hit the _disposed early-return guard
+    await executor.DisposeAsync();
+    await executor.DisposeAsync();
+
+    // Assert - reaching here without exception proves idempotency
+    await Assert.That(executor.Name).IsEqualTo("Serial");
+  }
+
+  [Test]
+  public async Task DisposeAsync_WhenNeverStarted_SucceedsAsync() {
+    // Arrange - never started (State.NotStarted); DisposeAsync -> StopAsync short-circuits,
+    // worker CTS is null so the null-conditional dispose is exercised.
+    var executor = new SerialExecutor();
+
+    // Act & Assert - no throw
+    await executor.DisposeAsync();
+    await Assert.That(executor.Name).IsEqualTo("Serial");
+  }
+
+  [Test]
   [Arguments(10)]
   [Arguments(100)]
   public async Task ExecuteAsync_BoundedChannel_HandlesBackpressureAsync(int capacity) {
