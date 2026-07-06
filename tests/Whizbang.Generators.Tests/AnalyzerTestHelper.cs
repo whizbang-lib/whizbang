@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Whizbang.Generators.Tests;
 
@@ -12,13 +13,16 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 public static class AnalyzerTestHelper {
   /// <summary>
-  /// Runs an analyzer against the provided source code and returns diagnostics.
+  /// Runs an analyzer against the provided source code (and optional AdditionalFiles) and returns diagnostics.
   /// </summary>
   /// <typeparam name="TAnalyzer">The type of analyzer to run</typeparam>
   /// <param name="source">The C# source code to compile</param>
+  /// <param name="additionalFiles">Optional (path, content) pairs surfaced to the analyzer as AdditionalFiles
+  /// (e.g. a pinned-type-ledger.json). Null/empty means no AdditionalFiles.</param>
   /// <returns>The diagnostics reported by the analyzer</returns>
   [RequiresAssemblyFiles()]
-  public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(string source)
+  public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(
+      string source, (string path, string content)[]? additionalFiles = null)
       where TAnalyzer : DiagnosticAnalyzer, new() {
 
     // Parse the source code
@@ -64,13 +68,28 @@ public static class AnalyzerTestHelper {
     // Create analyzer instance
     var analyzer = new TAnalyzer();
 
+    // Surface any AdditionalFiles (e.g. the pinned-type ledger) to the analyzer.
+    AnalyzerOptions? analyzerOptions = null;
+    if (additionalFiles is { Length: > 0 }) {
+      var texts = additionalFiles
+        .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
+        .ToImmutableArray();
+      analyzerOptions = new AnalyzerOptions(texts);
+    }
+
     // Create compilation with analyzers
-    var compilationWithAnalyzers = compilation.WithAnalyzers(
-        [analyzer]);
+    var compilationWithAnalyzers = compilation.WithAnalyzers([analyzer], analyzerOptions);
 
     // Get analyzer diagnostics only (exclude compiler diagnostics)
     var diagnostics = await compilationWithAnalyzers.GetAnalyzerDiagnosticsAsync();
 
     return diagnostics;
+  }
+
+  /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>
+  private sealed class TestAdditionalText(string path, string content) : AdditionalText {
+    public override string Path { get; } = path;
+    public override SourceText GetText(System.Threading.CancellationToken cancellationToken = default)
+      => SourceText.From(content);
   }
 }

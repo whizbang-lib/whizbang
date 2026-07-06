@@ -66,4 +66,25 @@
       Importance="normal"
       Condition="Exists('$(WhizbangRegistryJsonFile)')" />
   </Target>
+
+  <!-- Rename platform: extract the pinned-type ledger JSON from generated C# to the committed .whizbang/ lockfile.
+       Reuses the generic extraction task above. The generator MERGES with the existing committed ledger, so this
+       write is a monotonic lockfile update (adds new pinned types; never rewrites a recorded name/history). -->
+  <Target Name="WhizbangExtractPinnedTypeLedger" AfterTargets="Build"
+          Condition="'$(WhizbangEmitMessageRegistry)' == 'true' And '$(WhizbangIncludePinnedTypeLedger)' != 'false'">
+    <PropertyGroup>
+      <WhizbangLedgerGeneratedCSharpFile>$(CompilerGeneratedFilesOutputPath)/Whizbang.Generators/Whizbang.Generators.PinnedTypeLedgerGenerator/PinnedTypeLedger.g.cs</WhizbangLedgerGeneratedCSharpFile>
+      <WhizbangPinnedTypeLedgerFile>$(MSBuildProjectDirectory)/.whizbang/pinned-type-ledger.json</WhizbangPinnedTypeLedgerFile>
+    </PropertyGroup>
+
+    <WhizbangExtractMessageRegistryJson
+      SourceFile="$(WhizbangLedgerGeneratedCSharpFile)"
+      OutputFile="$(WhizbangPinnedTypeLedgerFile)"
+      Condition="Exists('$(WhizbangLedgerGeneratedCSharpFile)')" />
+
+    <Message
+      Text="Whizbang: Pinned-type ledger extracted to $(WhizbangPinnedTypeLedgerFile)"
+      Importance="normal"
+      Condition="Exists('$(WhizbangPinnedTypeLedgerFile)')" />
+  </Target>
 </Project>
