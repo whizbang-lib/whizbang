@@ -823,6 +823,38 @@ public static class DiagnosticDescriptors {
       description: "The [PinnedId] attribute requires its argument to be a parseable GUID string so it can uniquely identify the type across services and environments."
   );
 
+  /// <summary>
+  /// WHIZ120: Error — a [PinnedId] type was renamed without acknowledging it in the pinned-type ledger.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz120</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedTypeRenameAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PinnedTypeRenamedWithoutAcknowledgment = new(
+      id: "WHIZ120",
+      title: "Pinned Type Renamed Without Ledger Acknowledgment",
+      messageFormat: "Pinned type '{0}' (id {1}) has CLR name '{2}' but the pinned-type ledger records '{3}'. This is a rename: in .whizbang/pinned-type-ledger.json, add '{3}' to this entry's formerNames and set its clrTypeName to '{2}' so old stored events still resolve to this type.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A pinned type's identity is its PinnedId; its CLR name is a versioned label. When the name changes, the former name must be recorded as an alias in the committed pinned-type ledger so events written under the old name (immutable in the event store) still deserialize to the current type. Renames must be acknowledged, not silently dropped.",
+      customTags: WellKnownDiagnosticTags.CompilationEnd
+  );
+
+  /// <summary>
+  /// WHIZ121: Warning — the pinned-type ledger has an entry whose PinnedId is no longer present in the compilation.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz121</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedTypeRenameAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor LedgerEntryHasNoLivingType = new(
+      id: "WHIZ121",
+      title: "Pinned-Type Ledger Entry Has No Living Type",
+      messageFormat: "The pinned-type ledger records id {0} ('{1}') but no [PinnedId] type with that id exists in this compilation. The type was removed or its PinnedId changed; prune or reconcile the ledger entry.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "The pinned-type ledger should track exactly the [PinnedId] types in the assembly. An entry with no matching living type indicates a removed type or a changed PinnedId, and its aliases will register against nothing.",
+      customTags: WellKnownDiagnosticTags.CompilationEnd
+  );
+
   // ==========================================================================
   // WHIZ200: Perspective sync in receptor safety
   // ==========================================================================

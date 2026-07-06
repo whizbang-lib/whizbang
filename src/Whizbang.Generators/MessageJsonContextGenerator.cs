@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Ledger;
 using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
@@ -116,20 +117,35 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     ).Where(static info => !info.IsDefaultOrEmpty)
      .SelectMany(static (arr, _) => arr);
 
+    // Rename platform (P1): read the committed .whizbang/pinned-type-ledger.json (AdditionalFiles) and flatten it
+    // into former-name → current-name aliases. Empty when no ledger is present, so the feature is opt-in per project.
+    var renameAliases = context.AdditionalTextsProvider
+        .Where(static f => PinnedTypeLedger.IsLedgerPath(f.Path))
+        .Select(static (f, ct) => _readLedgerAliases(f, ct))
+        .SelectMany(static (aliases, _) => aliases)
+        .Collect();
+
     // Combine messages + perspective event types with compilation
     var allDiscoveredTypes = messageTypes.Collect().Combine(perspectiveEventTypes.Collect());
     var messagesWithCompilation = allDiscoveredTypes.Combine(context.CompilationProvider);
+    var messagesWithLedger = messagesWithCompilation.Combine(renameAliases);
 
     // Generate WhizbangJsonContext from collected message types
     context.RegisterSourceOutput(
-        messagesWithCompilation,
+        messagesWithLedger,
         static (ctx, data) => {
           // Merge message types (nullable-filtered) with perspective event types (non-nullable)
-          var messages = data.Left.Left!.Where(static m => m is not null).Select(static m => m!).ToImmutableArray();
-          var combined = messages.AddRange(data.Left.Right);
-          _generateWhizbangJsonContext(ctx, combined, data.Right);
+          var messages = data.Left.Left.Left!.Where(static m => m is not null).Select(static m => m!).ToImmutableArray();
+          var combined = messages.AddRange(data.Left.Left.Right);
+          _generateWhizbangJsonContext(ctx, combined, data.Left.Right, data.Right);
         }
     );
+  }
+
+  /// <summary>Parses a ledger additional file into rename aliases. Returns empty on a missing/blank/malformed ledger.</summary>
+  private static ImmutableArray<RenameAlias> _readLedgerAliases(AdditionalText file, System.Threading.CancellationToken ct) {
+    var ledger = PinnedTypeLedger.TryParse(file.GetText(ct)?.ToString());
+    return ledger is null ? ImmutableArray<RenameAlias>.Empty : ledger.ToRenameAliases().ToImmutableArray();
   }
 
   /// <summary>
@@ -427,7 +443,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static void _generateWhizbangJsonContext(
       SourceProductionContext context,
       ImmutableArray<JsonMessageTypeInfo> allMessages,
-      Compilation compilation) {
+      Compilation compilation,
+      ImmutableArray<RenameAlias> renameAliases) {
 
     // Deduplicate messages by FullyQualifiedName — perspective models can be discovered
     // through both the nested type path (syntactic predicate) and the perspective class
@@ -511,7 +528,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", _generateInterfaceProperties(assembly, allTypes));
-    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
+    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation, renameAliases));
     template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly,
       new JsonTypeCollections(allTypes, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes, polymorphicTypes)));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
@@ -1601,7 +1618,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string _generateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters, ImmutableArray<JsonMessageTypeInfo> messages, Compilation compilation) {
+  private static string _generateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters, ImmutableArray<JsonMessageTypeInfo> messages, Compilation compilation, ImmutableArray<RenameAlias> renameAliases) {
     // Load snippet template
     var createOptionsSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
@@ -1623,6 +1640,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Generate MessageEnvelope<T> wrapper type registrations for transport
     _generateEnvelopeTypeRegistrations(registrations, messageTypes, actualAssemblyName);
+
+    // Rename platform (P1): register FORMER type-name aliases so events written under a prior CLR name resolve.
+    _generateRenameAliasRegistrations(registrations, messageTypes, actualAssemblyName, renameAliases);
 
     // Replace placeholder and return
     return createOptionsSnippet.Replace("__CONVERTER_REGISTRATIONS__", registrations.ToString());
@@ -3160,6 +3180,73 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
              "    MessageJsonContext.Default);";
     });
     sb.AppendLine(string.Join("\n", envelopeRegistrations));
+  }
+
+  /// <summary>
+  /// Generates FORMER type-name alias registrations (rename platform, P1). For each former name a pinned type
+  /// has had — sourced from <c>.whizbang/pinned-type-ledger.json</c> — emits a
+  /// <c>RegisterTypeName(formerName, typeof(currentType), …)</c> (bare + MessageEnvelope&lt;T&gt; forms) so events
+  /// written into the append-only log under a prior CLR name still deserialize to the current type.
+  /// </summary>
+  /// <remarks>
+  /// Correlates the ledger's <c>currentClrTypeName</c> to a message in THIS assembly by CLR name (the P0 analyzer
+  /// guarantees they agree). Skips a former name that collides with a living type's own CLR name (name reuse) so
+  /// the alias never shadows a live registration, and de-dupes repeated former names.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRenameAliasTests.cs</tests>
+  /// <docs>fundamentals/identity/pinned-type-ledger</docs>
+  private static void _generateRenameAliasRegistrations(
+      System.Text.StringBuilder sb,
+      List<JsonMessageTypeInfo> messageTypes,
+      string actualAssemblyName,
+      ImmutableArray<RenameAlias> renameAliases) {
+
+    if (renameAliases.IsDefaultOrEmpty || messageTypes.Count == 0) {
+      return;
+    }
+
+    var fqnByClrName = new Dictionary<string, string>(StringComparer.Ordinal);
+    var livingClrNames = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var message in messageTypes) {
+      fqnByClrName[message.ClrTypeName] = message.FullyQualifiedName;
+      livingClrNames.Add(message.ClrTypeName);
+    }
+
+    var emitted = new List<string>();
+    var seenFormerNames = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var alias in renameAliases) {
+      // Only alias former names whose CURRENT type lives in this assembly (another assembly aliases its own).
+      if (!fqnByClrName.TryGetValue(alias.CurrentClrTypeName, out var fullyQualifiedName)) {
+        continue;
+      }
+      // Never shadow a live type that reuses the former name, and de-dupe.
+      if (livingClrNames.Contains(alias.FormerClrTypeName) || !seenFormerNames.Add(alias.FormerClrTypeName)) {
+        continue;
+      }
+
+      var formerQualified = $"{alias.FormerClrTypeName}, {actualAssemblyName}";
+      emitted.Add(
+        "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+        $"    \"{formerQualified}\",\n" +
+        $"    typeof({fullyQualifiedName}),\n" +
+        "    MessageJsonContext.Default);");
+
+      var formerEnvelope = $"Whizbang.Core.Observability.MessageEnvelope`1[[{formerQualified}]], Whizbang.Core";
+      emitted.Add(
+        "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+        $"    \"{formerEnvelope}\",\n" +
+        $"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{fullyQualifiedName}>),\n" +
+        "    MessageJsonContext.Default);");
+    }
+
+    if (emitted.Count == 0) {
+      return;
+    }
+
+    sb.AppendLine();
+    sb.AppendLine("  // Register FORMER type-name aliases (rename platform) so events written under a prior CLR");
+    sb.AppendLine("  // name still resolve to the current type. Sourced from .whizbang/pinned-type-ledger.json.");
+    sb.AppendLine(string.Join("\n", emitted));
   }
 
   // ========================================
