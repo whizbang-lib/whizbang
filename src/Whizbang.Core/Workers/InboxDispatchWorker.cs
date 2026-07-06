@@ -244,12 +244,13 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // Slice 31 PERF: per-message dispatch wall time. Surfaces whether inbox throughput is
     // bounded by the lifecycle invocation (security context + ReceptorInvoker + receptor body)
     // or by the surrounding plumbing (lease handle + DI scope + handler commit channel).
-    var dispatchStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+    // Timed via the injected TimeProvider (not raw Stopwatch) so tests can cross the
+    // slow-dispatch threshold with a FakeTimeProvider instead of wall-clock delays.
+    var dispatchStartTicks = _timeProvider.GetTimestamp();
     try {
       await ProcessOneInnerAsync(work, stoppingToken);
     } finally {
-      var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - dispatchStartTicks)
-        * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+      var totalMs = _timeProvider.GetElapsedTime(dispatchStartTicks).TotalMilliseconds;
       // v0.660 slice 8: always record into the per-message-type histogram so
       // operators can see distribution by event type without enabling Debug
       // logging. Operator dashboards filter the slow tail; nothing depends on

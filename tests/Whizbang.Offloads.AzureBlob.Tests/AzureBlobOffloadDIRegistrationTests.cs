@@ -87,6 +87,26 @@ public class AzureBlobOffloadDIRegistrationTests {
   }
 
   [Test]
+  public async Task AddWhizbangAzureBlobOffload_NullServices_ThrowsAsync() {
+    Action act = () => ((IServiceCollection)null!).AddWhizbangAzureBlobOffload("provider", opts => { });
+
+    var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(ex!.ParamName).IsEqualTo("services");
+  }
+
+  [Test]
+  public async Task AddWhizbangAzureBlobOffload_WhitespaceProviderName_ThrowsAsync() {
+    // A whitespace provider name would silently produce an unresolvable DI key
+    // (and could never match a claim's ProviderName) — rejected up front.
+    var services = new ServiceCollection();
+
+    Action act = () => services.AddWhizbangAzureBlobOffload("   ", opts => { });
+
+    var ex = await Assert.That(act).ThrowsExactly<ArgumentException>();
+    await Assert.That(ex!.ParamName).IsEqualTo("providerName");
+  }
+
+  [Test]
   public async Task AzureBlobMessageBodyStore_MissingConnectionString_ThrowsClearMessageAsync() {
     // Configure the option with an empty connection string and resolve the store.
     var services = new ServiceCollection();

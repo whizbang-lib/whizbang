@@ -661,35 +661,6 @@ public partial class ServiceBusConsumerWorker(
   }
 
   /// <summary>
-  /// Extracts event payload from InboxWork for processing.
-  /// Envelope is deserialized as MessageEnvelope&lt;JsonElement&gt;, so we need to deserialize the payload.
-  /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
-  private object? _deserializeEvent(InboxWork work) {
-    try {
-      // InboxWork envelope is IMessageEnvelope<JsonElement>
-      // Deserialize the JsonElement payload back to the actual event type
-      var jsonElement = work.Envelope.Payload;
-
-      // Use GetTypeInfoByName from JsonContextRegistry for AOT-safe cross-assembly type lookup
-      // This queries all registered type name mappings from all assemblies via ModuleInitializers
-      // Supports fuzzy matching on "TypeName, AssemblyName" (strips Version/Culture/PublicKeyToken)
-      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(work.MessageType, _jsonOptions);
-      if (jsonTypeInfo == null) {
-        LogCouldNotResolveJsonTypeInfo(_logger, work.MessageType, work.MessageId);
-        return null;
-      }
-
-      var @event = jsonElement.Deserialize(jsonTypeInfo);
-      return @event;
-    } catch (Exception ex) {
-      LogFailedToDeserializeEvent(_logger, work.MessageId, ex);
-      return null;
-    }
-  }
-
-  /// <summary>
   /// Extracts stream_id from envelope for stream-based ordering.
   /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>

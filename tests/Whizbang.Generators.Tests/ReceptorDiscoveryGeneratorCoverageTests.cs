@@ -55,12 +55,12 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("PingReceptor");
-    await Assert.That(registry!).DoesNotContain("GenericReceptor");
+    await Assert.That(registry).Contains("PingReceptor");
+    await Assert.That(registry).DoesNotContain("GenericReceptor");
 
     var registrations = GeneratorTestHelper.GetGeneratedSource(result, REGISTRATIONS_FILE);
     await Assert.That(registrations).IsNotNull();
-    await Assert.That(registrations!).DoesNotContain("GenericReceptor");
+    await Assert.That(registrations).DoesNotContain("GenericReceptor");
   }
 
   // ==================== [FireAt] stage extraction ====================
@@ -96,9 +96,9 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostInboxInline");
-    await Assert.That(registry!).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostPerspectiveInline");
-    await Assert.That(registry!).DoesNotContain("LifecycleStage.LocalImmediateDetached");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostInboxInline");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostPerspectiveInline");
+    await Assert.That(registry).DoesNotContain("LifecycleStage.LocalImmediateDetached");
   }
 
   /// <summary>
@@ -129,9 +129,9 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
     // Unknown stage value skipped -> receptor registered at the default stages
-    await Assert.That(registry!).Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached");
-    await Assert.That(registry!).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostInboxDetached");
-    await Assert.That(registry!).DoesNotContain("999");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostInboxDetached");
+    await Assert.That(registry).DoesNotContain("999");
   }
 
   // ==================== [AwaitPerspectiveSync] pipeline ====================
@@ -170,17 +170,17 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("ReceptorSyncAttributeInfo(PerspectiveType: typeof(global::MyApp.Receptors.OrderPerspective)");
-    await Assert.That(registry!).Contains("EventTypes: new global::System.Type[] { typeof(global::MyApp.Receptors.OrderPlaced) }");
-    await Assert.That(registry!).Contains("TimeoutMs: 1234");
-    await Assert.That(registry!).Contains("global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireAlways");
+    await Assert.That(registry).Contains("ReceptorSyncAttributeInfo(PerspectiveType: typeof(global::MyApp.Receptors.OrderPerspective)");
+    await Assert.That(registry).Contains("EventTypes: new global::System.Type[] { typeof(global::MyApp.Receptors.OrderPlaced) }");
+    await Assert.That(registry).Contains("TimeoutMs: 1234");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireAlways");
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("WaitForStreamAsync");
-    await Assert.That(dispatcher!).Contains("FromMilliseconds(1234)");
+    await Assert.That(dispatcher).Contains("WaitForStreamAsync");
+    await Assert.That(dispatcher).Contains("FromMilliseconds(1234)");
     // FireAlways (1) suppresses the FireOnSuccess timeout-throw block
-    await Assert.That(dispatcher!).DoesNotContain("SyncOutcome.TimedOut");
+    await Assert.That(dispatcher).DoesNotContain("SyncOutcome.TimedOut");
   }
 
   /// <summary>
@@ -213,15 +213,15 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("EventTypes: null");
-    await Assert.That(registry!).Contains("TimeoutMs: -1");
-    await Assert.That(registry!).Contains("global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess");
+    await Assert.That(registry).Contains("EventTypes: null");
+    await Assert.That(registry).Contains("TimeoutMs: -1");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess");
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("WaitForStreamAsync");
-    await Assert.That(dispatcher!).Contains("FromMilliseconds(5000)");
-    await Assert.That(dispatcher!).Contains("PerspectiveSyncTimeoutException");
+    await Assert.That(dispatcher).Contains("WaitForStreamAsync");
+    await Assert.That(dispatcher).Contains("FromMilliseconds(5000)");
+    await Assert.That(dispatcher).Contains("PerspectiveSyncTimeoutException");
   }
 
   /// <summary>
@@ -255,8 +255,8 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("[AwaitPerspectiveSync] ignored - message is not an IEvent");
-    await Assert.That(dispatcher!).DoesNotContain("WaitForStreamAsync");
+    await Assert.That(dispatcher).Contains("[AwaitPerspectiveSync] ignored - message is not an IEvent");
+    await Assert.That(dispatcher).DoesNotContain("WaitForStreamAsync");
   }
 
   /// <summary>
@@ -292,14 +292,14 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("typeof(global::MyApp.Receptors.PerspectiveA)");
-    await Assert.That(registry!).Contains("typeof(global::MyApp.Receptors.PerspectiveB)");
-    await Assert.That(registry!).Contains("typeof(global::MyApp.Receptors.PerspectiveC)");
-    await Assert.That(registry!).Contains("global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnEachEvent");
+    await Assert.That(registry).Contains("typeof(global::MyApp.Receptors.PerspectiveA)");
+    await Assert.That(registry).Contains("typeof(global::MyApp.Receptors.PerspectiveB)");
+    await Assert.That(registry).Contains("typeof(global::MyApp.Receptors.PerspectiveC)");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnEachEvent");
     // Unknown FireBehavior value (7) falls back to FireOnSuccess
-    await Assert.That(registry!).Contains("global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess");
     // Multiple entries -> comma-separated array elements
-    await Assert.That(registry!).Contains("), new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo(");
+    await Assert.That(registry).Contains("), new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo(");
   }
 
   // ==================== Replay / idempotency attribute flags ====================
@@ -337,8 +337,8 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("FireDuringReplay: true");
-    await Assert.That(registry!).Contains("IsIdempotent: false");
+    await Assert.That(registry).Contains("FireDuringReplay: true");
+    await Assert.That(registry).Contains("IsIdempotent: false");
   }
 
   /// <summary>
@@ -368,8 +368,8 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("FireDuringReplay: true");
-    await Assert.That(registry!).Contains("IsIdempotent: true");
+    await Assert.That(registry).Contains("FireDuringReplay: true");
+    await Assert.That(registry).Contains("IsIdempotent: true");
   }
 
   /// <summary>
@@ -399,8 +399,8 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("FireDuringReplay: false");
-    await Assert.That(registry!).Contains("IsIdempotent: true");
+    await Assert.That(registry).Contains("FireDuringReplay: false");
+    await Assert.That(registry).Contains("IsIdempotent: true");
   }
 
   // ==================== Traced void registry snippet ====================
@@ -433,13 +433,13 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("BeginHandlerTrace");
-    await Assert.That(registry!).Contains("EndHandlerTrace");
+    await Assert.That(registry).Contains("BeginHandlerTrace");
+    await Assert.That(registry).Contains("EndHandlerTrace");
     // Placeholders must be fully replaced (handler count / explicit flag)
-    await Assert.That(registry!).DoesNotContain("__HANDLER_COUNT__");
-    await Assert.That(registry!).DoesNotContain("__IS_EXPLICIT__");
+    await Assert.That(registry).DoesNotContain("__HANDLER_COUNT__");
+    await Assert.That(registry).DoesNotContain("__IS_EXPLICIT__");
     // Void receptor -> no result unwrapping in the invoke delegate for this receptor
-    await Assert.That(registry!).Contains("TracedVoidReceptor");
+    await Assert.That(registry).Contains("TracedVoidReceptor");
   }
 
   // ==================== [DefaultRouting] on sync receptor ====================
@@ -471,8 +471,8 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.CacheInvalidated)");
-    await Assert.That(dispatcher!).Contains("return global::Whizbang.Core.Dispatch.DispatchModes.Local;");
+    await Assert.That(dispatcher).Contains("typeof(global::MyApp.Receptors.CacheInvalidated)");
+    await Assert.That(dispatcher).Contains("return global::Whizbang.Core.Dispatch.DispatchModes.Local;");
   }
 
   // ==================== Polymorphic expansion: unresolvable metadata name ====================
@@ -508,8 +508,8 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("typeof(global::MyApp.Receptors.Contracts.ThingHappened)");
-    await Assert.That(registry!).Contains("ThingReceptor");
+    await Assert.That(registry).Contains("typeof(global::MyApp.Receptors.Contracts.ThingHappened)");
+    await Assert.That(registry).Contains("ThingReceptor");
   }
 
   // ==================== Tuple with array element cascade ====================
@@ -545,9 +545,9 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
     await Assert.That(dispatcher).IsNotNull();
     // Array element type cascaded, not the array type itself
-    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.ItemRemoved)");
-    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.CartCleared)");
-    await Assert.That(dispatcher!).DoesNotContain("typeof(global::MyApp.Receptors.ItemRemoved[])");
+    await Assert.That(dispatcher).Contains("typeof(global::MyApp.Receptors.ItemRemoved)");
+    await Assert.That(dispatcher).Contains("typeof(global::MyApp.Receptors.CartCleared)");
+    await Assert.That(dispatcher).DoesNotContain("typeof(global::MyApp.Receptors.ItemRemoved[])");
   }
 
   // ==================== Non-test assembly early exit ====================

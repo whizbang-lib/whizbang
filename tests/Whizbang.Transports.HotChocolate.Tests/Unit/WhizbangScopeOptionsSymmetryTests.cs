@@ -66,6 +66,37 @@ public class WhizbangScopeOptionsSymmetryTests {
     await Assert.That(list[0]).IsEqualTo("cust");
   }
 
+  [Test]
+  public async Task Organization_And_Customer_SingularGet_ReadFirstPluralEntryAsync() {
+    var opts = new WhizbangScopeOptions {
+      OrganizationIdClaimTypes = ["primary_org", "org_id"],
+      CustomerIdClaimTypes = ["primary_customer", "customer_id"],
+    };
+    await Assert.That(opts.OrganizationIdClaimType).IsEqualTo("primary_org");
+    await Assert.That(opts.CustomerIdClaimType).IsEqualTo("primary_customer");
+  }
+
+  [Test]
+  public async Task SingularGetters_EmptiedPluralLists_FallBackToLegacyDefaultsAsync() {
+    // Emptying every plural list exercises the null-coalescing arm of each singular
+    // getter shim — the legacy default names must come back rather than null.
+    var opts = new WhizbangScopeOptions {
+      TenantIdClaimTypes = [],
+      UserIdClaimTypes = [],
+      OrganizationIdClaimTypes = [],
+      CustomerIdClaimTypes = [],
+      PermissionsClaimTypes = [],
+      GroupsClaimTypes = [],
+    };
+
+    await Assert.That(opts.TenantIdClaimType).IsEqualTo("tenant_id");
+    await Assert.That(opts.UserIdClaimType).IsEqualTo(ClaimTypes.NameIdentifier);
+    await Assert.That(opts.OrganizationIdClaimType).IsEqualTo("org_id");
+    await Assert.That(opts.CustomerIdClaimType).IsEqualTo("customer_id");
+    await Assert.That(opts.PermissionsClaimType).IsEqualTo("permissions");
+    await Assert.That(opts.GroupsClaimType).IsEqualTo("groups");
+  }
+
   // ===== Defaults preserve legacy behavior =====
 
   [Test]

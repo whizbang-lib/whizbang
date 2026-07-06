@@ -15,6 +15,14 @@ public class AzureServiceBusOptions {
   public bool AutoProvisionInfrastructure { get; set; } = true;
 
   /// <summary>
+  /// Maximum time a single SendMessageAsync may take before the transport reports a
+  /// TimeoutException. Guards against the Azure Service Bus emulator's occasional
+  /// first-send hang (a plain CancellationToken also hangs there). Default 30 seconds.
+  /// </summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusErrorHandlingTests.cs</tests>
+  public TimeSpan SendTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+  /// <summary>
   /// How many messages can be processed at the same time by a single consumer instance.
   /// This controls throughput — higher values process more messages in parallel but use more resources.
   /// Only applies when <see cref="EnableSessions"/> is false (non-session mode).

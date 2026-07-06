@@ -41,9 +41,9 @@ public class StreamIdGeneratorCoverageTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).DoesNotContain("InternalOrderEvent");
-    await Assert.That(generated!).DoesNotContain("InternalAssignCommand");
-    await Assert.That(generated!).DoesNotContain("InternalComposite");
+    await Assert.That(generated).DoesNotContain("InternalOrderEvent");
+    await Assert.That(generated).DoesNotContain("InternalAssignCommand");
+    await Assert.That(generated).DoesNotContain("InternalComposite");
     // No discovery diagnostics and no missing-StreamId warning for skipped internal types.
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ010");
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ004");
@@ -74,11 +74,11 @@ public class StreamIdGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
     // Handled by the IEvent / ICommand dispatch paths...
-    await Assert.That(generated!).Contains("@event is global::TestNamespace.EventishComposite");
-    await Assert.That(generated!).Contains("command is global::TestNamespace.CommandishComposite");
+    await Assert.That(generated).Contains("@event is global::TestNamespace.EventishComposite");
+    await Assert.That(generated).Contains("command is global::TestNamespace.CommandishComposite");
     // ...and NOT by the object-typed composite dispatch (its cases use `message is <type>`).
-    await Assert.That(generated!).DoesNotContain("message is global::TestNamespace.EventishComposite");
-    await Assert.That(generated!).DoesNotContain("message is global::TestNamespace.CommandishComposite");
+    await Assert.That(generated).DoesNotContain("message is global::TestNamespace.EventishComposite");
+    await Assert.That(generated).DoesNotContain("message is global::TestNamespace.CommandishComposite");
   }
 
   [Test]
@@ -104,8 +104,8 @@ public class StreamIdGeneratorCoverageTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("message is global::TestNamespace.BulkRouteComposite");
-    await Assert.That(generated!).Contains("RouteId");
+    await Assert.That(generated).Contains("message is global::TestNamespace.BulkRouteComposite");
+    await Assert.That(generated).Contains("RouteId");
   }
 
   [Test]
@@ -128,11 +128,11 @@ public class StreamIdGeneratorCoverageTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("message is global::TestNamespace.FirstComposite");
-    await Assert.That(generated!).Contains("message is global::TestNamespace.SecondComposite");
+    await Assert.That(generated).Contains("message is global::TestNamespace.FirstComposite");
+    await Assert.That(generated).Contains("message is global::TestNamespace.SecondComposite");
     // Both dispatch cases get distinct pattern variables.
-    await Assert.That(generated!).Contains("TryExtractAsGuid(o0)");
-    await Assert.That(generated!).Contains("TryExtractAsGuid(o1)");
+    await Assert.That(generated).Contains("TryExtractAsGuid(o0)");
+    await Assert.That(generated).Contains("TryExtractAsGuid(o1)");
   }
 
   // --- [StreamId] on constructor parameters (events) ---
@@ -155,8 +155,8 @@ public class StreamIdGeneratorCoverageTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("ParamOrderPlaced");
-    await Assert.That(generated!).Contains("OrderId");
+    await Assert.That(generated).Contains("ParamOrderPlaced");
+    await Assert.That(generated).Contains("OrderId");
 
     var discovered = result.Diagnostics.Where(d => d.Id == "WHIZ010").ToArray();
     await Assert.That(discovered).Count().IsEqualTo(1);
@@ -182,9 +182,9 @@ public class StreamIdGeneratorCoverageTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("GetGenerationPolicy");
-    await Assert.That(generated!).Contains("message is global::TestNamespace.ParamArchive");
-    await Assert.That(generated!).Contains("(true, true)");
+    await Assert.That(generated).Contains("GetGenerationPolicy");
+    await Assert.That(generated).Contains("message is global::TestNamespace.ParamArchive");
+    await Assert.That(generated).Contains("(true, true)");
   }
 
   [Test]
@@ -206,8 +206,8 @@ public class StreamIdGeneratorCoverageTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("message is global::TestNamespace.ParamClassGen");
-    await Assert.That(generated!).Contains("(true, false)");
+    await Assert.That(generated).Contains("message is global::TestNamespace.ParamClassGen");
+    await Assert.That(generated).Contains("(true, false)");
   }
 
   [Test]
@@ -241,8 +241,8 @@ public class StreamIdGeneratorCoverageTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).DoesNotContain("CtorParamEvent");
-    await Assert.That(generated!).DoesNotContain("CtorParamCommand");
+    await Assert.That(generated).DoesNotContain("CtorParamEvent");
+    await Assert.That(generated).DoesNotContain("CtorParamCommand");
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ010");
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ004");
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ009");
@@ -275,14 +275,14 @@ public class StreamIdGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
     // Command dispatch + try-dispatch cases.
-    await Assert.That(generated!).Contains("command is global::TestNamespace.AssignOrderCommand c0");
-    await Assert.That(generated!).Contains("TryExtractAsGuidFromCommand(c0)");
+    await Assert.That(generated).Contains("command is global::TestNamespace.AssignOrderCommand c0");
+    await Assert.That(generated).Contains("TryExtractAsGuidFromCommand(c0)");
     // Command extractor methods (non-nullable Guid → no null check).
-    await Assert.That(generated!).Contains("public static string ExtractFromCommand(global::TestNamespace.AssignOrderCommand command)");
-    await Assert.That(generated!).Contains("private static global::System.Guid? TryExtractAsGuidFromCommand(global::TestNamespace.AssignOrderCommand command)");
+    await Assert.That(generated).Contains("public static string ExtractFromCommand(global::TestNamespace.AssignOrderCommand command)");
+    await Assert.That(generated).Contains("private static global::System.Guid? TryExtractAsGuidFromCommand(global::TestNamespace.AssignOrderCommand command)");
     // Mutable Guid [StreamId] → SetStreamId writer case is generated.
-    await Assert.That(generated!).Contains("message is global::TestNamespace.AssignOrderCommand setC0");
-    await Assert.That(generated!).Contains("setC0.OrderId = streamId;");
+    await Assert.That(generated).Contains("message is global::TestNamespace.AssignOrderCommand setC0");
+    await Assert.That(generated).Contains("setC0.OrderId = streamId;");
   }
 
   [Test]
@@ -305,9 +305,9 @@ public class StreamIdGeneratorCoverageTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("command is global::TestNamespace.RenameOrderCommand c0");
-    await Assert.That(generated!).Contains("public static string ExtractFromCommand(global::TestNamespace.RenameOrderCommand command)");
-    await Assert.That(generated!).Contains("OrderId");
+    await Assert.That(generated).Contains("command is global::TestNamespace.RenameOrderCommand c0");
+    await Assert.That(generated).Contains("public static string ExtractFromCommand(global::TestNamespace.RenameOrderCommand command)");
+    await Assert.That(generated).Contains("OrderId");
   }
 
   [Test]
@@ -357,9 +357,9 @@ public class StreamIdGeneratorCoverageTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("GetGenerationPolicy");
-    await Assert.That(generated!).Contains("message is global::TestNamespace.OpenOrderCommand");
-    await Assert.That(generated!).Contains("(true, true)");
+    await Assert.That(generated).Contains("GetGenerationPolicy");
+    await Assert.That(generated).Contains("message is global::TestNamespace.OpenOrderCommand");
+    await Assert.That(generated).Contains("(true, true)");
   }
 
   [Test]
@@ -399,15 +399,15 @@ public class StreamIdGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
     // Guid? → NULLABLE_GUID snippet: direct return of the property.
-    await Assert.That(generated!).Contains("return command.RefId;");
+    await Assert.That(generated).Contains("return command.RefId;");
     // string → STRING snippet: null/whitespace check then Guid.TryParse on the raw string.
-    await Assert.That(generated!).Contains("var key = command.OrderKey;");
-    await Assert.That(generated!).Contains("global::System.Guid.TryParse(key, out var guid)");
+    await Assert.That(generated).Contains("var key = command.OrderKey;");
+    await Assert.That(generated).Contains("global::System.Guid.TryParse(key, out var guid)");
     // int (non-Guid value type) → VALUE_TYPE snippet: ToString() directly on the property.
-    await Assert.That(generated!).Contains("var keyString = command.Counter.ToString();");
+    await Assert.That(generated).Contains("var keyString = command.Counter.ToString();");
     // int? (nullable value type) → OTHER snippet: null check then ToString() on the boxed key.
-    await Assert.That(generated!).Contains("var key = command.MaybeCounter;");
-    await Assert.That(generated!).Contains("var keyString = key.ToString();");
+    await Assert.That(generated).Contains("var key = command.MaybeCounter;");
+    await Assert.That(generated).Contains("var keyString = key.ToString();");
   }
 
   // --- Event try-extractor snippet selection (string / value type / other) ---
@@ -432,10 +432,10 @@ public class StreamIdGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
     // STRING snippet parses the raw string value.
-    await Assert.That(generated!).Contains("var key = @event.OrderKey;");
-    await Assert.That(generated!).Contains("global::System.Guid.TryParse(key, out var guid)");
+    await Assert.That(generated).Contains("var key = @event.OrderKey;");
+    await Assert.That(generated).Contains("global::System.Guid.TryParse(key, out var guid)");
     // string is nullable-ish → the throwing Extract uses the null/empty-checking variant.
-    await Assert.That(generated!).Contains("Stream ID 'OrderKey' on NamedEvent cannot be empty.");
+    await Assert.That(generated).Contains("Stream ID 'OrderKey' on NamedEvent cannot be empty.");
   }
 
   [Test]
@@ -458,7 +458,7 @@ public class StreamIdGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
     // VALUE_TYPE snippet calls ToString() directly on the (non-nullable) struct property.
-    await Assert.That(generated!).Contains("var keyString = @event.Counter.ToString();");
+    await Assert.That(generated).Contains("var keyString = @event.Counter.ToString();");
   }
 
   [Test]
@@ -481,8 +481,8 @@ public class StreamIdGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generated).IsNotNull();
     // OTHER snippet: null check, then ToString() on the captured key.
-    await Assert.That(generated!).Contains("var key = @event.Counter;");
-    await Assert.That(generated!).Contains("var keyString = key.ToString();");
+    await Assert.That(generated).Contains("var key = @event.Counter;");
+    await Assert.That(generated).Contains("var keyString = key.ToString();");
   }
 
   // --- Generated code compiles ---

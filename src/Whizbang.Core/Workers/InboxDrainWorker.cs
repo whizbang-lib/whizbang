@@ -149,15 +149,6 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     }
   }
 
-  private async Task _drainStreamAsync(Guid streamId, CancellationToken ct) {
-    _drainChannel.MarkDraining(streamId);
-    try {
-      await _drainStreamInnerAsync(streamId, ct);
-    } finally {
-      _drainChannel.MarkDrained(streamId);
-    }
-  }
-
   /// <summary>
   /// v0.685 — batched-fetch drain for a set of stream_ids. One multi-stream
   /// <see cref="IWorkCoordinator.FetchInboxBatchAsync"/> call amortizes the

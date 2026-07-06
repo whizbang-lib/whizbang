@@ -18,7 +18,7 @@ public class PerspectiveEventsSchemaTests {
     var tableName = PerspectiveEventsSchema.Table.Name;
 
     // Assert
-    var constantName = PerspectiveEventsSchema.TABLE_NAME;
+    const string constantName = PerspectiveEventsSchema.TABLE_NAME;
     await Assert.That(tableName).IsEqualTo("perspective_events");
     await Assert.That(tableName).IsEqualTo(constantName)
       .Because("The TABLE_NAME constant and the TableDefinition must agree.");
@@ -194,38 +194,38 @@ public class PerspectiveEventsSchemaTests {
   [Category("Schema")]
   public async Task Columns_Constants_MatchColumnNamesAsync() {
     // Arrange & Act - Get all column constants
-    var eventWorkId = PerspectiveEventsSchema.Columns.EVENT_WORK_ID;
-    var streamId = PerspectiveEventsSchema.Columns.STREAM_ID;
-    var perspectiveName = PerspectiveEventsSchema.Columns.PERSPECTIVE_NAME;
-    var eventId = PerspectiveEventsSchema.Columns.EVENT_ID;
-    var sequenceNumber = PerspectiveEventsSchema.Columns.SEQUENCE_NUMBER;
-    var instanceId = PerspectiveEventsSchema.Columns.INSTANCE_ID;
-    var leaseExpiry = PerspectiveEventsSchema.Columns.LEASE_EXPIRY;
-    var status = PerspectiveEventsSchema.Columns.STATUS;
-    var attempts = PerspectiveEventsSchema.Columns.ATTEMPTS;
-    var error = PerspectiveEventsSchema.Columns.ERROR;
-    var createdAt = PerspectiveEventsSchema.Columns.CREATED_AT;
-    var claimedAt = PerspectiveEventsSchema.Columns.CLAIMED_AT;
-    var processedAt = PerspectiveEventsSchema.Columns.PROCESSED_AT;
-    var scheduledFor = PerspectiveEventsSchema.Columns.SCHEDULED_FOR;
-    var failureReason = PerspectiveEventsSchema.Columns.FAILURE_REASON;
+    const string eventWorkId = PerspectiveEventsSchema.Columns.EVENT_WORK_ID;
+    const string streamId = PerspectiveEventsSchema.Columns.STREAM_ID;
+    const string perspectiveName = PerspectiveEventsSchema.Columns.PERSPECTIVE_NAME;
+    const string eventId = PerspectiveEventsSchema.Columns.EVENT_ID;
+    const string sequenceNumber = PerspectiveEventsSchema.Columns.SEQUENCE_NUMBER;
+    const string instanceId = PerspectiveEventsSchema.Columns.INSTANCE_ID;
+    const string leaseExpiry = PerspectiveEventsSchema.Columns.LEASE_EXPIRY;
+    const string status = PerspectiveEventsSchema.Columns.STATUS;
+    const string attempts = PerspectiveEventsSchema.Columns.ATTEMPTS;
+    const string error = PerspectiveEventsSchema.Columns.ERROR;
+    const string createdAt = PerspectiveEventsSchema.Columns.CREATED_AT;
+    const string claimedAt = PerspectiveEventsSchema.Columns.CLAIMED_AT;
+    const string processedAt = PerspectiveEventsSchema.Columns.PROCESSED_AT;
+    const string scheduledFor = PerspectiveEventsSchema.Columns.SCHEDULED_FOR;
+    const string failureReason = PerspectiveEventsSchema.Columns.FAILURE_REASON;
 
     // Assert - Verify constants match column names
-    await Assert.That(eventWorkId).IsEqualTo("event_work_id");
-    await Assert.That(streamId).IsEqualTo("stream_id");
-    await Assert.That(perspectiveName).IsEqualTo("perspective_name");
-    await Assert.That(eventId).IsEqualTo("event_id");
-    await Assert.That(sequenceNumber).IsEqualTo("sequence_number");
-    await Assert.That(instanceId).IsEqualTo("instance_id");
-    await Assert.That(leaseExpiry).IsEqualTo("lease_expiry");
-    await Assert.That(status).IsEqualTo("status");
-    await Assert.That(attempts).IsEqualTo("attempts");
-    await Assert.That(error).IsEqualTo("error");
-    await Assert.That(createdAt).IsEqualTo("created_at");
-    await Assert.That(claimedAt).IsEqualTo("claimed_at");
-    await Assert.That(processedAt).IsEqualTo("processed_at");
-    await Assert.That(scheduledFor).IsEqualTo("scheduled_for");
-    await Assert.That(failureReason).IsEqualTo("failure_reason");
+    await Assert.That(_columnNameOf(eventWorkId)).IsEqualTo("event_work_id");
+    await Assert.That(_columnNameOf(streamId)).IsEqualTo("stream_id");
+    await Assert.That(_columnNameOf(perspectiveName)).IsEqualTo("perspective_name");
+    await Assert.That(_columnNameOf(eventId)).IsEqualTo("event_id");
+    await Assert.That(_columnNameOf(sequenceNumber)).IsEqualTo("sequence_number");
+    await Assert.That(_columnNameOf(instanceId)).IsEqualTo("instance_id");
+    await Assert.That(_columnNameOf(leaseExpiry)).IsEqualTo("lease_expiry");
+    await Assert.That(_columnNameOf(status)).IsEqualTo("status");
+    await Assert.That(_columnNameOf(attempts)).IsEqualTo("attempts");
+    await Assert.That(_columnNameOf(error)).IsEqualTo("error");
+    await Assert.That(_columnNameOf(createdAt)).IsEqualTo("created_at");
+    await Assert.That(_columnNameOf(claimedAt)).IsEqualTo("claimed_at");
+    await Assert.That(_columnNameOf(processedAt)).IsEqualTo("processed_at");
+    await Assert.That(_columnNameOf(scheduledFor)).IsEqualTo("scheduled_for");
+    await Assert.That(_columnNameOf(failureReason)).IsEqualTo("failure_reason");
   }
 
   [Test]
@@ -259,4 +259,10 @@ public class PerspectiveEventsSchemaTests {
       await Assert.That(tableColumnNames).Contains(constant);
     }
   }
+
+  /// <summary>Round-trips a column-name constant through the runtime TableDefinition so the
+  /// asserted value is non-constant (TUnitAssertions0005) while proving the constant names
+  /// a real column.</summary>
+  private static string _columnNameOf(string constantName) =>
+    PerspectiveEventsSchema.Table.Columns.Single(c => c.Name == constantName).Name;
 }

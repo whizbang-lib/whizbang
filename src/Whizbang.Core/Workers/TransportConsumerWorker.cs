@@ -645,80 +645,6 @@ public partial class TransportConsumerWorker : BackgroundService {
     }
   }
 
-  /// <summary>
-  /// Global concurrency gate — limits total concurrent handlers across all subscriptions to
-  /// prevent connection pool exhaustion. Self-echo discards do NOT consume a slot because they
-  /// short-circuit before this call. Records wait-duration and concurrent-messages metrics.
-  /// </summary>
-  private async Task _acquireInboxConcurrencySlotAsync(
-      KeyValuePair<string, object?> messageTypeTag, CancellationToken cancellationToken) {
-    if (_concurrencySemaphore is null) {
-      return;
-    }
-    var semaphoreSw = Stopwatch.StartNew();
-    await _concurrencySemaphore.WaitAsync(cancellationToken);
-    semaphoreSw.Stop();
-    _metrics?.InboxConcurrencyWaitDuration.Record(semaphoreSw.Elapsed.TotalMilliseconds, messageTypeTag);
-    _metrics?.InboxConcurrentMessages.Add(1, messageTypeTag);
-  }
-
-  /// <summary>Releases the concurrency slot acquired by _acquireInboxConcurrencySlotAsync and
-  /// decrements the concurrent-messages metric. Safe to call unconditionally — when no semaphore
-  /// is configured the method is a no-op.</summary>
-  private void _releaseInboxConcurrencySlot(KeyValuePair<string, object?> messageTypeTag) {
-    if (_concurrencySemaphore is null) {
-      return;
-    }
-    _concurrencySemaphore.Release();
-    _metrics?.InboxConcurrentMessages.Add(-1, messageTypeTag);
-  }
-
-  /// <summary>
-  /// Body of the try-block: scope up, establish security context, serialize the inbox message,
-  /// run strategy dedup, and record metrics. Duplicates short-circuit with a log. The transport
-  /// consumer's responsibility ends when the message is safely in the Postgres inbox —
-  /// downstream Process/PostInbox/completion work is owned by WorkCoordinatorPublisherWorker
-  /// via claim_orphaned_inbox.
-  /// </summary>
-  private async Task _acceptInboxMessageAsync(
-      IMessageEnvelope envelope,
-      string? envelopeType,
-      KeyValuePair<string, object?> messageTypeTag,
-      Activity? inboxActivity,
-      CancellationToken cancellationToken) {
-    await using var scope = _scopeFactory.CreateAsyncScope();
-
-    var securitySw = Stopwatch.StartNew();
-    await SecurityContextHelper.EstablishFullContextAsync(envelope, scope.ServiceProvider, cancellationToken);
-    securitySw.Stop();
-    _metrics?.InboxSecurityContextDuration.Record(securitySw.Elapsed.TotalMilliseconds, messageTypeTag);
-
-    var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-
-    if (_logger.IsEnabled(LogLevel.Debug)) {
-      _logger.LogDebug("Processing message {MessageId} from transport", envelope.MessageId);
-    }
-
-    _populateDeliveredAtTimestamp(envelope, envelopeType);
-
-    var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scope.ServiceProvider, messageTypeTag, cancellationToken);
-
-    if (myWork.Count == 0) {
-      _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
-      if (_logger.IsEnabled(LogLevel.Information)) {
-        _logger.LogInformation("Message {MessageId} already processed (duplicate), skipping", envelope.MessageId);
-      }
-      return;
-    }
-
-    if (_logger.IsEnabled(LogLevel.Debug)) {
-      _logger.LogDebug("Message {MessageId} accepted into inbox ({WorkCount} work items) — processing deferred to WorkCoordinatorPublisherWorker", envelope.MessageId, myWork.Count);
-    }
-
-    _metrics?.InboxMessagesProcessed.Add(1, messageTypeTag);
-    inboxActivity?.SetStatus(ActivityStatusCode.Ok);
-  }
-
   private static Activity? _startInboxActivity(IMessageEnvelope envelope, string messageType) {
     var traceParent = envelope.Hops?
       .Where(h => h.Type == HopType.Current)
@@ -735,21 +661,6 @@ public partial class TransportConsumerWorker : BackgroundService {
     activity?.SetTag("messaging.operation", "receive");
     activity?.SetTag("whizbang.hop_count", envelope.Hops?.Count ?? 0);
     return activity;
-  }
-
-  private async Task<List<InboxWork>> _serializeAndDeduplicateAsync(
-    IMessageEnvelope envelope, string? envelopeType, IWorkCoordinatorStrategy strategy,
-    IServiceProvider scopedProvider, KeyValuePair<string, object?> messageTypeTag,
-    CancellationToken cancellationToken) {
-    var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
-    strategy.QueueInboxMessage(newInboxMessage);
-
-    var dedupSw = Stopwatch.StartNew();
-    var workBatch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
-    dedupSw.Stop();
-    _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
-
-    return [.. workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value)];
   }
 
   internal static async Task InvokePostLifecycleForEventAsync(
@@ -791,36 +702,6 @@ public partial class TransportConsumerWorker : BackgroundService {
   }
 
   /// <summary>
-  /// Fires a Detached lifecycle stage as fire-and-forget with its own DI scope.
-  /// The receptor runs independently on the thread pool — if it calls WaitForStreamAsync,
-  /// it blocks its own task, not the worker pipeline.
-  /// ImmediateDetached is chained in the same closure.
-  /// </summary>
-  private void _fireDetachedStageAsync(
-      IMessageEnvelope envelope, LifecycleStage stage,
-      LifecycleExecutionContext context, CancellationToken ct) {
-    var task = Task.Run(async () => {
-      try {
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        await SecurityContextHelper.EstablishFullContextAsync(envelope, scope.ServiceProvider, ct);
-        var invoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-        if (invoker is null) {
-          return;
-        }
-        var ctx = context with { CurrentStage = stage };
-        await invoker.InvokeAsync(envelope, stage, ctx, ct);
-        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
-      } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-        // Graceful shutdown — suppress
-      } catch (Exception ex) {
-        LogDetachedStageError(_logger, ex, stage, envelope.MessageId.Value);
-      }
-    }, ct);
-    _detachedTasks.Add(task);
-  }
-
-  /// <summary>
   /// Waits for all in-flight detached tasks to complete.
   /// Used for graceful shutdown and testing.
   /// </summary>
@@ -855,33 +736,6 @@ public partial class TransportConsumerWorker : BackgroundService {
         // Static context — errors surface via receptor telemetry
       }
     });
-  }
-
-  /// <summary>
-  /// Checks if the given message type is an event type that has NO associated perspectives.
-  /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
-  /// Events without perspectives need PostLifecycle fired here immediately.
-  /// </summary>
-  private static bool _isEventWithoutPerspectives(string messageType, IServiceProvider serviceProvider) {
-    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
-    if (registry is null) {
-      // No perspectives registered at all - all events are "without perspectives"
-      return true;
-    }
-
-    var normalizedMessageType = EventTypeMatchingHelper.NormalizeTypeName(messageType);
-
-    var perspectives = registry.GetRegisteredPerspectives();
-    foreach (var perspective in perspectives) {
-      foreach (var eventType in perspective.EventTypes) {
-        var normalizedEventType = EventTypeMatchingHelper.NormalizeTypeName(eventType);
-        if (string.Equals(normalizedMessageType, normalizedEventType, StringComparison.Ordinal)) {
-          return false; // This event type has at least one perspective
-        }
-      }
-    }
-
-    return true; // No perspectives handle this event type
   }
 
   /// <summary>
@@ -995,26 +849,6 @@ public partial class TransportConsumerWorker : BackgroundService {
   }
 
   /// <summary>
-  /// Deserializes event payload from InboxWork.
-  /// </summary>
-  private object? _deserializeEvent(InboxWork work) {
-    try {
-      var jsonElement = work.Envelope.Payload;
-      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(work.MessageType, _jsonOptions);
-      if (jsonTypeInfo == null) {
-        _logger.LogError("Could not resolve JsonTypeInfo for type {MessageType} for message {MessageId}",
-          work.MessageType, work.MessageId);
-        return null;
-      }
-
-      return jsonElement.Deserialize(jsonTypeInfo);
-    } catch (Exception ex) {
-      _logger.LogError(ex, "Failed to deserialize event for message {MessageId}", work.MessageId);
-      return null;
-    }
-  }
-
-  /// <summary>
   /// Extracts stream_id from envelope for stream-based ordering.
   /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>
@@ -1111,13 +945,6 @@ public partial class TransportConsumerWorker : BackgroundService {
         TimestampKind.DeliveredAt,
         DateTimeOffset.UtcNow);
   }
-
-  /// <summary>Logs that a message was dropped during shutdown due to ObjectDisposedException.</summary>
-  [LoggerMessage(
-    Level = LogLevel.Debug,
-    Message = "Message {MessageId} dropped during shutdown (ObjectDisposedException)"
-  )]
-  private static partial void LogMessageDroppedDuringShutdown(ILogger logger, Guid messageId);
 
   /// <summary>Logs that an owned event was discarded (owned events arriving from transport are always echo).</summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>

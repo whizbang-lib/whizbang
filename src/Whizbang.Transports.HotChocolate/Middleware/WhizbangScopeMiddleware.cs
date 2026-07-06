@@ -101,22 +101,6 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
     };
   }
 
-  private static string? _extractValue(HttpContext context, string claimType, string headerName) {
-    // First try claims
-    var claimValue = context.User?.FindFirst(claimType)?.Value;
-    if (!string.IsNullOrEmpty(claimValue)) {
-      return claimValue;
-    }
-
-    // Then try headers
-    if (context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
-        !string.IsNullOrEmpty(headerValue)) {
-      return headerValue!;
-    }
-
-    return null;
-  }
-
   /// <summary>
   /// Extracts a value trying multiple claim types in order (for fallback scenarios).
   /// Tries each claim type until one is found, then falls back to header.

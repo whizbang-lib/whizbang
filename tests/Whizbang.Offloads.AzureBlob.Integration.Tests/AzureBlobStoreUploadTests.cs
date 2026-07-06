@@ -170,7 +170,7 @@ public class AzureBlobStoreUploadTests {
     await using var provider = _buildProvider(connectionString, containerName);
     var store = provider.GetRequiredKeyedService<IMessageBodyStore>("azurite");
 
-    var expectedEmptyHash = "sha256-" + Convert.ToHexString(SHA256.HashData(ReadOnlySpan<byte>.Empty));
+    var expectedEmptyHash = "sha256-" + Convert.ToHexString(SHA256.HashData([]));
 
     var claim = await store.UploadAsync(ReadOnlyMemory<byte>.Empty, "application/octet-stream");
 

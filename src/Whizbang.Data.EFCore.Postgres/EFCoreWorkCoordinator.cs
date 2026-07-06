@@ -121,13 +121,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 #pragma warning restore RCS1158
 
-  private string _serializeCompletions(MessageCompletion[] completions) {
-    if (completions.Length == 0) { return "[]"; }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageCompletion[]. Ensure the type is registered.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
   private string _serializeFailures(MessageFailure[] failures) {
     if (failures.Length == 0) { return "[]"; }
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageFailure[]))
@@ -1151,19 +1144,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     return results;
-  }
-
-  /// <summary>
-  /// Handles PostgreSQL RAISE DEBUG messages by logging them at Debug level.
-  /// Notices are only generated when WorkBatchOptions.DebugMode is set in the SQL function.
-  /// </summary>
-  private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var severity = args.Notice.Severity;
-      var message = args.Notice.MessageText;
-      _logger.LogDebug("PostgreSQL Notice [{Severity}]: {Message}",
-        severity, message);
-    }
   }
 
   /// <inheritdoc/>
