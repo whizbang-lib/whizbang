@@ -98,9 +98,16 @@ jobs:
     with:
       artifact-name: build-${{ github.run_id }}
 
+  azureblob-integration:
+    name: AzureBlob Integration
+    needs: build
+    uses: ./.github/workflows/reusable-test-azureblob.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
+
   quality:
     name: Quality
-    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration]
+    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
     uses: ./.github/workflows/reusable-quality.yml
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -293,7 +300,7 @@ jobs:
 
   notify-failure:
     name: Notify Failure
-    needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, quality]
+    needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
     if: failure() && github.ref != 'refs/heads/develop' && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
@@ -313,7 +320,7 @@ jobs:
 
   notify-cancelled:
     name: Notify Cancelled
-    needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, quality]
+    needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
     if: cancelled() && github.ref != 'refs/heads/develop' && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
