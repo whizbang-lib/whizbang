@@ -20,7 +20,7 @@ namespace Whizbang.Generators.Analyzers;
 /// Abstract types, interfaces, and non-message types are skipped so adoption can be gradual.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-type-ledger</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PinnedIdAnalyzer : DiagnosticAnalyzer {

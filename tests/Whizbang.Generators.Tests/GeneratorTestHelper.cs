@@ -4,6 +4,7 @@ using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Whizbang.Generators.Tests;
 
@@ -17,9 +18,12 @@ public static class GeneratorTestHelper {
   /// </summary>
   /// <typeparam name="TGenerator">The type of generator to run</typeparam>
   /// <param name="source">The C# source code to compile</param>
+  /// <param name="additionalFiles">Optional (path, content) pairs surfaced to the generator as AdditionalFiles
+  /// (e.g. a .whizbang/pinned-type-ledger.json consumed via AdditionalTextsProvider). Null/empty means none.</param>
   /// <returns>The generator driver result containing generated sources and diagnostics</returns>
   [RequiresAssemblyFiles()]
-  public static GeneratorDriverRunResult RunGenerator<TGenerator>(string source)
+  public static GeneratorDriverRunResult RunGenerator<TGenerator>(
+      string source, (string path, string content)[]? additionalFiles = null)
       where TGenerator : IIncrementalGenerator, new() {
 
     // Parse the source code
@@ -108,14 +112,27 @@ public static class GeneratorTestHelper {
     // Create generator instance
     var generator = new TGenerator();
 
-    // Create generator driver
-    var driver = CSharpGeneratorDriver.Create(generator);
+    // Create generator driver, surfacing any AdditionalFiles (e.g. the pinned-type ledger) to the generator.
+    var driver = additionalFiles is { Length: > 0 }
+        ? CSharpGeneratorDriver.Create(
+            generators: [generator.AsSourceGenerator()],
+            additionalTexts: additionalFiles
+                .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
+                .ToImmutableArray())
+        : CSharpGeneratorDriver.Create(generator);
 
     // Run the generator
     driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
 
     // Get the results
     return driver.GetRunResult();
+  }
+
+  /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>
+  private sealed class TestAdditionalText(string path, string content) : AdditionalText {
+    public override string Path { get; } = path;
+    public override SourceText GetText(System.Threading.CancellationToken cancellationToken = default)
+      => SourceText.From(content);
   }
 
   /// <summary>
@@ -251,7 +268,8 @@ public static class GeneratorTestHelper {
   /// and the only remaining errors come from the generated output.
   /// </summary>
   [RequiresAssemblyFiles()]
-  public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors<TGenerator>(string source)
+  public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors<TGenerator>(
+      string source, (string path, string content)[]? additionalFiles = null)
       where TGenerator : IIncrementalGenerator, new() {
 
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
@@ -263,7 +281,13 @@ public static class GeneratorTestHelper {
     );
 
     var generator = new TGenerator();
-    var driver = CSharpGeneratorDriver.Create(generator);
+    var driver = additionalFiles is { Length: > 0 }
+        ? CSharpGeneratorDriver.Create(
+            generators: [generator.AsSourceGenerator()],
+            additionalTexts: additionalFiles
+                .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
+                .ToImmutableArray())
+        : CSharpGeneratorDriver.Create(generator);
     _ = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out _);
 
     return outputCompilation.GetDiagnostics()
