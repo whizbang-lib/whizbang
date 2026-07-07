@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Text;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
@@ -48,7 +47,7 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
     var rows = await connection.QueryAsync<ReconcileRow>(
       new CommandDefinition(
         "SELECT o_action AS Action, o_pinned_id AS PinnedId, o_clr_type_name AS ClrTypeName, o_stored_clr_type_name AS StoredClrTypeName FROM reconcile_message_type_registry(@Entries::jsonb)",
-        new { Entries = _serializeEntries(entries) },
+        new { Entries = MessageTypeRegistryJson.Serialize(entries) },
         cancellationToken: cancellationToken));
 
     var inserted = 0;
@@ -90,63 +89,4 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
   }
 
   private sealed record ReconcileRow(string Action, Guid? PinnedId, string ClrTypeName, string? StoredClrTypeName);
-
-  private static string _serializeEntries(IReadOnlyList<MessageTypeCatalogEntry> entries) {
-    var sb = new StringBuilder("[");
-    for (var i = 0; i < entries.Count; i++) {
-      var e = entries[i];
-      if (i > 0) {
-        sb.Append(',');
-      }
-      sb.Append("{\"ClrTypeName\":").Append(_jsonString(e.ClrTypeName))
-        .Append(",\"PinnedId\":").Append(e.PinnedId is null ? "null" : _jsonString(e.PinnedId))
-        .Append(",\"Kind\":").Append(_jsonString(e.Kind))
-        .Append(",\"FormerNames\":").Append(_jsonArray(e.FormerNames))
-        .Append('}');
-    }
-    sb.Append(']');
-    return sb.ToString();
-  }
-
-  private static string _jsonArray(IReadOnlyList<string> values) {
-    if (values is null || values.Count == 0) {
-      return "[]";
-    }
-    var sb = new StringBuilder("[");
-    for (var i = 0; i < values.Count; i++) {
-      if (i > 0) {
-        sb.Append(',');
-      }
-      sb.Append(_jsonString(values[i]));
-    }
-    sb.Append(']');
-    return sb.ToString();
-  }
-
-  private static string _jsonString(string? value) {
-    if (value is null) {
-      return "null";
-    }
-    var sb = new StringBuilder("\"");
-    foreach (var c in value) {
-      switch (c) {
-        case '"': sb.Append("\\\""); break;
-        case '\\': sb.Append("\\\\"); break;
-        case '\b': sb.Append("\\b"); break;
-        case '\f': sb.Append("\\f"); break;
-        case '\n': sb.Append("\\n"); break;
-        case '\r': sb.Append("\\r"); break;
-        case '\t': sb.Append("\\t"); break;
-        default:
-          if (c < 0x20) {
-            sb.AppendFormat(System.Globalization.CultureInfo.InvariantCulture, "\\u{0:X4}", (int)c);
-          } else {
-            sb.Append(c);
-          }
-          break;
-      }
-    }
-    sb.Append('"');
-    return sb.ToString();
-  }
 }
