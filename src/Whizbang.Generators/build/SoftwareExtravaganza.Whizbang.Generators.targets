@@ -47,12 +47,15 @@
     </Task>
   </UsingTask>
 
-  <!-- Post-build task to extract message registry JSON from generated C# file -->
+  <!-- Post-build task to extract message registry JSON from generated C# file.
+       message-registry.json is a REGENERABLE artifact (rebuilt from source on every compile), so it
+       lives in the git-ignored .whizbang-generated/ folder — NOT beside the committed ledger in
+       .whizbang/. Convention: .whizbang-generated/ = ephemeral/ignored, .whizbang/ = committed. -->
   <Target Name="WhizbangExtractMessageRegistry" AfterTargets="Build" Condition="'$(WhizbangEmitMessageRegistry)' == 'true'">
     <PropertyGroup>
-      <WhizbangDir>$(MSBuildProjectDirectory)/.whizbang</WhizbangDir>
+      <WhizbangGeneratedDir>$(MSBuildProjectDirectory)/.whizbang-generated</WhizbangGeneratedDir>
       <WhizbangGeneratedCSharpFile>$(CompilerGeneratedFilesOutputPath)/Whizbang.Generators/Whizbang.Generators.MessageRegistryGenerator/MessageRegistry.g.cs</WhizbangGeneratedCSharpFile>
-      <WhizbangRegistryJsonFile>$(WhizbangDir)/message-registry.json</WhizbangRegistryJsonFile>
+      <WhizbangRegistryJsonFile>$(WhizbangGeneratedDir)/message-registry.json</WhizbangRegistryJsonFile>
     </PropertyGroup>
 
     <!-- Extract JSON from generated C# file (cross-platform) -->

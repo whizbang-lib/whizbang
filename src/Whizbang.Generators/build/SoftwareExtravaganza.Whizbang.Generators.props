@@ -9,7 +9,8 @@
 
   <!-- Rename platform (P0/P1): surface the committed pinned-type ledger to the analyzer + generators as an
        AdditionalFile so former-name aliases resolve and un-acknowledged renames are gated (WHIZ120/WHIZ121).
-       The ledger lives beside message-registry.json in .whizbang/ (also read by the VSCode extension). -->
+       The ledger is the COMMITTED source-of-truth lockfile and lives in .whizbang/ (tracked in git). The
+       regenerable message-registry.json lives separately in the ignored .whizbang-generated/ folder. -->
   <ItemGroup Condition="'$(WhizbangIncludePinnedTypeLedger)' == 'true' And Exists('$(MSBuildProjectDirectory)/.whizbang/pinned-type-ledger.json')">
     <AdditionalFiles Include="$(MSBuildProjectDirectory)/.whizbang/pinned-type-ledger.json" />
   </ItemGroup>
