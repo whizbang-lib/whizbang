@@ -101,7 +101,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     // Count-based completion signals. A test that expects N invocations of a stage awaits
     // WaitForCountAsync instead of polling a wall clock — under full-suite CPU contention a
     // wall-clock deadline can expire before the worker gets scheduled, producing a flake.
-    private readonly object _gate = new();
+    private readonly System.Threading.Lock _gate = new();
     private readonly List<(LifecycleStage Stage, int Target, TaskCompletionSource Tcs)> _waiters = [];
 
     public ValueTask InvokeAsync(
