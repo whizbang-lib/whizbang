@@ -11,9 +11,16 @@ namespace Whizbang.Core.Tests.Observability;
 public sealed class MetricAssertionHelper : IDisposable {
   private readonly MeterListener _listener;
   private readonly HashSet<Meter> _trackedMeters = [];
+  // MeterListener measurement callbacks fire on whatever thread records the metric — which can
+  // be concurrent with (and across from) a test enumerating results. Guard every read and write
+  // of _measurements with _sync, otherwise a concurrent Add throws "Collection was modified"
+  // inside GetByName/Measurements enumeration.
+  private readonly System.Threading.Lock _sync = new();
   private readonly List<RecordedMeasurement> _measurements = [];
 
-  public IReadOnlyList<RecordedMeasurement> Measurements => _measurements;
+  public IReadOnlyList<RecordedMeasurement> Measurements {
+    get { lock (_sync) { return _measurements.ToArray(); } }
+  }
 
   /// <summary>
   /// Creates a helper that tracks measurements only from the specified Meter instances.
@@ -31,17 +38,9 @@ public sealed class MetricAssertionHelper : IDisposable {
       }
     };
 
-    _listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) => {
-      _measurements.Add(new RecordedMeasurement(instrument.Name, value, _extractTags(tags)));
-    });
-
-    _listener.SetMeasurementEventCallback<int>((instrument, value, tags, _) => {
-      _measurements.Add(new RecordedMeasurement(instrument.Name, value, _extractTags(tags)));
-    });
-
-    _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => {
-      _measurements.Add(new RecordedMeasurement(instrument.Name, value, _extractTags(tags)));
-    });
+    _listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) => _record(instrument.Name, value, tags));
+    _listener.SetMeasurementEventCallback<int>((instrument, value, tags, _) => _record(instrument.Name, value, tags));
+    _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => _record(instrument.Name, value, tags));
 
     _listener.Start();
   }
@@ -59,26 +58,28 @@ public sealed class MetricAssertionHelper : IDisposable {
       }
     };
 
-    _listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) => {
-      _measurements.Add(new RecordedMeasurement(instrument.Name, value, _extractTags(tags)));
-    });
-
-    _listener.SetMeasurementEventCallback<int>((instrument, value, tags, _) => {
-      _measurements.Add(new RecordedMeasurement(instrument.Name, value, _extractTags(tags)));
-    });
-
-    _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => {
-      _measurements.Add(new RecordedMeasurement(instrument.Name, value, _extractTags(tags)));
-    });
+    _listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) => _record(instrument.Name, value, tags));
+    _listener.SetMeasurementEventCallback<int>((instrument, value, tags, _) => _record(instrument.Name, value, tags));
+    _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => _record(instrument.Name, value, tags));
 
     _listener.Start();
   }
 
+  // Extract tags off the callback thread's span, then append under the lock.
+  private void _record(string instrumentName, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags) {
+    var measurement = new RecordedMeasurement(instrumentName, value, _extractTags(tags));
+    lock (_sync) {
+      _measurements.Add(measurement);
+    }
+  }
+
   public List<RecordedMeasurement> GetByName(string instrumentName) {
     var results = new List<RecordedMeasurement>();
-    foreach (var m in _measurements) {
-      if (m.InstrumentName == instrumentName) {
-        results.Add(m);
+    lock (_sync) {
+      foreach (var m in _measurements) {
+        if (m.InstrumentName == instrumentName) {
+          results.Add(m);
+        }
       }
     }
     return results;
