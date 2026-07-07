@@ -2,7 +2,7 @@
   <!-- Extract individual project registry -->
   <Target Name="ExtractMessageRegistry" AfterTargets="Build">
     <PropertyGroup>
-      <MessageRegistryFile>$(MSBuildProjectDirectory)/.whizbang-generated/Whizbang.Generators/Whizbang.Generators.MessageRegistryGenerator/MessageRegistry.g.cs</MessageRegistryFile>
+      <MessageRegistryFile>$(MSBuildProjectDirectory)/.whizbang/cache/Whizbang.Generators/Whizbang.Generators.MessageRegistryGenerator/MessageRegistry.g.cs</MessageRegistryFile>
       <RegistryOutputDir>$(MSBuildProjectDirectory)/.whizbang</RegistryOutputDir>
       <RegistryOutputFile>$(RegistryOutputDir)/message-registry.json</RegistryOutputFile>
     </PropertyGroup>

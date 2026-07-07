@@ -15,7 +15,7 @@
 
     <!-- Enable source generator output for debugging -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
 
     <!-- RabbitMQ transport compiler directive -->
     <DefineConstants>RABBITMQ</DefineConstants>

@@ -15,7 +15,7 @@
       "break": 0
     },
     "mutate": [
-      "!**/.whizbang-generated/**",
+      "!**/.whizbang/cache/**",
       "!**/*.g.cs",
       "!**/obj/**",
       "!**/bin/**",
