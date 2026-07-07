@@ -316,7 +316,8 @@ View telemetry in the Aspire Dashboard when running via AppHost.
 
 ### Message Registry
 
-Each service generates a `.whizbang/message-registry.json` file containing:
+Each service generates a `.whizbang-generated/message-registry.json` file (a regenerable,
+git-ignored artifact) containing:
 - All message types (commands, events)
 - Dispatchers and their message flows
 - Receptors and their message handling
