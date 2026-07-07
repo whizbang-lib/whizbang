@@ -103,6 +103,10 @@ internal sealed class PinnedTypeLedger {
   private static readonly JsonSerializerOptions _writeOptions = new() {
     WriteIndented = true,
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    // The ledger is a file-destined, human-reviewed lockfile — never embedded in HTML — so use the relaxed
+    // encoder. The default HTML-safe encoder escapes '+' (and angle brackets and ampersand) to a 6-char unicode
+    // escape, which would render every nested-type name's '+' separator as an unreadable escape and wreck diffs.
+    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
   };
 
   /// <summary>Serializes the ledger to committable JSON (camelCase, indented, entries sorted by CLR name for stable diffs).</summary>
