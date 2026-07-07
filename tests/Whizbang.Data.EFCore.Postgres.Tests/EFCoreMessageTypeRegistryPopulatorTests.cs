@@ -121,6 +121,33 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task PopulateAsync_AcknowledgedRename_ReconcilesOldToNewInPlaceAsync() {
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    const string id = "11111111-1111-1111-1111-111111111111";
+
+    // Initial run: registry holds the OLD CLR name.
+    await new EFCoreMessageTypeRegistryPopulator(new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent, Sample", "event", id),
+    ]), dataSource).PopulateAsync();
+
+    // Re-populate: same pinned_id, NEW name, with the OLD name recorded as a former name (acknowledged rename).
+    var logger = new CapturingLogger<EFCoreMessageTypeRegistryPopulator>();
+    await new EFCoreMessageTypeRegistryPopulator(new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent, Sample", "event", id)
+        { FormerNames = ["Old.Namespace.FooEvent, Sample"] },
+    ]), dataSource, logger).PopulateAsync();
+
+    // Reconciled in place: row holds the NEW name, same pinned_id; an info log records the rename.
+    var rows = await _queryRegistryAsync();
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("New.Namespace.FooEvent, Sample");
+    await Assert.That(rows[0].PinnedId).IsEqualTo(new Guid(id));
+
+    var renameLog = logger.Entries.FirstOrDefault(e => e.Level == LogLevel.Information && e.Message.Contains("Reconciled acknowledged rename", StringComparison.Ordinal));
+    await Assert.That(renameLog).IsNotNull();
+  }
+
+  [Test]
   public async Task PopulateAsync_PinnedDottedEncoding_NormalizedToPlusAsync() {
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
     const string id = "11111111-1111-1111-1111-111111111111";

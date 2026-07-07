@@ -138,6 +138,47 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   }
 
   [Test]
+  public async Task PopulateAsync_AcknowledgedRename_ReconcilesOldToNewInPlaceAsync() {
+    const string id = "11111111-1111-1111-1111-111111111111";
+    // Initial run: registry holds the OLD CLR name.
+    await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent, Sample", "event", id),
+    ]), _connectionFactory!).PopulateAsync();
+
+    // Re-populate: same pinned_id, NEW name, with the OLD name recorded as a former name in the ledger.
+    var logger = new CapturingLogger<DapperMessageTypeRegistryPopulator>();
+    await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent, Sample", "event", id)
+        { FormerNames = ["Old.Namespace.FooEvent, Sample"] },
+    ]), _connectionFactory!, logger).PopulateAsync();
+
+    // The acknowledged rename is reconciled in place: the row now holds the NEW name, same pinned_id.
+    var rows = await _queryRegistryAsync();
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("New.Namespace.FooEvent, Sample");
+    await Assert.That(rows[0].PinnedId).IsEqualTo(new Guid(id));
+    await Assert.That(logger.Messages.Any(m => m.Contains("1 renamed", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task PopulateAsync_UnacknowledgedRename_NotOverwrittenEvenWithOtherFormerNamesAsync() {
+    const string id = "11111111-1111-1111-1111-111111111111";
+    await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent, Sample", "event", id),
+    ]), _connectionFactory!).PopulateAsync();
+
+    // Former names are recorded, but NONE of them is the stored old name -> still drift, not overwritten.
+    await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent, Sample", "event", id)
+        { FormerNames = ["Some.Other.PriorName, Sample"] },
+    ]), _connectionFactory!).PopulateAsync();
+
+    var rows = await _queryRegistryAsync();
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Old.Namespace.FooEvent, Sample");
+  }
+
+  [Test]
   public async Task PopulateAsync_PinnedDottedEncoding_NormalizedToPlusAsync() {
     const string id = "11111111-1111-1111-1111-111111111111";
     // Legacy state: stored '.'-nested (the old MessageTypeCatalogGenerator wrote the C# display form).

@@ -12,6 +12,12 @@ namespace Whizbang.Generators.Ledger;
 internal sealed record RenameAlias(string FormerClrTypeName, string CurrentClrTypeName);
 
 /// <summary>
+/// A flattened (pinned id → one former name) pair. Value-equatable so it flows cleanly through the incremental
+/// pipeline. Used by <c>MessageTypeCatalogGenerator</c> to attach former names to catalog entries by pinned id.
+/// </summary>
+internal sealed record PinnedFormerName(string PinnedId, string FormerClrTypeName);
+
+/// <summary>
 /// A currently-compiled <c>[PinnedId]</c> type discovered by the ledger generator. Value-equatable so it flows
 /// through the incremental pipeline. <see cref="Kind"/> is <c>event</c>/<c>command</c>/<c>message</c>/<c>perspective</c>.
 /// </summary>
@@ -86,6 +92,25 @@ internal sealed class PinnedTypeLedger {
           continue;
         }
         yield return new RenameAlias(former, entry.ClrTypeName);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Flattens the ledger into one <see cref="PinnedFormerName"/> per (pinned id → former name) pair. Skips entries
+  /// with a blank pinned id, and blank former names or a former name equal to the entry's own current name.
+  /// </summary>
+  public IEnumerable<PinnedFormerName> ToPinnedFormerNames() {
+    foreach (var entry in Types) {
+      if (string.IsNullOrWhiteSpace(entry.PinnedId)) {
+        continue;
+      }
+      foreach (var former in entry.FormerNames) {
+        if (string.IsNullOrWhiteSpace(former) ||
+            string.Equals(former, entry.ClrTypeName, System.StringComparison.Ordinal)) {
+          continue;
+        }
+        yield return new PinnedFormerName(entry.PinnedId, former);
       }
     }
   }
