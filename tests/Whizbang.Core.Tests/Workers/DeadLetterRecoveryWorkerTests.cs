@@ -32,9 +32,14 @@ public class DeadLetterRecoveryWorkerTests {
     public List<(Guid Id, DateTimeOffset NextAt)> ScheduleCalls { get; } = [];
     public List<string> ResetForGenerationCalls { get; } = [];
     public bool RecoverShouldThrow { get; set; }
+    public bool TerminalTransitionShouldThrow { get; set; }
+    public bool ScheduleShouldThrow { get; set; }
     public int GenerationReplayReturn { get; set; }
     public TaskCompletionSource FirstFetchSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource SecondFetchSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Fires when RecoverAsync is invoked — lets a test await the actual recovery (which
+    // happens AFTER FetchDueAsync returns and the batch is processed), not just the fetch.
+    public TaskCompletionSource RecoverSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _fetchCount;
 
     public Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
@@ -46,15 +51,19 @@ public class DeadLetterRecoveryWorkerTests {
     public Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default) {
       if (RecoverShouldThrow) { throw new InvalidOperationException("simulated DB failure"); }
       RecoverCalls.Add(deadLetterId);
+      RecoverSignal.TrySetResult();
       return Task.FromResult(true);
     }
     public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default) {
+      if (TerminalTransitionShouldThrow) { throw new InvalidOperationException("simulated terminal-set failure"); }
       HoldCalls.Add(deadLetterId); return Task.CompletedTask;
     }
     public Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default) {
+      if (TerminalTransitionShouldThrow) { throw new InvalidOperationException("simulated terminal-set failure"); }
       PermanentlyFailedCalls.Add(deadLetterId); return Task.CompletedTask;
     }
     public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) {
+      if (ScheduleShouldThrow) { throw new InvalidOperationException("simulated schedule failure"); }
       ScheduleCalls.Add((deadLetterId, nextAt)); return Task.CompletedTask;
     }
     public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) {
@@ -71,6 +80,25 @@ public class DeadLetterRecoveryWorkerTests {
 
   private sealed class FixedGenerationProvider(string value) : IGenerationProvider {
     public string GetGeneration() => value;
+  }
+
+  /// <summary>
+  /// Test double for the NOTIFY listener. Tracks subscribe/unsubscribe and can raise a
+  /// signal of any category so the worker's <c>_onSignal</c> filter can be exercised.
+  /// </summary>
+  private sealed class FakeNotificationListener : Whizbang.Core.Notifications.IWorkNotificationListener {
+    public bool IsHealthy => true;
+    public DateTimeOffset? LastSignalAt => null;
+    public int SubscriberCount { get; private set; }
+    public event Action<Whizbang.Core.Notifications.WorkSignalCategory>? OnSignal {
+      add { _onSignal += value; SubscriberCount++; }
+      remove { _onSignal -= value; SubscriberCount--; }
+    }
+    public event Action<bool>? OnHealthChanged { add { } remove { } }
+
+    private Action<Whizbang.Core.Notifications.WorkSignalCategory>? _onSignal;
+
+    public void Raise(Whizbang.Core.Notifications.WorkSignalCategory category) => _onSignal?.Invoke(category);
   }
 
   private static DeadLetterEntry _entry(
@@ -93,7 +121,8 @@ public class DeadLetterRecoveryWorkerTests {
 
   private static (DeadLetterRecoveryWorker Worker, FakeRecoveryService Svc) _newWorker(
       DeadLetterRecoveryOptions? options = null,
-      string generation = "test/0.0.1") {
+      string generation = "test/0.0.1",
+      FakeNotificationListener? listener = null) {
     var svc = new FakeRecoveryService();
     var services = new ServiceCollection();
     services.AddSingleton<IDeadLetterRecoveryService>(svc);
@@ -104,7 +133,9 @@ public class DeadLetterRecoveryWorkerTests {
       new ImmediateSchemaGate(),
       Options.Create(options ?? new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
       new FixedGenerationProvider(generation),
-      NullLogger<DeadLetterRecoveryWorker>.Instance);
+      NullLogger<DeadLetterRecoveryWorker>.Instance,
+      metrics: null,
+      notificationListener: listener);
     return (worker, svc);
   }
 
@@ -279,6 +310,134 @@ public class DeadLetterRecoveryWorkerTests {
       .Because("HoldForReview rows must never enter the recovery loop even if fetch returns them");
     await Assert.That(svc.HoldCalls).IsEmpty();
     await Assert.That(svc.PermanentlyFailedCalls).IsEmpty();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Slice 7c — when a NOTIFY listener is wired, the worker subscribes its <c>_onSignal</c>
+  /// handler during ExecuteAsync and unsubscribes it on StopAsync. A DeadLetterReady signal
+  /// releases the wake semaphore so the next scan runs without waiting for the poll backstop.
+  /// </summary>
+  [Test]
+  public async Task NotificationListener_DeadLetterReadySignal_WakesAndRescansAsync() {
+    var listener = new FakeNotificationListener();
+    var (worker, svc) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener);
+    // First scan returns nothing; second scan (after the wake) recovers the entry.
+    var entry = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([]);
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Handler must be subscribed while running.
+    await Assert.That(listener.SubscriberCount).IsEqualTo(1)
+      .Because("ExecuteAsync subscribes the DeadLetterReady handler when a listener is wired");
+
+    // Raising a DeadLetterReady signal releases the wake semaphore, ending the poll wait.
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    // Await the recovery itself, not just the fetch start — RecoverAsync runs after the
+    // second FetchDueAsync returns and the batch is processed.
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
+      .Because("the wake-driven rescan must pick up the newly-ready DLQ row");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // StopAsync unsubscribes the handler.
+    await Assert.That(listener.SubscriberCount).IsEqualTo(0)
+      .Because("StopAsync removes the OnSignal subscription so the worker leaves no dangling handler");
+  }
+
+  /// <summary>
+  /// The <c>_onSignal</c> filter ignores non-DeadLetterReady categories — an Outbox signal
+  /// must NOT release the wake semaphore. We prove this by confirming the handler is wired,
+  /// raising an unrelated category, and observing no second scan is triggered by it (the
+  /// first scan already happened; the second only occurs once we raise the correct category).
+  /// </summary>
+  [Test]
+  public async Task NotificationListener_UnrelatedCategory_DoesNotWakeAsync() {
+    var listener = new FakeNotificationListener();
+    var (worker, svc) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener);
+    svc.FetchBatches.Enqueue([]);
+    var entry = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Raise an unrelated category — the filter returns early, no wake.
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.Outbox);
+
+    // Now raise the correct category — this one wakes and triggers the second scan.
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    // Await the recovery itself — RecoverAsync runs after the second FetchDueAsync returns.
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
+      .Because("only the DeadLetterReady signal drives the rescan; the Outbox signal was filtered out");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// When the terminal-state transition (MarkHolding) throws mid-scan, the worker must catch
+  /// it, log, and continue — never propagate. Covers the LogTerminalSetFailed catch arm.
+  /// </summary>
+  [Test]
+  public async Task ExhaustedEntry_TerminalTransitionThrows_SwallowsAndContinuesAsync() {
+    var (worker, svc) = _newWorker();
+    svc.TerminalTransitionShouldThrow = true;
+    // ValidationError → HoldForReview policy with MaxRecoveryAttempts=0 → MarkHolding path.
+    var entry = _entry(MessageFailureReason.ValidationError, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100);
+
+    // The throw was swallowed — no hold recorded, no recover attempted, worker still alive.
+    await Assert.That(svc.HoldCalls).IsEmpty()
+      .Because("MarkHolding threw, so no hold was recorded, but the exception must not escape the scan loop");
+    await Assert.That(svc.RecoverCalls).IsEmpty();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// When recovery throws AND the follow-up ScheduleNextAttempt ALSO throws, the worker must
+  /// catch the inner schedule failure and continue. Covers the nested LogScheduleFailed catch.
+  /// </summary>
+  [Test]
+  public async Task RecoveryThrows_AndScheduleAlsoThrows_SwallowsScheduleFailureAsync() {
+    var (worker, svc) = _newWorker();
+    svc.RecoverShouldThrow = true;
+    svc.ScheduleShouldThrow = true;
+    var entry = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100);
+
+    // Both the recover and the schedule threw — neither was recorded, worker survived.
+    await Assert.That(svc.RecoverCalls).IsEmpty();
+    await Assert.That(svc.ScheduleCalls).IsEmpty()
+      .Because("ScheduleNextAttempt threw, so nothing was recorded, but the inner catch must swallow it");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

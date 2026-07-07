@@ -1124,6 +1124,79 @@ public class DispatcherSecurityBuilderTests {
     await Assert.That(context.ActualPrincipal).IsEqualTo(Guid.Empty.ToString());
   }
 
+  /// <summary>
+  /// The <see cref="DispatcherSecurityBuilder.WithTenant"/> instance method (distinct from
+  /// the SystemDispatcherBuilder.ForTenant entry-point) rebuilds the builder with an explicit
+  /// tenant while preserving the effective principal. Chained AFTER ForAllTenants() it must
+  /// override the tenant to the explicit value on the captured context.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_OnSecurityBuilder_OverridesTenantOnCapturedContextAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    var command = new DispatcherSecurityBuilderTestCommand("test-data");
+
+    // Act - obtain a DispatcherSecurityBuilder via ForAllTenants(), then chain WithTenant()
+    await dispatcher.RunAs("target-user@example.com").ForAllTenants()
+      .WithTenant("explicit-tenant-42").SendAsync(command);
+
+    // Assert - the explicit tenant from WithTenant() wins, effective principal preserved
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context!.Scope.TenantId).IsEqualTo("explicit-tenant-42")
+      .Because("WithTenant() rebuilds the builder with the explicit tenant, overriding ForAllTenants()");
+    await Assert.That(context.EffectivePrincipal).IsEqualTo("target-user@example.com")
+      .Because("WithTenant() preserves the effective principal from the prior builder");
+  }
+
+  /// <summary>
+  /// <see cref="DispatcherSecurityBuilder.WithTenant"/> validates its argument — whitespace
+  /// must throw, matching the ForTenant entry-point guard.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_OnSecurityBuilder_WithWhitespace_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    // Act & Assert
+    await Assert.That(() => dispatcher.AsSystem().ForAllTenants().WithTenant("   ")).ThrowsException();
+  }
+
+  /// <summary>
+  /// The <see cref="DispatcherSecurityBuilder.SendAsync{TMessage}(TMessage, DispatchOptions)"/>
+  /// overload (an uncovered dispatch arm) must set the explicit context and forward to the
+  /// dispatcher when the token is not cancelled — the success counterpart to the
+  /// already-covered cancellation throw.
+  /// </summary>
+  [Test]
+  public async Task SendAsync_WithDispatchOptions_UncancelledToken_SetsContextAndDispatchesAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    var command = new DispatcherSecurityBuilderTestCommand("options-data");
+
+    // Act - a live (non-cancelled) token flows through the success path of the overload
+    using var cts = new CancellationTokenSource();
+    await dispatcher.AsSystem().ForAllTenants()
+      .SendAsync(command, new DispatchOptions { CancellationToken = cts.Token });
+
+    // Assert - SYSTEM context was applied and the receptor ran
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context!.EffectivePrincipal).IsEqualTo("SYSTEM")
+      .Because("the DispatchOptions overload must still apply the explicit SYSTEM context");
+    await Assert.That(context.ContextType).IsEqualTo(SecurityContextType.System);
+  }
+
   // ============================================
   // Helper Methods
   // ============================================

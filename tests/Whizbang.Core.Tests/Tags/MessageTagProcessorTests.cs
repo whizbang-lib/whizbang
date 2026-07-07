@@ -1745,4 +1745,133 @@ public class MessageTagProcessorTests {
   }
 
   #endregion
+
+  #region Diagnostic Logging Branch Coverage
+
+  /// <summary>
+  /// Both size thresholds explicitly null → the payload-size enforcement short-circuits to
+  /// "allowed" before measuring the payload. Covers the early-return in _enforcePayloadSize.
+  /// </summary>
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_WithBothPayloadThresholdsNull_SkipsSizeEnforcementAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "no-limits");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = null,
+      PayloadSizeErrorThresholdBytes = null
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
+
+    // With both thresholds off, no measurement happens and the hook still fires.
+    await Assert.That(hook.InvokedCount).IsEqualTo(1)
+      .Because("with both size thresholds null, enforcement is skipped and the hook processes normally");
+  }
+
+  /// <summary>
+  /// With a Debug-enabled logger (via scope factory) and a hook resolver that returns null,
+  /// the processor logs the "resolved to NULL — skipping" diagnostic and skips the hook.
+  /// Covers the null-hook-instance Debug branch in _resolveHookInstance.
+  /// </summary>
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_DebugLogging_HookResolvesToNull_LogsAndSkipsAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "debug-null");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    // Resolver ALWAYS returns null for the hook — but provides the Debug logger factory.
+    var scopeFactory = new DebugLoggingScopeFactory(_ => null);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new TaggedTestMessage("123");
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
+
+    // No hook ran (resolver returned null), and the Debug branch was walked without throwing.
+    await Assert.That(scopeFactory.Logger.DebugMessages.Any(m => m.Contains("resolved to NULL", StringComparison.Ordinal))).IsTrue()
+      .Because("a null-resolving hook must be logged at Debug and skipped, not invoked");
+  }
+
+  /// <summary>
+  /// With a Debug-enabled logger and a custom (non-built-in) attribute type, the processor
+  /// walks the dispatcher-registry fallback in _invokeHookAsync, logging the "Trying dispatcher
+  /// registry" and result diagnostics. Covers those Debug branches.
+  /// </summary>
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_DebugLogging_CustomAttribute_LogsDispatcherRegistryAttemptAsync() {
+    _cleanupRegistry();
+    _cleanupDispatcherRegistry();
+
+    var customRegistry = new CustomAttributeTestRegistry();
+    MessageTagRegistry.Register(customRegistry, priority: 100);
+    var customDispatcher = new TestMessageTagHookDispatcher();
+    MessageTagHookDispatcherRegistry.Register(customDispatcher, priority: 100);
+
+    var customHook = new CustomTagTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<CustomTestTagAttribute, CustomTagTrackingHook>();
+    var scopeFactory = new DebugLoggingScopeFactory(type => type == typeof(CustomTagTrackingHook) ? customHook : null);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new CustomTaggedMessage("dispatch-debug");
+
+    await processor.ProcessTagsAsync(message, typeof(CustomTaggedMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(customHook.InvokedCount).IsEqualTo(1);
+    await Assert.That(scopeFactory.Logger.DebugMessages.Any(m => m.Contains("dispatcher registry", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("a custom attribute type must fall through to the dispatcher registry, logged at Debug");
+  }
+
+  private sealed class DebugCapturingLogger : Microsoft.Extensions.Logging.ILogger {
+    public List<string> DebugMessages { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      DebugMessages.Add(formatter(state, exception));
+    }
+  }
+
+  private sealed class DebugCapturingLoggerFactory(Microsoft.Extensions.Logging.ILogger logger) : Microsoft.Extensions.Logging.ILoggerFactory {
+    public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => logger;
+    public void Dispose() { }
+  }
+
+  private sealed class DebugLoggingScopeFactory(Func<Type, object?> resolver) : IServiceScopeFactory {
+    public DebugCapturingLogger Logger { get; } = new();
+    public IServiceScope CreateScope() => new DebugLoggingScope(Logger, resolver);
+  }
+
+  private sealed class DebugLoggingScope(DebugCapturingLogger logger, Func<Type, object?> resolver) : IServiceScope, IAsyncDisposable {
+    public IServiceProvider ServiceProvider { get; } = new DebugLoggingServiceProvider(logger, resolver);
+    public void Dispose() { }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+  }
+
+  private sealed class DebugLoggingServiceProvider(DebugCapturingLogger logger, Func<Type, object?> resolver) : IServiceProvider {
+    public object? GetService(Type serviceType) {
+      if (serviceType == typeof(Microsoft.Extensions.Logging.ILoggerFactory)) {
+        return new DebugCapturingLoggerFactory(logger);
+      }
+      return resolver(serviceType);
+    }
+  }
+
+  #endregion
 }

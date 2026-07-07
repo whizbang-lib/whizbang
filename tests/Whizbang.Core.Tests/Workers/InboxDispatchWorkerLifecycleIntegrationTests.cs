@@ -98,12 +98,31 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     public TaskCompletionSource<bool> PostLifecycleInlineFired { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource<bool> PostLifecycleDetachedFired { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    // Count-based completion signals. A test that expects N invocations of a stage awaits
+    // WaitForCountAsync instead of polling a wall clock — under full-suite CPU contention a
+    // wall-clock deadline can expire before the worker gets scheduled, producing a flake.
+    private readonly object _gate = new();
+    private readonly List<(LifecycleStage Stage, int Target, TaskCompletionSource Tcs)> _waiters = [];
+
     public ValueTask InvokeAsync(
         IMessageEnvelope envelope,
         LifecycleStage stage,
         ILifecycleContext? context = null,
         CancellationToken cancellationToken = default) {
-      Invocations.Add((envelope, stage));
+      List<TaskCompletionSource>? toRelease = null;
+      lock (_gate) {
+        Invocations.Add((envelope, stage));
+        var count = Invocations.Count(i => i.Stage == stage);
+        for (var i = _waiters.Count - 1; i >= 0; i--) {
+          if (_waiters[i].Stage == stage && count >= _waiters[i].Target) {
+            (toRelease ??= []).Add(_waiters[i].Tcs);
+            _waiters.RemoveAt(i);
+          }
+        }
+      }
+      if (toRelease is not null) {
+        foreach (var tcs in toRelease) { tcs.TrySetResult(); }
+      }
       switch (stage) {
         case LifecycleStage.PostAllPerspectivesInline:
           PostAllPerspectivesInlineFired.TrySetResult(true);
@@ -121,6 +140,19 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
           break;
       }
       return ValueTask.CompletedTask;
+    }
+
+    /// <summary>Completes when the given stage has been invoked at least <paramref name="target"/>
+    /// times. Returns an already-completed task if the count is already met.</summary>
+    public Task WaitForCountAsync(LifecycleStage stage, int target) {
+      lock (_gate) {
+        if (Invocations.Count(i => i.Stage == stage) >= target) {
+          return Task.CompletedTask;
+        }
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiters.Add((stage, target, tcs));
+        return tcs.Task;
+      }
     }
 
     public bool HasStage(LifecycleStage stage) => Invocations.Any(i => i.Stage == stage);
@@ -280,15 +312,15 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     await inbox.WriteAsync(work1, cts.Token);
     await inbox.WriteAsync(work2, cts.Token);
 
-    // Wait for both events' PostAllPerspectivesInline to fire — using count-based wait
-    // pattern: spin a tiny SemaphoreSlim until count reaches 2. We avoid Task.Delay; the
-    // capture invoker resolves PostAllPerspectivesInlineFired on the first hit, so we need
-    // a separate signal for the second. Polling against a count keeps deterministic without
-    // wall-clock dependency, bounded by a 5s ceiling.
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (invoker.CountStage(LifecycleStage.PostAllPerspectivesInline) < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    // Await both events' PostAllPerspectivesInline via a count-based completion signal.
+    // The invoker resolves WaitForCountAsync the instant the second invocation lands, so
+    // there is no wall-clock dependency — the previous DateTimeOffset deadline could expire
+    // under full-suite CPU contention before the worker was scheduled, causing a flake.
+    // The 5s ceiling here is a hang-guard, not the success path.
+    await invoker.WaitForCountAsync(LifecycleStage.PostAllPerspectivesInline, 2)
+      .WaitAsync(TimeSpan.FromSeconds(5));
+    await invoker.WaitForCountAsync(LifecycleStage.PostLifecycleInline, 2)
+      .WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(invoker.CountStage(LifecycleStage.PostAllPerspectivesInline)).IsEqualTo(2)
       .Because("PostAllPerspectivesInline fires exactly once per event in the no-perspective path.");
