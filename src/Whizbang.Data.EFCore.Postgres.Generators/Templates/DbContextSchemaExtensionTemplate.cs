@@ -1141,20 +1141,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       return;
     }
 
-    // Build JSON array manually (AOT-safe — no JsonSerializer reflection).
-    var json = new System.Text.StringBuilder("[");
-    for (int i = 0; i < entries.Count; i++) {
-      var e = entries[i];
-      if (i > 0) {
-        json.Append(',');
-      }
-      json.Append("{\"ClrTypeName\":").Append(_jsonString(e.ClrTypeName))
-          .Append(",\"PinnedId\":").Append(e.PinnedId is null ? "null" : _jsonString(e.PinnedId))
-          .Append(",\"Kind\":").Append(_jsonString(e.Kind))
-          .Append(",\"FormerNames\":").Append(_jsonArray(e.FormerNames))
-          .Append('}');
-    }
-    json.Append(']');
+    // Serialize the catalog to the reconcile JSONB payload via the shared, AOT-safe Whizbang.Core helper
+    // (same definition the Dapper/EFCore populators use — one payload shape, no duplication).
+    var json = MessageTypeRegistryJson.Serialize(entries);
 
     try {
       var sql = @"SELECT * FROM __QUOTED_SCHEMA__.reconcile_message_type_registry(@p_entries::JSONB)";
@@ -1168,7 +1157,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       command.CommandText = sql;
       var entriesParam = command.CreateParameter();
       entriesParam.ParameterName = "@p_entries";
-      entriesParam.Value = json.ToString();
+      entriesParam.Value = json;
       command.Parameters.Add(entriesParam);
 
       var currentTransaction = dbContext.Database.CurrentTransaction;
@@ -1223,48 +1212,6 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       logger?.LogWarning(ex, "Failed to reconcile message type registry (function may not exist yet)");
       // Don't throw — reconciliation is informational, not critical for startup.
     }
-  }
-
-  private static string _jsonString(string? value) {
-    if (value is null) {
-      return "null";
-    }
-    var sb = new System.Text.StringBuilder("\"");
-    foreach (var c in value) {
-      switch (c) {
-        case '"': sb.Append("\\\""); break;
-        case '\\': sb.Append("\\\\"); break;
-        case '\b': sb.Append("\\b"); break;
-        case '\f': sb.Append("\\f"); break;
-        case '\n': sb.Append("\\n"); break;
-        case '\r': sb.Append("\\r"); break;
-        case '\t': sb.Append("\\t"); break;
-        default:
-          if (c < 0x20) {
-            sb.AppendFormat(System.Globalization.CultureInfo.InvariantCulture, "\\u{0:X4}", (int)c);
-          } else {
-            sb.Append(c);
-          }
-          break;
-      }
-    }
-    sb.Append('"');
-    return sb.ToString();
-  }
-
-  private static string _jsonArray(System.Collections.Generic.IReadOnlyList<string> values) {
-    if (values is null || values.Count == 0) {
-      return "[]";
-    }
-    var sb = new System.Text.StringBuilder("[");
-    for (int i = 0; i < values.Count; i++) {
-      if (i > 0) {
-        sb.Append(',');
-      }
-      sb.Append(_jsonString(values[i]));
-    }
-    sb.Append(']');
-    return sb.ToString();
   }
 
   /// <summary>
