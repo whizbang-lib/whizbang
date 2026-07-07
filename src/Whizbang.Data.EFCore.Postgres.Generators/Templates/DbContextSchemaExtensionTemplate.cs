@@ -1151,6 +1151,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       json.Append("{\"ClrTypeName\":").Append(_jsonString(e.ClrTypeName))
           .Append(",\"PinnedId\":").Append(e.PinnedId is null ? "null" : _jsonString(e.PinnedId))
           .Append(",\"Kind\":").Append(_jsonString(e.Kind))
+          .Append(",\"FormerNames\":").Append(_jsonArray(e.FormerNames))
           .Append('}');
     }
     json.Append(']');
@@ -1178,6 +1179,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       using var reader = await command.ExecuteReaderAsync(cancellationToken);
       var insertedCount = 0;
       var updatedCount = 0;
+      var renamedCount = 0;
       var driftCount = 0;
 
       while (await reader.ReadAsync(cancellationToken)) {
@@ -1189,10 +1191,16 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
         switch (action) {
           case "inserted": insertedCount++; break;
           case "updated": updatedCount++; break;
+          case "renamed":
+            renamedCount++;
+            logger?.LogInformation(
+              "Reconciled acknowledged rename: registry clr_type_name '{StoredClrTypeName}' updated to current '{CurrentClrTypeName}' (former name recorded in the pinned-type ledger).",
+              storedClr, clrType);
+            break;
           case "drift_detected":
             driftCount++;
             logger?.LogWarning(
-              "Pinned id drift: stored clr_type_name '{StoredClrTypeName}' differs from current code '{CurrentClrTypeName}'. Run the rename tool to reconcile.",
+              "Pinned id drift: stored clr_type_name '{StoredClrTypeName}' differs from current code '{CurrentClrTypeName}' and is not a recorded former name. Record the rename in .whizbang/pinned-type-ledger.json to reconcile.",
               storedClr, clrType);
             break;
         }
@@ -1209,8 +1217,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       }
 
       logger?.LogInformation(
-        "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Drifted} drifted).",
-        entries.Count, pinned, unpinned, insertedCount, updatedCount, driftCount);
+        "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Renamed} renamed, {Drifted} drifted).",
+        entries.Count, pinned, unpinned, insertedCount, updatedCount, renamedCount, driftCount);
     } catch (Exception ex) {
       logger?.LogWarning(ex, "Failed to reconcile message type registry (function may not exist yet)");
       // Don't throw — reconciliation is informational, not critical for startup.
@@ -1241,6 +1249,21 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       }
     }
     sb.Append('"');
+    return sb.ToString();
+  }
+
+  private static string _jsonArray(System.Collections.Generic.IReadOnlyList<string> values) {
+    if (values is null || values.Count == 0) {
+      return "[]";
+    }
+    var sb = new System.Text.StringBuilder("[");
+    for (int i = 0; i < values.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append(_jsonString(values[i]));
+    }
+    sb.Append(']');
     return sb.ToString();
   }
 

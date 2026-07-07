@@ -1,8 +1,10 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Ledger;
 using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
@@ -31,16 +33,34 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractEntry(ctx, ct)
     ).Where(static info => info is not null);
 
-    var combined = context.CompilationProvider.Combine(entries.Collect());
+    // Rename platform: read the committed .whizbang/pinned-type-ledger.json so each pinned entry can carry the
+    // FORMER names the type has had. Empty when no ledger is present (opt-in), so the catalog is unchanged.
+    var ledgerFormers = context.AdditionalTextsProvider
+        .Where(static f => PinnedTypeLedger.IsLedgerPath(f.Path))
+        .Select(static (f, ct) => _readPinnedFormerNames(f, ct))
+        .SelectMany(static (a, _) => a)
+        .Collect();
+
+    var combined = context.CompilationProvider.Combine(entries.Collect()).Combine(ledgerFormers);
 
     context.RegisterSourceOutput(
         combined,
         static (ctx, data) => {
-          var compilation = data.Left;
-          var infos = data.Right;
-          _generateCatalog(ctx, compilation, infos!);
+          var compilation = data.Left.Left;
+          var infos = data.Left.Right;
+          var formerNames = data.Right;
+          _generateCatalog(ctx, compilation, infos!, formerNames);
         }
     );
+  }
+
+  /// <summary>Parses a ledger additional file into flattened (pinned id → former name) pairs. Empty on missing/blank/invalid.</summary>
+  private static ImmutableArray<PinnedFormerName> _readPinnedFormerNames(
+      AdditionalText file, System.Threading.CancellationToken ct) {
+    var ledger = PinnedTypeLedger.TryParse(file.GetText(ct)?.ToString());
+    return ledger is null
+      ? ImmutableArray<PinnedFormerName>.Empty
+      : ledger.ToPinnedFormerNames().ToImmutableArray();
   }
 
   private static MessageTypeCatalogEntryInfo? _extractEntry(
@@ -109,7 +129,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   private static void _generateCatalog(
       SourceProductionContext context,
       Compilation compilation,
-      ImmutableArray<MessageTypeCatalogEntryInfo> infos) {
+      ImmutableArray<MessageTypeCatalogEntryInfo> infos,
+      ImmutableArray<PinnedFormerName> formerNames) {
 
     if (infos.IsEmpty) {
       return;
@@ -117,6 +138,18 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
 
     var assemblyName = compilation.AssemblyName ?? "UnknownAssembly";
     var namespaceName = $"{assemblyName}.Generated";
+
+    // pinned id -> distinct former names, from the committed ledger.
+    var formerByPinnedId = new Dictionary<string, List<string>>(System.StringComparer.OrdinalIgnoreCase);
+    foreach (var pf in formerNames) {
+      if (!formerByPinnedId.TryGetValue(pf.PinnedId, out var list)) {
+        list = new List<string>();
+        formerByPinnedId[pf.PinnedId] = list;
+      }
+      if (!list.Contains(pf.FormerClrTypeName)) {
+        list.Add(pf.FormerClrTypeName);
+      }
+    }
 
     var ordered = infos.OrderBy(i => i.TypeName, System.StringComparer.Ordinal).ToList();
 
@@ -144,7 +177,14 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     source.AppendLine("  private static readonly IReadOnlyList<MessageTypeCatalogEntry> _all = new MessageTypeCatalogEntry[] {");
     foreach (var info in ordered) {
       var pinnedIdLiteral = info.PinnedId is null ? "null" : $"\"{info.PinnedId}\"";
-      source.AppendLine($"    new(typeof({info.TypeName}), \"{info.ClrTypeName}\", \"{info.Kind}\", {pinnedIdLiteral}),");
+      var formerInit = "";
+      if (info.PinnedId is not null &&
+          formerByPinnedId.TryGetValue(info.PinnedId, out var formers) &&
+          formers.Count > 0) {
+        var arr = string.Join(", ", formers.Select(f => $"\"{f}\""));
+        formerInit = $" {{ FormerNames = new string[] {{ {arr} }} }}";
+      }
+      source.AppendLine($"    new(typeof({info.TypeName}), \"{info.ClrTypeName}\", \"{info.Kind}\", {pinnedIdLiteral}){formerInit},");
     }
     source.AppendLine("  };");
     source.AppendLine();

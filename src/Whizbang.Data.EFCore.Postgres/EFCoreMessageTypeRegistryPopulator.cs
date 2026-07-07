@@ -52,6 +52,7 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
 
     var inserted = 0;
     var updated = 0;
+    var renamed = 0;
     var drifted = 0;
     await using (var reader = await command.ExecuteReaderAsync(cancellationToken)) {
       while (await reader.ReadAsync(cancellationToken)) {
@@ -61,10 +62,16 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
         switch (action) {
           case "inserted": inserted++; break;
           case "updated": updated++; break;
+          case "renamed":
+            renamed++;
+            _logger?.LogInformation(
+              "Reconciled acknowledged rename: registry clr_type_name '{StoredClrTypeName}' updated to current '{CurrentClrTypeName}' (former name recorded in the pinned-type ledger).",
+              storedClr, currentClr);
+            break;
           case "drift_detected":
             drifted++;
             _logger?.LogWarning(
-              "Pinned id drift: stored clr_type_name '{StoredClrTypeName}' differs from current code '{CurrentClrTypeName}'. Run the rename tool to reconcile.",
+              "Pinned id drift: stored clr_type_name '{StoredClrTypeName}' differs from current code '{CurrentClrTypeName}' and is not a recorded former name. Record the rename in .whizbang/pinned-type-ledger.json to reconcile.",
               storedClr, currentClr);
             break;
         }
@@ -82,8 +89,8 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
     }
 
     _logger?.LogInformation(
-      "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Drifted} drifted).",
-      entries.Count, pinned, unpinned, inserted, updated, drifted);
+      "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Renamed} renamed, {Drifted} drifted).",
+      entries.Count, pinned, unpinned, inserted, updated, renamed, drifted);
   }
 
   private static string _serializeEntries(IReadOnlyList<MessageTypeCatalogEntry> entries) {
@@ -96,7 +103,23 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
       sb.Append("{\"ClrTypeName\":").Append(_jsonString(e.ClrTypeName))
         .Append(",\"PinnedId\":").Append(e.PinnedId is null ? "null" : _jsonString(e.PinnedId))
         .Append(",\"Kind\":").Append(_jsonString(e.Kind))
+        .Append(",\"FormerNames\":").Append(_jsonArray(e.FormerNames))
         .Append('}');
+    }
+    sb.Append(']');
+    return sb.ToString();
+  }
+
+  private static string _jsonArray(IReadOnlyList<string> values) {
+    if (values is null || values.Count == 0) {
+      return "[]";
+    }
+    var sb = new StringBuilder("[");
+    for (var i = 0; i < values.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append(_jsonString(values[i]));
     }
     sb.Append(']');
     return sb.ToString();

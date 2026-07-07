@@ -13,7 +13,15 @@ public sealed record MessageTypeCatalogEntry(
   string ClrTypeName,
   string Kind,
   string? PinnedId
-);
+) {
+  /// <summary>
+  /// The CLR names this pinned type was FORMERLY known by, from the committed pinned-type ledger
+  /// (<c>.whizbang/pinned-type-ledger.json</c>). Empty for unpinned types or types that have never
+  /// been renamed. Used by the registry populator to recognise an acknowledged rename and reconcile
+  /// a stale <c>wh_message_type_registry</c> row (old name -&gt; current name) in place.
+  /// </summary>
+  public IReadOnlyList<string> FormerNames { get; init; } = System.Array.Empty<string>();
+}
 
 /// <summary>
 /// Zero-reflection, AOT-safe enumeration of every concrete IMessage and IPerspectiveFor&lt;&gt;

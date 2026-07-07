@@ -65,6 +65,51 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_LedgerFormerNames_EmittedOnMatchingPinnedEntryAsync() {
+    // A committed ledger records a former name for the pinned type -> the catalog entry must carry it,
+    // so the registry populator can recognise the acknowledged rename and reconcile the stale row.
+    const string source = """
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      namespace MyApp;
+      [PinnedId("11111111-1111-1111-1111-111111111111")]
+      public record OrderPlacedEvent : IEvent;
+      public record UnpinnedEvent : IEvent;
+""";
+    const string ledger = """
+      { "version": 1, "types": [
+        { "pinnedId": "11111111-1111-1111-1111-111111111111", "clrTypeName": "MyApp.OrderPlacedEvent",
+          "kind": "event", "formerNames": ["MyApp.OrderCreatedEvent"] }
+      ] }
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(
+      source, [("/repo/src/MyApp/.whizbang/pinned-type-ledger.json", ledger)]);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
+
+    await Assert.That(code).IsNotNull();
+    // The pinned entry carries its former name via the FormerNames initializer.
+    await Assert.That(code!).Contains("FormerNames = new string[] { \"MyApp.OrderCreatedEvent\" }");
+  }
+
+  [Test]
+  public async Task Generator_NoLedger_EmitsNoFormerNamesAsync() {
+    const string source = """
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      namespace MyApp;
+      [PinnedId("11111111-1111-1111-1111-111111111111")]
+      public record OrderPlacedEvent : IEvent;
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
+
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).DoesNotContain("FormerNames");
+  }
+
+  [Test]
   public async Task Generator_SkipsAbstractTypesAsync() {
     const string source = """
 
