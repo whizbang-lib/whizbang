@@ -76,7 +76,7 @@ Each mutatable project needs a `stryker-config.json` in its test project directo
       "break": 0
     },
     "mutate": [
-      "!**/.whizbang-generated/**",
+      "!**/.whizbang/cache/**",
       "!**/*.g.cs",
       "!**/obj/**",
       "!**/bin/**",
@@ -95,7 +95,7 @@ Each mutatable project needs a `stryker-config.json` in its test project directo
 - **test-runner: mtp** - Required for TUnit (Microsoft.Testing.Platform)
 - **coverage-analysis: off** - MTP coverage capture has compatibility issues; disable for reliability
 - **ignore-mutations** - `string` and `linq` produce many low-value surviving mutants (log messages, exception text)
-- **mutate exclusions** - Always exclude generated code (`.whizbang-generated/`, `*.g.cs`)
+- **mutate exclusions** - Always exclude generated code (`.whizbang/cache/`, `*.g.cs`)
 
 ## Adding a New Project
 

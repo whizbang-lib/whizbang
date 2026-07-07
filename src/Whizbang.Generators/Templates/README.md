@@ -130,4 +130,4 @@ This approach is based on the **AdditionalFiles pattern** used by:
 
 - `ReceptorDiscoveryGenerator.cs` - Reads and processes templates
 - `Whizbang.Generators.csproj` - Template configuration
-- Generated code: `tests/Whizbang.Core.Tests/.whizbang-generated/`
+- Generated code: `tests/Whizbang.Core.Tests/.whizbang/cache/`

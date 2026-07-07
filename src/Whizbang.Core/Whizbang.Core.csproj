@@ -8,7 +8,7 @@
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
     <!-- Emit source-generated files to disk for debugging -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
   <!-- Generate compile-time version constant from MSBuild $(Version) — no reflection needed -->
   <Target Name="GenerateVersionInfo" BeforeTargets="CoreCompile">

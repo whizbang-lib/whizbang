@@ -218,7 +218,9 @@ public class AggregateIdGenerator : IIncrementalGenerator {
 
 **Outputs**:
 - `MessageRegistry.g.cs` - JSON registry for VSCode extension
-- Written to `.whizbang/message-registry.json`
+- Extracted (by an MSBuild post-build target) to `.whizbang/cache/message-registry.json` — a
+  regenerable, git-ignored artifact. (The committed `pinned-type-ledger.json` lockfile lives
+  separately in `.whizbang/`.)
 
 **Cache**: `MessageTypeInfo`, `DispatcherLocationInfo`, `ReceptorLocationInfo`, `PerspectiveLocationInfo` records
 

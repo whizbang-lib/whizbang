@@ -7,7 +7,7 @@
 
     <!-- Enable source generator output to file system -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
 
     <!-- AOT Compatibility - Enabled but not enforced strictly for samples -->
     <!-- NOTE: EF Core InMemory provider isn't fully AOT compatible -->

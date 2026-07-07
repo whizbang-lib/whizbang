@@ -42,9 +42,13 @@ bld/
 # Visual Studio 2017 auto generated files
 Generated\ Files/
 
-# Whizbang Source Generator output
-**/.whizbang-generated/
-**/.whizbang/
+# Whizbang generated output.
+# Convention: everything under .whizbang/cache/ is REGENERABLE (generated .cs, message-registry.json)
+# and is ignored. The rest of .whizbang/ is COMMITTED source-of-truth (the pinned-type-ledger.json
+# rename lockfile + README), so it is NOT ignored. The second line drops any stale/legacy registry
+# left by older Whizbang versions that wrote it to .whizbang/ directly.
+**/.whizbang/cache/
+**/.whizbang/message-registry.json
 
 # Whizbang Generated Schema Files (regenerated from C# schema definitions)
 # Note: Dapper.Sqlite needs whizbang-schema.sql as an embedded resource

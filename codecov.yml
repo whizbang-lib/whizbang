@@ -11,7 +11,7 @@ comment:
 
 ignore:
   - "**/*.Generated.cs"
-  - "**/.whizbang-generated/**"
+  - "**/.whizbang/cache/**"
   - "samples/**"
   - "benchmarks/**"
   - "test-diagnostics/**"
