@@ -33,6 +33,29 @@ public class PinnedTypeLedgerGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task Generator_NestedType_RendersLiteralPlusNotUnicodeEscapeAsync() {
+    // A nested pinned type's CLR name uses '+' as the separator. The committed ledger is a human-reviewed
+    // lockfile, so the '+' must appear literally — NOT as the HTML-safe encoder's 6-char unicode escape.
+    const string nested = """
+        using Whizbang.Core;
+        using Whizbang.Core.Attributes;
+        namespace TestApp;
+        public static class OrderContracts {
+          [PinnedId("33333333-3333-3333-3333-333333333333")]
+          public record OrderPlacedEvent : IEvent;
+        }
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<PinnedTypeLedgerGenerator>(nested);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
+
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated!).Contains("TestApp.OrderContracts+OrderPlacedEvent"); // literal '+'
+    await Assert.That(generated!).DoesNotContain("\\u002B");                            // not the escaped form
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task Generator_NoExistingLedger_BootstrapsAllPinnedTypesAsync() {
     var result = GeneratorTestHelper.RunGenerator<PinnedTypeLedgerGenerator>(TWO_PINNED_TYPES);
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
