@@ -108,10 +108,18 @@ public class SlidingWindowBatcherTests {
   /// </summary>
   [Test]
   public async Task ReadBatches_BusyProducer_FlushesAtMaxWaitAsync() {
+    // Timing margins are chosen so CI load cannot invert the intended ordering. Task.Delay is a
+    // FLOOR — under load the producer's arrival gap only stretches, never shrinks — while MaxWait
+    // is a real timer that fires close to schedule. So the window and MaxWait must be large
+    // enough that even a heavily-stretched arrival gap (say 10x, ~200ms) still stays under the
+    // sliding window (keeping the debounce alive) and still lets >= 3 arrivals land before MaxWait:
+    //   - gap nominal 20ms; stretched to ~200ms still << 1000ms window -> window keeps resetting
+    //   - MaxWait 1500ms >> 3 stretched gaps (~600ms) -> at least 3 items always accrue first
+    //   - MaxWait 1500ms fires before size (75 items nominal < MaxSize 100) -> MaxWait is the trigger
     var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
       MaxSize = 100,
-      SlidingWindow = TimeSpan.FromMilliseconds(150),
-      MaxWait = TimeSpan.FromMilliseconds(250)
+      SlidingWindow = TimeSpan.FromMilliseconds(1000),
+      MaxWait = TimeSpan.FromMilliseconds(1500)
     });
     var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
     var cts = new CancellationTokenSource();
@@ -122,23 +130,26 @@ public class SlidingWindowBatcherTests {
       }
     });
 
-    // Steady arrivals every 50ms — sliding window (150ms) keeps resetting; MaxWait (250ms) wins.
+    // Fast steady arrivals — the sliding window keeps resetting so the debounce never expires;
+    // MaxWait is the hard cap that forces the flush.
     var producer = Task.Run(async () => {
-      for (var i = 1; i <= 20 && !cts.IsCancellationRequested; i++) {
+      for (var i = 1; i <= 100 && !cts.IsCancellationRequested; i++) {
         try {
           await ch.Writer.WriteAsync(i, cts.Token);
         } catch (OperationCanceledException) { return; }
-        await Task.Delay(50);
+        await Task.Delay(20);
       }
     });
 
-    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(8));
     cts.Cancel();
     try { await consumeTask; } catch (OperationCanceledException) { }
     try { await producer; } catch (OperationCanceledException) { }
 
-    // Batch should contain at least 3 items (250ms / 50ms ≈ 5, but timing variance gives 3-6).
+    // MaxWait flushed a multi-item batch (>= 3) that includes the first arrival, and it flushed
+    // because of MaxWait rather than MaxSize (count stays well under the 100 cap).
     await Assert.That(batch.Count).IsGreaterThanOrEqualTo(3);
+    await Assert.That(batch.Count).IsLessThan(100);
     await Assert.That(batch.Contains(1)).IsTrue();
   }
 
