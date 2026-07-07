@@ -5,6 +5,10 @@
     <WhizbangEmitMessageRegistry Condition="'$(WhizbangEmitMessageRegistry)' == ''">true</WhizbangEmitMessageRegistry>
     <!-- Rename platform: consumers can set WhizbangIncludePinnedTypeLedger=false to opt out -->
     <WhizbangIncludePinnedTypeLedger Condition="'$(WhizbangIncludePinnedTypeLedger)' == ''">true</WhizbangIncludePinnedTypeLedger>
+    <!-- Drop a README.md into the .whizbang/ and .whizbang-generated/ folders explaining what they
+         are and whether to commit or ignore them. Consumers can set WhizbangEmitFolderReadmes=false
+         to opt out (e.g. if they document the convention themselves). -->
+    <WhizbangEmitFolderReadmes Condition="'$(WhizbangEmitFolderReadmes)' == ''">true</WhizbangEmitFolderReadmes>
   </PropertyGroup>
 
   <!-- Rename platform (P0/P1): surface the committed pinned-type ledger to the analyzer + generators as an
