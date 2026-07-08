@@ -3602,6 +3602,20 @@ public abstract partial class Dispatcher(
     return CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
   }
 
+  /// <summary>
+  /// Resolves the security scope (Tenant/User) to stamp on a child event's hop, HOP-FIRST — the source hop
+  /// captured at the calling site is authoritative (survives detached/worker/collective boundaries), ambient is
+  /// the fallback. The scope companion to <see cref="_resolveHopFirstIdentity"/>: together they are the ONE place
+  /// the hop-first precedence lives, so every hop builder (outbox typed, outbox JSON, deferred) resolves
+  /// identically instead of re-implementing the rule (which is how one site at a time drifted to ambient-first).
+  /// </summary>
+  private static ScopeDelta? _resolveHopFirstScope(IMessageEnvelope? sourceEnvelope) {
+    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
+      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = s.Scope?.TenantId, UserId = s.Scope?.UserId })
+      : null;
+    return sourceScope ?? ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
+  }
+
   private static readonly object _captureSentinelPayload = new();
 
   /// <summary>
@@ -3643,13 +3657,9 @@ public abstract partial class Dispatcher(
     var hopMetadata = _createHopMetadata(eventData!, eventType);
 
     // Scope + identity are carried on the SOURCE HOP captured at the calling site — hop-FIRST — falling back to
-    // ambient only when no source hop was threaded. Ambient-first was the boundary bug: a detached/worker handler
-    // has no ambient, so the child lost scope and got a fresh correlation even though the source hop had them.
-    var propagatedScope = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
-    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
-      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = s.Scope?.TenantId, UserId = s.Scope?.UserId })
-      : null;
-    var finalScope = sourceScope ?? propagatedScope;
+    // ambient only when no source hop was threaded (see _resolveHopFirstScope / _resolveHopFirstIdentity — the
+    // single place the hop-first precedence lives, shared by every hop builder).
+    var finalScope = _resolveHopFirstScope(sourceEnvelope);
 
     var (correlation, causation) = _resolveHopFirstIdentity(sourceEnvelope);
 
@@ -3868,13 +3878,8 @@ public abstract partial class Dispatcher(
     string? destination,
     Dictionary<string, JsonElement>? hopMetadata,
     IMessageEnvelope? sourceEnvelope) {
-    var propagatedScope = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
-    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } sc
-      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc.Scope?.TenantId, UserId = sc.Scope?.UserId })
-      : null;
-
-    // Hop-FIRST: the source hop captured at the calling site is authoritative (survives detached/worker
-    // boundaries); ambient is only the fallback. See _resolveHopFirstIdentity.
+    // Hop-FIRST scope + identity: the source hop captured at the calling site is authoritative (survives
+    // detached/worker boundaries); ambient is only the fallback. Shared helpers — the single place the rule lives.
     var (correlation, causation) = _resolveHopFirstIdentity(sourceEnvelope);
 
     var hop = new MessageHop {
@@ -3883,7 +3888,7 @@ public abstract partial class Dispatcher(
       Topic = destination ?? "(event-store)",
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
-      Scope = sourceScope ?? propagatedScope,
+      Scope = _resolveHopFirstScope(sourceEnvelope),
       CorrelationId = correlation,
       CausationId = causation,
       TraceParent = System.Diagnostics.Activity.Current?.Id
@@ -4933,15 +4938,11 @@ public abstract partial class Dispatcher(
     // 2. Extract aggregate ID and add to hop metadata
     var hopMetadata = _createHopMetadata(eventData!, eventType);
 
-    // 3. Add hop indicating message is being deferred
-    var propagatedScope3 = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
-    var sourceScope3 = sourceEnvelope?.GetCurrentScope() is { } sc3
-      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc3.Scope?.TenantId, UserId = sc3.Scope?.UserId })
-      : null;
-    var finalScope3 = propagatedScope3 ?? sourceScope3;
-
-    // Cascade identity rides the deferred outbox hop alongside scope (see ResolveCascadeIdentity).
-    var (correlation3, causation3) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+    // 3. Add hop indicating message is being deferred. Scope + identity ride the SOURCE HOP captured at the
+    // calling site — hop-FIRST — via the SAME shared helpers as _createOutboxEnvelopeWithHop/_addOutboxHop, so the
+    // deferred path can't drift to ambient-first (the boundary bug: a detached/worker defer has no ambient).
+    var finalScope3 = _resolveHopFirstScope(sourceEnvelope);
+    var (correlation3, causation3) = _resolveHopFirstIdentity(sourceEnvelope);
 
     var hop = new MessageHop {
       Type = HopType.Current,
