@@ -203,6 +203,23 @@ public class CascadeContextTests {
     }
   }
 
+  [Test]
+  [NotInParallel("AmbientInitiatingContext")]
+  public async Task ResolveHopFirstScope_NoHop_NonPropagatingAmbient_ReturnsNullAsync() {
+    // Arrange — ambient scope exists but is marked ShouldPropagate=false (the PropagateToOutgoingMessages=false
+    // opt-out). It must NOT flow onto an outgoing/child hop. Guards the unified ambient-scope rule after the
+    // _captureAmbientSourceEnvelope fallback (which bypassed this) was removed.
+    ScopeContextAccessor.CurrentContext = _createTestScopeContext("user-A", "tenant-A", shouldPropagate: false);
+
+    try {
+      var result = CascadeContext.ResolveHopFirstScope(sourceEnvelope: null);
+      await Assert.That(result).IsNull()
+        .Because("Scope marked ShouldPropagate=false must never propagate onto an outgoing/child hop — the contract GetSecurityFromAmbient enforces, honored identically by every hop builder AND the ambient-capture path.");
+    } finally {
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
   // ========================================
   // RECORD INITIALIZATION TESTS
   // ========================================

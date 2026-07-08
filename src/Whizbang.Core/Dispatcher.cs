@@ -3607,8 +3607,12 @@ public abstract partial class Dispatcher(
     if (initiating is null || initiating.CorrelationId.Value == Guid.Empty) {
       return null;
     }
-    var ambientSecurity = CascadeContext.GetSecurityFromAmbient()
-      ?? (initiating.ScopeContext?.Scope is { } sc ? new SecurityContext { TenantId = sc.TenantId, UserId = sc.UserId } : null);
+    // Scope honours the ShouldPropagate contract via GetSecurityFromAmbient (identical to
+    // CascadeContext.ResolveHopFirstScope's ambient branch — the ONE ambient-scope rule). Do NOT re-add an
+    // initiating-scope fallback here: it would bypass PropagateToOutgoingMessages=false and leak a deliberately
+    // non-propagating scope onto the child hop (the divergence the audit found; the fallback was accidental
+    // symmetry copied from the identity capture, never a contract decision).
+    var ambientSecurity = CascadeContext.GetSecurityFromAmbient();
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
