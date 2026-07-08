@@ -3028,7 +3028,12 @@ public abstract partial class Dispatcher(
       // to delay cross-service event delivery by that amount. Starting the outbox first also
       // ensures FIFO order: the original event enters the outbox before any cascaded events
       // produced by the receptor.
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
+      // Capture the establishing context SYNCHRONOUSLY here (the calling site) so the emitted child inherits
+      // correlation+causation+scope from the hop even when the outbox builder runs where AsyncLocal no longer
+      // flows (a detached-stage or worker emit). Without this, PublishAsync passed sourceEnvelope=null and the
+      // child fabricated a fresh correlation + null scope across the boundary.
+      var establishingEnvelope = _captureAmbientSourceEnvelope();
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope);
 
       try {
         await publisher(eventData);
@@ -3113,7 +3118,10 @@ public abstract partial class Dispatcher(
       // options.ScheduledFor flows through to the outbox row's scheduled_for column so
       // wh_outbox's pickup query (mig 040) gates publication until the time elapses. The composite also
       // goes over transport here (step 1.2) for other subscribing services.
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, scheduledFor: options.ScheduledFor);
+      // Capture the establishing context synchronously (see the other overload) so a detached/worker emit's
+      // child inherits identity+scope from the hop rather than fabricating a fresh root across the boundary.
+      var establishingEnvelope = _captureAmbientSourceEnvelope();
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, scheduledFor: options.ScheduledFor);
 
       // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
       // the outbox-pickup query. Without this branch the local receptor fires inline despite the
@@ -3578,6 +3586,51 @@ public abstract partial class Dispatcher(
 #pragma warning restore S3776
 
   /// <summary>
+  /// Resolves the (correlation, causation) to stamp on a child event's hop, HOP-FIRST: the source hop captured
+  /// at the calling site is authoritative — it survives detached/worker/collective boundaries where AsyncLocal
+  /// does not — falling back to the ambient initiating context and finally a fresh root via
+  /// <see cref="CascadeContext.ResolveCascadeIdentity"/>. Mirror of the scope precedence in the hop builders.
+  /// </summary>
+  private static (CorrelationId Correlation, MessageId? Causation) _resolveHopFirstIdentity(IMessageEnvelope? sourceEnvelope) {
+    if (sourceEnvelope?.GetCorrelationId() is { } sourceCorrelation && sourceCorrelation.Value != Guid.Empty) {
+      return (sourceCorrelation, sourceEnvelope.GetCausationId());
+    }
+    return CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+  }
+
+  private static readonly object _captureSentinelPayload = new();
+
+  /// <summary>
+  /// Snapshots the ambient establishing message context into a lightweight source envelope SYNCHRONOUSLY at a
+  /// child-emit calling site (<c>PublishAsync</c>), so the emitted child inherits correlation + causation + scope
+  /// from the hop even when the outbox builder later runs where AsyncLocal no longer flows (detached/worker).
+  /// Causation is the establishing message's id (the parent). Returns <see langword="null"/> when there is no
+  /// establishing context — a genuine root emit, which then resolves a fresh trace-aligned root as before.
+  /// </summary>
+  private MessageEnvelope<object>? _captureAmbientSourceEnvelope() {
+    var initiating = ScopeContextAccessor.CurrentInitiatingContext;
+    if (initiating is null || initiating.CorrelationId.Value == Guid.Empty) {
+      return null;
+    }
+    var ambientSecurity = CascadeContext.GetSecurityFromAmbient()
+      ?? (initiating.ScopeContext?.Scope is { } sc ? new SecurityContext { TenantId = sc.TenantId, UserId = sc.UserId } : null);
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _instanceProvider.ToInfo(),
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = initiating.CorrelationId,
+      CausationId = initiating.MessageId,
+      Scope = ambientSecurity is not null ? ScopeDelta.FromSecurityContext(ambientSecurity) : null,
+    };
+    return new MessageEnvelope<object> {
+      MessageId = initiating.MessageId,
+      Payload = _captureSentinelPayload,
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    };
+  }
+
+  /// <summary>
   /// Creates a MessageEnvelope with hop metadata for outbox publishing.
   /// Includes scope propagation from ambient context or source envelope.
   /// </summary>
@@ -3585,16 +3638,16 @@ public abstract partial class Dispatcher(
     // Extract aggregate ID and add to hop metadata (for streamId extraction)
     var hopMetadata = _createHopMetadata(eventData!, eventType);
 
-    // Scope: First try ambient context, then inherit from source envelope
+    // Scope + identity are carried on the SOURCE HOP captured at the calling site — hop-FIRST — falling back to
+    // ambient only when no source hop was threaded. Ambient-first was the boundary bug: a detached/worker handler
+    // has no ambient, so the child lost scope and got a fresh correlation even though the source hop had them.
     var propagatedScope = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
     var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
       ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = s.Scope?.TenantId, UserId = s.Scope?.UserId })
       : null;
-    var finalScope = propagatedScope ?? sourceScope;
+    var finalScope = sourceScope ?? propagatedScope;
 
-    // Cascade identity (correlation + causation) rides the outbox hop just like scope does — resolved from the
-    // same ambient/source context. Without this the persisted hop keeps `sc` but loses `co`/`ca`.
-    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+    var (correlation, causation) = _resolveHopFirstIdentity(sourceEnvelope);
 
     var hop = new MessageHop {
       Type = HopType.Current,
@@ -3816,8 +3869,9 @@ public abstract partial class Dispatcher(
       ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc.Scope?.TenantId, UserId = sc.Scope?.UserId })
       : null;
 
-    // Cascade identity rides the outbox hop alongside scope (see ResolveCascadeIdentity).
-    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+    // Hop-FIRST: the source hop captured at the calling site is authoritative (survives detached/worker
+    // boundaries); ambient is only the fallback. See _resolveHopFirstIdentity.
+    var (correlation, causation) = _resolveHopFirstIdentity(sourceEnvelope);
 
     var hop = new MessageHop {
       Type = HopType.Current,
@@ -3825,7 +3879,7 @@ public abstract partial class Dispatcher(
       Topic = destination ?? "(event-store)",
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
-      Scope = propagatedScope ?? sourceScope,
+      Scope = sourceScope ?? propagatedScope,
       CorrelationId = correlation,
       CausationId = causation,
       TraceParent = System.Diagnostics.Activity.Current?.Id
