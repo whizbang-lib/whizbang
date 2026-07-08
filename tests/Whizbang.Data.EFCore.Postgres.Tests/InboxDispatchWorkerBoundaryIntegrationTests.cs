@@ -93,6 +93,31 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     }
   }
 
+  /// <summary>Inbound event for the COLLECTIVE variant (#6) — the a consumer overlay-activation saga-trigger shape.</summary>
+  public record CollectiveParentEvent([property: StreamId] Guid Id) : IEvent;
+
+  /// <summary>
+  /// A real collective event (produced via ordinary PublishAsync + EventFlags.Collective). Its cohort Scope is
+  /// producer-set (the WHERE predicate); its STORE hop's co+ca+scope must be inherited from the carried inbound
+  /// hop the same as any event — that's the lineage identity a consumer currently works around with a manual attach.
+  /// </summary>
+  public sealed record BoundaryCollectiveChildEvent : CollectiveEventBase;
+
+  /// <summary>
+  /// Detached-stage receptor (the saga-trigger shape) that imperatively PUBLISHES a collective event — exactly
+  /// like a consumer's OverlayActivatedSagaTriggerHandler emitting OverlayAppliedToJobsCollectiveEvent.
+  /// </summary>
+  public sealed class CollectiveEmittingReceptor(IDispatcher dispatcher) : IReceptor<CollectiveParentEvent> {
+    public static TaskCompletionSource Done { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public async ValueTask HandleAsync(CollectiveParentEvent message, CancellationToken cancellationToken = default) {
+      try {
+        await dispatcher.PublishAsync(new BoundaryCollectiveChildEvent { Scope = new TenantCollectiveScope("tenant-456") });
+      } finally {
+        Done.TrySetResult();
+      }
+    }
+  }
+
   [Test]
   public async Task InboxWorker_Boundary_NoAmbient_ChildInheritsIdentityFromHopAsync() {
     // Arrange — real services over real PG + the real InboxDispatchWorker.
@@ -287,6 +312,104 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
         .Because("Causation must survive the detached boundary on the carried hop.");
       await Assert.That(childEnvelope.GetCurrentScope()?.Scope?.TenantId).IsEqualTo("tenant-456")
         .Because("Tenant scope must survive the detached boundary on the carried hop.");
+    } finally {
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+      await serviceProvider.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task InboxWorker_DetachedStage_CollectiveChild_InheritsIdentityFromHopAsync() {
+    // #6: a collective event is produced via ORDINARY PublishAsync (+ EventFlags.Collective) — there is no special
+    // collective-produce path. Emitted imperatively from a detached saga-trigger receptor at the worker boundary
+    // (the a consumer OverlayApplied... shape), its persisted STORE hop must inherit co+ca+scope from the carried inbound
+    // hop, same as any event. Proves #6's produce-side is covered by the #1/#2/#7 carry — so a consumer's manual
+    // lineage-scope attach for the collective event is no longer needed.
+    CollectiveEmittingReceptor.Done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var (serviceProvider, jsonOptions) = await _createServicesAsync();
+
+    var expectedCorrelation = CorrelationId.New();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    var parent = new CollectiveParentEvent(streamId);
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      Timestamp = DateTimeOffset.UtcNow,
+      ServiceInstance = new ServiceInstanceInfo {
+        InstanceId = Guid.CreateVersion7(),
+        ServiceName = "upstream-service",
+        HostName = "upstream-host",
+        ProcessId = 1
+      },
+      CorrelationId = expectedCorrelation,
+      CausationId = MessageId.New(),
+      Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "tenant-456", UserId = "user-123" })
+    };
+    var work = new InboxWork {
+      MessageId = messageId,
+      Envelope = new MessageEnvelope<JsonElement> {
+        MessageId = MessageId.From(messageId),
+        Payload = JsonSerializer.SerializeToElement(parent, jsonOptions),
+        Hops = [hop],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
+      },
+      MessageType = typeof(CollectiveParentEvent).AssemblyQualifiedName!,
+      StreamId = streamId,
+      PartitionNumber = 0,
+      Attempts = 1,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    ScopeContextAccessor.CurrentInitiatingContext = null;
+    ScopeContextAccessor.CurrentContext = null;
+
+    var worker = new InboxDispatchWorker(
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
+      inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: serviceProvider.GetRequiredService<ILifecycleMessageDeserializer>(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
+      leaseRegistry: new LeaseRegistry());
+
+    using var cts = new CancellationTokenSource();
+    try {
+      await worker.StartAsync(cts.Token);
+      await inbox.WriteAsync(work, cts.Token);
+      await CollectiveEmittingReceptor.Done.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+      await using var dbContext = CreateDbContext();
+      var outboxMessages = await dbContext.Outbox.ToListAsync();
+      var child = outboxMessages.FirstOrDefault(m => m.MessageType == typeof(BoundaryCollectiveChildEvent).AssemblyQualifiedName);
+      await Assert.That(child).IsNotNull()
+        .Because("The detached receptor's PublishAsync'd collective event must be durable in the outbox.");
+
+      var childEnvelope = new MessageEnvelope<JsonElement> {
+        MessageId = child!.MessageData.MessageId,
+        Payload = child.MessageData.Payload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+        Hops = child.MessageData.Hops
+      };
+      await Assert.That(childEnvelope.GetCorrelationId()).IsEqualTo(expectedCorrelation)
+        .Because("A collective event emitted at the worker boundary must inherit correlation from the carried hop (the a consumer lineage that was fabricating fresh).");
+      await Assert.That(childEnvelope.GetCausationId()).IsNotNull()
+        .Because("Causation must survive onto the collective event's store hop.");
+      await Assert.That(childEnvelope.GetCurrentScope()?.Scope?.TenantId).IsEqualTo("tenant-456")
+        .Because("The collective event's STORE-hop scope must inherit the tenant from the carried hop — no manual attach — so a consumer can drop its ForCurrentTenant lineage workaround.");
     } finally {
       await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
