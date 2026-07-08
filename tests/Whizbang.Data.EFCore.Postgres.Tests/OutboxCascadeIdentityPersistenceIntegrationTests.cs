@@ -153,6 +153,77 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
     }
   }
 
+  /// <summary>Command that triggers a receptor which emits an event routed to fire its own reactor inline.</summary>
+  public record ReactorTriggerCommand([property: StreamId] Guid Id);
+
+  /// <summary>
+  /// Event A — emitted by the command receptor and routed <c>Both</c> so its reactor fires inline (the production
+  /// saga shape: the reactor's published events persist BEFORE A itself does).
+  /// </summary>
+  public record ReactorTriggerEvent([property: StreamId] Guid Id) : IEvent;
+
+  /// <summary>Event B — PUBLISHED by the reactor while it is handling event A. Must inherit A's cascade identity.</summary>
+  public record ReactorPublishedEvent([property: StreamId] Guid Id) : IEvent;
+
+  /// <summary>Command handler emits event A routed <c>Both</c> (local + outbox) so A's reactor fires inline.</summary>
+  public class ReactorTriggerCommandHandler : IReceptor<ReactorTriggerCommand, Routed<ReactorTriggerEvent>> {
+    public ValueTask<Routed<ReactorTriggerEvent>> HandleAsync(ReactorTriggerCommand command, CancellationToken cancellationToken = default) {
+      return ValueTask.FromResult(Route.Both(new ReactorTriggerEvent(command.Id)));
+    }
+  }
+
+  /// <summary>
+  /// Void reactor: reacts to event A by PUBLISHING event B via the dispatcher — exactly what an
+  /// OverlayApplication saga-trigger handler does. This is the seam where B was minting a FRESH correlation +
+  /// null causation instead of inheriting A's, orphaning the completion notification the toast waits on.
+  /// </summary>
+  public class ReactorTriggerEventReactor(IDispatcher dispatcher) : IReceptor<ReactorTriggerEvent> {
+    public async ValueTask HandleAsync(ReactorTriggerEvent message, CancellationToken cancellationToken = default) {
+      await dispatcher.PublishAsync(new ReactorPublishedEvent(message.Id));
+    }
+  }
+
+  [Test]
+  public async Task Cascade_EventReactorPublishesEvent_InheritsCorrelationAndSetsCausationAsync() {
+    // Arrange — the production saga-trigger shape: an inbound command (correlation X) → receptor emits event A
+    // (routed Both, so its reactor fires INLINE) → the reactor PUBLISHES event B via IDispatcher. B must inherit
+    // X and carry a non-null causation. Today B mints a fresh root correlation (ca=None) — so the completion
+    // notification rides a correlation that never matches the "Template Activating" toast's subscription.
+    var services = await _createServicesAsync();
+    services.AddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+    var command = new ReactorTriggerCommand(Guid.CreateVersion7());
+    var expectedCorrelation = CorrelationId.New();
+
+    try {
+      // Act — dispatch the command under an explicit inbound correlation.
+      await dispatcher.LocalInvokeAsync(command, MessageContext.Create(expectedCorrelation));
+
+      // Assert — the reactor-published event B is in the outbox with the inbound correlation + a causation link.
+      await using var dbContext = CreateDbContext();
+      var outboxMessages = await dbContext.Outbox.ToListAsync();
+      var expectedType = typeof(ReactorPublishedEvent).AssemblyQualifiedName;
+      var published = outboxMessages.FirstOrDefault(m => m.MessageType == expectedType);
+      await Assert.That(published).IsNotNull()
+        .Because("The reactor's PublishAsync'd event should be in the outbox.");
+
+      var envelope = new MessageEnvelope<JsonElement> {
+        MessageId = published!.MessageData.MessageId,
+        Payload = published.MessageData.Payload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+        Hops = published.MessageData.Hops
+      };
+      await Assert.That(envelope.GetCorrelationId()).IsEqualTo(expectedCorrelation)
+        .Because("An event PUBLISHED by a receptor reacting to a cascaded event must inherit the triggering event's correlation (== the inbound command correlation) — the saga-trigger seam that was minting a fresh correlation and orphaning the completion notification.");
+      await Assert.That(envelope.GetCausationId()).IsNotNull()
+        .Because("The published event must carry a causation link back to its trigger, not ca=None (the production signature).");
+    } finally {
+      await serviceProvider.DisposeAsync();
+    }
+  }
+
   [Test]
   public async Task Outbox_WithAmbientInitiatingContext_PersistsCorrelationAndCausation_OnHopAsync() {
     // Arrange

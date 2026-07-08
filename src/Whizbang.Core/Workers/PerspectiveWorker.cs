@@ -3637,10 +3637,12 @@ public partial class PerspectiveWorker(
 
     var messageContextAccessor = scopedProvider.GetService<IMessageContextAccessor>();
     if (messageContextAccessor is not null) {
+      // Single source of truth for correlation propagation: hop → ambient parent (rescue) → fresh root.
+      var (correlation, causation) = Observability.CascadeContext.ResolveInheritedIdentity(envelope);
       var messageContext = new MessageContext {
         MessageId = envelope.MessageId,
-        CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
-        CausationId = envelope.GetCausationId() ?? MessageId.New(),
+        CorrelationId = correlation,
+        CausationId = causation,
         Timestamp = envelope.GetMessageTimestamp(),
         UserId = scopeForMessageContext?.Scope?.UserId,
         TenantId = scopeForMessageContext?.Scope?.TenantId,

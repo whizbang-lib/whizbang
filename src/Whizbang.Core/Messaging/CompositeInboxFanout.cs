@@ -208,7 +208,8 @@ public static class CompositeInboxFanout {
       Timestamp = DateTimeOffset.UtcNow,
       CausationId = source.MessageId,
       CausationType = composite.GetType().Name,
-      CorrelationId = source.GetCorrelationId() ?? CorrelationId.New(),
+      // Same shared rescue chain as every other cascade site (hop → ambient parent → fresh root).
+      CorrelationId = Observability.CascadeContext.ResolveInheritedIdentity(source).Correlation,
       // Carry the composite's stream metadata (AggregateId) + scope so the child's hop chain is
       // self-consistent for stream resolution and security extraction.
       Metadata = sourceFirstHop?.Metadata,
