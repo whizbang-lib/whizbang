@@ -27,7 +27,10 @@ internal sealed class CascadeEnvelopeWrapper(IMessageEnvelope inner) : IMessageE
   public void AddHop(MessageHop hop) => _inner.AddHop(hop);
   public DateTimeOffset GetMessageTimestamp() => _inner.GetMessageTimestamp();
   public CorrelationId? GetCorrelationId() => _inner.GetCorrelationId();
-  public MessageId? GetCausationId() => _inner.GetCausationId();
+  // A child cascaded from the wrapped message is caused BY that message — its causation is the wrapped
+  // envelope's own MessageId, NOT the wrapped message's causation (which is the grandparent). Mirrors
+  // CascadeContextFactory.FromEnvelope (causation = envelope.MessageId).
+  public MessageId? GetCausationId() => _inner.MessageId;
   public JsonElement? GetMetadata(string key) => _inner.GetMetadata(key);
   public ScopeContext? GetCurrentScope() => _inner.GetCurrentScope();
 
