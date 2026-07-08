@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -23,17 +24,20 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
   private readonly IMessageTypeCatalog _catalog;
   private readonly NpgsqlDataSource _dataSource;
   private readonly ILogger<EFCoreMessageTypeRegistryPopulator>? _logger;
+  private readonly TypeRegistryMetrics? _metrics;
 
   /// <summary>Initializes a new populator.</summary>
   public EFCoreMessageTypeRegistryPopulator(
       IMessageTypeCatalog catalog,
       NpgsqlDataSource dataSource,
-      ILogger<EFCoreMessageTypeRegistryPopulator>? logger = null) {
+      ILogger<EFCoreMessageTypeRegistryPopulator>? logger = null,
+      TypeRegistryMetrics? metrics = null) {
     ArgumentNullException.ThrowIfNull(catalog);
     ArgumentNullException.ThrowIfNull(dataSource);
     _catalog = catalog;
     _dataSource = dataSource;
     _logger = logger;
+    _metrics = metrics;
   }
 
   /// <inheritdoc/>
@@ -90,5 +94,7 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
     _logger?.LogInformation(
       "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Renamed} renamed, {Drifted} drifted).",
       entries.Count, pinned, unpinned, inserted, updated, renamed, drifted);
+
+    _metrics?.Record(renamed, drifted);
   }
 }

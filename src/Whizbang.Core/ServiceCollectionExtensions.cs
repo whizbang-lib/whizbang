@@ -253,6 +253,7 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<InboxMetrics>();
     services.TryAddSingleton<LifecycleCoordinatorMetrics>();
     services.TryAddSingleton<EventCategoryMetrics>();
+    services.TryAddSingleton<TypeRegistryMetrics>();
 
     // Cross-worker dedup: prevents same message+stage from firing twice
     services.TryAddSingleton<Messaging.LifecycleStageTracker>();
