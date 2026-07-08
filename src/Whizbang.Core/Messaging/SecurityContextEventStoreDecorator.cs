@@ -60,10 +60,10 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEve
       where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
 
-    // Use unified security extraction via CascadeContext, and resolve the cascade identity the same way so
-    // a raw event stored through this path keeps its correlation/causation (not just its scope).
-    var securityContext = CascadeContext.GetSecurityFromAmbient();
-    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope: null);
+    // Top-level event-store append (no source hop) — resolve scope + identity through the SAME shared hop-first
+    // helpers as the outbox hop builders, so a raw event stored through this path keeps its correlation/causation
+    // and scope consistently (with a null source these collapse to the ambient context).
+    var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope: null);
 
     var envelope = new MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
@@ -73,7 +73,7 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEve
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = Activity.Current?.Id,
-          Scope = ScopeDelta.FromSecurityContext(securityContext),
+          Scope = CascadeContext.ResolveHopFirstScope(sourceEnvelope: null),
           CorrelationId = correlation,
           CausationId = causation,
         }

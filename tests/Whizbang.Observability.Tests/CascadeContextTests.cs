@@ -91,6 +91,119 @@ public class CascadeContextTests {
   }
 
   // ========================================
+  // RESOLVE HOP-FIRST TESTS (the shared publish-side precedence used by every hop builder)
+  // ========================================
+  // These directly guard the hop-first PRECEDENCE — "source hop wins over a DIFFERENT present ambient" — that
+  // survives detached/worker/collective boundaries. The boundary integration tests clear ambient, so ONLY these
+  // catch a regression from hop-first back to ambient-first (which would silently reappear the production bug).
+
+  [Test]
+  [NotInParallel("AmbientInitiatingContext")]
+  public async Task ResolveHopFirstIdentity_HopPresent_WinsOverDifferentAmbientAsync() {
+    // Arrange — ambient carries correlation A; the source hop carries a DIFFERENT correlation B + causation C.
+    ScopeContextAccessor.CurrentInitiatingContext = new MessageContext {
+      MessageId = MessageId.New(),
+      CorrelationId = CorrelationId.New(),   // ambient A — must be ignored
+      CausationId = MessageId.New()
+    };
+    var hopCorrelation = CorrelationId.New();  // B
+    var hopCausation = MessageId.New();        // C
+    var sourceEnvelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "parent",
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow,
+          CorrelationId = hopCorrelation, CausationId = hopCausation
+        }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    try {
+      // Act
+      var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope);
+
+      // Assert — the source HOP wins over the different ambient (hop-first).
+      await Assert.That(correlation).IsEqualTo(hopCorrelation)
+        .Because("Hop-first: the source hop's correlation must win over a different present ambient (survives detached/worker boundaries).");
+      await Assert.That(causation).IsEqualTo(hopCausation)
+        .Because("Hop-first: causation comes from the source hop, not ambient.");
+    } finally {
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
+
+  [Test]
+  [NotInParallel("AmbientInitiatingContext")]
+  public async Task ResolveHopFirstIdentity_NoHop_FallsBackToAmbientAsync() {
+    // Arrange — no source hop; ambient carries correlation A + message id M.
+    var ambientCorrelation = CorrelationId.New();
+    var ambientMessageId = MessageId.New();
+    ScopeContextAccessor.CurrentInitiatingContext = new MessageContext {
+      MessageId = ambientMessageId,
+      CorrelationId = ambientCorrelation,
+      CausationId = MessageId.New()
+    };
+
+    try {
+      var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope: null);
+      await Assert.That(correlation).IsEqualTo(ambientCorrelation)
+        .Because("With no source hop, hop-first falls back to the ambient initiating context.");
+      await Assert.That(causation).IsEqualTo(ambientMessageId)
+        .Because("Ambient-fallback causation is the initiating message id.");
+    } finally {
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
+
+  [Test]
+  [NotInParallel("AmbientInitiatingContext")]
+  public async Task ResolveHopFirstScope_HopPresent_WinsOverDifferentAmbientAsync() {
+    // Arrange — ambient scope is tenant-A/user-A; the source hop carries a DIFFERENT tenant-B/user-B scope.
+    ScopeContextAccessor.CurrentContext = _createTestScopeContext("user-A", "tenant-A", shouldPropagate: true);
+    var sourceEnvelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "parent",
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow,
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "tenant-B", UserId = "user-B" })
+        }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    try {
+      // Act
+      var resolved = CascadeContext.ResolveHopFirstScope(sourceEnvelope)!.ApplyTo(null);
+
+      // Assert — the source hop's tenant/user win over the different present ambient.
+      await Assert.That(resolved.Scope.TenantId).IsEqualTo("tenant-B")
+        .Because("Hop-first: the source hop's tenant scope must win over a different present ambient.");
+      await Assert.That(resolved.Scope.UserId).IsEqualTo("user-B")
+        .Because("Hop-first: the source hop's user scope wins over ambient too.");
+    } finally {
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  [NotInParallel("AmbientInitiatingContext")]
+  public async Task ResolveHopFirstScope_NoHop_FallsBackToAmbientAsync() {
+    // Arrange — no source hop; ambient (propagating) scope is tenant-A/user-A.
+    ScopeContextAccessor.CurrentContext = _createTestScopeContext("user-A", "tenant-A", shouldPropagate: true);
+
+    try {
+      var resolved = CascadeContext.ResolveHopFirstScope(sourceEnvelope: null)!.ApplyTo(null);
+      await Assert.That(resolved.Scope.TenantId).IsEqualTo("tenant-A")
+        .Because("With no source hop, hop-first scope falls back to the ambient propagating scope.");
+    } finally {
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  // ========================================
   // RECORD INITIALIZATION TESTS
   // ========================================
 

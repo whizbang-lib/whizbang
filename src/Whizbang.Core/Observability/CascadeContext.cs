@@ -198,6 +198,38 @@ public sealed record CascadeContext {
   }
 
   /// <summary>
+  /// Resolves the (correlation, causation) to stamp on a child event's hop when PUBLISHING, HOP-FIRST: the source
+  /// hop captured at the calling site is authoritative — it survives detached/worker/collective boundaries where
+  /// AsyncLocal does not — falling back to the ambient initiating context and finally a trace-aligned fresh root
+  /// via <see cref="ResolveCascadeIdentity"/>. This is the single place the hop-first publish precedence lives, so
+  /// every hop builder (outbox typed/JSON, deferred, event-store decorator) resolves identically instead of
+  /// re-implementing the rule (which is how one site at a time drifted to ambient-first).
+  /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstIdentity_HopPresent_WinsOverDifferentAmbientAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstIdentity_NoHop_FallsBackToAmbientAsync</tests>
+  public static (CorrelationId Correlation, MessageId? Causation) ResolveHopFirstIdentity(IMessageEnvelope? sourceEnvelope) {
+    if (sourceEnvelope?.GetCorrelationId() is { } sourceCorrelation && sourceCorrelation.Value != Guid.Empty) {
+      return (sourceCorrelation, sourceEnvelope.GetCausationId());
+    }
+    return ResolveCascadeIdentity(sourceEnvelope);
+  }
+
+  /// <summary>
+  /// Resolves the security scope (Tenant/User) to stamp on a child event's hop, HOP-FIRST — the source hop
+  /// captured at the calling site is authoritative (survives detached/worker/collective boundaries), ambient is
+  /// the fallback. The scope companion to <see cref="ResolveHopFirstIdentity"/>: together they are the ONE place
+  /// the hop-first precedence lives, shared by every hop builder.
+  /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstScope_HopPresent_WinsOverDifferentAmbientAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstScope_NoHop_FallsBackToAmbientAsync</tests>
+  public static ScopeDelta? ResolveHopFirstScope(IMessageEnvelope? sourceEnvelope) {
+    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
+      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = s.Scope?.TenantId, UserId = s.Scope?.UserId })
+      : null;
+    return sourceScope ?? ScopeDelta.FromSecurityContext(GetSecurityFromAmbient());
+  }
+
+  /// <summary>
   /// Creates a new CascadeContext with the specified metadata added/updated.
   /// </summary>
   /// <param name="key">The metadata key</param>
