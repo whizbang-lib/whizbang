@@ -644,7 +644,7 @@ public abstract partial class Dispatcher(
         await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
         var result = await invoker(message);
-        await _cascadeEventsFromResultAsync(result, messageType);
+        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(message, messageType);
@@ -1631,7 +1631,7 @@ public abstract partial class Dispatcher(
 
         // Auto-cascade: Extract and publish any IEvent instances from receptor return value
         // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-        await _cascadeEventsFromResultAsync(result, messageType);
+        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(actualMessage, messageType);
@@ -3268,9 +3268,13 @@ public abstract partial class Dispatcher(
 #pragma warning restore CA1848
       var publisher = GetUntypedReceptorPublisher(messageType);
       if (publisher != null) {
-        // Wrap source envelope to set IsDefaultDispatch=true — cascade paths only fire default-stage receptors
-        var cascadeEnvelope = sourceEnvelope != null
-          ? (IMessageEnvelope)new CascadeEnvelopeWrapper(sourceEnvelope)
+        // Wrap the source envelope so IsDefaultDispatch=true — cascade local-dispatch fires only default-stage
+        // receptors. When no source envelope was threaded, capture the ambient establishing context so a
+        // locally-dispatched detached-stage receptor still sees a hop carrying identity (co+ca+scope); only a
+        // genuine root emit (no source hop AND no ambient) falls back to the identity-less default. The wrapper
+        // forces IsDefaultDispatch=true regardless of what it wraps, preserving default-stage-only fan-out.
+        var cascadeEnvelope = (sourceEnvelope ?? _captureAmbientSourceEnvelope()) is { } cascadeSource
+          ? (IMessageEnvelope)new CascadeEnvelopeWrapper(cascadeSource)
           : _cascadeDefaultEnvelope;
         await publisher(message, cascadeEnvelope, cancellationToken);
       }
