@@ -170,7 +170,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // CRITICAL: This must happen BEFORE early return to ensure InitiatingContext is always set
     var messageContextAccessor = _scopedProvider.GetService<IMessageContextAccessor>();
     if (messageContextAccessor is not null) {
-      var establishedContext = await _setMessageContextAsync(messageContextAccessor, envelope, securityContext, callerInfo, cancellationToken).ConfigureAwait(false);
+      var establishedContext = await _setMessageContextAsync(envelope, securityContext, callerInfo, cancellationToken).ConfigureAwait(false);
       // Establish-side symmetry (the boundary fix): the InitiatingContext (correlation/causation) written INSIDE
       // the awaited _setMessageContextAsync is lost across its ConfigureAwait(false) boundary — AsyncLocal flows
       // parent→child, not child→parent. Re-set both accessors SYNCHRONOUSLY here, on the same flow that reaches
@@ -434,42 +434,22 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// Establishes ImmutableScopeContext with propagation when security extraction failed but envelope has scope.
   /// </summary>
   private async ValueTask<MessageContext> _setMessageContextAsync(
-      IMessageContextAccessor messageContextAccessor,
       IMessageEnvelope envelope,
       IScopeContext? securityContext,
       CallerInfo? callerInfo,
       CancellationToken cancellationToken) {
     IScopeContext? scopeForContext = securityContext ?? envelope.GetCurrentScope();
 
-    // When extraction fails but envelope has scope, wrap in ImmutableScopeContext with propagation
+    // When extraction fails but envelope has scope, wrap in ImmutableScopeContext with propagation.
     if (securityContext is null && scopeForContext is not null) {
       scopeForContext = await _promoteScopeWithPropagationAsync(scopeForContext, envelope, cancellationToken).ConfigureAwait(false);
     }
 
-    // Single source of truth for correlation propagation: hop → ambient parent (rescue) → fresh root.
-    var (correlation, causation) = Observability.CascadeContext.ResolveInheritedIdentity(envelope);
-    var messageContext = new MessageContext {
-      MessageId = envelope.MessageId,
-      CorrelationId = correlation,
-      CausationId = causation,
-      Timestamp = envelope.GetMessageTimestamp(),
-      UserId = scopeForContext?.Scope?.UserId,
-      TenantId = scopeForContext?.Scope?.TenantId,
-      ScopeContext = scopeForContext,
-      CallerInfo = callerInfo
-    };
-    messageContextAccessor.Current = messageContext;
-
-    // Set InitiatingContext on IScopeContextAccessor - establishes IMessageContext as SOURCE OF TRUTH.
-    // NOTE: these AsyncLocal writes are made inside this awaited method, so they do NOT flow back to the
-    // synchronous caller (InvokeAsync) across its ConfigureAwait(false) boundary — the caller re-establishes
-    // the returned context synchronously so it reaches the receptor body. See InvokeAsync.
-    var scopeContextAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
-    if (scopeContextAccessor is not null) {
-      scopeContextAccessor.InitiatingContext = messageContext;
-    }
-
-    return messageContext;
+    // Build + establish via the ONE shared step (identity + scope + both accessors). Non-null here: the caller
+    // only invokes this when an IMessageContextAccessor is registered. The AsyncLocal writes inside do NOT flow
+    // back across this method's ConfigureAwait(false) boundary — InvokeAsync re-establishes the returned context
+    // synchronously so it reaches the receptor body (the boundary fix). See InvokeAsync.
+    return Security.SecurityContextHelper.BuildAndEstablishMessageContext(envelope, scopeForContext, _scopedProvider, callerInfo)!;
   }
 
   /// <summary>
