@@ -3603,19 +3603,8 @@ public partial class PerspectiveWorker(
     //    CascadeContext.GetSecurityFromAmbient() can find it when lifecycle handlers append events
     // 2. Invoke callbacks manually so UserContextManagerCallback sets TenantContext
     if (securityContext is null && scopeForMessageContext is not null) {
-      // Convert envelope scope to ImmutableScopeContext for propagation
-      var extraction = new SecurityExtraction {
-        Scope = scopeForMessageContext.Scope,
-        Roles = scopeForMessageContext.Roles,
-        Permissions = scopeForMessageContext.Permissions,
-        SecurityPrincipals = scopeForMessageContext.SecurityPrincipals,
-        Claims = scopeForMessageContext.Claims,
-        ActualPrincipal = scopeForMessageContext.ActualPrincipal,
-        EffectivePrincipal = scopeForMessageContext.EffectivePrincipal,
-        ContextType = scopeForMessageContext.ContextType,
-        Source = "EnvelopeHop"
-      };
-      var immutableScope = new ImmutableScopeContext(extraction, shouldPropagate: true);
+      // Convert envelope scope to a propagating ImmutableScopeContext via the shared promotion.
+      var immutableScope = ImmutableScopeContext.PromoteToPropagating(scopeForMessageContext);
 
       // Use the immutable scope for both accessor and message context
       scopeForMessageContext = immutableScope;

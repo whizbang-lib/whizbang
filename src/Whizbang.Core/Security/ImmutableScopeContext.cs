@@ -40,6 +40,30 @@ public sealed class ImmutableScopeContext(SecurityExtraction extraction, bool sh
   /// </summary>
   public bool ShouldPropagate { get; } = shouldPropagate;
 
+  /// <summary>
+  /// Wraps an existing <see cref="IScopeContext"/> as a propagating (<c>ShouldPropagate = true</c>)
+  /// <see cref="ImmutableScopeContext"/> by shallow-copying all nine scope dimensions. The ONE place the
+  /// "promote a scope to propagating" shape lives — shared by every establishment/extraction site
+  /// (ReceptorInvoker, SecurityContextHelper, PerspectiveWorker, EnvelopeContextExtractor) so the field set
+  /// can't drift between them. Callers keep their own accessor-set + <c>ISecurityContextCallback</c> ordering.
+  /// </summary>
+  public static ImmutableScopeContext PromoteToPropagating(IScopeContext source, string sourceLabel = "EnvelopeHop") {
+    ArgumentNullException.ThrowIfNull(source);
+    return new ImmutableScopeContext(
+      new SecurityExtraction {
+        Scope = source.Scope,
+        Roles = source.Roles,
+        Permissions = source.Permissions,
+        SecurityPrincipals = source.SecurityPrincipals,
+        Claims = source.Claims,
+        ActualPrincipal = source.ActualPrincipal,
+        EffectivePrincipal = source.EffectivePrincipal,
+        ContextType = source.ContextType,
+        Source = sourceLabel
+      },
+      shouldPropagate: true);
+  }
+
   // === IScopeContext implementation ===
 
   /// <inheritdoc />

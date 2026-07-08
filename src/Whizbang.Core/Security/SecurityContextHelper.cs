@@ -176,18 +176,7 @@ public static partial class SecurityContextHelper {
     // and set IScopeContextAccessor (callbacks will be invoked AFTER MessageContextAccessor is set)
     ImmutableScopeContext? immutableScope = null;
     if (securityContext is null && scopeForMessageContext is not null) {
-      var extraction = new SecurityExtraction {
-        Scope = scopeForMessageContext.Scope,
-        Roles = scopeForMessageContext.Roles,
-        Permissions = scopeForMessageContext.Permissions,
-        SecurityPrincipals = scopeForMessageContext.SecurityPrincipals,
-        Claims = scopeForMessageContext.Claims,
-        ActualPrincipal = scopeForMessageContext.ActualPrincipal,
-        EffectivePrincipal = scopeForMessageContext.EffectivePrincipal,
-        ContextType = scopeForMessageContext.ContextType,
-        Source = "EnvelopeHop"
-      };
-      immutableScope = new ImmutableScopeContext(extraction, shouldPropagate: true);
+      immutableScope = ImmutableScopeContext.PromoteToPropagating(scopeForMessageContext);
       scopeForMessageContext = immutableScope;
 
       // Set IScopeContextAccessor.Current with ImmutableScopeContext (for GetSecurityFromAmbient)

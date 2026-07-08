@@ -103,20 +103,8 @@ public static class EnvelopeContextExtractor {
       return null;
     }
 
-    // Wrap in ImmutableScopeContext for use
-    return new ImmutableScopeContext(
-        new SecurityExtraction {
-          Scope = mergedScope.Scope,
-          Roles = mergedScope.Roles,
-          Permissions = mergedScope.Permissions,
-          SecurityPrincipals = mergedScope.SecurityPrincipals,
-          Claims = mergedScope.Claims,
-          ActualPrincipal = mergedScope.ActualPrincipal,
-          EffectivePrincipal = mergedScope.EffectivePrincipal,
-          ContextType = mergedScope.ContextType,
-          Source = "EnvelopeHops"
-        },
-        shouldPropagate: true);
+    // Wrap in a propagating ImmutableScopeContext via the shared promotion (one field-copy shape everywhere).
+    return ImmutableScopeContext.PromoteToPropagating(mergedScope, "EnvelopeHops");
   }
 
   /// <summary>

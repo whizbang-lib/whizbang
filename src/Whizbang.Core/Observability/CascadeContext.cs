@@ -1,3 +1,4 @@
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
@@ -111,10 +112,7 @@ public sealed record CascadeContext {
       return null;
     }
 
-    return new SecurityContext {
-      UserId = ctx.Scope.UserId,
-      TenantId = ctx.Scope.TenantId
-    };
+    return SecurityFromScope(ctx.Scope);
   }
 
   /// <summary>
@@ -126,6 +124,15 @@ public sealed record CascadeContext {
     string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)
       ? null
       : new SecurityContext { TenantId = tenantId, UserId = userId };
+
+  /// <summary>
+  /// Builds a <see cref="SecurityContext"/> carrying a scope's Tenant/User, or <see langword="null"/> when the
+  /// scope itself is null. (A scope with blank ids still yields a SecurityContext; downstream
+  /// <see cref="ScopeDelta.FromSecurityContext"/> collapses blank→null — matching the always-create-from-scope
+  /// hop builders this replaces.) The scope companion to <see cref="SecurityFromIds"/>.
+  /// </summary>
+  public static SecurityContext? SecurityFromScope(PerspectiveScope? scope) =>
+    scope is null ? null : new SecurityContext { TenantId = scope.TenantId, UserId = scope.UserId };
 
   /// <summary>
   /// The Tenant/User scope carried by an <see cref="IMessageContext"/> as a <see cref="ScopeDelta"/>, or
@@ -242,7 +249,7 @@ public sealed record CascadeContext {
   /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstScope_NoHop_FallsBackToAmbientAsync</tests>
   public static ScopeDelta? ResolveHopFirstScope(IMessageEnvelope? sourceEnvelope) {
     var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
-      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = s.Scope?.TenantId, UserId = s.Scope?.UserId })
+      ? ScopeDelta.FromSecurityContext(SecurityFromScope(s.Scope))
       : null;
     return sourceScope ?? ScopeDelta.FromSecurityContext(GetSecurityFromAmbient());
   }

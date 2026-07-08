@@ -461,18 +461,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       IScopeContext scopeForContext,
       IMessageEnvelope envelope,
       CancellationToken cancellationToken) {
-    var extraction = new SecurityExtraction {
-      Scope = scopeForContext.Scope,
-      Roles = scopeForContext.Roles,
-      Permissions = scopeForContext.Permissions,
-      SecurityPrincipals = scopeForContext.SecurityPrincipals,
-      Claims = scopeForContext.Claims,
-      ActualPrincipal = scopeForContext.ActualPrincipal,
-      EffectivePrincipal = scopeForContext.EffectivePrincipal,
-      ContextType = scopeForContext.ContextType,
-      Source = "EnvelopeHop"
-    };
-    var immutableScope = new ImmutableScopeContext(extraction, shouldPropagate: true);
+    var immutableScope = ImmutableScopeContext.PromoteToPropagating(scopeForContext);
 
     // Set on accessor so GetSecurityFromAmbient() can find it
     var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
