@@ -118,6 +118,24 @@ public sealed record CascadeContext {
   }
 
   /// <summary>
+  /// Builds a <see cref="SecurityContext"/> from raw tenant/user ids, or <see langword="null"/> when BOTH are
+  /// blank (the "no scope" case). The lowest-level scope primitive shared by the hop builders that stamp scope
+  /// from an explicit id pair — one place for the null-on-blank rule instead of re-inlining it per site.
+  /// </summary>
+  public static SecurityContext? SecurityFromIds(string? tenantId, string? userId) =>
+    string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)
+      ? null
+      : new SecurityContext { TenantId = tenantId, UserId = userId };
+
+  /// <summary>
+  /// The Tenant/User scope carried by an <see cref="IMessageContext"/> as a <see cref="ScopeDelta"/>, or
+  /// <see langword="null"/> when the context carries no tenant/user. Shared by the hop builders that stamp scope
+  /// from an explicit message context (dispatcher initial hop + the transport envelope builders).
+  /// </summary>
+  public static ScopeDelta? ScopeDeltaFromMessageContext(IMessageContext context) =>
+    ScopeDelta.FromSecurityContext(SecurityFromIds(context.TenantId, context.UserId));
+
+  /// <summary>
   /// Resolves the cascade identity (<see cref="CorrelationId"/> + causation <see cref="MessageId"/>) to stamp
   /// on a hop that is being published to the outbox or written to the event store — the mirror of
   /// <see cref="GetSecurityFromAmbient"/> for the tracing/lineage axis.

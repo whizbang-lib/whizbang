@@ -224,14 +224,8 @@ public class TransportManager(
     TMessage message,
     IMessageContext context
   ) {
-    // Extract scope from IMessageContext (UserId/TenantId)
-    ScopeDelta? scopeDelta = null;
-    if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
-      scopeDelta = ScopeDelta.FromSecurityContext(new SecurityContext {
-        UserId = context.UserId,
-        TenantId = context.TenantId
-      });
-    }
+    // Scope from the explicit IMessageContext (null when it carries no tenant/user) — shared resolver.
+    var scopeDelta = CascadeContext.ScopeDeltaFromMessageContext(context);
 
     return new MessageEnvelope<TMessage> {
       MessageId = context.MessageId,

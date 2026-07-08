@@ -2326,18 +2326,11 @@ public abstract partial class Dispatcher(
   /// Priority: IMessageContext (UserId/TenantId) first, then ambient AsyncLocal.
   /// This ensures context flows correctly even when AsyncLocal scope has ended.
   /// </summary>
-  private static ScopeDelta? _getScopeDeltaForHop(IMessageContext context) {
-    // Priority 1: IMessageContext (set via CascadeContextFactory or explicit)
-    if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
-      return ScopeDelta.FromSecurityContext(new SecurityContext {
-        UserId = context.UserId,
-        TenantId = context.TenantId
-      });
-    }
-
-    // Priority 2: Ambient AsyncLocal scope
-    return ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
-  }
+  private static ScopeDelta? _getScopeDeltaForHop(IMessageContext context) =>
+    // Priority 1: the explicit IMessageContext scope; Priority 2: ambient AsyncLocal scope. Both via the shared
+    // CascadeContext helpers so scope-from-context / scope-from-ambient are resolved the ONE way everywhere.
+    CascadeContext.ScopeDeltaFromMessageContext(context)
+      ?? ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
 
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
