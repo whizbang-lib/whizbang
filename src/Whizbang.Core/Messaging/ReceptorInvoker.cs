@@ -170,7 +170,18 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // CRITICAL: This must happen BEFORE early return to ensure InitiatingContext is always set
     var messageContextAccessor = _scopedProvider.GetService<IMessageContextAccessor>();
     if (messageContextAccessor is not null) {
-      await _setMessageContextAsync(messageContextAccessor, envelope, securityContext, callerInfo, cancellationToken).ConfigureAwait(false);
+      var establishedContext = await _setMessageContextAsync(messageContextAccessor, envelope, securityContext, callerInfo, cancellationToken).ConfigureAwait(false);
+      // Establish-side symmetry (the boundary fix): the InitiatingContext (correlation/causation) written INSIDE
+      // the awaited _setMessageContextAsync is lost across its ConfigureAwait(false) boundary — AsyncLocal flows
+      // parent→child, not child→parent. Re-set both accessors SYNCHRONOUSLY here, on the same flow that reaches
+      // the receptor body (exactly how ScopeContextAccessor.CurrentContext scope survives just below). Without
+      // this, a worker-dispatched receptor's PublishAsync read a null InitiatingContext and its cascaded child
+      // minted a fresh correlation while scope survived — the asymmetric boundary bug.
+      messageContextAccessor.Current = establishedContext;
+      var initiatingAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
+      if (initiatingAccessor is not null) {
+        initiatingAccessor.InitiatingContext = establishedContext;
+      }
     }
 
     // Extract both trace context and scope from envelope hops.
@@ -422,7 +433,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// Sets message context from envelope for injectable IMessageContext.
   /// Establishes ImmutableScopeContext with propagation when security extraction failed but envelope has scope.
   /// </summary>
-  private async ValueTask _setMessageContextAsync(
+  private async ValueTask<MessageContext> _setMessageContextAsync(
       IMessageContextAccessor messageContextAccessor,
       IMessageEnvelope envelope,
       IScopeContext? securityContext,
@@ -449,11 +460,16 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     };
     messageContextAccessor.Current = messageContext;
 
-    // Set InitiatingContext on IScopeContextAccessor - establishes IMessageContext as SOURCE OF TRUTH
+    // Set InitiatingContext on IScopeContextAccessor - establishes IMessageContext as SOURCE OF TRUTH.
+    // NOTE: these AsyncLocal writes are made inside this awaited method, so they do NOT flow back to the
+    // synchronous caller (InvokeAsync) across its ConfigureAwait(false) boundary — the caller re-establishes
+    // the returned context synchronously so it reaches the receptor body. See InvokeAsync.
     var scopeContextAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
     if (scopeContextAccessor is not null) {
       scopeContextAccessor.InitiatingContext = messageContext;
     }
+
+    return messageContext;
   }
 
   /// <summary>
