@@ -3,6 +3,7 @@ using Dapper;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Data;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -21,17 +22,20 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
   private readonly IMessageTypeCatalog _catalog;
   private readonly IDbConnectionFactory _connectionFactory;
   private readonly ILogger<DapperMessageTypeRegistryPopulator>? _logger;
+  private readonly TypeRegistryMetrics? _metrics;
 
   /// <summary>Initializes a new populator.</summary>
   public DapperMessageTypeRegistryPopulator(
       IMessageTypeCatalog catalog,
       IDbConnectionFactory connectionFactory,
-      ILogger<DapperMessageTypeRegistryPopulator>? logger = null) {
+      ILogger<DapperMessageTypeRegistryPopulator>? logger = null,
+      TypeRegistryMetrics? metrics = null) {
     ArgumentNullException.ThrowIfNull(catalog);
     ArgumentNullException.ThrowIfNull(connectionFactory);
     _catalog = catalog;
     _connectionFactory = connectionFactory;
     _logger = logger;
+    _metrics = metrics;
   }
 
   /// <inheritdoc/>
@@ -86,6 +90,8 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
     _logger?.LogInformation(
       "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Renamed} renamed, {Drifted} drifted).",
       entries.Count, pinned, unpinned, inserted, updated, renamed, drifted);
+
+    _metrics?.Record(renamed, drifted);
   }
 
   private sealed record ReconcileRow(string Action, Guid? PinnedId, string ClrTypeName, string? StoredClrTypeName);

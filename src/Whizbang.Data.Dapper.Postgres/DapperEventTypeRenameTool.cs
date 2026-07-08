@@ -81,6 +81,7 @@ public sealed class DapperEventTypeRenameTool : IEventTypeRenameTool {
   }
 
   /// <inheritdoc/>
+  [System.Obsolete("Superseded by the pinned-type ledger + ledger-aware registry reconcile. See IEventTypeRenameTool.")]
   public void Rename(string oldTypeName, string newTypeName) {
     ArgumentException.ThrowIfNullOrWhiteSpace(oldTypeName);
     ArgumentException.ThrowIfNullOrWhiteSpace(newTypeName);
@@ -88,6 +89,7 @@ public sealed class DapperEventTypeRenameTool : IEventTypeRenameTool {
   }
 
   /// <inheritdoc/>
+  [System.Obsolete("Superseded by the pinned-type ledger + ledger-aware registry reconcile. See IEventTypeRenameTool.")]
   public async Task ExecuteAsync(CancellationToken cancellationToken = default) {
     var detected = await DetectRenamesAsync(cancellationToken);
     var pending = detected.Concat(_manualRenames)

@@ -9,6 +9,10 @@ using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
+// The Rename/ExecuteAsync apply path is [Obsolete] (superseded by the ledger-aware reconcile), but it remains
+// functional and these tests deliberately exercise it to lock in that legacy behavior until it is removed.
+#pragma warning disable CS0618
+
 /// <summary>
 /// Integration tests for DapperEventTypeRenameTool.
 /// Verifies drift detection and the cross-table UPDATE executed in a single transaction.

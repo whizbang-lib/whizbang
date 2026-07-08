@@ -1135,6 +1135,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       return;
     }
 
+    var typeRegistryMetrics = (Whizbang.Core.Observability.TypeRegistryMetrics?)serviceProvider.GetService(typeof(Whizbang.Core.Observability.TypeRegistryMetrics));
+
     var entries = catalog.GetAll();
     if (entries.Count == 0) {
       logger?.LogDebug("Message type catalog is empty — skipping registry reconciliation");
@@ -1208,6 +1210,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       logger?.LogInformation(
         "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Renamed} renamed, {Drifted} drifted).",
         entries.Count, pinned, unpinned, insertedCount, updatedCount, renamedCount, driftCount);
+
+      typeRegistryMetrics?.Record(renamedCount, driftCount);
     } catch (Exception ex) {
       logger?.LogWarning(ex, "Failed to reconcile message type registry (function may not exist yet)");
       // Don't throw — reconciliation is informational, not critical for startup.
