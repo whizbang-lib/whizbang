@@ -435,10 +435,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       scopeForContext = await _promoteScopeWithPropagationAsync(scopeForContext, envelope, cancellationToken).ConfigureAwait(false);
     }
 
+    // Single source of truth for correlation propagation: hop → ambient parent (rescue) → fresh root.
+    var (correlation, causation) = Observability.CascadeContext.ResolveInheritedIdentity(envelope);
     var messageContext = new MessageContext {
       MessageId = envelope.MessageId,
-      CorrelationId = envelope.GetCorrelationId() ?? ValueObjects.CorrelationId.New(),
-      CausationId = envelope.GetCausationId() ?? ValueObjects.MessageId.New(),
+      CorrelationId = correlation,
+      CausationId = causation,
       Timestamp = envelope.GetMessageTimestamp(),
       UserId = scopeForContext?.Scope?.UserId,
       TenantId = scopeForContext?.Scope?.TenantId,

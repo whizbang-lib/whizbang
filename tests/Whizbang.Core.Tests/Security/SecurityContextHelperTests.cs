@@ -395,6 +395,119 @@ public class SecurityContextHelperTests {
     await Assert.That(messageContextAccessor.Current!.Timestamp).IsEqualTo(timestamp);
   }
 
+  [Test]
+  public async Task SetMessageContextFromEnvelope_HopHasNoCorrelation_RescuesFromAmbientParentAsync() {
+    // Cascade identity IN GENERAL (not just collective events): if a received/cascaded message's hop carries
+    // NO correlation, the established context must RESCUE it from the ambient parent context — never silently
+    // mint a fresh root. A fresh root forks the correlation tree and orphans everything the message goes on to
+    // emit (the class of defect behind the un-dismissing toast). Correlation propagates unchanged down the whole
+    // tree; causation points at the ambient parent message.
+    var parentCorrelation = CorrelationId.New();
+    var parentMessageId = MessageId.New();
+    MessageContextAccessor.CurrentContext = new MessageContext {
+      MessageId = parentMessageId,
+      CorrelationId = parentCorrelation,
+      CausationId = MessageId.New()
+    };
+
+    // _createTestEnvelope builds a hop with NO CorrelationId — exactly the correlation-less-hop regression.
+    var envelope = _createTestEnvelope(new TestSecurityMessage("no-correlation-hop"));
+    var messageContextAccessor = new MessageContextAccessor();
+    var services = _createServiceProviderWithMessageAccessor(messageContextAccessor);
+
+    try {
+      await Assert.That(envelope.GetCorrelationId()).IsNull()
+        .Because("Sanity: this envelope's hop must carry no correlation so the rescue path is exercised.");
+
+      // Act
+      SecurityContextHelper.SetMessageContextFromEnvelope(envelope, services);
+
+      // Assert
+      await Assert.That(messageContextAccessor.Current).IsNotNull();
+      await Assert.That(messageContextAccessor.Current!.CorrelationId).IsEqualTo(parentCorrelation)
+        .Because("A correlation-less hop must inherit the ambient parent's correlation, not mint a fresh root.");
+      await Assert.That(messageContextAccessor.Current.CausationId).IsEqualTo(parentMessageId)
+        .Because("Causation should point at the ambient parent message when the hop carries none.");
+    } finally {
+      MessageContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
+
+  [Test]
+  public async Task SetMessageContextFromEnvelope_HopHasCorrelation_UsesHopNotAmbientParentAsync() {
+    // The message's own hop correlation is authoritative and must win over any ambient parent — the parent is
+    // only the RESCUE for a correlation-less hop, never an override of a hop that already carries identity.
+    var hopUserId = "user-hop";
+    var envelope = _createEnvelopeWithSecurityContext(new TestSecurityMessage("has-correlation"), hopUserId);
+    var hopCorrelation = CorrelationId.New();
+    envelope.Hops[0] = envelope.Hops[0] with { CorrelationId = hopCorrelation };
+
+    MessageContextAccessor.CurrentContext = new MessageContext {
+      MessageId = MessageId.New(),
+      CorrelationId = CorrelationId.New(), // a DIFFERENT ambient correlation that must NOT win
+      CausationId = MessageId.New()
+    };
+    var messageContextAccessor = new MessageContextAccessor();
+    var services = _createServiceProviderWithMessageAccessor(messageContextAccessor);
+
+    try {
+      // Act
+      SecurityContextHelper.SetMessageContextFromEnvelope(envelope, services);
+
+      // Assert
+      await Assert.That(messageContextAccessor.Current!.CorrelationId).IsEqualTo(hopCorrelation)
+        .Because("A hop that already carries a correlation is authoritative — the ambient parent must not override it.");
+    } finally {
+      MessageContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
+
+  [Test]
+  public async Task Cascade_MultiLevelChain_CorrelationPropagatesAndCausationLinksThroughAllLevelsAsync() {
+    // Correlation must survive an arbitrarily DEEP cascade (command → event → event → event …), not just one
+    // hop — the recurring class of bug was a single level minting fresh. Each level inherits the root
+    // correlation unchanged, and its causation points at the immediately-preceding level, so the causal chain
+    // is fully linked end to end.
+    var rootCorrelation = CorrelationId.New();
+    var rootMessageId = MessageId.New();
+    MessageContextAccessor.CurrentContext = new MessageContext {
+      MessageId = rootMessageId,
+      CorrelationId = rootCorrelation,
+      CausationId = MessageId.New()
+    };
+
+    try {
+      // Level 1 — a locally-cascaded event (no envelope) inherits the root context.
+      SecurityContextHelper.EstablishMessageContextForCascade();
+      var level1 = MessageContextAccessor.CurrentContext!;
+      await Assert.That(level1.CorrelationId).IsEqualTo(rootCorrelation);
+      await Assert.That(level1.CausationId).IsEqualTo(rootMessageId)
+        .Because("Level 1's causation must point at the root message.");
+
+      // Level 2 — level 1 is now the ambient parent.
+      SecurityContextHelper.EstablishMessageContextForCascade();
+      var level2 = MessageContextAccessor.CurrentContext!;
+      await Assert.That(level2.CorrelationId).IsEqualTo(rootCorrelation)
+        .Because("Correlation must not degrade at the second cascade level.");
+      await Assert.That(level2.CausationId).IsEqualTo(level1.MessageId)
+        .Because("Level 2's causation links to level 1 (the chain forms).");
+
+      // Level 3 — proves depth is unbounded, not a one-level special case.
+      SecurityContextHelper.EstablishMessageContextForCascade();
+      var level3 = MessageContextAccessor.CurrentContext!;
+      await Assert.That(level3.CorrelationId).IsEqualTo(rootCorrelation)
+        .Because("Correlation must survive an arbitrarily deep cascade.");
+      await Assert.That(level3.CausationId).IsEqualTo(level2.MessageId)
+        .Because("Level 3's causation links to level 2 — the whole chain is connected.");
+    } finally {
+      MessageContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
+
   // === EstablishFullContextAsync Tests ===
 
   [Test]

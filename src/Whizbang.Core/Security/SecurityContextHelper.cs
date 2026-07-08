@@ -95,10 +95,12 @@ public static partial class SecurityContextHelper {
     }
 
     var scopeContext = envelope.GetCurrentScope();
+    // Single source of truth for correlation propagation: hop → ambient parent (rescue) → fresh root.
+    var (correlation, causation) = CascadeContext.ResolveInheritedIdentity(envelope);
     var messageContext = new MessageContext {
       MessageId = envelope.MessageId,
-      CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
-      CausationId = envelope.GetCausationId() ?? MessageId.New(),
+      CorrelationId = correlation,
+      CausationId = causation,
       Timestamp = envelope.GetMessageTimestamp(),
       UserId = scopeContext?.Scope?.UserId,
       TenantId = scopeContext?.Scope?.TenantId,
@@ -211,10 +213,12 @@ public static partial class SecurityContextHelper {
       return;
     }
 
+    // Single source of truth for correlation propagation: hop → ambient parent (rescue) → fresh root.
+    var (correlation, causation) = CascadeContext.ResolveInheritedIdentity(envelope);
     var messageContext = new MessageContext {
       MessageId = envelope.MessageId,
-      CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
-      CausationId = envelope.GetCausationId() ?? MessageId.New(),
+      CorrelationId = correlation,
+      CausationId = causation,
       Timestamp = envelope.GetMessageTimestamp(),
       UserId = scopeContext?.Scope?.UserId,
       TenantId = scopeContext?.Scope?.TenantId,
@@ -368,11 +372,20 @@ public static partial class SecurityContextHelper {
 
   private static void _establishMessageContextForCascade(
       string? userId, string? tenantId, ILogger? logger) {
+    // Inherit the cascade IDENTITY (correlation + causation) from the ambient parent context — the receptor
+    // whose handler is emitting this cascaded event — via the single shared resolver, exactly the way userId/
+    // tenantId are inherited above. There is NO envelope on this path (the generated cascade publisher invokes
+    // receptors directly), so the resolver falls to its ambient-parent branch. Without this, a cascaded event's
+    // receptor scope minted a FRESH correlation, orphaning anything that receptor in turn PUBLISHES (the
+    // saga-trigger shape) onto a brand-new chain — so the collective apply + completion notification no longer
+    // shared the activating command's correlation and the "Template Activating" toast never dismissed.
+    var (correlationId, causationId) = CascadeContext.ResolveInheritedIdentity(sourceEnvelope: null);
+
     // Set MessageContextAccessor (for fallback + other consumers)
     var messageContext = new MessageContext {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = MessageId.New(),
+      CorrelationId = correlationId,
+      CausationId = causationId,
       Timestamp = DateTimeOffset.UtcNow,
       UserId = userId,
       TenantId = tenantId

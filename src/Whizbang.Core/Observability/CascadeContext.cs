@@ -158,6 +158,46 @@ public sealed record CascadeContext {
   }
 
   /// <summary>
+  /// Resolves the cascade identity (correlation + causation) to stamp on the message context of a message being
+  /// <b>handled</b> — the mirror of <see cref="ResolveCascadeIdentity"/> (which resolves the identity for a message
+  /// being <b>published</b>). Together these two are the single place correlation propagation is decided, so every
+  /// establishment site (transport workers, the local cascade, perspective workers) inherits identically instead of
+  /// each re-implementing the rule — which is how one site at a time drifted into minting a fresh correlation.
+  /// </summary>
+  /// <remarks>
+  /// Priority:
+  /// <list type="number">
+  /// <item><description>the message's own envelope hop — an inbound message carries its authoritative
+  ///   correlation/causation;</description></item>
+  /// <item><description>the ambient parent message context — a locally-cascaded message (no envelope) inherits from
+  ///   the receptor whose handler emitted it. This branch also <b>rescues</b> an inbound message whose hop somehow
+  ///   lost its correlation, so a dropped hop can never silently start a fresh correlation tree (defence in depth);</description></item>
+  /// <item><description>a fresh root — only when there is genuinely no parent (a true entry point).</description></item>
+  /// </list>
+  /// Correlation propagates unchanged down the whole causal tree; causation points at the parent message.
+  /// </remarks>
+  /// <param name="sourceEnvelope">The envelope of the message being handled, or <see langword="null"/> for a local
+  /// cascade that carries no envelope.</param>
+  /// <returns>The correlation id (never default) and the causation id (never default).</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_HopHasNoCorrelation_RescuesFromAmbientParentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_HopHasCorrelation_UsesHopNotAmbientParentAsync</tests>
+  public static (CorrelationId Correlation, MessageId Causation) ResolveInheritedIdentity(IMessageEnvelope? sourceEnvelope) {
+    var parent = MessageContextAccessor.CurrentContext ?? ScopeContextAccessor.CurrentInitiatingContext;
+
+    var correlation =
+        sourceEnvelope?.GetCorrelationId() is { } hopCorrelation && hopCorrelation.Value != Guid.Empty ? hopCorrelation
+      : parent is not null && parent.CorrelationId.Value != Guid.Empty ? parent.CorrelationId
+      : CorrelationId.New();
+
+    var causation =
+        sourceEnvelope?.GetCausationId()
+      ?? parent?.MessageId
+      ?? MessageId.New();
+
+    return (correlation, causation);
+  }
+
+  /// <summary>
   /// Creates a new CascadeContext with the specified metadata added/updated.
   /// </summary>
   /// <param name="key">The metadata key</param>
