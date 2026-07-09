@@ -3603,19 +3603,8 @@ public partial class PerspectiveWorker(
     //    CascadeContext.GetSecurityFromAmbient() can find it when lifecycle handlers append events
     // 2. Invoke callbacks manually so UserContextManagerCallback sets TenantContext
     if (securityContext is null && scopeForMessageContext is not null) {
-      // Convert envelope scope to ImmutableScopeContext for propagation
-      var extraction = new SecurityExtraction {
-        Scope = scopeForMessageContext.Scope,
-        Roles = scopeForMessageContext.Roles,
-        Permissions = scopeForMessageContext.Permissions,
-        SecurityPrincipals = scopeForMessageContext.SecurityPrincipals,
-        Claims = scopeForMessageContext.Claims,
-        ActualPrincipal = scopeForMessageContext.ActualPrincipal,
-        EffectivePrincipal = scopeForMessageContext.EffectivePrincipal,
-        ContextType = scopeForMessageContext.ContextType,
-        Source = "EnvelopeHop"
-      };
-      var immutableScope = new ImmutableScopeContext(extraction, shouldPropagate: true);
+      // Convert envelope scope to a propagating ImmutableScopeContext via the shared promotion.
+      var immutableScope = ImmutableScopeContext.PromoteToPropagating(scopeForMessageContext);
 
       // Use the immutable scope for both accessor and message context
       scopeForMessageContext = immutableScope;
@@ -3635,30 +3624,11 @@ public partial class PerspectiveWorker(
       }
     }
 
-    var messageContextAccessor = scopedProvider.GetService<IMessageContextAccessor>();
-    if (messageContextAccessor is not null) {
-      // Single source of truth for correlation propagation: hop → ambient parent (rescue) → fresh root.
-      var (correlation, causation) = Observability.CascadeContext.ResolveInheritedIdentity(envelope);
-      var messageContext = new MessageContext {
-        MessageId = envelope.MessageId,
-        CorrelationId = correlation,
-        CausationId = causation,
-        Timestamp = envelope.GetMessageTimestamp(),
-        UserId = scopeForMessageContext?.Scope?.UserId,
-        TenantId = scopeForMessageContext?.Scope?.TenantId,
-        ScopeContext = scopeForMessageContext
-      };
-      messageContextAccessor.Current = messageContext;
-
-      // CRITICAL: Set InitiatingContext on IScopeContextAccessor (same pattern as ReceptorInvoker)
-      // This establishes IMessageContext as the SOURCE OF TRUTH for security context.
-      // Required for CascadeContext.GetSecurityFromAmbient() to find the scope when
-      // lifecycle handlers append events via SecurityContextEventStoreDecorator.
-      var scopeContextAccessor = scopedProvider.GetService<IScopeContextAccessor>();
-      if (scopeContextAccessor is not null) {
-        scopeContextAccessor.InitiatingContext = messageContext;
-      }
-    }
+    // Build + establish the message context via the ONE shared step (identity + scope + both accessors) — the
+    // same helper ReceptorInvoker and SecurityContextHelper use, so this worker can't drift from them. Required
+    // for CascadeContext.GetSecurityFromAmbient() to find the scope when lifecycle handlers append events via
+    // SecurityContextEventStoreDecorator.
+    Security.SecurityContextHelper.BuildAndEstablishMessageContext(envelope, scopeForMessageContext, scopedProvider);
   }
 
   // LoggerMessage definitions

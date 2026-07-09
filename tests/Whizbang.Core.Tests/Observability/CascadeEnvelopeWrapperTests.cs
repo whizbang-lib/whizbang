@@ -144,11 +144,15 @@ public class CascadeEnvelopeWrapperTests {
   }
 
   [Test]
-  public async Task GetCausationId_DelegatesToInnerAsync() {
+  public async Task GetCausationId_IsWrappedMessageId_NotInnerCausationAsync() {
     var inner = _makeInner();
     var wrapper = new CascadeEnvelopeWrapper(inner);
 
-    await Assert.That(wrapper.GetCausationId()).IsEqualTo(inner.GetCausationId());
+    // A child cascaded from the wrapped message is caused BY that message — its causation is the wrapped
+    // envelope's own MessageId, not the wrapped message's causation (which is the grandparent). See
+    // CascadeEnvelopeWrapperCausationTests for the full rationale; this replaces the old delegate-to-inner
+    // assertion that flattened the causal chain one level up.
+    await Assert.That(wrapper.GetCausationId()).IsEqualTo(inner.MessageId);
   }
 
   [Test]

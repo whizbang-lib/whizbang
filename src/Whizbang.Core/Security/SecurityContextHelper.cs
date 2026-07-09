@@ -88,13 +88,30 @@ public static partial class SecurityContextHelper {
       IServiceProvider scopedProvider) {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(scopedProvider);
+    BuildAndEstablishMessageContext(envelope, envelope.GetCurrentScope(), scopedProvider);
+  }
 
+  /// <summary>
+  /// The single "build a <see cref="MessageContext"/> from an envelope + establish it on both accessors" step,
+  /// shared by every establishment site (ReceptorInvoker, PerspectiveWorker, and the SecurityContextHelper
+  /// entry points) so the shape can't drift between them. Resolves correlation/causation via
+  /// <see cref="CascadeContext.ResolveInheritedIdentity"/>, stamps the (already-resolved) scope's Tenant/User,
+  /// sets <see cref="IMessageContextAccessor.Current"/> + <see cref="IScopeContextAccessor.InitiatingContext"/>,
+  /// and RETURNS the built context so callers that must survive a <c>ConfigureAwait(false)</c> boundary can
+  /// re-establish it synchronously (see <c>ReceptorInvoker.InvokeAsync</c>). The caller resolves + promotes the
+  /// scope; this helper does not. Returns <see langword="null"/> when no <see cref="IMessageContextAccessor"/>
+  /// is registered (nothing to establish).
+  /// </summary>
+  internal static MessageContext? BuildAndEstablishMessageContext(
+      IMessageEnvelope envelope,
+      IScopeContext? scope,
+      IServiceProvider scopedProvider,
+      CallerInfo? callerInfo = null) {
     var messageContextAccessor = scopedProvider.GetService<IMessageContextAccessor>();
     if (messageContextAccessor is null) {
-      return;
+      return null;
     }
 
-    var scopeContext = envelope.GetCurrentScope();
     // Single source of truth for correlation propagation: hop → ambient parent (rescue) → fresh root.
     var (correlation, causation) = CascadeContext.ResolveInheritedIdentity(envelope);
     var messageContext = new MessageContext {
@@ -102,19 +119,21 @@ public static partial class SecurityContextHelper {
       CorrelationId = correlation,
       CausationId = causation,
       Timestamp = envelope.GetMessageTimestamp(),
-      UserId = scopeContext?.Scope?.UserId,
-      TenantId = scopeContext?.Scope?.TenantId,
-      ScopeContext = scopeContext
+      UserId = scope?.Scope?.UserId,
+      TenantId = scope?.Scope?.TenantId,
+      ScopeContext = scope,
+      CallerInfo = callerInfo
     };
     messageContextAccessor.Current = messageContext;
 
-    // CRITICAL: Set InitiatingContext on IScopeContextAccessor
-    // This establishes IMessageContext as the SOURCE OF TRUTH for security context.
-    // AsyncLocal carries a REFERENCE to this IMessageContext, not a copy of its data.
+    // CRITICAL: Set InitiatingContext on IScopeContextAccessor — establishes IMessageContext as the SOURCE OF
+    // TRUTH for security context. AsyncLocal carries a REFERENCE to this IMessageContext, not a copy.
     var scopeContextAccessor = scopedProvider.GetService<IScopeContextAccessor>();
     if (scopeContextAccessor is not null) {
       scopeContextAccessor.InitiatingContext = messageContext;
     }
+
+    return messageContext;
   }
 
   /// <summary>
@@ -157,18 +176,7 @@ public static partial class SecurityContextHelper {
     // and set IScopeContextAccessor (callbacks will be invoked AFTER MessageContextAccessor is set)
     ImmutableScopeContext? immutableScope = null;
     if (securityContext is null && scopeForMessageContext is not null) {
-      var extraction = new SecurityExtraction {
-        Scope = scopeForMessageContext.Scope,
-        Roles = scopeForMessageContext.Roles,
-        Permissions = scopeForMessageContext.Permissions,
-        SecurityPrincipals = scopeForMessageContext.SecurityPrincipals,
-        Claims = scopeForMessageContext.Claims,
-        ActualPrincipal = scopeForMessageContext.ActualPrincipal,
-        EffectivePrincipal = scopeForMessageContext.EffectivePrincipal,
-        ContextType = scopeForMessageContext.ContextType,
-        Source = "EnvelopeHop"
-      };
-      immutableScope = new ImmutableScopeContext(extraction, shouldPropagate: true);
+      immutableScope = ImmutableScopeContext.PromoteToPropagating(scopeForMessageContext);
       scopeForMessageContext = immutableScope;
 
       // Set IScopeContextAccessor.Current with ImmutableScopeContext (for GetSecurityFromAmbient)
@@ -181,7 +189,7 @@ public static partial class SecurityContextHelper {
     // Step 4: Set message context with the resolved scope
     // CRITICAL: This must be done BEFORE callbacks are invoked so MessageContextAccessor.Current
     // is available inside callbacks (e.g., UserContextManagerCallback)
-    _setMessageContextFromEnvelopeWithScope(envelope, scopedProvider, scopeForMessageContext);
+    BuildAndEstablishMessageContext(envelope, scopeForMessageContext, scopedProvider);
 
     // Step 5: Invoke callbacks AFTER both accessors are set
     // This ensures MessageContextAccessor.CurrentContext is available inside callbacks
@@ -197,41 +205,8 @@ public static partial class SecurityContextHelper {
     }
   }
 
-  /// <summary>
-  /// Sets IMessageContextAccessor.Current from envelope, using a provided scope context.
-  /// This overload allows passing an already-established scope context (from extractors).
-  /// </summary>
-  private static void _setMessageContextFromEnvelopeWithScope(
-      IMessageEnvelope envelope,
-      IServiceProvider scopedProvider,
-      IScopeContext? scopeContext) {
-    ArgumentNullException.ThrowIfNull(envelope);
-    ArgumentNullException.ThrowIfNull(scopedProvider);
-
-    var messageContextAccessor = scopedProvider.GetService<IMessageContextAccessor>();
-    if (messageContextAccessor is null) {
-      return;
-    }
-
-    // Single source of truth for correlation propagation: hop → ambient parent (rescue) → fresh root.
-    var (correlation, causation) = CascadeContext.ResolveInheritedIdentity(envelope);
-    var messageContext = new MessageContext {
-      MessageId = envelope.MessageId,
-      CorrelationId = correlation,
-      CausationId = causation,
-      Timestamp = envelope.GetMessageTimestamp(),
-      UserId = scopeContext?.Scope?.UserId,
-      TenantId = scopeContext?.Scope?.TenantId,
-      ScopeContext = scopeContext
-    };
-    messageContextAccessor.Current = messageContext;
-
-    // CRITICAL: Set InitiatingContext on IScopeContextAccessor
-    var scopeContextAccessor = scopedProvider.GetService<IScopeContextAccessor>();
-    if (scopeContextAccessor is not null) {
-      scopeContextAccessor.InitiatingContext = messageContext;
-    }
-  }
+  // _setMessageContextFromEnvelopeWithScope was folded into BuildAndEstablishMessageContext (above) — the one
+  // shared "build + establish MessageContext from envelope" step used by every establishment site.
 
   /// <summary>
   /// Establishes message context for cascaded receptor invocation.

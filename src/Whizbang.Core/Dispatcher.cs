@@ -644,7 +644,7 @@ public abstract partial class Dispatcher(
         await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
         var result = await invoker(message);
-        await _cascadeEventsFromResultAsync(result, messageType);
+        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(message, messageType);
@@ -1631,7 +1631,7 @@ public abstract partial class Dispatcher(
 
         // Auto-cascade: Extract and publish any IEvent instances from receptor return value
         // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-        await _cascadeEventsFromResultAsync(result, messageType);
+        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(actualMessage, messageType);
@@ -2326,18 +2326,11 @@ public abstract partial class Dispatcher(
   /// Priority: IMessageContext (UserId/TenantId) first, then ambient AsyncLocal.
   /// This ensures context flows correctly even when AsyncLocal scope has ended.
   /// </summary>
-  private static ScopeDelta? _getScopeDeltaForHop(IMessageContext context) {
-    // Priority 1: IMessageContext (set via CascadeContextFactory or explicit)
-    if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
-      return ScopeDelta.FromSecurityContext(new SecurityContext {
-        UserId = context.UserId,
-        TenantId = context.TenantId
-      });
-    }
-
-    // Priority 2: Ambient AsyncLocal scope
-    return ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
-  }
+  private static ScopeDelta? _getScopeDeltaForHop(IMessageContext context) =>
+    // Priority 1: the explicit IMessageContext scope; Priority 2: ambient AsyncLocal scope. Both via the shared
+    // CascadeContext helpers so scope-from-context / scope-from-ambient are resolved the ONE way everywhere.
+    CascadeContext.ScopeDeltaFromMessageContext(context)
+      ?? ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
 
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
@@ -3028,7 +3021,12 @@ public abstract partial class Dispatcher(
       // to delay cross-service event delivery by that amount. Starting the outbox first also
       // ensures FIFO order: the original event enters the outbox before any cascaded events
       // produced by the receptor.
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
+      // Capture the establishing context SYNCHRONOUSLY here (the calling site) so the emitted child inherits
+      // correlation+causation+scope from the hop even when the outbox builder runs where AsyncLocal no longer
+      // flows (a detached-stage or worker emit). Without this, PublishAsync passed sourceEnvelope=null and the
+      // child fabricated a fresh correlation + null scope across the boundary.
+      var establishingEnvelope = _captureAmbientSourceEnvelope();
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope);
 
       try {
         await publisher(eventData);
@@ -3113,7 +3111,10 @@ public abstract partial class Dispatcher(
       // options.ScheduledFor flows through to the outbox row's scheduled_for column so
       // wh_outbox's pickup query (mig 040) gates publication until the time elapses. The composite also
       // goes over transport here (step 1.2) for other subscribing services.
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, scheduledFor: options.ScheduledFor);
+      // Capture the establishing context synchronously (see the other overload) so a detached/worker emit's
+      // child inherits identity+scope from the hop rather than fabricating a fresh root across the boundary.
+      var establishingEnvelope = _captureAmbientSourceEnvelope();
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, scheduledFor: options.ScheduledFor);
 
       // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
       // the outbox-pickup query. Without this branch the local receptor fires inline despite the
@@ -3260,9 +3261,13 @@ public abstract partial class Dispatcher(
 #pragma warning restore CA1848
       var publisher = GetUntypedReceptorPublisher(messageType);
       if (publisher != null) {
-        // Wrap source envelope to set IsDefaultDispatch=true — cascade paths only fire default-stage receptors
-        var cascadeEnvelope = sourceEnvelope != null
-          ? (IMessageEnvelope)new CascadeEnvelopeWrapper(sourceEnvelope)
+        // Wrap the source envelope so IsDefaultDispatch=true — cascade local-dispatch fires only default-stage
+        // receptors. When no source envelope was threaded, capture the ambient establishing context so a
+        // locally-dispatched detached-stage receptor still sees a hop carrying identity (co+ca+scope); only a
+        // genuine root emit (no source hop AND no ambient) falls back to the identity-less default. The wrapper
+        // forces IsDefaultDispatch=true regardless of what it wraps, preserving default-stage-only fan-out.
+        var cascadeEnvelope = (sourceEnvelope ?? _captureAmbientSourceEnvelope()) is { } cascadeSource
+          ? (IMessageEnvelope)new CascadeEnvelopeWrapper(cascadeSource)
           : _cascadeDefaultEnvelope;
         await publisher(message, cascadeEnvelope, cancellationToken);
       }
@@ -3577,6 +3582,46 @@ public abstract partial class Dispatcher(
   }
 #pragma warning restore S3776
 
+  // Hop-first identity/scope resolution now lives in CascadeContext (CascadeContext.ResolveHopFirstIdentity /
+  // ResolveHopFirstScope) so every hop builder — here AND in other classes (e.g. SecurityContextEventStoreDecorator)
+  // — shares the ONE hop-first precedence rule instead of each re-implementing it.
+
+  private static readonly object _captureSentinelPayload = new();
+
+  /// <summary>
+  /// Snapshots the ambient establishing message context into a lightweight source envelope SYNCHRONOUSLY at a
+  /// child-emit calling site (<c>PublishAsync</c>), so the emitted child inherits correlation + causation + scope
+  /// from the hop even when the outbox builder later runs where AsyncLocal no longer flows (detached/worker).
+  /// Causation is the establishing message's id (the parent). Returns <see langword="null"/> when there is no
+  /// establishing context — a genuine root emit, which then resolves a fresh trace-aligned root as before.
+  /// </summary>
+  private MessageEnvelope<object>? _captureAmbientSourceEnvelope() {
+    var initiating = ScopeContextAccessor.CurrentInitiatingContext;
+    if (initiating is null || initiating.CorrelationId.Value == Guid.Empty) {
+      return null;
+    }
+    // Scope honours the ShouldPropagate contract via GetSecurityFromAmbient (identical to
+    // CascadeContext.ResolveHopFirstScope's ambient branch — the ONE ambient-scope rule). Do NOT re-add an
+    // initiating-scope fallback here: it would bypass PropagateToOutgoingMessages=false and leak a deliberately
+    // non-propagating scope onto the child hop (the divergence the audit found; the fallback was accidental
+    // symmetry copied from the identity capture, never a contract decision).
+    var ambientSecurity = CascadeContext.GetSecurityFromAmbient();
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _instanceProvider.ToInfo(),
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = initiating.CorrelationId,
+      CausationId = initiating.MessageId,
+      Scope = ambientSecurity is not null ? ScopeDelta.FromSecurityContext(ambientSecurity) : null,
+    };
+    return new MessageEnvelope<object> {
+      MessageId = initiating.MessageId,
+      Payload = _captureSentinelPayload,
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    };
+  }
+
   /// <summary>
   /// Creates a MessageEnvelope with hop metadata for outbox publishing.
   /// Includes scope propagation from ambient context or source envelope.
@@ -3585,16 +3630,12 @@ public abstract partial class Dispatcher(
     // Extract aggregate ID and add to hop metadata (for streamId extraction)
     var hopMetadata = _createHopMetadata(eventData!, eventType);
 
-    // Scope: First try ambient context, then inherit from source envelope
-    var propagatedScope = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
-    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
-      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = s.Scope?.TenantId, UserId = s.Scope?.UserId })
-      : null;
-    var finalScope = propagatedScope ?? sourceScope;
+    // Scope + identity are carried on the SOURCE HOP captured at the calling site — hop-FIRST — falling back to
+    // ambient only when no source hop was threaded (see CascadeContext.ResolveHopFirstScope /
+    // ResolveHopFirstIdentity — the single place the hop-first precedence lives, shared by every hop builder).
+    var finalScope = CascadeContext.ResolveHopFirstScope(sourceEnvelope);
 
-    // Cascade identity (correlation + causation) rides the outbox hop just like scope does — resolved from the
-    // same ambient/source context. Without this the persisted hop keeps `sc` but loses `co`/`ca`.
-    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+    var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope);
 
     var hop = new MessageHop {
       Type = HopType.Current,
@@ -3811,13 +3852,9 @@ public abstract partial class Dispatcher(
     string? destination,
     Dictionary<string, JsonElement>? hopMetadata,
     IMessageEnvelope? sourceEnvelope) {
-    var propagatedScope = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
-    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } sc
-      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc.Scope?.TenantId, UserId = sc.Scope?.UserId })
-      : null;
-
-    // Cascade identity rides the outbox hop alongside scope (see ResolveCascadeIdentity).
-    var (correlation, causation) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+    // Hop-FIRST scope + identity: the source hop captured at the calling site is authoritative (survives
+    // detached/worker boundaries); ambient is only the fallback. Shared helpers — the single place the rule lives.
+    var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope);
 
     var hop = new MessageHop {
       Type = HopType.Current,
@@ -3825,7 +3862,7 @@ public abstract partial class Dispatcher(
       Topic = destination ?? "(event-store)",
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
-      Scope = propagatedScope ?? sourceScope,
+      Scope = CascadeContext.ResolveHopFirstScope(sourceEnvelope),
       CorrelationId = correlation,
       CausationId = causation,
       TraceParent = System.Diagnostics.Activity.Current?.Id
@@ -4875,15 +4912,11 @@ public abstract partial class Dispatcher(
     // 2. Extract aggregate ID and add to hop metadata
     var hopMetadata = _createHopMetadata(eventData!, eventType);
 
-    // 3. Add hop indicating message is being deferred
-    var propagatedScope3 = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
-    var sourceScope3 = sourceEnvelope?.GetCurrentScope() is { } sc3
-      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc3.Scope?.TenantId, UserId = sc3.Scope?.UserId })
-      : null;
-    var finalScope3 = propagatedScope3 ?? sourceScope3;
-
-    // Cascade identity rides the deferred outbox hop alongside scope (see ResolveCascadeIdentity).
-    var (correlation3, causation3) = CascadeContext.ResolveCascadeIdentity(sourceEnvelope);
+    // 3. Add hop indicating message is being deferred. Scope + identity ride the SOURCE HOP captured at the
+    // calling site — hop-FIRST — via the SAME shared helpers as _createOutboxEnvelopeWithHop/_addOutboxHop, so the
+    // deferred path can't drift to ambient-first (the boundary bug: a detached/worker defer has no ambient).
+    var finalScope3 = CascadeContext.ResolveHopFirstScope(sourceEnvelope);
+    var (correlation3, causation3) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope);
 
     var hop = new MessageHop {
       Type = HopType.Current,
