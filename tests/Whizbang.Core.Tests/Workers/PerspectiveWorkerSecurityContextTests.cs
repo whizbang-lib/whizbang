@@ -409,17 +409,16 @@ public class PerspectiveWorkerSecurityContextTests {
 
     var capturedUserIds = new List<string?>();
 
-    var messageContextAccessor = new TestMessageContextAccessor();
+    var messageContextAccessor = new AsyncLocalMessageContextAccessor();
 
-    var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (envelope, stage, ctx) => {
-        // Use PrePerspectiveInline (not Detached) for capturing — Detached stages run via Task.Run
-        // on separate threads, and the shared TestMessageContextAccessor (non-AsyncLocal) would race.
-        // Inline stages execute sequentially on the worker thread with deterministic security context.
-        if (stage == LifecycleStage.PrePerspectiveInline) {
-          capturedUserIds.Add(messageContextAccessor.Current?.UserId);
-        }
-      });
+    void OnInlineCapture(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? ctx) {
+      // Capture on the Inline stage. The invoker (below) establishes the message context synchronously
+      // in-frame — like the real ReceptorInvoker — so Current reflects THIS envelope, isolated (via the
+      // AsyncLocal-backed accessor) from the Detached stages that re-establish context on Task.Run threads.
+      if (stage == LifecycleStage.PrePerspectiveInline) {
+        capturedUserIds.Add(messageContextAccessor.Current?.UserId);
+      }
+    }
 
     var eventStore = new FakeEventStore();
     eventStore.AddEvent(streamId, eventId1, new TestEvent(Guid.CreateVersion7(), "data-1"), userId1);
@@ -451,7 +450,9 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
-    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
+    // Factory registration so the invoker receives the scoped provider and can establish the message
+    // context synchronously in-frame (mirrors the real ReceptorInvoker — the boundary fix).
+    services.AddScoped<IReceptorInvoker>(sp => new CapturingLifecycleInvoker(OnInlineCapture, sp));
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -486,7 +487,7 @@ public class PerspectiveWorkerSecurityContextTests {
       // Expected during shutdown
     }
 
-    // Assert - should have captured two different user IDs
+    // Assert - should have captured two different user IDs, one per envelope, in order
     await Assert.That(capturedUserIds.Count).IsEqualTo(2)
       .Because("Security context should be established for each envelope");
     await Assert.That(capturedUserIds[0]).IsEqualTo(userId1);
@@ -1277,14 +1278,25 @@ public class PerspectiveWorkerSecurityContextTests {
   private sealed record TestEvent(Guid Id, string Data) : IEvent;
 
   private sealed class CapturingLifecycleInvoker(
-      Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? onInvoke = null) : IReceptorInvoker {
+      Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? onInvoke = null,
+      IServiceProvider? scopedProvider = null) : IReceptorInvoker {
     private readonly Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? _onInvoke = onInvoke;
+    private readonly IServiceProvider? _scopedProvider = scopedProvider;
 
     public ValueTask InvokeAsync(
         IMessageEnvelope envelope,
         LifecycleStage stage,
         ILifecycleContext? context = null,
         CancellationToken cancellationToken = default) {
+      // Mirror the real ReceptorInvoker.InvokeAsync: synchronously (re-)establish the message context
+      // from the envelope in THIS frame, so it reaches the callback across the AsyncLocal boundary. The
+      // worker's async _establishSecurityContextAsync write is lost across its ConfigureAwait(false)
+      // boundary (AsyncLocal sets inside a child async method don't flow back) — production relies on the
+      // inline invoker re-establishing here. Only wired when a scopedProvider is supplied (opt-in); the
+      // other 11 usages keep the plain no-op behavior.
+      if (_scopedProvider is not null) {
+        Whizbang.Core.Security.SecurityContextHelper.SetMessageContextFromEnvelope(envelope, _scopedProvider);
+      }
       _onInvoke?.Invoke(envelope, stage, context);
       return ValueTask.CompletedTask;
     }
@@ -1573,8 +1585,26 @@ public class PerspectiveWorkerSecurityContextTests {
     }
   }
 
+  // Plain shared field. Fine for single-envelope tests: the Detached stage re-establishes the SAME
+  // envelope's context, so even if it clobbers Current from a Task.Run thread the value is unchanged.
+  // Multi-envelope tests must use AsyncLocalMessageContextAccessor instead (see that type's remarks).
   private sealed class TestMessageContextAccessor : IMessageContextAccessor {
     public IMessageContext? Current { get; set; }
+  }
+
+  // Mirrors the production MessageContextAccessor, which backs Current with AsyncLocal precisely so that
+  // a write in a child flow (e.g. a Detached lifecycle stage fired via Task.Run, which re-establishes the
+  // security context on a threadpool thread) does NOT bleed into the parent/sibling flow that runs the
+  // Inline stage. With a plain shared field, a detached stage's Current write clobbered what a later
+  // envelope's inline capture read, non-deterministically. AsyncLocal gives each async flow its own view.
+  // Required by MultipleEnvelopes_EstablishesContextForEachEnvelope, whose invoker re-establishes the
+  // context synchronously in-frame (like the real ReceptorInvoker) so the write reaches the callback (L5).
+  private sealed class AsyncLocalMessageContextAccessor : IMessageContextAccessor {
+    private readonly AsyncLocal<IMessageContext?> _current = new();
+    public IMessageContext? Current {
+      get => _current.Value;
+      set => _current.Value = value;
+    }
   }
 
   private sealed class TestEventTypeProvider(IReadOnlyList<Type> eventTypes) : IEventTypeProvider {
