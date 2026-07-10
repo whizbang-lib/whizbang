@@ -130,7 +130,11 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // even if a row falls out of the cohort after its update.
     var selectSql = "SELECT id AS \"Value\" FROM " + table + " WHERE (" + where.SqlFragment +
       ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
-    var updateSql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + " WHERE id = ANY(@wb_ids)";
+    // Bump the store-managed columns too — a collective UPDATE that writes only `data` leaves updated_at/version
+    // stale, so change-detection (delta sync, downstream mirrors, "recently changed" reads) misses a collective
+    // flip. Mirrors the per-event upsert (BaseUpsertStrategy: updated_at = now, version = version + 1).
+    var updateSql = "UPDATE " + qualifiedTable + " SET data = " + setExpr +
+      ", updated_at = @wb_now, version = version + 1 WHERE id = ANY(@wb_ids)";
 
     // Per-(table,scope) exclusive advisory lock so collective applies to the same table+scope serialize
     // (across pods) instead of convoying; disjoint scopes hash to different keys and run concurrently.
@@ -150,6 +154,9 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     var total = 0;
     var batches = 0;
     var lastId = Guid.Empty;
+    // One timestamp for the whole apply so every batch of this event stamps the same updated_at (consistent with a
+    // single logical apply). Mirrors BaseUpsertStrategy's DateTime.UtcNow for the per-event path.
+    var applyTimestamp = DateTimeOffset.UtcNow;
     while (true) {
       var lastCursor = lastId;
       // The per-batch transaction must run inside the DbContext's execution strategy: a DbContext configured
@@ -160,7 +167,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       // backstop for 40P01/40001 when the configured strategy doesn't cover them.
       var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
         () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
-          () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lockKey, lastCursor, cancellationToken)),
+          () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lockKey, applyTimestamp, lastCursor, cancellationToken)),
         maxAttempts: 5,
         logger: logger,
         cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -197,7 +204,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       DbContext dbContext, string selectSql, string updateSql,
       IReadOnlyList<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,
       CollectivePredicateSqlCompiler<TModel>.CompiledWhereClause where,
-      CollectiveApplyOptions options, long? lockKey, Guid lastId, CancellationToken cancellationToken) {
+      CollectiveApplyOptions options, long? lockKey, DateTimeOffset now, Guid lastId, CancellationToken cancellationToken) {
 
     await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -229,13 +236,14 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       return (0, null);
     }
 
-    var updateParams = new List<Npgsql.NpgsqlParameter>((assignments.Count * 2) + 1);
+    var updateParams = new List<Npgsql.NpgsqlParameter>((assignments.Count * 2) + 2);
     for (var i = 0; i < assignments.Count; i++) {
       var idx = i.ToString(CultureInfo.InvariantCulture);
       updateParams.Add(_param("path" + idx, new[] { assignments[i].PathName }));  // text[] path
       updateParams.Add(_param("p" + idx, assignments[i].JsonValue));             // JSON text, cast ::jsonb
     }
     updateParams.Add(_param("wb_ids", ids.ToArray()));  // uuid[]
+    updateParams.Add(_param("wb_now", now));            // updated_at stamp (mirrors the per-event upsert)
     var count = await dbContext.Database.ExecuteSqlRawAsync(updateSql, updateParams, cancellationToken).ConfigureAwait(false);
 
     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);

@@ -115,12 +115,17 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     // The bare table name qualifies the outer row inside any correlated EXISTS.
     var selectSql = "SELECT id FROM " + tableName + " WHERE (" + whereClause.SqlFragment +
       ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
-    var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment + " WHERE id = ANY(@wb_ids)";
+    // Bump the store-managed columns too (mirrors EFCoreCollectiveAdapter + the per-event upsert) — a collective
+    // UPDATE that writes only the setters leaves updated_at/version stale, breaking change-detection.
+    var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment +
+      ", updated_at = @wb_now, version = version + 1 WHERE id = ANY(@wb_ids)";
     var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
     long? lockKey = effectiveOptions.SerializeApplies ? CollectiveApplyLockKey.Compute(tableName, scopeKey) : null;
 
     var total = 0;
     var lastId = Guid.Empty;
+    // One timestamp for the whole apply, so every batch of this event stamps the same updated_at.
+    var applyTimestamp = DateTimeOffset.UtcNow;
     while (true) {
       var cursor = lastId;
       // Each batch is one short transaction. Transient concurrency errors (40P01 / 40001) are retried in-line
@@ -128,7 +133,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       // attempt opens a fresh connection (a rolled-back transaction leaves its connection unusable).
       var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
         () => _executeOneBatchAsync(connectionFactory, selectSql, updateSql, setClause.Parameters,
-          whereClause.Parameters, effectiveOptions, lockKey, cursor, cancellationToken),
+          whereClause.Parameters, effectiveOptions, lockKey, applyTimestamp, cursor, cancellationToken),
         maxAttempts: 5,
         logger: logger,
         cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -150,7 +155,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
   private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
       IDbConnectionFactory connectionFactory, string selectSql, string updateSql,
       IReadOnlyDictionary<string, object?> setParameters, IReadOnlyDictionary<string, object?> whereParameters,
-      CollectiveApplyOptions options, long? lockKey, Guid lastId, CancellationToken cancellationToken) {
+      CollectiveApplyOptions options, long? lockKey, DateTimeOffset now, Guid lastId, CancellationToken cancellationToken) {
     var rawConnection = await connectionFactory.CreateConnectionAsync(cancellationToken).ConfigureAwait(false);
     await using var connection = (DbConnection)rawConnection;
     if (connection.State != ConnectionState.Open) {
@@ -200,6 +205,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     updateCmd.CommandText = updateSql;
     _addParameters(updateCmd, setParameters);
     _addParameter(updateCmd, "wb_ids", ids.ToArray());
+    _addParameter(updateCmd, "wb_now", now);
     var count = await updateCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);

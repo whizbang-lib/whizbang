@@ -180,6 +180,45 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task ApplyAsync_BumpsStoreManagedUpdatedAtAndVersionAsync() {
+    // Parity with EFCoreCollectiveAdapter: a collective UPDATE must stamp updated_at = now and version = version+1,
+    // not leave them stale — otherwise change-detection (delta sync, downstream mirrors) misses the flip.
+    await _createTableAsync();
+    var id = Guid.NewGuid();
+    var stale = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    using (var seedConn = await ConnectionFactory.CreateConnectionAsync()) {
+      await seedConn.ExecuteAsync(
+        $"INSERT INTO {TABLE} (id, data, scope, updated_at, version) VALUES (@id, @data::jsonb, @scope::jsonb, @updatedAt, 1)",
+        new { id, data = "{\"Status\": \"Active\"}", scope = "{\"t\": \"t-stamp\"}", updatedAt = stale });
+    }
+
+    var handler = new _jobPerspective();
+    var entry = new CollectiveApplyEntry(
+      ModelType: typeof(_jobModel),
+      EventType: typeof(_archiveEvent),
+      HandlerType: typeof(_jobPerspective),
+      MethodName: nameof(_jobPerspective.Archive),
+      ScopeHandling: CollectiveScopeHandling.Framework,
+      SpecKind: CollectiveSpecKind.Linq,
+      Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+
+    var before = DateTime.UtcNow;
+    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+      entry, handler, new _archiveEvent { Scope = new TenantCollectiveScope("t-stamp") },
+      new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings, CollectiveApplyOptions.Default, default);
+    await Assert.That(affected).IsEqualTo(1);
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var updatedAt = await conn.ExecuteScalarAsync<DateTime>($"SELECT updated_at FROM {TABLE} WHERE id = @id", new { id });
+    var version = await conn.ExecuteScalarAsync<long>($"SELECT version FROM {TABLE} WHERE id = @id", new { id });
+    await Assert.That(version).IsEqualTo(2L)
+      .Because("A collective UPDATE must bump the store-managed version, like a per-event apply.");
+    await Assert.That(updatedAt).IsGreaterThanOrEqualTo(before)
+      .Because("A collective UPDATE must stamp updated_at = now, not leave the stale 2020 seed.");
+    await Assert.That(updatedAt.Year).IsNotEqualTo(2020);
+  }
+
+  [Test]
   public async Task ApplyAsync_CohortLargerThanBatchSize_UpdatesEveryRowAcrossBatchesAsync() {
     // §4 parity: a cohort bigger than BatchSize is applied via the keyset loop (SELECT id … LIMIT + UPDATE …
     // WHERE id = ANY, looped on id > cursor). Every row must be updated exactly once — the loop covers the

@@ -87,6 +87,49 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await Assert.That(await _readStatusAsync(jobB2)).IsEqualTo("Active");
   }
 
+  // ── Store-managed columns: a collective apply bumps updated_at + version like a per-event apply ──
+
+  [Test]
+  public async Task DispatchAsync_BumpsStoreManagedUpdatedAtAndVersionAsync() {
+    // A collective apply is a set-based SQL UPDATE. If it only writes `data`, updated_at/version stay stale and
+    // downstream change-detection (delta sync, mirrors, "recently changed" reads) misses the flip. It must stamp
+    // both, exactly like the per-event upsert (BaseUpsertStrategy: updated_at = now, version = version + 1).
+    var job = Guid.NewGuid();
+    var stale = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    await using (var conn = new NpgsqlConnection(_connectionString)) {
+      await conn.OpenAsync();
+      await conn.ExecuteAsync("""
+        INSERT INTO wh_per_collective_job (id, data, metadata, scope, created_at, updated_at, version)
+        VALUES (@id, @data::jsonb, '{}'::jsonb, @scope::jsonb, @createdAt, @updatedAt, 1);
+        """, new {
+        id = job,
+        data = JsonSerializer.Serialize(new _jobModel { Status = "Active" }),
+        scope = JsonSerializer.Serialize(new PerspectiveScope { TenantId = "t-stamp" }),
+        createdAt = stale,
+        updatedAt = stale,
+      });
+    }
+
+    var before = DateTime.UtcNow;
+    var result = await _buildDispatcher().DispatchAsync(
+      evt: new _archiveJobsCollectiveEvent {
+        Scope = new TenantCollectiveScope("t-stamp"),
+        OccurredAt = DateTimeOffset.UtcNow,
+      },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+    await Assert.That(result.AffectedRowCount).IsEqualTo(1);
+
+    var (updatedAt, version) = await _readUpdatedAtVersionAsync(job);
+    await Assert.That(version).IsEqualTo(2)
+      .Because("A collective UPDATE must bump the store-managed version, like a per-event apply.");
+    await Assert.That(updatedAt).IsGreaterThanOrEqualTo(before)
+      .Because("A collective UPDATE must stamp updated_at = now, not leave the stale seed value.");
+    await Assert.That(updatedAt.Year).IsNotEqualTo(2020)
+      .Because("updated_at must no longer be the stale 2020 seed — change-detection relies on the fresh stamp.");
+  }
+
   // ── Predicate re-evaluates at apply time (no snapshot) ────────────────
 
   [Test]
@@ -530,6 +573,17 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     cmd.Parameters.AddWithValue("id", id);
     var result = await cmd.ExecuteScalarAsync();
     return (string)result!;
+  }
+
+  private async Task<(DateTime UpdatedAt, int Version)> _readUpdatedAtVersionAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT updated_at, version FROM wh_per_collective_job WHERE id = @id;";
+    cmd.Parameters.AddWithValue("id", id);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    return (reader.GetFieldValue<DateTime>(0), reader.GetInt32(1));
   }
 
   private CollectiveDispatcher _buildDispatcher() {
