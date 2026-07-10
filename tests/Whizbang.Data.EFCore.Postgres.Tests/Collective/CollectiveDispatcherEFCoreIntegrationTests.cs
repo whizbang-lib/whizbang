@@ -14,6 +14,7 @@ using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.EFCore.Postgres.Collective;
 using Whizbang.Data.EFCore.Postgres.Functions;
@@ -85,6 +86,49 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await Assert.That(await _readStatusAsync(jobB1)).IsEqualTo("Active")
       .Because("Tenant B rows must be entirely untouched — the resolver's scope filter restricts by row.Scope.TenantId.");
     await Assert.That(await _readStatusAsync(jobB2)).IsEqualTo("Active");
+  }
+
+  // ── Store-managed columns: a collective apply bumps updated_at + version like a per-event apply ──
+
+  [Test]
+  public async Task DispatchAsync_BumpsStoreManagedUpdatedAtAndVersionAsync() {
+    // A collective apply is a set-based SQL UPDATE. If it only writes `data`, updated_at/version stay stale and
+    // downstream change-detection (delta sync, mirrors, "recently changed" reads) misses the flip. It must stamp
+    // both, exactly like the per-event upsert (BaseUpsertStrategy: updated_at = now, version = version + 1).
+    var job = Guid.NewGuid();
+    var stale = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    await using (var conn = new NpgsqlConnection(_connectionString)) {
+      await conn.OpenAsync();
+      await conn.ExecuteAsync("""
+        INSERT INTO wh_per_collective_job (id, data, metadata, scope, created_at, updated_at, version)
+        VALUES (@id, @data::jsonb, '{}'::jsonb, @scope::jsonb, @createdAt, @updatedAt, 1);
+        """, new {
+        id = job,
+        data = JsonSerializer.Serialize(new _jobModel { Status = "Active" }),
+        scope = JsonSerializer.Serialize(new PerspectiveScope { TenantId = "t-stamp" }),
+        createdAt = stale,
+        updatedAt = stale,
+      });
+    }
+
+    var before = DateTime.UtcNow;
+    var result = await _buildDispatcher().DispatchAsync(
+      evt: new _archiveJobsCollectiveEvent {
+        Scope = new TenantCollectiveScope("t-stamp"),
+        OccurredAt = DateTimeOffset.UtcNow,
+      },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      cancellationToken: default);
+    await Assert.That(result.AffectedRowCount).IsEqualTo(1);
+
+    var (updatedAt, version) = await _readUpdatedAtVersionAsync(job);
+    await Assert.That(version).IsEqualTo(2)
+      .Because("A collective UPDATE must bump the store-managed version, like a per-event apply.");
+    await Assert.That(updatedAt).IsGreaterThanOrEqualTo(before)
+      .Because("A collective UPDATE must stamp updated_at = now, not leave the stale seed value.");
+    await Assert.That(updatedAt.Year).IsNotEqualTo(2020)
+      .Because("updated_at must no longer be the stale 2020 seed — change-detection relies on the fresh stamp.");
   }
 
   // ── Predicate re-evaluates at apply time (no snapshot) ────────────────
@@ -532,6 +576,17 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     return (string)result!;
   }
 
+  private async Task<(DateTime UpdatedAt, int Version)> _readUpdatedAtVersionAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT updated_at, version FROM wh_per_collective_job WHERE id = @id;";
+    cmd.Parameters.AddWithValue("id", id);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    return (reader.GetFieldValue<DateTime>(0), reader.GetInt32(1));
+  }
+
   private CollectiveDispatcher _buildDispatcher() {
     var services = new ServiceCollection();
     var handler = new _jobPerspective();
@@ -554,6 +609,152 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       entries,
       [new TenantCollectiveScopeResolver()],
       [new EFCoreCollectiveEventExecutor<_jobModel>()]);
+  }
+
+  // ── Apply hooks (collective path, EF Core) ────────────────────────────
+
+  private CollectiveDispatcher _buildDispatcherWithHooks(CollectiveApplyHookRegistry hooks) {
+    var services = new ServiceCollection();
+    services.AddSingleton(new _jobPerspective());
+    var entries = new CollectiveApplyEntry[] {
+      new(typeof(_jobModel), typeof(_archiveJobsCollectiveEvent), typeof(_jobPerspective),
+        nameof(_jobPerspective.ArchiveJobs), CollectiveScopeHandling.Framework, CollectiveSpecKind.Linq,
+        static (h, e, q) => ((_jobPerspective)h).ArchiveJobs((_archiveJobsCollectiveEvent)e)),
+    };
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(), entries,
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<_jobModel>(hookRegistry: hooks)]);
+  }
+
+  private sealed class _collectiveHook<TMarker>(Action<ICollectiveApplyHookBuilder<TMarker>, ApplyHookContext> body)
+      : ICollectiveApplyHook<TMarker> {
+    public void Configure(ICollectiveApplyHookBuilder<TMarker> b, ApplyHookContext c) => body(b, c);
+  }
+
+  private interface _unrelatedMarker { } // a marker _jobModel does NOT implement
+
+  private static async Task<int> _dispatchArchiveAsync(CollectiveDispatcher dispatcher, _jobDbContext ctx, string tenant) {
+    var result = await dispatcher.DispatchAsync(
+      new _archiveJobsCollectiveEvent { Scope = new TenantCollectiveScope(tenant), OccurredAt = DateTimeOffset.UtcNow },
+      Guid.NewGuid(), ctx, default);
+    return result.AffectedRowCount;
+  }
+
+  [Test]
+  public async Task Hook_SetProperty_OverridesSpecField_AndLastRegisteredWinsAsync() {
+    var job = Guid.NewGuid();
+    await _seedJobAsync(job, tenantId: "t-A", status: "Active");
+
+    // Two hooks both set Status; hook setters append after the spec's Status="Archived", and the last-registered
+    // hook wins (nested jsonb_set) — proving accumulation + registration order end-to-end.
+    var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
+      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.SetProperty(j => j.Status, "first")))
+      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.SetProperty(j => j.Status, "second")));
+
+    await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
+
+    await Assert.That(await _readStatusAsync(job)).IsEqualTo("second")
+      .Because("Hook SetProperty is appended after the spec setter and the last-registered hook wins.");
+  }
+
+  [Test]
+  public async Task Hook_SetColumn_OverridesDefaultUpdatedAt_AndSkipsVersionBumpAsync() {
+    var job = Guid.NewGuid();
+    await _seedJobAsync(job, tenantId: "t-A", status: "Active");
+    var sentinel = new DateTimeOffset(2099, 3, 4, 5, 6, 7, TimeSpan.Zero);
+
+    // Override the documented default key: stamp a sentinel updated_at and deliberately DO NOT bump version.
+    var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
+      .Register<object>(new _collectiveHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)),
+        key: WhizbangApplyHookKeys.TIMESTAMPS);
+
+    await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
+
+    var (updatedAt, version) = await _readUpdatedAtVersionAsync(job);
+    await Assert.That(updatedAt.Year).IsEqualTo(2099)
+      .Because("Re-registering whizbang.timestamps replaces the default stamp — updated_at is the sentinel.");
+    await Assert.That(version).IsEqualTo(1)
+      .Because("The override sets updated_at but does not BumpVersion, so version stays 1 — the default bump was replaced.");
+  }
+
+  [Test]
+  public async Task Hook_RemoveSetter_DropsASpecFieldSetterAsync() {
+    var job = Guid.NewGuid();
+    await _seedJobAsync(job, tenantId: "t-A", status: "Active");
+
+    var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
+      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.RemoveSetter(j => j.Status)));
+
+    await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
+
+    await Assert.That(await _readStatusAsync(job)).IsEqualTo("Active")
+      .Because("RemoveSetter(Status) drops the spec's Status=\"Archived\" setter — Status stays its seeded value.");
+  }
+
+  [Test]
+  public async Task Hook_AndWhere_RefinesTheCohortAsync() {
+    var active = Guid.NewGuid();
+    var draft = Guid.NewGuid();
+    await _seedJobAsync(active, tenantId: "t-A", status: "Active");
+    await _seedJobAsync(draft, tenantId: "t-A", status: "Draft");
+
+    var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
+      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.AndWhere(j => j.Status == "Active")));
+
+    var affected = await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
+
+    await Assert.That(affected).IsEqualTo(1)
+      .Because("AndWhere(Status==\"Active\") narrows the scope cohort to just the Active row.");
+    await Assert.That(await _readStatusAsync(active)).IsEqualTo("Archived");
+    await Assert.That(await _readStatusAsync(draft)).IsEqualTo("Draft")
+      .Because("The Draft row falls out of the hook-refined cohort — untouched.");
+  }
+
+  [Test]
+  public async Task Hook_ReplaceWhere_SwapsCohortButScopeStillBindsAsync() {
+    var activeA = Guid.NewGuid();
+    var draftA = Guid.NewGuid();
+    var draftB = Guid.NewGuid();
+    await _seedJobAsync(activeA, tenantId: "t-A", status: "Active");
+    await _seedJobAsync(draftA, tenantId: "t-A", status: "Draft");
+    await _seedJobAsync(draftB, tenantId: "t-B", status: "Draft");
+
+    var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
+      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.ReplaceWhere(j => j.Status == "Draft")));
+
+    var affected = await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
+
+    await Assert.That(affected).IsEqualTo(1)
+      .Because("ReplaceWhere(Status==\"Draft\") swaps the cohort to Draft rows, but the tenant scope still binds.");
+    await Assert.That(await _readStatusAsync(draftA)).IsEqualTo("Archived");
+    await Assert.That(await _readStatusAsync(activeA)).IsEqualTo("Active")
+      .Because("Active is no longer in the replaced cohort.");
+    await Assert.That(await _readStatusAsync(draftB)).IsEqualTo("Draft")
+      .Because("D0: the scope envelope still binds under ReplaceWhere — tenant B is untouched.");
+  }
+
+  [Test]
+  public async Task Hook_NonMatchingMarker_IsNotAppliedAsync() {
+    var job = Guid.NewGuid();
+    await _seedJobAsync(job, tenantId: "t-A", status: "Active");
+    var sentinel = new DateTimeOffset(1999, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    // A hook gated on a marker _jobModel does NOT implement must not fire — updated_at stays the default stamp.
+    // Registered UNKEYED (appends) so the default whizbang.timestamps hook stays in place and still fires.
+    var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
+      .Register<_unrelatedMarker>(new _collectiveHook<_unrelatedMarker>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)));
+
+    var before = DateTime.UtcNow.AddSeconds(-5);
+    await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
+
+    var (updatedAt, version) = await _readUpdatedAtVersionAsync(job);
+    await Assert.That(updatedAt.Year).IsNotEqualTo(1999)
+      .Because("The _unrelatedMarker hook does not match _jobModel, so its sentinel stamp never applies.");
+    await Assert.That(updatedAt).IsGreaterThanOrEqualTo(before)
+      .Because("The default whizbang.timestamps hook still stamps updated_at ~now for _jobModel.");
+    await Assert.That(version).IsEqualTo(2)
+      .Because("Only the default hook fired — it bumped version 1 → 2.");
   }
 
   internal sealed class _jobPerspective {

@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text.Json;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
@@ -94,6 +95,23 @@ internal static class CollectiveSettersRewriter {
       var valueType = a.Value?.GetType() ?? (a.Comparison is null ? a.Property.PropertyType : typeof(object));
       var json = JsonSerializer.Serialize(a.Value, valueType, _persistenceJsonOptions);
       result.Add(new CollectiveSetterAssignment(a.Property.Name, json, a.Value is null && a.Comparison is null, a.Comparison));
+    }
+    return result;
+  }
+
+  /// <summary>
+  /// Turn collective apply-hook <see cref="SetPropertyOp"/>s (property name + already-evaluated value) into the
+  /// same <see cref="CollectiveSetterAssignment"/> shape the spec setters produce, serialized with the identical
+  /// persistence profile so a hook-set field is byte-for-byte consistent with a spec-set one. Constant setters
+  /// only — hooks never carry computed comparisons.
+  /// </summary>
+  public static IReadOnlyList<CollectiveSetterAssignment> FromHookSetters(IEnumerable<SetPropertyOp> setters) {
+    ArgumentNullException.ThrowIfNull(setters);
+    var result = new List<CollectiveSetterAssignment>();
+    foreach (var setter in setters) {
+      var valueType = setter.Value?.GetType() ?? setter.PropertyType;
+      var json = JsonSerializer.Serialize(setter.Value, valueType, _persistenceJsonOptions);
+      result.Add(new CollectiveSetterAssignment(setter.PropertyName, json, setter.Value is null, Comparison: null));
     }
     return result;
   }

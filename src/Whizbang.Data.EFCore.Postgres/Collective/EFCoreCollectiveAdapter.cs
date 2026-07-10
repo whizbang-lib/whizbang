@@ -70,6 +70,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       DbContext dbContext,
       ICollectiveSpec<TModel> spec,
       Expression<Func<PerspectiveRow<TModel>, bool>> scopeFilter,
+      CollectiveApplyHookPlan<TModel> hookPlan,
       CollectiveApplyOptions options,
       string scopeKey,
       Guid collectiveEventId,
@@ -78,12 +79,17 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(spec);
     ArgumentNullException.ThrowIfNull(scopeFilter);
+    ArgumentNullException.ThrowIfNull(hookPlan);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(scopeKey);
 
     var logger = dbContext.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Collective.Apply");
 
-    var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters);
+    // Model-field (jsonb) setters = the spec's setters plus any the hooks added, minus any a hook removed.
+    var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters)
+      .Concat(CollectiveSettersRewriter.FromHookSetters(hookPlan.ModelFieldSetters))
+      .Where(a => !hookPlan.RemovedModelFields.Contains(a.PathName))
+      .ToList();
 
     var entityType = dbContext.Model.FindEntityType(typeof(PerspectiveRow<TModel>))
       ?? throw new InvalidOperationException(
@@ -130,7 +136,26 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // even if a row falls out of the cohort after its update.
     var selectSql = "SELECT id AS \"Value\" FROM " + table + " WHERE (" + where.SqlFragment +
       ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
-    var updateSql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + " WHERE id = ANY(@wb_ids)";
+    // The store-managed column writes (updated_at, the version bump, any developer audit columns) come from the
+    // resolved apply-hook plan. By default the whizbang.timestamps hook contributes updated_at = ApplyTimestamp
+    // and a version bump — a collective UPDATE that writes only `data` would leave those stale and break
+    // change-detection (delta sync, downstream mirrors, "recently changed" reads) — and a consumer can override
+    // or extend that stamping via hooks.
+    var storeColumns = hookPlan.StoreColumns;
+    var setTail = new StringBuilder();
+    for (var i = 0; i < storeColumns.Count; i++) {
+      var column = storeColumns[i].Column;
+      if (!CollectiveStoreColumn.IsValidIdentifier(column)) {
+        throw new InvalidOperationException(
+          $"Apply hook produced an invalid store-column name '{column}'. Column names must be valid unquoted " +
+          "Postgres identifiers (a letter or underscore, then letters/digits/underscores).");
+      }
+      setTail.Append(", \"").Append(column).Append("\" = @wb_hookcol").Append(i.ToString(CultureInfo.InvariantCulture));
+    }
+    if (hookPlan.BumpVersion) {
+      setTail.Append(", version = version + 1");
+    }
+    var updateSql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + setTail + " WHERE id = ANY(@wb_ids)";
 
     // Per-(table,scope) exclusive advisory lock so collective applies to the same table+scope serialize
     // (across pods) instead of convoying; disjoint scopes hash to different keys and run concurrently.
@@ -160,7 +185,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       // backstop for 40P01/40001 when the configured strategy doesn't cover them.
       var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
         () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
-          () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lockKey, lastCursor, cancellationToken)),
+          () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lockKey, storeColumns, lastCursor, cancellationToken)),
         maxAttempts: 5,
         logger: logger,
         cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -195,9 +220,10 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
   /// </summary>
   private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
       DbContext dbContext, string selectSql, string updateSql,
-      IReadOnlyList<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,
+      List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,
       CollectivePredicateSqlCompiler<TModel>.CompiledWhereClause where,
-      CollectiveApplyOptions options, long? lockKey, Guid lastId, CancellationToken cancellationToken) {
+      CollectiveApplyOptions options, long? lockKey, IReadOnlyList<CollectiveStoreColumn> storeColumns,
+      Guid lastId, CancellationToken cancellationToken) {
 
     await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -229,13 +255,17 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       return (0, null);
     }
 
-    var updateParams = new List<Npgsql.NpgsqlParameter>((assignments.Count * 2) + 1);
+    var updateParams = new List<Npgsql.NpgsqlParameter>((assignments.Count * 2) + 1 + storeColumns.Count);
     for (var i = 0; i < assignments.Count; i++) {
       var idx = i.ToString(CultureInfo.InvariantCulture);
       updateParams.Add(_param("path" + idx, new[] { assignments[i].PathName }));  // text[] path
       updateParams.Add(_param("p" + idx, assignments[i].JsonValue));             // JSON text, cast ::jsonb
     }
     updateParams.Add(_param("wb_ids", ids.ToArray()));  // uuid[]
+    // Store-column values from the apply-hook plan (e.g. updated_at = ApplyTimestamp). One value per @wb_hookcol{i}.
+    for (var i = 0; i < storeColumns.Count; i++) {
+      updateParams.Add(_param("wb_hookcol" + i.ToString(CultureInfo.InvariantCulture), storeColumns[i].Value ?? DBNull.Value));
+    }
     var count = await dbContext.Database.ExecuteSqlRawAsync(updateSql, updateParams, cancellationToken).ConfigureAwait(false);
 
     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);

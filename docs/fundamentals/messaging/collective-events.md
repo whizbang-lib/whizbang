@@ -202,6 +202,11 @@ convoy locks or run away (the mechanics that stopped the production spiral):
 - **Per-(table, scope) exclusive advisory lock (§5a).** Each batch takes `pg_advisory_xact_lock(hash(table,
   scope))` — DB-global, so it serializes same-scope collective applies **across pods** while disjoint scopes
   (e.g. different tenants) run concurrently. Opt out with `SerializeApplies = false`.
+- **Store-managed columns via the `whizbang.timestamps` apply hook.** The `UPDATE` also stamps
+  `updated_at = ApplyTimestamp` and bumps `version` (a collective `UPDATE` writing only `data` would leave them
+  stale, breaking change-detection). That stamping is the framework's default [apply hook](apply-hooks.md) —
+  overridable, and the seam through which a consumer can add model-field setters, extra store columns, or refine
+  the cohort `WHERE`. Same hook surface applies to the per-event path.
 - **Startup expression index (§7).** The btree `((scope->>'t'))` expression index the tenant-scope filter
   needs (`gin(scope)` can't serve `->>` equality) is created **at service startup** by the schema generator
   (`EFCoreServiceRegistrationGenerator._appendStandardIndexes`, alongside the `gin` indexes), **never in the

@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 
 namespace Whizbang.Data.Dapper.Postgres.Collective;
 
@@ -80,7 +81,9 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
   public static CompiledSetClause Compile(
       ICollectiveSpec<TModel> spec,
       JsonSerializerOptions jsonOptions,
-      string parameterPrefix = "set") {
+      string parameterPrefix = "set",
+      IEnumerable<SetPropertyOp>? hookSetters = null,
+      IReadOnlySet<string>? removedFields = null) {
     ArgumentNullException.ThrowIfNull(spec);
     ArgumentNullException.ThrowIfNull(jsonOptions);
     ArgumentException.ThrowIfNullOrWhiteSpace(parameterPrefix);
@@ -94,8 +97,19 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
         "An ICollectiveSpec must mutate at least one property — empty specs are unsupported because they translate to a SQL UPDATE with no SET clause.");
     }
 
+    // Fold in the collective apply-hook contributions: append any hook-added constant setters, then drop any
+    // field a hook removed. Kept after the spec so hook writes win on the same jsonb path (nested jsonb_set).
+    if (hookSetters is not null) {
+      foreach (var setter in hookSetters) {
+        visitor.AddConstant(setter.PropertyName, setter.Value);
+      }
+    }
+    var properties = removedFields is { Count: > 0 }
+      ? visitor.Properties.Where(p => !removedFields.Contains(p.JsonbPath)).ToList()
+      : visitor.Properties;
+
     return new CompiledSetClause(
-      SqlFragment: _buildJsonbSetChain(visitor.Properties),
+      SqlFragment: _buildJsonbSetChain(properties),
       Parameters: visitor.Parameters);
   }
 
@@ -195,6 +209,14 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
         "DapperCollectiveSpecCompiler only supports scalar top-level property selectors " +
         "(j => j.PropertyName). Nested paths (j => j.Nested.X), indexed access, or computed " +
         "selectors require [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
+    }
+
+    // Append a collective apply-hook constant setter: a pre-evaluated value (not an expression) bound as
+    // "@p::jsonb" on the given jsonb path. Mirrors _compileConstantValue but starts from the raw value.
+    public void AddConstant(string propertyName, object? value) {
+      var paramName = _nextParam(propertyName);
+      Parameters[paramName] = JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), _jsonOptions);
+      Properties.Add(new _propertyAssignment(propertyName, $"@{paramName}::jsonb"));
     }
 
     // Constant value source → "@p::jsonb", with the value JSON-serialized into the parameter dictionary.
