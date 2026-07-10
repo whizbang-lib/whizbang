@@ -5,6 +5,8 @@ using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -123,30 +125,44 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     var scopeTypeInfo = jsonOptions.GetTypeInfo(typeof(PerspectiveScope))
       ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveScope. Ensure the type is registered in InfrastructureJsonContext.");
 
+    // Per-event apply hooks: resolve once, mutate the data object (SetProperty) in place before serialization,
+    // and take the updated_at / version-bump decision from the plan. The default whizbang.timestamps hook yields
+    // updated_at = now + a version bump — identical to the prior hardcoded stamping, now overridable.
+    var now = DateTime.UtcNow;
+    var hookPlan = PerEventApplyHooks.Resolve(new ApplyHookContext {
+      ModelType = typeof(TModel),
+      Scope = scope,
+      ApplyTimestamp = new DateTimeOffset(now, TimeSpan.Zero),
+    });
+    if (hookPlan.ModelFieldSetters.Count > 0) {
+      PerEventApplyHooks.ApplyModelSetters(model, hookPlan.ModelFieldSetters);
+    }
+    var updatedAt = hookPlan.UpdatedAt?.UtcDateTime ?? now;
+    var versionBump = hookPlan.BumpVersion ? 1 : 0;
+
     var dataJson = JsonSerializer.Serialize(model, dataTypeInfo);
     var scopeJson = JsonSerializer.Serialize(scope, scopeTypeInfo);
     const string metadataJson = "{}"; // Default metadata for Dapper store
-    var now = DateTime.UtcNow;
 
-    // Build SET clause based on forceUpdateScope
+    // Build SET clause based on forceUpdateScope. updated_at + the version bump come from the hook plan.
     var setClause = forceUpdateScope
         ? $"""
             data = EXCLUDED.data,
             metadata = EXCLUDED.metadata,
             scope = EXCLUDED.scope,
             updated_at = EXCLUDED.updated_at,
-            version = {tableName}.version + 1
+            version = {tableName}.version + @p_versionbump
           """
         : $"""
             data = EXCLUDED.data,
             metadata = EXCLUDED.metadata,
             updated_at = EXCLUDED.updated_at,
-            version = {tableName}.version + 1
+            version = {tableName}.version + @p_versionbump
           """;
 
     var sql = $"""
       INSERT INTO {tableName} (id, data, metadata, scope, created_at, updated_at, version)
-      VALUES (@p_id, @p_data::jsonb, @p_metadata::jsonb, @p_scope::jsonb, @p_now, @p_now, 1)
+      VALUES (@p_id, @p_data::jsonb, @p_metadata::jsonb, @p_scope::jsonb, @p_created, @p_updated, 1)
       ON CONFLICT (id) DO UPDATE SET
         {setClause}
       """;
@@ -156,7 +172,9 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     cmd.Parameters.Add(new NpgsqlParameter("p_data", NpgsqlDbType.Jsonb) { Value = dataJson });
     cmd.Parameters.Add(new NpgsqlParameter("p_metadata", NpgsqlDbType.Jsonb) { Value = metadataJson });
     cmd.Parameters.Add(new NpgsqlParameter("p_scope", NpgsqlDbType.Jsonb) { Value = scopeJson });
-    cmd.Parameters.AddWithValue("p_now", now);
+    cmd.Parameters.AddWithValue("p_created", now);
+    cmd.Parameters.AddWithValue("p_updated", updatedAt);
+    cmd.Parameters.AddWithValue("p_versionbump", versionBump);
 
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }

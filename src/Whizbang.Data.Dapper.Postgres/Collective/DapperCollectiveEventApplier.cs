@@ -2,11 +2,13 @@ using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Collective;
 
@@ -33,6 +35,10 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
   // Preserve PascalCase property names — they are the jsonb keys (matches CollectiveSettersRewriter).
   private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNamingPolicy = null };
 
+  // The framework defaults (whizbang.timestamps: stamp updated_at + bump version) used when no registry is
+  // supplied — so a direct ApplyAsync call (e.g. a driver-level test) still stamps the store columns.
+  private static readonly CollectiveApplyHookRegistry _defaultHooks = WhizbangApplyHooks.CreateCollectiveWithDefaults();
+
   /// <summary>
   /// Apply the collective event against the Dapper-backed perspective table. Returns the affected-row count.
   /// </summary>
@@ -54,6 +60,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       IReadOnlyDictionary<Type, string> siblingTables,
       CollectiveApplyOptions options,
       ILogger? logger = null,
+      CollectiveApplyHookRegistry? hookRegistry = null,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(entry);
@@ -91,14 +98,26 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
         $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance.");
     }
 
-    var setClause = DapperCollectiveSpecCompiler<TModel>.Compile(spec, _jsonOptions, parameterPrefix: "set");
+    // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field
+    // setters, and cohort-WHERE modifiers) once for this apply. One ApplyTimestamp is shared across every batch.
+    var registry = hookRegistry ?? _defaultHooks;
+    var hookPlan = CollectiveApplyHookPlanner.Resolve<TModel>(registry, new ApplyHookContext {
+      ModelType = typeof(TModel),
+      Event = evt,
+      Scope = evt.Scope,
+      ApplyTimestamp = DateTimeOffset.UtcNow,
+    });
+
+    var setClause = DapperCollectiveSpecCompiler<TModel>.Compile(
+      spec, _jsonOptions, parameterPrefix: "set",
+      hookSetters: hookPlan.ModelFieldSetters, removedFields: hookPlan.RemovedModelFields);
 
     // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
     // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
-    // Custom AND-composes it with the mandatory handler cohort Where. A handler refines within scope, never
-    // escapes it.
+    // Custom AND-composes it with the mandatory handler cohort Where. A hook can refine (AndWhere) or replace
+    // (ReplaceWhere) the cohort, but the scope envelope still binds — a hook never escapes its scope.
     var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
-    var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
+    var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, hookPlan.ComposeCohort(spec.Where));
     var whereClause = CollectivePredicateSqlCompiler<TModel>.Compile(
       effectiveWhere, parameterPrefix: "where", outerTableName: tableName);
 
@@ -115,17 +134,30 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     // The bare table name qualifies the outer row inside any correlated EXISTS.
     var selectSql = "SELECT id FROM " + tableName + " WHERE (" + whereClause.SqlFragment +
       ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
-    // Bump the store-managed columns too (mirrors EFCoreCollectiveAdapter + the per-event upsert) — a collective
-    // UPDATE that writes only the setters leaves updated_at/version stale, breaking change-detection.
-    var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment +
-      ", updated_at = @wb_now, version = version + 1 WHERE id = ANY(@wb_ids)";
+    // The store-managed column writes (updated_at, the version bump, any developer audit columns) come from the
+    // resolved apply-hook plan. By default the whizbang.timestamps hook contributes updated_at = ApplyTimestamp
+    // and a version bump (mirrors EFCoreCollectiveAdapter + the per-event upsert) — a collective UPDATE that
+    // writes only the setters would leave those stale and break change-detection; a consumer can override it.
+    var storeColumns = hookPlan.StoreColumns;
+    var setTail = new StringBuilder();
+    for (var i = 0; i < storeColumns.Count; i++) {
+      var column = storeColumns[i].Column;
+      if (!CollectiveStoreColumn.IsValidIdentifier(column)) {
+        throw new InvalidOperationException(
+          $"Apply hook produced an invalid store-column name '{column}'. Column names must be valid unquoted " +
+          "Postgres identifiers (a letter or underscore, then letters/digits/underscores).");
+      }
+      setTail.Append(", \"").Append(column).Append("\" = @wb_hookcol").Append(i.ToString(CultureInfo.InvariantCulture));
+    }
+    if (hookPlan.BumpVersion) {
+      setTail.Append(", version = version + 1");
+    }
+    var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment + setTail + " WHERE id = ANY(@wb_ids)";
     var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
     long? lockKey = effectiveOptions.SerializeApplies ? CollectiveApplyLockKey.Compute(tableName, scopeKey) : null;
 
     var total = 0;
     var lastId = Guid.Empty;
-    // One timestamp for the whole apply, so every batch of this event stamps the same updated_at.
-    var applyTimestamp = DateTimeOffset.UtcNow;
     while (true) {
       var cursor = lastId;
       // Each batch is one short transaction. Transient concurrency errors (40P01 / 40001) are retried in-line
@@ -133,7 +165,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       // attempt opens a fresh connection (a rolled-back transaction leaves its connection unusable).
       var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
         () => _executeOneBatchAsync(connectionFactory, selectSql, updateSql, setClause.Parameters,
-          whereClause.Parameters, effectiveOptions, lockKey, applyTimestamp, cursor, cancellationToken),
+          whereClause.Parameters, effectiveOptions, lockKey, storeColumns, cursor, cancellationToken),
         maxAttempts: 5,
         logger: logger,
         cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -155,7 +187,8 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
   private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
       IDbConnectionFactory connectionFactory, string selectSql, string updateSql,
       IReadOnlyDictionary<string, object?> setParameters, IReadOnlyDictionary<string, object?> whereParameters,
-      CollectiveApplyOptions options, long? lockKey, DateTimeOffset now, Guid lastId, CancellationToken cancellationToken) {
+      CollectiveApplyOptions options, long? lockKey, IReadOnlyList<CollectiveStoreColumn> storeColumns,
+      Guid lastId, CancellationToken cancellationToken) {
     var rawConnection = await connectionFactory.CreateConnectionAsync(cancellationToken).ConfigureAwait(false);
     await using var connection = (DbConnection)rawConnection;
     if (connection.State != ConnectionState.Open) {
@@ -205,7 +238,10 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     updateCmd.CommandText = updateSql;
     _addParameters(updateCmd, setParameters);
     _addParameter(updateCmd, "wb_ids", ids.ToArray());
-    _addParameter(updateCmd, "wb_now", now);
+    // Store-column values from the apply-hook plan (e.g. updated_at = ApplyTimestamp). One per @wb_hookcol{i}.
+    for (var i = 0; i < storeColumns.Count; i++) {
+      _addParameter(updateCmd, "wb_hookcol" + i.ToString(CultureInfo.InvariantCulture), storeColumns[i].Value ?? DBNull.Value);
+    }
     var count = await updateCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);

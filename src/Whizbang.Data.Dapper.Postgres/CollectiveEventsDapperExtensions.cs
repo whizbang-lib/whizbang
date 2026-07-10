@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.Dapper.Postgres.Collective;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Collective;
@@ -46,6 +47,9 @@ public static class CollectiveEventsDapperExtensions {
           StatementTimeoutSeconds = pg.CollectiveApplyStatementTimeoutSeconds,
         };
     });
+    // Collective apply-hook registry, seeded with the framework defaults (whizbang.timestamps: stamp updated_at
+    // + bump version). TryAdd so a consumer can register their own (defaults + custom hooks) first to override.
+    services.TryAddSingleton(_ => WhizbangApplyHooks.CreateCollectiveWithDefaults());
     services.TryAddSingleton<ICollectiveSessionAccessor, DapperCollectiveSessionAccessor>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
@@ -83,7 +87,8 @@ public static class CollectiveEventsDapperExtensions {
     // and logger.
     services.AddSingleton<ICollectiveEventExecutor>(sp =>
       new DapperCollectiveEventExecutor<TModel>(tableName, registry.Tables, sp.GetService<CollectiveApplyOptions>(),
-        sp.GetService<Microsoft.Extensions.Logging.ILogger<DapperCollectiveEventExecutor<TModel>>>()));
+        sp.GetService<Microsoft.Extensions.Logging.ILogger<DapperCollectiveEventExecutor<TModel>>>(),
+        sp.GetService<CollectiveApplyHookRegistry>()));
     // In-memory twin used during replay/rebuild (driver-neutral). Same TModel as the SQL executor.
     services.AddSingleton<ICollectiveInMemoryExecutor, CollectiveInMemoryExecutor<TModel>>();
     return services;

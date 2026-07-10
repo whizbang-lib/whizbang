@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 
@@ -22,11 +23,16 @@ public sealed class EFCoreCollectiveEventExecutor<TModel> : ICollectiveEventExec
     where TModel : class {
 
   private readonly CollectiveApplyOptions _options;
+  private readonly CollectiveApplyHookRegistry? _hookRegistry;
 
-  /// <summary>Creates the executor with the apply policy (batching + statement_timeout). DI supplies the
-  /// resolved <see cref="CollectiveApplyOptions"/>; the parameterless default is used by tests.</summary>
-  public EFCoreCollectiveEventExecutor(CollectiveApplyOptions? options = null)
-    => _options = options ?? CollectiveApplyOptions.Default;
+  /// <summary>Creates the executor with the apply policy (batching + statement_timeout) and the collective
+  /// apply-hook registry. DI supplies both; the parameterless defaults are used by tests (a null registry falls
+  /// back to the framework defaults, i.e. the whizbang.timestamps stamping).</summary>
+  public EFCoreCollectiveEventExecutor(
+      CollectiveApplyOptions? options = null, CollectiveApplyHookRegistry? hookRegistry = null) {
+    _options = options ?? CollectiveApplyOptions.Default;
+    _hookRegistry = hookRegistry;
+  }
 
   /// <inheritdoc />
   public Type ModelType => typeof(TModel);
@@ -51,6 +57,6 @@ public sealed class EFCoreCollectiveEventExecutor<TModel> : ICollectiveEventExec
 
     return CollectiveEventApplier<TModel>.ApplyAsync(
       entry, handlerInstance, evt, resolver, dbContext,
-      collectiveEventId, _options, cancellationToken);
+      collectiveEventId, _options, _hookRegistry, cancellationToken);
   }
 }

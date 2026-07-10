@@ -4,6 +4,8 @@ using System.Text.Json.Serialization.Metadata;
 using Npgsql;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives.Hooks;
+using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
@@ -64,6 +66,47 @@ public class DapperPostgresPerspectiveStoreTests : PostgresTestBase {
     var userId = reader.GetString(1);
     await Assert.That(tenant).IsEqualTo("tenant-dapper");
     await Assert.That(userId).IsEqualTo("user-1");
+  }
+
+  // ── Per-event apply hooks flow through the real Dapper upsert ─────────
+  // The custom hook is gated on this class's private TestModel and keeps the framework defaults, so the
+  // process-wide registry swap can't affect any other test class's model (they still get default stamping).
+
+  private sealed class _perEventHook(Action<IApplyHookBuilder<TestModel>, ApplyHookContext> body)
+      : IApplyHook<TestModel> {
+    public void Configure(IApplyHookBuilder<TestModel> b, ApplyHookContext c) => body(b, c);
+  }
+
+  [Test]
+  public async Task DapperUpsert_PerEventHook_SetsPropertyAndOverridesUpdatedAtAsync() {
+    var sentinel = new DateTimeOffset(2099, 3, 4, 5, 6, 7, TimeSpan.Zero);
+    var original = PerEventApplyHooks.Registry;
+    PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
+      .Register<TestModel>(new _perEventHook((b, _) => {
+        b.SetProperty(m => m.Name, "HookName");
+        b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel); // last-wins over the default stamp
+      }));
+    try {
+      var store = new DapperPostgresPerspectiveStore<TestModel>(ConnectionString, TABLE_NAME, _jsonOptions);
+      var id = Guid.CreateVersion7();
+
+      await store.UpsertAsync(id, new TestModel { Name = "Original" }, new PerspectiveScope { TenantId = "t" });
+
+      await using var conn = new NpgsqlConnection(ConnectionString);
+      await conn.OpenAsync();
+      await using var cmd = new NpgsqlCommand(
+        $"SELECT data->>'Name', updated_at FROM {TABLE_NAME} WHERE id = @id", conn);
+      cmd.Parameters.AddWithValue("id", id);
+      await using var reader = await cmd.ExecuteReaderAsync();
+      await reader.ReadAsync();
+
+      await Assert.That(reader.GetString(0)).IsEqualTo("HookName")
+        .Because("A per-event SetProperty hook mutates the row data object before it is serialized and written.");
+      await Assert.That(reader.GetFieldValue<DateTime>(1).Year).IsEqualTo(2099)
+        .Because("A per-event SetColumn(updated_at) hook overrides the default stamp (last-wins).");
+    } finally {
+      PerEventApplyHooks.Registry = original;
+    }
   }
 
   [Test]

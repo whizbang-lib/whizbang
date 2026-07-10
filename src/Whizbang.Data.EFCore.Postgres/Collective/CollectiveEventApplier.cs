@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
+using Whizbang.Data.Postgres.Collective;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 
@@ -59,6 +61,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       DbContext dbContext,
       Guid collectiveEventId,
       CollectiveApplyOptions options,
+      CollectiveApplyHookRegistry? hookRegistry = null,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(entry);
@@ -103,12 +106,22 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
         $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
     }
 
+    // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field
+    // setters, and cohort-WHERE modifiers) once for this apply. One ApplyTimestamp is shared across every batch.
+    var registry = hookRegistry ?? _defaultHooks;
+    var hookPlan = CollectiveApplyHookPlanner.Resolve<TModel>(registry, new ApplyHookContext {
+      ModelType = typeof(TModel),
+      Event = evt,
+      Scope = evt.Scope,
+      ApplyTimestamp = DateTimeOffset.UtcNow,
+    });
+
     // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
     // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
-    // Custom AND-composes it with the mandatory handler cohort Where. A handler can refine within scope but
-    // never escape it.
+    // Custom AND-composes it with the mandatory handler cohort Where. A hook can refine (AndWhere) or replace
+    // (ReplaceWhere) the handler cohort, but the scope envelope still binds — a hook never escapes its scope.
     var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
-    var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, spec.Where);
+    var effectiveWhere = CollectiveWhereComposer.Compose(entry.ScopeHandling, scopeFilter, hookPlan.ComposeCohort(spec.Where));
 
     // A stable identity for the scope (includes the tenant), so the per-(table,scope) advisory lock serializes
     // same-scope applies while letting disjoint scopes run concurrently. The record ToString() is
@@ -128,9 +141,14 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       dbContext,
       spec,
       effectiveWhere,
+      hookPlan,
       effectiveOptions,
       scopeKey,
       collectiveEventId,
       cancellationToken).ConfigureAwait(false);
   }
+
+  // The framework defaults (whizbang.timestamps: stamp updated_at + bump version) used when no registry is
+  // supplied — so a direct ApplyAsync call (e.g. a driver-level test) still stamps the store columns.
+  private static readonly CollectiveApplyHookRegistry _defaultHooks = WhizbangApplyHooks.CreateCollectiveWithDefaults();
 }

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 
 namespace Whizbang.Data.Dapper.Postgres.Collective;
 
@@ -24,6 +25,7 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
   private readonly IReadOnlyDictionary<Type, string> _siblingTables;
   private readonly CollectiveApplyOptions _options;
   private readonly ILogger? _logger;
+  private readonly CollectiveApplyHookRegistry? _hookRegistry;
 
   /// <summary>Create the executor for <typeparamref name="TModel"/> targeting <paramref name="tableName"/>.</summary>
   /// <param name="tableName">The perspective table for the model (e.g. <c>wh_per_job</c>).</param>
@@ -33,15 +35,18 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
   /// </param>
   /// <param name="options">Apply policy (batching + statement_timeout); DI supplies the resolved value.</param>
   /// <param name="logger">Optional logger for transient-retry warnings on the apply (parity with EF Core).</param>
+  /// <param name="hookRegistry">Collective apply-hook registry; DI supplies it. Null falls back to framework
+  /// defaults (the whizbang.timestamps stamping).</param>
   public DapperCollectiveEventExecutor(
       string tableName, IReadOnlyDictionary<Type, string> siblingTables, CollectiveApplyOptions? options = null,
-      ILogger? logger = null) {
+      ILogger? logger = null, CollectiveApplyHookRegistry? hookRegistry = null) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     ArgumentNullException.ThrowIfNull(siblingTables);
     _tableName = tableName;
     _siblingTables = siblingTables;
     _options = options ?? CollectiveApplyOptions.Default;
     _logger = logger;
+    _hookRegistry = hookRegistry;
   }
 
   /// <inheritdoc />
@@ -67,6 +72,6 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
 
     return DapperCollectiveEventApplier<TModel>.ApplyAsync(
       entry, handlerInstance, evt, resolver, connectionFactory, _tableName, _siblingTables, _options,
-      logger: _logger, cancellationToken: cancellationToken);
+      logger: _logger, hookRegistry: _hookRegistry, cancellationToken: cancellationToken);
   }
 }

@@ -7,7 +7,9 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -161,13 +163,25 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       UpsertRowArgs<TModel> args,
       CancellationToken cancellationToken)
       where TModel : class {
+    // Per-event apply hooks: resolve once, mutate the row's data object (SetProperty) in place, and carry the
+    // updated_at / version-bump decision to both write paths below. The default whizbang.timestamps hook yields
+    // updated_at = now + a version bump — identical to the prior hardcoded stamping, now overridable.
+    var hookPlan = PerEventApplyHooks.Resolve(new ApplyHookContext {
+      ModelType = typeof(TModel),
+      Scope = args.Scope,
+      ApplyTimestamp = DateTimeOffset.UtcNow,
+    });
+    if (hookPlan.ModelFieldSetters.Count > 0) {
+      PerEventApplyHooks.ApplyModelSetters(args.Model, hookPlan.ModelFieldSetters);
+    }
+
     // Path 1 atomic upsert. When configured (see PathOnePersistenceOptionsProvider) and
     // applicable (no physical fields, table name supplied), this single round-trip replaces
     // the SELECT-then-INSERT/UPDATE pattern and structurally eliminates the 23505 dup-key
     // race that slice 19's retry loop was built to recover from. Returns false to signal
     // the caller should fall back to the retry loop (config off, physical fields present,
     // or any other unsupported case).
-    if (await _tryAtomicUpsertAsync(context, args, cancellationToken)) {
+    if (await _tryAtomicUpsertAsync(context, args, hookPlan, cancellationToken)) {
       return;
     }
 
@@ -180,7 +194,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // propagates and the caller routes the work through the failure channel.
     for (var attempt = 0; attempt <= MAX_DUPLICATE_KEY_RETRIES; attempt++) {
       try {
-        await _upsertCoreInnerAsync(context, args, cancellationToken);
+        await _upsertCoreInnerAsync(context, args, hookPlan, cancellationToken);
         if (attempt > 0) {
           Interlocked.Increment(ref _duplicateKeyRetriesRecovered);
         }
@@ -207,6 +221,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   private static async Task<bool> _tryAtomicUpsertAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
+      PerEventApplyHookPlan hookPlan,
       CancellationToken cancellationToken)
       where TModel : class {
     var optionsProvider = PathOnePersistenceOptionsProvider;
@@ -333,14 +348,16 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
            OR EXCLUDED.metadata->>'CommitSequence' IS NULL
            OR (EXCLUDED.metadata->>'CommitSequence')::bigint >= ({qualifiedTable}.metadata->>'CommitSequence')::bigint";
 
+    // updated_at + the version bump come from the resolved per-event hook plan (default whizbang.timestamps:
+    // updated_at = now, bump = 1). created_at is always the real now on insert (a hook cannot rewrite it).
     var sql = $@"
         INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, version{pfColumnsClause})
-        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @now, @now, 1{pfValuesClause})
+        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, 1{pfValuesClause})
         ON CONFLICT (id) DO UPDATE SET
           data = EXCLUDED.data,
           metadata = EXCLUDED.metadata,
           updated_at = EXCLUDED.updated_at,
-          version = {qualifiedTable}.version + 1{scopeUpdateClause}{pfUpdateClause}{whereClause}";
+          version = {qualifiedTable}.version + @wb_versionbump{scopeUpdateClause}{pfUpdateClause}{whereClause}";
 
     var connection = context.Database.GetDbConnection();
     var openedHere = false;
@@ -360,7 +377,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       cmd.Parameters.Add(new NpgsqlParameter("data", dataJson));
       cmd.Parameters.Add(new NpgsqlParameter("metadata", metadataJson));
       cmd.Parameters.Add(new NpgsqlParameter("scope", scopeJson));
-      cmd.Parameters.Add(new NpgsqlParameter("now", DateTime.UtcNow));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_created", DateTime.UtcNow));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_updated", hookPlan.UpdatedAt?.UtcDateTime ?? DateTime.UtcNow));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_versionbump", hookPlan.BumpVersion ? 1 : 0));
       if (pfCount > 0) {
         var i = 0;
         foreach (var value in args.PhysicalFieldValues!.Values) {
@@ -438,6 +457,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   private async Task _upsertCoreInnerAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
+      PerEventApplyHookPlan hookPlan,
       CancellationToken cancellationToken)
       where TModel : class {
     var id = args.Id;
@@ -466,6 +486,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
     var now = DateTime.UtcNow;
+    // updated_at + the version bump come from the resolved per-event hook plan (default whizbang.timestamps:
+    // updated_at = now, bump). A hook may override the stamp or skip the bump.
+    var updatedAt = hookPlan.UpdatedAt?.UtcDateTime ?? now;
 
     PerspectiveRow<TModel> row;
     if (existingRow != null) {
@@ -491,8 +514,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         Metadata = CloneMetadata(metadata),
         Scope = forceUpdateScope ? CloneScope(scope) : CloneScope(existingRow.Scope),
         CreatedAt = existingRow.CreatedAt,
-        UpdatedAt = now,
-        Version = existingRow.Version + 1
+        UpdatedAt = updatedAt,
+        Version = hookPlan.BumpVersion ? existingRow.Version + 1 : existingRow.Version
       };
       context.Set<PerspectiveRow<TModel>>().Update(row);
       if (!forceUpdateScope) {
@@ -505,7 +528,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         }
       }
     } else {
-      row = _createNewRow(id, model, metadata, scope, now);
+      row = _createNewRow(id, model, metadata, scope, now, updatedAt);
       context.Set<PerspectiveRow<TModel>>().Add(row);
     }
 
@@ -526,15 +549,15 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   }
 
   private static PerspectiveRow<TModel> _createNewRow<TModel>(
-      Guid id, TModel model, PerspectiveMetadata metadata, PerspectiveScope scope, DateTime now)
+      Guid id, TModel model, PerspectiveMetadata metadata, PerspectiveScope scope, DateTime createdAt, DateTime updatedAt)
       where TModel : class =>
     new() {
       Id = id,
       Data = model,
       Metadata = CloneMetadata(metadata),
       Scope = CloneScope(scope),
-      CreatedAt = now,
-      UpdatedAt = now,
+      CreatedAt = createdAt,
+      UpdatedAt = updatedAt,
       Version = 1
     };
 
