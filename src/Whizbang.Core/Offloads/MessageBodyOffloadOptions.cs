@@ -32,4 +32,11 @@ public sealed class MessageBodyOffloadOptions {
   /// cleanup races in fan-out subscriber topologies.
   /// </summary>
   public bool ActiveCleanup { get; set; }
+
+  /// <summary>
+  /// Bounded timeout for a single body-store download during receive-side rehydration. A download
+  /// that exceeds this is aborted and surfaced as a retryable failure (the transport redelivers the
+  /// message) instead of stalling the consumer indefinitely on a hung blob call. Default: 100s.
+  /// </summary>
+  public TimeSpan DownloadTimeout { get; set; } = TimeSpan.FromSeconds(100);
 }

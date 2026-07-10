@@ -101,9 +101,12 @@ public class BodyClaimRehydratorTests {
   }
 
   [Test]
-  public async Task MaybeRehydrateAsync_DownloadThrows_DeadLettersAsTransportExceptionAsync() {
-    // Provider download throws a non-CT exception — receive must dead-letter so the
-    // message is redelivered/diagnosed rather than silently re-processed without the body.
+  public async Task MaybeRehydrateAsync_DownloadThrows_ThrowsForRetryNotDeadLetterAsync() {
+    // A download failure is very likely TRANSIENT (network blip, momentary store outage — the body
+    // is in the store). The rehydrator must THROW (BodyClaimDownloadException) so the transport
+    // redelivers the message for a bounded, automatic retry, rather than terminally dead-lettering a
+    // body that is almost certainly there on the next attempt. (Permanent failures — integrity /
+    // deserialize / unknown-provider — still dead-letter, asserted by the other tests.)
     var services = new ServiceCollection();
     var store = new ThrowingStore("memory");
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => store);
@@ -114,19 +117,42 @@ public class BodyClaimRehydratorTests {
       ContentType: "application/json", UploadedAt: DateTimeOffset.UtcNow);
     var claimEnvelope = _wrapInClaimEnvelope(claim, "OriginalType, MyAssembly");
 
-    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
-      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None);
+    var ex = await Assert.That(async () => await BodyClaimRehydrator.MaybeRehydrateAsync(
+        claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None))
+      .Throws<BodyClaimDownloadException>()
+      .Because("A transient download failure MUST throw for transport-level redelivery/retry — not terminally dead-letter.");
+    await Assert.That(ex!.Message).Contains("memory");
+    await Assert.That(ex.InnerException).IsTypeOf<InvalidOperationException>()
+      .Because("The original provider exception must be preserved as the inner exception for diagnostics.");
+  }
 
-    await Assert.That(result.IsDeadLetter).IsTrue();
-    await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.TransportException)
-      .Because("Provider exceptions during download MUST surface as TransportException dead-letter — distinct from integrity-failure so dashboards can route them separately.");
-    await Assert.That(result.FailureDescription!).Contains("memory");
+  [Test, Timeout(30_000)]
+  public async Task MaybeRehydrateAsync_DownloadExceedsTimeout_ThrowsForRetryAsync(CancellationToken testCt) {
+    // A hung body-store download must be aborted at DownloadTimeout and surfaced as a retryable throw —
+    // never stall the consumer indefinitely on a blob call that never returns.
+    var services = new ServiceCollection();
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => new HangingStore("memory"));
+    services.AddSingleton<IOptions<MessageBodyOffloadOptions>>(
+      Options.Create(new MessageBodyOffloadOptions { DownloadTimeout = TimeSpan.FromMilliseconds(100) }));
+    var sp = services.BuildServiceProvider();
+    var claim = new MessageBodyClaim(
+      ProviderName: "memory", StorageKey: "test://hangs",
+      Size: 4, ContentHash: "sha256-AB",
+      ContentType: "application/json", UploadedAt: DateTimeOffset.UtcNow);
+    var claimEnvelope = _wrapInClaimEnvelope(claim, "OriginalType, MyAssembly");
+
+    var ex = await Assert.That(async () => await BodyClaimRehydrator.MaybeRehydrateAsync(
+        claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, testCt))
+      .Throws<BodyClaimDownloadException>()
+      .Because("A download exceeding DownloadTimeout MUST abort and throw for retry, not hang the consumer forever.");
+    await Assert.That(ex!.Message).Contains("timeout");
   }
 
   [Test]
   public async Task MaybeRehydrateAsync_DownloadCanceled_PropagatesOperationCanceledAsync() {
-    // The exception filter explicitly excludes OperationCanceledException so cooperative
-    // cancellation propagates to the caller instead of dead-lettering as TransportException.
+    // When the RECEIVER's own CancellationToken is cancelled (host shutdown), the rehydrator must
+    // propagate the OperationCanceledException untouched so the consumer stops cleanly — it must NOT
+    // be masked as a retryable download failure (that path is only for timeouts / store errors).
     var services = new ServiceCollection();
     var store = new CancelingStore("memory");
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => store);
@@ -137,11 +163,14 @@ public class BodyClaimRehydratorTests {
       ContentType: "application/json", UploadedAt: DateTimeOffset.UtcNow);
     var claimEnvelope = _wrapInClaimEnvelope(claim, "OriginalType, MyAssembly");
 
+    using var shutdownCts = new CancellationTokenSource();
+    await shutdownCts.CancelAsync();
+
     await Assert.That(async () => await BodyClaimRehydrator.MaybeRehydrateAsync(
         claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName,
-        _buildJsonOptions(), sp, CancellationToken.None))
+        _buildJsonOptions(), sp, shutdownCts.Token))
       .Throws<OperationCanceledException>()
-      .Because("OperationCanceledException is excluded from the catch filter — receiver-shutdown CT propagates instead of dead-lettering.");
+      .Because("A cancelled receiver CT (host shutdown) propagates untouched — distinct from the retryable download-failure path.");
   }
 
   [Test]
@@ -334,6 +363,20 @@ public class BodyClaimRehydratorTests {
       => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
     public Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default)
       => throw new OperationCanceledException();
+    public Task DeleteAsync(MessageBodyClaim claim, MessageBodyDeleteOptions? options = null, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+  }
+
+  /// <summary>Store whose DownloadAsync never completes until cancelled — exercises the rehydrator's bounded download timeout.</summary>
+  private sealed class HangingStore : IMessageBodyStore {
+    public HangingStore(string providerName) { ProviderName = providerName; }
+    public string ProviderName { get; }
+    public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
+      => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
+    public async Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default) {
+      await Task.Delay(Timeout.Infinite, cancellationToken);  // returns only when the (linked timeout) token cancels
+      return ReadOnlyMemory<byte>.Empty;                      // unreachable — Task.Delay throws on cancellation
+    }
     public Task DeleteAsync(MessageBodyClaim claim, MessageBodyDeleteOptions? options = null, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
