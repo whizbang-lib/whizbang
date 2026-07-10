@@ -199,7 +199,11 @@ public partial class ServiceBusConsumerWorker(
     // EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; we
     // skip the gate in that case rather than misclassifying — never drop a message
     // because of a registry-side parse miss.
-    if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(envelopeType)) {
+    // EXEMPTION — body-offload (claim-check): a claim's wire type is MessageEnvelope<BodyClaimEnvelopePayload>,
+    // which no service consumes. Dropping it here would kill every offloaded message before rehydration.
+    // Skip the gate for claims; BodyClaimRehydrator restores the original type downstream.
+    if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(envelopeType)
+        && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(envelopeType)) {
       var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
       if (innerMessageType is not null
           && !_receptorRegistry.HasAnyConsumer(innerMessageType)

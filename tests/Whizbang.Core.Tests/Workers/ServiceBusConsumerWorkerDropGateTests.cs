@@ -8,6 +8,7 @@ using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Offloads;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -202,6 +203,46 @@ public class ServiceBusConsumerWorkerDropGateTests {
 
       await worker.StopAsync(CancellationToken.None);
     }
+  }
+
+  [Test]
+  public async Task HandleMessage_BodyOffloadClaim_NotDroppedByNoConsumerGateAsync() {
+    // Body-offload (claim-check): a claim's wire type is MessageEnvelope<BodyClaimEnvelopePayload>, which
+    // NO service consumes. The no-consumer gate must NOT drop it — that would kill every offloaded message
+    // before rehydration. The claim must proceed past the gate (rehydration restores the original type).
+    var registry = new FakeReceptorRegistry(hasAnyConsumer: false);
+    var (worker, transport, strategy, sp) = _buildWorker(registry, envelopeSerializer: new StubEnvelopeSerializer());
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      await worker.StartAsync(cts.Token);
+
+      var claimEnvelopeType = typeof(MessageEnvelope<BodyClaimEnvelopePayload>).AssemblyQualifiedName!;
+      await transport.BatchHandler!.Invoke(
+        [new TransportMessage(_makeEnvelope(), claimEnvelopeType)],
+        cts.Token);
+
+      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(1)
+        .Because("The no-consumer gate must exempt offloaded claim envelopes so they proceed past the gate — no service consumes BodyClaimEnvelopePayload, but the real message is rehydrated downstream.");
+
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  private sealed class StubEnvelopeSerializer : IEnvelopeSerializer {
+    public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
+      var jsonEnvelope = new MessageEnvelope<JsonElement> {
+        MessageId = envelope.MessageId,
+        Payload = JsonSerializer.SerializeToElement(new { }),
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
+      };
+      return new SerializedEnvelope(
+        jsonEnvelope,
+        typeof(MessageEnvelope<>).MakeGenericType(typeof(TMessage)).AssemblyQualifiedName!,
+        typeof(TMessage).AssemblyQualifiedName!);
+    }
+    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName)
+      => throw new NotImplementedException();
   }
 
   // Positive control (gate doesn't drop messages with consumers) and null-registry

@@ -52,4 +52,20 @@ public static class EnvelopeTypeNameHelper {
 
     return envelopeTypeName.Substring(openIdx + 2, closeIdx - openIdx - 2).Trim();
   }
+
+  /// <summary>
+  /// True when the envelope wraps the internal body-offload claim sentinel
+  /// (<c>MessageEnvelope&lt;BodyClaimEnvelopePayload&gt;</c>). No service registers a receptor for the
+  /// claim type, so the receive-side "no local consumer" gates MUST NOT drop it — the real message is
+  /// rehydrated to its original type downstream by <c>BodyClaimRehydrator</c>. Matching on the inner
+  /// type name keeps this driver-agnostic, shared by every transport worker's pre-serialization gate.
+  /// </summary>
+  public static bool IsBodyClaimEnvelope(string? envelopeTypeName) {
+    if (string.IsNullOrEmpty(envelopeTypeName)) {
+      return false;
+    }
+    var inner = ExtractInnerTypeName(envelopeTypeName);
+    return inner is not null
+      && inner.Contains(nameof(Whizbang.Core.Offloads.BodyClaimEnvelopePayload), StringComparison.Ordinal);
+  }
 }

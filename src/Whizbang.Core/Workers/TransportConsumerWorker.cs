@@ -439,7 +439,13 @@ public partial class TransportConsumerWorker : BackgroundService {
       // even when a runtime receptor is listening (integration-test wait helpers, dynamic
       // registrations). Worse than the lifecycle-gate version of this bug because dropping
       // here means no inbox row gets written at all — no downstream anything can recover.
-      if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)) {
+      // EXEMPTION — body-offload (claim-check): an offloaded message's wire type is the internal
+      // MessageEnvelope<BodyClaimEnvelopePayload>, which NO service registers a consumer for. Running
+      // this no-consumer gate against the claim would drop EVERY offloaded message here — before
+      // rehydration, with no inbox row written, unrecoverable. Skip the gate for claims; the real
+      // type is restored by BodyClaimRehydrator in _tryBuildInboxMessageFromTransportAsync below.
+      if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)
+          && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(msg.EnvelopeType)) {
         var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
         if (innerMessageType is not null
             && !_receptorRegistry.HasAnyConsumer(innerMessageType)

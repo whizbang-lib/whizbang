@@ -83,6 +83,43 @@ public class TransportConsumerWorkerBodyOffloadTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  [Test]
+  public async Task BatchHandler_ClaimEnvelope_RegistryLacksClaimConsumer_StillRehydratesAsync() {
+    // Regression (production bulk no-op): a real service's IReceptorRegistryQuery has NO consumer for the
+    // internal BodyClaimEnvelopePayload sentinel, so the pre-serialization no-consumer gate dropped
+    // EVERY offloaded message BEFORE rehydration (metric only, no log, no inbox row — unrecoverable).
+    // The gate must exempt claim envelopes so the ORIGINAL message is rehydrated + stored.
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var store = new TestBodyStore(MEM_PROVIDER_KEY);
+    var coordinator = new NoOpWorkCoordinator();
+    await using var sp = _buildProvider(coordinator, jsonOptions, services => {
+      services.AddKeyedSingleton<IMessageBodyStore>(MEM_PROVIDER_KEY, (_, _) => store);
+      services.AddSingleton(metrics);
+    });
+    var transport = new OffloadTransport();
+    var worker = _buildWorker(transport, sp, metrics, receptorRegistry: new NoConsumerRegistry());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+    var (claimEnvelope, originalMessageId, _, _) =
+      await _uploadOriginalEnvelopeAsync(store, jsonOptions);
+
+    // Faithful to the wire: the transport hands the worker the CLAIM envelope's type as EnvelopeType
+    // (ASB ENVELOPE_TYPE = MessageEnvelope<BodyClaimEnvelopePayload>) — the gate keys on this.
+    var claimEnvelopeType = claimEnvelope.GetType().AssemblyQualifiedName!;
+    await transport.DeliverBatchAsync([new TransportMessage(claimEnvelope, claimEnvelopeType)]);
+
+    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(1)
+      .Because("The no-consumer gate must exempt the offloaded claim sentinel so the rehydrated ORIGINAL message is stored — even though no service has a receptor for BodyClaimEnvelopePayload.");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   // ============================================================
   // Rehydrate dead-letter
   // ============================================================
@@ -293,7 +330,8 @@ public class TransportConsumerWorkerBodyOffloadTests {
       ITransport transport,
       IServiceProvider serviceProvider,
       TransportMetrics? metrics = null,
-      ILogger<TransportConsumerWorker>? logger = null) {
+      ILogger<TransportConsumerWorker>? logger = null,
+      IReceptorRegistryQuery? receptorRegistry = null) {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("offload-topic"));
     return new TransportConsumerWorker(
@@ -301,7 +339,16 @@ public class TransportConsumerWorkerBodyOffloadTests {
       serviceProvider.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: metrics,
-      logger ?? NullLogger<TransportConsumerWorker>.Instance);
+      logger ?? NullLogger<TransportConsumerWorker>.Instance,
+      receptorRegistry: receptorRegistry);
+  }
+
+  /// <summary>Registry that consumes NOTHING — mirrors a real service that has no receptor for the
+  /// internal BodyClaimEnvelopePayload sentinel (which is every service).</summary>
+  private sealed class NoConsumerRegistry : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
+    public bool HasInboxHandler(string messageType) => false;
+    public bool HasAnyConsumer(string messageType) => false;
   }
 
   private static ServiceProvider _buildProvider(
