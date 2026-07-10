@@ -7,6 +7,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Offloads;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests;
@@ -167,6 +168,72 @@ public class AsbReceiveDecisionMakerTests {
     var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, isHandledLocally: null);
 
     await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
+  }
+
+  // ============================================================
+  // Body-offload (claim-check) — a message whose serialized body exceeds the transport limit is
+  // offloaded: the wire payload becomes BodyClaimEnvelopePayload, the ORIGINAL type is carried in
+  // whizbang.original-type, and TransportConsumerWorker rehydrates the real message downstream.
+  //
+  // REGRESSION (production 2026-07): "bulk → Approved" (21,398 job IDs) silently did nothing. The
+  // BulkUpdateJobStatusesCommand exceeded ASB's 256 KB limit → offloaded. On receive, Decide's
+  // Slice-2 NO_LOCAL_CONSUMER filter ran against the CLAIM payload type (BodyClaimEnvelopePayload),
+  // which no service has a receptor for → AckAndDrop before rehydration. Every offloaded message
+  // died here. The filter must not fire for claim payloads — the real type is rehydrated downstream.
+  // ============================================================
+
+  [Test]
+  public async Task Decide_OffloadedClaimMessage_OriginalHandledLocally_ReturnsProcessNotDropAsync() {
+    var decider = new AsbReceiveDecisionMaker();
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var claimTypeInfo = (JsonTypeInfo<MessageEnvelope<BodyClaimEnvelopePayload>>)
+      combinedOptions.GetTypeInfo(typeof(MessageEnvelope<BodyClaimEnvelopePayload>));
+
+    var claim = new MessageBodyClaim(
+      ProviderName: "test-store",
+      StorageKey: "key-123",
+      Size: 900_000,
+      ContentHash: "sha256-deadbeef",
+      ContentType: "application/json",
+      UploadedAt: DateTimeOffset.UtcNow);
+    var originalEnvelopeType =
+      "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Commands.BigCommand, MyApp.Contracts]], Whizbang.Core";
+
+    var envelope = new MessageEnvelope<BodyClaimEnvelopePayload> {
+      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      Payload = new BodyClaimEnvelopePayload(claim, "application/json", originalEnvelopeType),
+      Hops = [new MessageHop {
+        Type = HopType.Current,
+        ServiceInstance = new ServiceInstanceInfo {
+          InstanceId = (Guid)TrackedGuid.NewMedo(),
+          ServiceName = "test",
+          HostName = "test-host",
+          ProcessId = 1,
+        },
+        Timestamp = DateTimeOffset.UtcNow,
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Local, Source = MessageSource.Local },
+    };
+    var body = JsonSerializer.Serialize(envelope, claimTypeInfo);
+
+    // Faithful to the wire: is-claim arrives as an AMQP boolean (ToString() == "True"); ENVELOPE_TYPE
+    // names the claim envelope; original-type carries the real type.
+    var props = new Dictionary<string, object> {
+      [AsbMessageHeaderReader.ENVELOPE_TYPE_PROPERTY_KEY] =
+        "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Offloads.BodyClaimEnvelopePayload, Whizbang.Core]], Whizbang.Core",
+      [BodyOffloadPostSerializeHook.IS_CLAIM_METADATA_KEY] = true,
+      [BodyOffloadPostSerializeHook.ORIGINAL_TYPE_METADATA_KEY] = originalEnvelopeType,
+    };
+
+    // Service consumes its real messages but has NO receptor for the internal claim type.
+    bool _isHandledLocally(Type t) => t != typeof(BodyClaimEnvelopePayload);
+
+    var decision = decider.Decide(props, body, (_, _) => claimTypeInfo, combinedOptions, _isHandledLocally);
+
+    // Must Process so TransportConsumerWorker.MaybeRehydrateAsync can download + rehydrate the
+    // original message. Today this is AckAndDrop / NoLocalConsumer — the silent bulk drop.
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
+    await Assert.That(decision.Reason).IsEqualTo("Ok");
   }
 
   // ============================================================

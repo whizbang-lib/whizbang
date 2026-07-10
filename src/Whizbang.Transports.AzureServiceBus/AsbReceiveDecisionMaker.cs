@@ -120,8 +120,18 @@ internal sealed class AsbReceiveDecisionMaker {
 
     // Slice 2 — receptor-registry filter at receive. If this service has no consumer
     // for the payload type, drop the message instead of storing it in the inbox.
+    //
+    // EXCEPTION — body-offload (claim-check): an offloaded message carries the internal
+    // BodyClaimEnvelopePayload on the wire; the ORIGINAL message is rehydrated downstream by
+    // TransportConsumerWorker/BodyClaimRehydrator (keyed off the payload type). No service registers
+    // a receptor for BodyClaimEnvelopePayload, so running this filter against the claim type would
+    // silently AckAndDrop EVERY offloaded message before it can rehydrate. Skip the filter for claims
+    // — the transport SqlFilter already matched this service's owned namespace, and the rehydrated
+    // original type flows through normal dispatch. (Regression: production "bulk → Approved" no-op.)
     var payloadType = envelope.Payload?.GetType();
-    if (isHandledLocally != null && payloadType != null && !isHandledLocally(payloadType)) {
+    if (isHandledLocally != null && payloadType != null
+        && envelope.Payload is not Whizbang.Core.Offloads.BodyClaimEnvelopePayload
+        && !isHandledLocally(payloadType)) {
       return new AsbReceiveDecision {
         Action = AsbReceiveAction.AckAndDrop,
         Envelope = envelope,

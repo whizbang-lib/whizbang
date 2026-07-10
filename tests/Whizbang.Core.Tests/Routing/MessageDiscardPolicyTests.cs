@@ -65,6 +65,34 @@ public class MessageDiscardPolicyTests {
     await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.None);
   }
 
+  // Body-offload (claim-check): an offloaded message arrives with the internal
+  // BodyClaimEnvelopePayload as its wire payload type — no service consumes it, so HasAnyConsumer
+  // says "discard". That silently drops every offloaded message before TransportConsumerWorker can
+  // rehydrate the original type. Both no-local-consumer gates must exempt claim envelopes.
+  // (Regression: production "bulk → Approved" (21,398 IDs) offloaded past ASB's limit, then dropped.)
+  private const string CLAIM_ENVELOPE_TYPE =
+    "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Offloads.BodyClaimEnvelopePayload, Whizbang.Core]], Whizbang.Core";
+
+  [Test]
+  public async Task EvaluateReceive_BodyOffloadClaimEnvelope_NeverDiscardsAsync() {
+    var (policy, _, _, _) = _newPolicy();  // registry has NO consumer for the claim type
+
+    var decision = policy.EvaluateReceive(CLAIM_ENVELOPE_TYPE, topic: "inbox", subscription: "jobservice-inbox");
+
+    await Assert.That(decision.ShouldDiscard).IsFalse();
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.None);
+  }
+
+  [Test]
+  public async Task EvaluateInbox_BodyOffloadClaimEnvelope_NeverDiscardsAsync() {
+    var (policy, _, _, _) = _newPolicy();
+
+    var decision = policy.EvaluateInbox(CLAIM_ENVELOPE_TYPE);
+
+    await Assert.That(decision.ShouldDiscard).IsFalse();
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.None);
+  }
+
   [Test]
   public async Task EvaluateInbox_TypeNoLongerInRegistry_ReturnsShouldDiscard_RegistryChangedAsync() {
     var (policy, _, _, _) = _newPolicy();
