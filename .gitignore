@@ -50,6 +50,11 @@ Generated\ Files/
 **/.whizbang/cache/
 **/.whizbang/message-registry.json
 
+# Source-generator debug output (EmitCompilerGeneratedFiles). Regenerated on every build — never committed.
+# The sample projects emit here; without this, VS/VS Code surface thousands of untracked .g.cs files.
+**/.whizbang-generated/
+**/.generated/
+
 # Whizbang Generated Schema Files (regenerated from C# schema definitions)
 # Note: Dapper.Sqlite needs whizbang-schema.sql as an embedded resource
 **/whizbang-schema.sql
