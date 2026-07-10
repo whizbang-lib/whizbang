@@ -52,13 +52,26 @@ public static class BodyClaimRehydrator {
         $"Receiver does not have an IMessageBodyStore registered under provider name '{claim.ProviderName}'. Register the matching AddWhizbang*Offload(name) (e.g., AddWhizbangInMemoryOffload, AddWhizbangAzureBlobOffload) on the receiver service.");
     }
 
+    var downloadTimeout = serviceProvider.GetService<IOptions<MessageBodyOffloadOptions>>()?.Value?.DownloadTimeout
+      ?? TimeSpan.FromSeconds(100);
     ReadOnlyMemory<byte> downloaded;
-    try {
-      downloaded = await store.DownloadAsync(claim, options: null, cancellationToken);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      return RehydrateResult.DeadLetter(
-        MessageFailureReason.TransportException,
-        $"Body store '{claim.ProviderName}' threw downloading claim '{claim.StorageKey}': {ex.GetType().Name}: {ex.Message}");
+    using (var downloadCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)) {
+      downloadCts.CancelAfter(downloadTimeout);
+      try {
+        downloaded = await store.DownloadAsync(claim, options: null, downloadCts.Token);
+      } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+        throw;  // genuine host shutdown — propagate untouched so the consumer stops cleanly.
+      } catch (Exception ex) {
+        // Transient store/network failure OR a bounded download timeout. Throw (do NOT dead-letter):
+        // the body is very likely present on a later attempt, so the transport redelivers the message
+        // for a bounded, automatic retry, and only after the transport's max-delivery count does it
+        // DLQ. Integrity / deserialization / unknown-provider failures below stay terminal dead-letters.
+        var reason = downloadCts.IsCancellationRequested
+          ? $"exceeded the {downloadTimeout.TotalSeconds:0}s download timeout"
+          : $"{ex.GetType().Name}: {ex.Message}";
+        throw new BodyClaimDownloadException(
+          $"Body store '{claim.ProviderName}' download failed for claim '{claim.StorageKey}' ({reason}) — will retry via redelivery.", ex);
+      }
     }
 
     var actualHash = "sha256-" + Convert.ToHexString(SHA256.HashData(downloaded.Span));
