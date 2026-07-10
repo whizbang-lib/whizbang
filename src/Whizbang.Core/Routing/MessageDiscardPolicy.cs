@@ -109,6 +109,9 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     if (string.IsNullOrEmpty(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
+    if (_isBodyClaimEnvelope(payloadClrType)) {
+      return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
+    }
     return _registry.HasAnyConsumer(payloadClrType)
       ? new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None)
       : new MessageDiscardDecision(
@@ -120,6 +123,9 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// <inheritdoc />
   public MessageDiscardDecision EvaluateInbox(string payloadClrType) {
     if (string.IsNullOrEmpty(payloadClrType)) {
+      return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
+    }
+    if (_isBodyClaimEnvelope(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
     return _registry.HasAnyConsumer(payloadClrType)
@@ -137,6 +143,15 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     // be plugged in to enable real outbox-side filtering.
     return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
   }
+
+  /// <summary>
+  /// True when the wire payload type is a body-offload (claim-check) envelope carrying the internal
+  /// <see cref="Whizbang.Core.Offloads.BodyClaimEnvelopePayload"/>. No service registers a consumer
+  /// for the claim type, so the receive/inbox no-local-consumer gates would discard it — but the real
+  /// message is rehydrated to its original type downstream, so a claim must never be dropped here.
+  /// </summary>
+  private static bool _isBodyClaimEnvelope(string payloadClrType) =>
+    payloadClrType.Contains(nameof(Whizbang.Core.Offloads.BodyClaimEnvelopePayload), System.StringComparison.Ordinal);
 
   /// <inheritdoc />
   public void RecordDiscard(
