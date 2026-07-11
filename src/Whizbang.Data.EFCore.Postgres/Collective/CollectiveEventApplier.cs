@@ -108,13 +108,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
 
     // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field
     // setters, and cohort-WHERE modifiers) once for this apply. One ApplyTimestamp is shared across every batch.
-    var registry = hookRegistry ?? _defaultHooks;
-    var hookPlan = CollectiveApplyHookPlanner.Resolve<TModel>(registry, new ApplyHookContext {
-      ModelType = typeof(TModel),
-      Event = evt,
-      Scope = evt.Scope,
-      ApplyTimestamp = DateTimeOffset.UtcNow,
-    });
+    var hookPlan = CollectiveApplyHookPlanner.ResolveForEvent<TModel>(hookRegistry, evt);
 
     // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
     // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
@@ -147,8 +141,4 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       collectiveEventId,
       cancellationToken).ConfigureAwait(false);
   }
-
-  // The framework defaults (whizbang.timestamps: stamp updated_at + bump version) used when no registry is
-  // supplied — so a direct ApplyAsync call (e.g. a driver-level test) still stamps the store columns.
-  private static readonly CollectiveApplyHookRegistry _defaultHooks = WhizbangApplyHooks.CreateCollectiveWithDefaults();
 }

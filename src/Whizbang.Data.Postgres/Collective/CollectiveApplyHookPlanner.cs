@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives.Hooks;
 
 namespace Whizbang.Data.Postgres.Collective;
@@ -28,6 +29,26 @@ namespace Whizbang.Data.Postgres.Collective;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:Hook_ReplaceWhere_SwapsCohortButScopeStillBindsAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:Hook_SetColumn_OverridesDefaultUpdatedAt_AndSkipsVersionBumpAsync</tests>
 public static class CollectiveApplyHookPlanner {
+  // The framework defaults (whizbang.timestamps: stamp updated_at + bump version) used when no registry is
+  // supplied — so a direct apply (e.g. a driver-level test) still stamps the store columns.
+  private static readonly CollectiveApplyHookRegistry _defaults = WhizbangApplyHooks.CreateCollectiveWithDefaults();
+
+  /// <summary>
+  /// Resolve the hook plan for one collective event: falls back to the framework defaults when
+  /// <paramref name="registry"/> is null, and builds the per-apply <see cref="ApplyHookContext"/> (one
+  /// <c>ApplyTimestamp</c> shared across every keyset batch). The shared entry point both drivers call.
+  /// </summary>
+  public static CollectiveApplyHookPlan<TModel> ResolveForEvent<TModel>(
+      CollectiveApplyHookRegistry? registry, ICollectiveEvent evt) where TModel : class {
+    ArgumentNullException.ThrowIfNull(evt);
+    return Resolve<TModel>(registry ?? _defaults, new ApplyHookContext {
+      ModelType = typeof(TModel),
+      Event = evt,
+      Scope = evt.Scope,
+      ApplyTimestamp = DateTimeOffset.UtcNow,
+    });
+  }
+
   /// <summary>Resolve and fold the matching collective hooks for <typeparamref name="TModel"/>.</summary>
   /// <param name="registry">The collective hook registry (already seeded with framework defaults).</param>
   /// <param name="context">The per-apply context (model type, event, scope, timestamp).</param>

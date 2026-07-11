@@ -2,7 +2,6 @@ using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Data;
@@ -34,10 +33,6 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
   // Preserve PascalCase property names — they are the jsonb keys (matches CollectiveSettersRewriter).
   private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNamingPolicy = null };
-
-  // The framework defaults (whizbang.timestamps: stamp updated_at + bump version) used when no registry is
-  // supplied — so a direct ApplyAsync call (e.g. a driver-level test) still stamps the store columns.
-  private static readonly CollectiveApplyHookRegistry _defaultHooks = WhizbangApplyHooks.CreateCollectiveWithDefaults();
 
   /// <summary>
   /// Apply the collective event against the Dapper-backed perspective table. Returns the affected-row count.
@@ -100,13 +95,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
 
     // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field
     // setters, and cohort-WHERE modifiers) once for this apply. One ApplyTimestamp is shared across every batch.
-    var registry = hookRegistry ?? _defaultHooks;
-    var hookPlan = CollectiveApplyHookPlanner.Resolve<TModel>(registry, new ApplyHookContext {
-      ModelType = typeof(TModel),
-      Event = evt,
-      Scope = evt.Scope,
-      ApplyTimestamp = DateTimeOffset.UtcNow,
-    });
+    var hookPlan = CollectiveApplyHookPlanner.ResolveForEvent<TModel>(hookRegistry, evt);
 
     var setClause = DapperCollectiveSpecCompiler<TModel>.Compile(
       spec, _jsonOptions, parameterPrefix: "set",
@@ -135,24 +124,11 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var selectSql = "SELECT id FROM " + tableName + " WHERE (" + whereClause.SqlFragment +
       ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
     // The store-managed column writes (updated_at, the version bump, any developer audit columns) come from the
-    // resolved apply-hook plan. By default the whizbang.timestamps hook contributes updated_at = ApplyTimestamp
-    // and a version bump (mirrors EFCoreCollectiveAdapter + the per-event upsert) — a collective UPDATE that
-    // writes only the setters would leave those stale and break change-detection; a consumer can override it.
+    // resolved apply-hook plan (default whizbang.timestamps: updated_at = ApplyTimestamp + a version bump). The
+    // tail is rendered by the plan so both drivers produce it identically; each binds @wb_hookcol{i} its own way.
     var storeColumns = hookPlan.StoreColumns;
-    var setTail = new StringBuilder();
-    for (var i = 0; i < storeColumns.Count; i++) {
-      var column = storeColumns[i].Column;
-      if (!CollectiveStoreColumn.IsValidIdentifier(column)) {
-        throw new InvalidOperationException(
-          $"Apply hook produced an invalid store-column name '{column}'. Column names must be valid unquoted " +
-          "Postgres identifiers (a letter or underscore, then letters/digits/underscores).");
-      }
-      setTail.Append(", \"").Append(column).Append("\" = @wb_hookcol").Append(i.ToString(CultureInfo.InvariantCulture));
-    }
-    if (hookPlan.BumpVersion) {
-      setTail.Append(", version = version + 1");
-    }
-    var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment + setTail + " WHERE id = ANY(@wb_ids)";
+    var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment +
+      hookPlan.RenderStoreColumnSetTail() + " WHERE id = ANY(@wb_ids)";
     var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
     long? lockKey = effectiveOptions.SerializeApplies ? CollectiveApplyLockKey.Compute(tableName, scopeKey) : null;
 

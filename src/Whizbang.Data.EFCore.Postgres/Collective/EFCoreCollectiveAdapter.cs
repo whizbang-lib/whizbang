@@ -142,20 +142,8 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // change-detection (delta sync, downstream mirrors, "recently changed" reads) — and a consumer can override
     // or extend that stamping via hooks.
     var storeColumns = hookPlan.StoreColumns;
-    var setTail = new StringBuilder();
-    for (var i = 0; i < storeColumns.Count; i++) {
-      var column = storeColumns[i].Column;
-      if (!CollectiveStoreColumn.IsValidIdentifier(column)) {
-        throw new InvalidOperationException(
-          $"Apply hook produced an invalid store-column name '{column}'. Column names must be valid unquoted " +
-          "Postgres identifiers (a letter or underscore, then letters/digits/underscores).");
-      }
-      setTail.Append(", \"").Append(column).Append("\" = @wb_hookcol").Append(i.ToString(CultureInfo.InvariantCulture));
-    }
-    if (hookPlan.BumpVersion) {
-      setTail.Append(", version = version + 1");
-    }
-    var updateSql = "UPDATE " + qualifiedTable + " SET data = " + setExpr + setTail + " WHERE id = ANY(@wb_ids)";
+    var updateSql = "UPDATE " + qualifiedTable + " SET data = " + setExpr +
+      hookPlan.RenderStoreColumnSetTail() + " WHERE id = ANY(@wb_ids)";
 
     // Per-(table,scope) exclusive advisory lock so collective applies to the same table+scope serialize
     // (across pods) instead of convoying; disjoint scopes hash to different keys and run concurrently.

@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Linq.Expressions;
+using System.Text;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives.Hooks;
 
@@ -62,6 +64,29 @@ public sealed record CollectiveApplyHookPlan<TModel>(
       cohort = cohort is null ? andWhere : _andAlso(cohort, andWhere);
     }
     return cohort;
+  }
+
+  /// <summary>
+  /// Render the store-column SET tail for the collective <c>UPDATE</c> — the shared SQL fragment both drivers
+  /// append after the <c>data = …</c> setter: <c>, "col0" = @wb_hookcol0, "col1" = @wb_hookcol1</c> and, when
+  /// <see cref="BumpVersion"/> is set, <c>, version = version + 1</c>. Each driver binds the <c>@wb_hookcol{i}</c>
+  /// parameters to <see cref="StoreColumns"/>'s values in its own parameter mechanism.
+  /// </summary>
+  public string RenderStoreColumnSetTail() {
+    var tail = new StringBuilder();
+    for (var i = 0; i < StoreColumns.Count; i++) {
+      var column = StoreColumns[i].Column;
+      if (!CollectiveStoreColumn.IsValidIdentifier(column)) {
+        throw new InvalidOperationException(
+          $"Apply hook produced an invalid store-column name '{column}'. Column names must be valid unquoted " +
+          "Postgres identifiers (a letter or underscore, then letters/digits/underscores).");
+      }
+      tail.Append(", \"").Append(column).Append("\" = @wb_hookcol").Append(i.ToString(CultureInfo.InvariantCulture));
+    }
+    if (BumpVersion) {
+      tail.Append(", version = version + 1");
+    }
+    return tail.ToString();
   }
 
   private static Expression<Func<PerspectiveRow<TModel>, bool>> _andAlso(
