@@ -110,6 +110,18 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Whizbang.Core.Signals.ISignalTransport, PostgresSignalTransport>());
 
+    // Signal-bus pull sources — periodic reconciliation backstops for the three work-available
+    // signal types. They run alongside NOTIFY: when the push transport is healthy the poll adds
+    // latency-relaxed correctness checks; when NOTIFY is unavailable they carry the wake load.
+    // TimeProvider is resolved from DI so tests can inject a FakeTimeProvider.
+    services.TryAddSingleton<TimeProvider>(sp => TimeProvider.System);
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalSource, PgOutboxWorkAvailablePollSource>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalSource, PgInboxWorkAvailablePollSource>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalSource, PgPerspectiveWorkAvailablePollSource>());
+
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
     // AddWhizbangNotificationDataSource), and no explicit
