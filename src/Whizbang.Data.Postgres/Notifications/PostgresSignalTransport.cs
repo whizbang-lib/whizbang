@@ -94,6 +94,12 @@ public sealed partial class PostgresSignalTransport(
     await using var conn = new NpgsqlConnection(resolution.ConnectionString);
     await conn.OpenAsync(cancellationToken);
 
+    // Durable signals persist to wh_signals BEFORE the NOTIFY so a tail on any instance
+    // can replay them if the NOTIFY was dropped. Best-effort signals go NOTIFY-only.
+    if (TSignal.DeliveryClass == SignalDeliveryClass.Durable) {
+      await _appendDurableAsync(conn, wireName, target, cancellationToken);
+    }
+
     switch (target.Kind) {
       case SignalTargetKind.Broadcast:
         await _publishBroadcastAsync(conn, wireName, cancellationToken);
@@ -105,6 +111,22 @@ public sealed partial class PostgresSignalTransport(
         await _publishStreamsAsync(conn, wireName, target.StreamIds, cancellationToken);
         break;
     }
+  }
+
+  private static async Task _appendDurableAsync(NpgsqlConnection conn, string wireName, SignalTarget target, CancellationToken ct) {
+    // Instance-targeted signals persist the specific target; broadcast + streams-targeted
+    // signals persist with target_instance_id NULL and every instance's tail delivers.
+    // (Streams-targeted durable signals are unusual — the wire-side notify_instance_owners
+    // routing IS the delivery for the fast path; the durable log's role for streams is
+    // "if any tail is behind, deliver again." Broadcasting is the safe fallback.)
+    Guid? persistedTarget = target.Kind == SignalTargetKind.Instance ? target.InstanceId : null;
+    await using var cmd = new NpgsqlCommand(
+      "INSERT INTO wh_signals (wire_name, target_instance_id) VALUES (@wire_name, @target_instance_id)", conn);
+    cmd.Parameters.AddWithValue("wire_name", wireName);
+    cmd.Parameters.Add(new NpgsqlParameter("target_instance_id", NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = (object?)persistedTarget ?? DBNull.Value,
+    });
+    await cmd.ExecuteNonQueryAsync(ct);
   }
 
   private static async Task _publishBroadcastAsync(NpgsqlConnection conn, string wireName, CancellationToken ct) {

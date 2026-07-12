@@ -122,6 +122,12 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Whizbang.Core.Signals.ISignalSource, PgPerspectiveWorkAvailablePollSource>());
 
+    // Durable-signal tail worker — delivers Delivery=Durable signals persisted to wh_signals
+    // on a per-instance cursor. Must-not-miss signals (e.g. InstanceDied → orphan takeover)
+    // ride this tail as insurance against NOTIFY drops.
+    services.TryAddSingleton<PgDurableSignalTailWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalTailWorker>());
+
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
     // AddWhizbangNotificationDataSource), and no explicit

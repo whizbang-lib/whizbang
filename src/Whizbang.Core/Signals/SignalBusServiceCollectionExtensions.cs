@@ -17,6 +17,10 @@ public static class SignalBusServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     services.TryAddSingleton<SignalBus>();
     services.TryAddSingleton<ISignalBus>(static sp => sp.GetRequiredService<SignalBus>());
+    // ISignalSink is the bus-side entry point that transports/tail-workers call to deliver
+    // received signals. Registered as the same singleton so the durable-log tail (and any
+    // other consumer that raises signals into the bus) resolves to the actual bus instance.
+    services.TryAddSingleton<ISignalSink>(static sp => sp.GetRequiredService<SignalBus>());
     // Default transport: in-memory loopback. Data providers add their own (Postgres NOTIFY)
     // alongside this via TryAddEnumerable, so single-process hosts still work. Pull sources
     // register separately as ISignalSource (see IPollSignalSource<T>).
