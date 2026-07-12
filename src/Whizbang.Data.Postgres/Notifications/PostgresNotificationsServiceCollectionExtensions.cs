@@ -128,6 +128,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingleton<PgDurableSignalTailWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalTailWorker>());
 
+    // Instance lifecycle monitor — scans wh_service_instances for stale heartbeats and
+    // publishes the durable InstanceDiedSignal so live pods drive orphan takeover.
+    services.TryAddSingleton<PgInstanceLifecycleMonitor>();
+    services.AddHostedService(sp => sp.GetRequiredService<PgInstanceLifecycleMonitor>());
+
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
     // AddWhizbangNotificationDataSource), and no explicit
