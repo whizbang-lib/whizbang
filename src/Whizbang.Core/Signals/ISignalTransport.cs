@@ -1,20 +1,14 @@
 namespace Whizbang.Core.Signals;
 
 /// <summary>
-/// Moves signals for the <see cref="ISignalBus"/>. A transport is an injected implementation —
-/// the framework ships a Postgres NOTIFY (push) transport, a polling (pull) transport, and an
-/// in-memory transport, and applications may register their own. Push and pull are peers: both
-/// raise received signals into the bus's <see cref="ISignalSink"/>, so subscribers are
-/// transport-agnostic.
+/// Moves signals for the <see cref="ISignalBus"/>. A transport is a bidirectional
+/// <see cref="ISignalSource"/> that additionally supports publishing. The framework ships a
+/// Postgres NOTIFY (push) transport and an in-memory transport; applications may register their
+/// own. Pull sources (<see cref="IPollSignalSource{TSignal}"/>) are also <see cref="ISignalSource"/>s
+/// so subscribers are agnostic to which one raised a signal.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-public interface ISignalTransport {
-  /// <summary>
-  /// Begin producing signals (open a <c>LISTEN</c>, or start a poll loop). Received signals are
-  /// raised into <paramref name="sink"/>, which dispatches them to subscribers.
-  /// </summary>
-  Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default);
-
+public interface ISignalTransport : ISignalSource {
   /// <summary>
   /// Propagate a published signal (e.g. emit a <c>NOTIFY</c>, or loop back in-memory). The
   /// <paramref name="target"/> selects which channel the transport routes to (broadcast, or a

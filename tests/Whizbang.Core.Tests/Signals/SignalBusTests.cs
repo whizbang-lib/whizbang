@@ -203,4 +203,33 @@ public class SignalBusTests {
     var bus = new SignalBus([]);
     await Assert.That(() => bus.Subscribe<TestSignal>(null!)).Throws<ArgumentNullException>();
   }
+
+  private sealed class StartCountingPullSource : ISignalSource {
+    public int StartCallCount { get; private set; }
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) {
+      StartCallCount++;
+      return Task.CompletedTask;
+    }
+  }
+
+  [Test]
+  public async Task StartAsync_StartsEveryPullSourceAsync() {
+    var transport = new CapturingTransport();
+    var poll = new StartCountingPullSource();
+    var bus = new SignalBus([transport], [poll]);
+
+    await bus.StartAsync();
+
+    await Assert.That(poll.StartCallCount).IsEqualTo(1)
+      .Because("the bus is responsible for starting pull sources alongside push transports");
+  }
+
+  [Test]
+  public async Task StartAsync_NoPullSources_DoesNotThrowAsync() {
+    // The pullSources argument is optional; callers with no polling registered pass null (or omit).
+    var bus = new SignalBus([new CapturingTransport()]);
+
+    await bus.StartAsync();
+    // No throw = pass.
+  }
 }

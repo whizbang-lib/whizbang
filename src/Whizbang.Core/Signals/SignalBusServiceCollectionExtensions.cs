@@ -17,8 +17,9 @@ public static class SignalBusServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     services.TryAddSingleton<SignalBus>();
     services.TryAddSingleton<ISignalBus>(static sp => sp.GetRequiredService<SignalBus>());
-    // Default transport: in-memory loopback. Data providers add their own (Postgres NOTIFY,
-    // polling) alongside this via TryAddEnumerable, so single-process hosts still work.
+    // Default transport: in-memory loopback. Data providers add their own (Postgres NOTIFY)
+    // alongside this via TryAddEnumerable, so single-process hosts still work. Pull sources
+    // register separately as ISignalSource (see IPollSignalSource<T>).
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ISignalTransport, InMemorySignalTransport>());
     return services;
   }

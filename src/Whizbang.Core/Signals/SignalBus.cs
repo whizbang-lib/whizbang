@@ -5,8 +5,10 @@ namespace Whizbang.Core.Signals;
 /// <summary>
 /// Transport-agnostic, multicast implementation of <see cref="ISignalBus"/>. Subscribers are
 /// registered per signal type; publishing forwards to every injected <see cref="ISignalTransport"/>,
-/// and each transport raises received signals back through <see cref="ReceiveAsync{TSignal}"/>,
-/// which fans out to the type's subscribers.
+/// and each source raises received signals back through <see cref="ReceiveAsync{TSignal}"/>,
+/// which fans out to the type's subscribers. Sources include both push transports (<c>NOTIFY</c>,
+/// in-memory) and pull sources (polling) — the bus starts every registered source uniformly, and
+/// subscribers cannot tell which source raised a signal.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 public sealed class SignalBus : ISignalBus, ISignalSink {
@@ -14,20 +16,27 @@ public sealed class SignalBus : ISignalBus, ISignalSink {
   // retrieved via the generic type argument, so this stays AOT-safe.
   private readonly ConcurrentDictionary<Type, object> _handlers = new();
   private readonly ISignalTransport[] _transports;
+  private readonly ISignalSource[] _pullSources;
 
-  /// <summary>Create a bus over the given transports.</summary>
-  public SignalBus(IEnumerable<ISignalTransport> transports) {
+  /// <summary>Create a bus over the given push transports and pull sources.</summary>
+  public SignalBus(
+    IEnumerable<ISignalTransport> transports,
+    IEnumerable<ISignalSource>? pullSources = null) {
     ArgumentNullException.ThrowIfNull(transports);
     _transports = transports.ToArray();
+    _pullSources = pullSources?.ToArray() ?? [];
   }
 
   /// <summary>
-  /// Start every transport, wiring this bus as their sink so received signals are dispatched
-  /// to subscribers. Call once before publishing.
+  /// Start every registered push transport and pull source, wiring this bus as their sink so
+  /// received signals are dispatched to subscribers. Call once before publishing.
   /// </summary>
   public async Task StartAsync(CancellationToken cancellationToken = default) {
     foreach (var transport in _transports) {
       await transport.StartAsync(this, cancellationToken).ConfigureAwait(false);
+    }
+    foreach (var source in _pullSources) {
+      await source.StartAsync(this, cancellationToken).ConfigureAwait(false);
     }
   }
 
