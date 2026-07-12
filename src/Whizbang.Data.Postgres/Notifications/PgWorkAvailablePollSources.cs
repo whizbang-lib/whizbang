@@ -23,11 +23,12 @@ public sealed class PgOutboxWorkAvailablePollSource(
   IConfiguration configuration,
   IServiceInstanceProvider instanceProvider,
   ILogger<PgOutboxWorkAvailablePollSource> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotifySignalingGate? signalingGate = null
 ) : PgWorkAvailablePollSourceBase<WorkOutboxAvailableSignal>(
   clock,
   TimeSpan.FromMilliseconds(WorkAvailablePollDefaults.INTERVAL_MILLISECONDS),
-  options, configuration, instanceProvider, logger, connectionStringFallback) {
+  options, configuration, instanceProvider, logger, connectionStringFallback, signalingGate) {
   /// <inheritdoc />
   protected override string DetectSql => @"
     SELECT EXISTS (
@@ -47,11 +48,12 @@ public sealed class PgInboxWorkAvailablePollSource(
   IConfiguration configuration,
   IServiceInstanceProvider instanceProvider,
   ILogger<PgInboxWorkAvailablePollSource> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotifySignalingGate? signalingGate = null
 ) : PgWorkAvailablePollSourceBase<WorkInboxAvailableSignal>(
   clock,
   TimeSpan.FromMilliseconds(WorkAvailablePollDefaults.INTERVAL_MILLISECONDS),
-  options, configuration, instanceProvider, logger, connectionStringFallback) {
+  options, configuration, instanceProvider, logger, connectionStringFallback, signalingGate) {
   /// <inheritdoc />
   protected override string DetectSql => @"
     SELECT EXISTS (
@@ -71,11 +73,12 @@ public sealed class PgPerspectiveWorkAvailablePollSource(
   IConfiguration configuration,
   IServiceInstanceProvider instanceProvider,
   ILogger<PgPerspectiveWorkAvailablePollSource> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotifySignalingGate? signalingGate = null
 ) : PgWorkAvailablePollSourceBase<WorkPerspectiveAvailableSignal>(
   clock,
   TimeSpan.FromMilliseconds(WorkAvailablePollDefaults.INTERVAL_MILLISECONDS),
-  options, configuration, instanceProvider, logger, connectionStringFallback) {
+  options, configuration, instanceProvider, logger, connectionStringFallback, signalingGate) {
   /// <inheritdoc />
   protected override string DetectSql => @"
     SELECT EXISTS (

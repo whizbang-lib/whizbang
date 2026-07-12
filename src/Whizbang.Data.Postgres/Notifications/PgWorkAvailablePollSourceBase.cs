@@ -29,20 +29,49 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-public abstract partial class PgWorkAvailablePollSourceBase<TSignal>(
-  TimeProvider clock,
-  TimeSpan interval,
-  IOptions<WhizbangNotificationOptions> options,
-  IConfiguration configuration,
-  IServiceInstanceProvider instanceProvider,
-  ILogger logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
-) : BasePollSignalSource<TSignal>(clock, interval) where TSignal : ISignal, new() {
-  private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-  private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollSignalSource<TSignal>
+  where TSignal : ISignal, new() {
+  private readonly WhizbangNotificationOptions _options;
+  private readonly IConfiguration _configuration;
+  private readonly IServiceInstanceProvider _instanceProvider;
+  private readonly ILogger _logger;
+  private readonly INotificationConnectionStringFallback? _connectionStringFallback;
+  private readonly INotifySignalingGate? _signalingGate;
+  private readonly TimeSpan _relaxedInterval;
+
+  /// <summary>Tight cadence used while the NOTIFY push transport is unavailable.</summary>
+  private static readonly TimeSpan _tightInterval = TimeSpan.FromMilliseconds(500);
+
+  /// <summary>Constructor.</summary>
+  protected PgWorkAvailablePollSourceBase(
+    TimeProvider clock,
+    TimeSpan interval,
+    IOptions<WhizbangNotificationOptions> options,
+    IConfiguration configuration,
+    IServiceInstanceProvider instanceProvider,
+    ILogger logger,
+    INotificationConnectionStringFallback? connectionStringFallback = null,
+    INotifySignalingGate? signalingGate = null
+  ) : base(clock, interval) {
+    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _connectionStringFallback = connectionStringFallback;
+    _signalingGate = signalingGate;
+    _relaxedInterval = interval;
+
+    // Adaptive: when the NOTIFY push transport goes unavailable, tighten the poll cadence so
+    // this source can carry the wake load until push recovers. When push comes back, relax to
+    // the ctor interval (5s default) — NOTIFY carries latency and we don't need to be tight.
+    if (_signalingGate is not null) {
+      _signalingGate.OnAvailabilityChanged += _onGateAvailabilityChanged;
+    }
+  }
+
+  private void _onGateAvailabilityChanged(bool nowAvailable) {
+    Reschedule(nowAvailable ? _relaxedInterval : _tightInterval);
+  }
 
   /// <summary>
   /// SQL that returns a single boolean — <c>true</c> if any unclaimed work exists for this

@@ -17,7 +17,7 @@ public class PollSignalSourceTests {
     public static SignalTargeting Targeting => SignalTargeting.Broadcast;
   }
 
-  private sealed class FakePollSource(FakeTimeProvider clock, TimeSpan interval)
+  private class FakePollSource(FakeTimeProvider clock, TimeSpan interval)
     : BasePollSignalSource<PollProbe>(clock, interval) {
     public int DetectCallCount { get; private set; }
     public bool DetectResult { get; set; } = true;
@@ -96,5 +96,38 @@ public class PollSignalSourceTests {
     var source = new FakePollSource(new FakeTimeProvider(), interval);
 
     await Assert.That(source.Interval).IsEqualTo(interval);
+  }
+
+  private sealed class ReschedulingFakePollSource(FakeTimeProvider clock, TimeSpan interval)
+    : FakePollSource(clock, interval) {
+    public void ReschedulePublic(TimeSpan next) => Reschedule(next);
+  }
+
+  [Test]
+  public async Task Reschedule_UpdatesTheIntervalPropertyAsync() {
+    var source = new ReschedulingFakePollSource(new FakeTimeProvider(), TimeSpan.FromSeconds(5));
+    await source.StartAsync(new CountingSink());
+
+    source.ReschedulePublic(TimeSpan.FromMilliseconds(500));
+
+    await Assert.That(source.Interval).IsEqualTo(TimeSpan.FromMilliseconds(500));
+  }
+
+  [Test]
+  public async Task Reschedule_NonPositive_ThrowsAsync() {
+    var source = new ReschedulingFakePollSource(new FakeTimeProvider(), TimeSpan.FromSeconds(5));
+    await source.StartAsync(new CountingSink());
+
+    await Assert.That(() => source.ReschedulePublic(TimeSpan.Zero)).Throws<ArgumentOutOfRangeException>();
+  }
+
+  [Test]
+  public async Task Reschedule_BeforeStart_UpdatesIntervalWithoutTimerAsync() {
+    // Rescheduling before StartAsync just records the new interval; the timer isn't created yet.
+    var source = new ReschedulingFakePollSource(new FakeTimeProvider(), TimeSpan.FromSeconds(5));
+
+    source.ReschedulePublic(TimeSpan.FromMilliseconds(200));
+
+    await Assert.That(source.Interval).IsEqualTo(TimeSpan.FromMilliseconds(200));
   }
 }

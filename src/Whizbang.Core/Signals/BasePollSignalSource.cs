@@ -13,21 +13,41 @@ public abstract class BasePollSignalSource<TSignal>(
   TimeSpan interval
 ) : IPollSignalSource<TSignal> where TSignal : ISignal, new() {
   private readonly TimeProvider _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-  private readonly TimeSpan _interval = interval > TimeSpan.Zero
+  private TimeSpan _interval = interval > TimeSpan.Zero
     ? interval
     : throw new ArgumentOutOfRangeException(nameof(interval), "Poll interval must be positive.");
   private ISignalSink? _sink;
   private ITimer? _timer;
+  private readonly Lock _timerGate = new();
 
   /// <inheritdoc />
-  public TimeSpan Interval => _interval;
+  public TimeSpan Interval {
+    get { lock (_timerGate) { return _interval; } }
+  }
 
   /// <inheritdoc />
   public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(sink);
     _sink = sink;
-    _timer = _clock.CreateTimer(_onTick, state: null, _interval, _interval);
+    lock (_timerGate) {
+      _timer = _clock.CreateTimer(_onTick, state: null, _interval, _interval);
+    }
     return Task.CompletedTask;
+  }
+
+  /// <summary>
+  /// Change the polling interval at runtime. Used by concrete sources that adapt their cadence
+  /// to external state (e.g., tightening when a push transport reports unavailable). A no-op
+  /// before <see cref="StartAsync"/> — reschedules the running timer otherwise.
+  /// </summary>
+  protected void Reschedule(TimeSpan newInterval) {
+    if (newInterval <= TimeSpan.Zero) {
+      throw new ArgumentOutOfRangeException(nameof(newInterval), "Poll interval must be positive.");
+    }
+    lock (_timerGate) {
+      _interval = newInterval;
+      _timer?.Change(newInterval, newInterval);
+    }
   }
 
   /// <summary>
