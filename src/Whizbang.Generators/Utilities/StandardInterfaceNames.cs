@@ -20,6 +20,9 @@ internal static class StandardInterfaceNames {
   public const string I_EVENT = "global::Whizbang.Core.IEvent";
   public const string I_MESSAGE = "global::Whizbang.Core.IMessage";
 
+  // Control-plane signal marker (system signal bus).
+  public const string I_SIGNAL = "global::Whizbang.Core.Signals.ISignal";
+
   /// <summary>
   /// Composite event marker — IMessage-not-IEvent. Carries [StreamId] (via CompositeEventBase) so its
   /// fanned-out inner events inherit the composite's stream. Resolved through the object-typed
