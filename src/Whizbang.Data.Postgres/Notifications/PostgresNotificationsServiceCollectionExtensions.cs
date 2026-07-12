@@ -133,6 +133,12 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingleton<PgInstanceLifecycleMonitor>();
     services.AddHostedService(sp => sp.GetRequiredService<PgInstanceLifecycleMonitor>());
 
+    // Retention sweep for wh_signals — deletes rows older than the retention window that every
+    // pod's tail has already consumed. Runs hourly; a stalled tail keeps its rows alive because
+    // the delete is gated by MIN(last_delivered_signal_id) across all cursors.
+    services.TryAddSingleton<PgDurableSignalRetentionWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalRetentionWorker>());
+
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
     // AddWhizbangNotificationDataSource), and no explicit
