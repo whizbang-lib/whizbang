@@ -55,10 +55,26 @@ public class SignalTypeRegistryGenerator : IIncrementalGenerator {
     }
 
     var fullyQualified = TypeNameHelper.GetFullyQualifiedName(symbol);   // "global::Ns.Type"
-    var wireName = fullyQualified.StartsWith("global::", StringComparison.Ordinal)
+    var defaultWireName = fullyQualified.StartsWith("global::", StringComparison.Ordinal)
         ? fullyQualified.Substring("global::".Length)
         : fullyQualified;
+    var wireName = _readWireNameAttribute(symbol) ?? defaultWireName;
     return new SignalTypeInfo(fullyQualified, wireName);
+  }
+
+  private static string? _readWireNameAttribute(INamedTypeSymbol symbol) {
+    foreach (var attr in symbol.GetAttributes()) {
+      var name = attr.AttributeClass?.ToDisplayString();
+      if (name != "Whizbang.Core.Signals.WireNameAttribute") {
+        continue;
+      }
+      if (attr.ConstructorArguments.Length > 0 &&
+          attr.ConstructorArguments[0].Value is string value &&
+          !string.IsNullOrEmpty(value)) {
+        return value;
+      }
+    }
+    return null;
   }
 
   private static void _generate(
