@@ -32,10 +32,29 @@ public sealed class SignalBus : ISignalBus, ISignalSink {
   }
 
   /// <inheritdoc />
-  public async ValueTask PublishAsync<TSignal>(TSignal signal, CancellationToken cancellationToken = default)
+  public async ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
     where TSignal : ISignal {
+    _validateTarget<TSignal>(target);
     foreach (var transport in _transports) {
-      await transport.PublishAsync(signal, cancellationToken).ConfigureAwait(false);
+      await transport.PublishAsync(signal, target, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  private static void _validateTarget<TSignal>(SignalTarget target) where TSignal : ISignal {
+    var targeting = TSignal.Targeting;
+    var kind = target.Kind;
+    // Compile-time targeting declaration and per-call target kind must agree — the control
+    // plane's correctness depends on this pairing, so mismatches are programmer errors.
+    var mismatched = targeting switch {
+      SignalTargeting.Broadcast => kind != SignalTargetKind.Broadcast,
+      SignalTargeting.Targeted => kind == SignalTargetKind.Broadcast,
+      _ => false,
+    };
+    if (mismatched) {
+      throw new ArgumentException(
+        $"Signal type '{typeof(TSignal).FullName}' declares Targeting={targeting} but the publish call used SignalTarget.Kind={kind}. " +
+        "Broadcast signals require SignalTarget.Broadcast (default); Targeted signals require SignalTarget.Streams(...) or SignalTarget.Instance(...).",
+        nameof(target));
     }
   }
 

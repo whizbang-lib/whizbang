@@ -11,6 +11,23 @@ public class SignalBusTests {
     public static SignalTargeting Targeting => SignalTargeting.Broadcast;
   }
 
+  private readonly record struct TestTargetedSignal(int Value) : ISignal {
+    public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.BestEffort;
+    public static SignalTargeting Targeting => SignalTargeting.Targeted;
+  }
+
+  private sealed class CapturingTransport : ISignalTransport {
+    public List<(Type SignalType, SignalTargetKind TargetKind)> Published { get; } = [];
+
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
+      where TSignal : ISignal {
+      Published.Add((typeof(TSignal), target.Kind));
+      return ValueTask.CompletedTask;
+    }
+  }
+
   [Test]
   public async Task ReceiveAsync_WithSubscriber_InvokesHandlerWithSignalAsync() {
     var bus = new SignalBus([]);
@@ -79,5 +96,111 @@ public class SignalBusTests {
     await ((ISignalSink)bus).ReceiveAsync(new TestSignal(2));
 
     await Assert.That(delivered).IsTrue();
+  }
+
+  [Test]
+  public async Task PublishAsync_DefaultTarget_FlowsBroadcastToTransportAsync() {
+    var transport = new CapturingTransport();
+    var bus = new SignalBus([transport]);
+    await bus.StartAsync();
+
+    await bus.PublishAsync(new TestSignal(1));
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    await Assert.That(transport.Published[0].TargetKind).IsEqualTo(SignalTargetKind.Broadcast);
+  }
+
+  [Test]
+  public async Task PublishAsync_TargetedSignal_WithBroadcastTarget_ThrowsAsync() {
+    var transport = new CapturingTransport();
+    var bus = new SignalBus([transport]);
+    await bus.StartAsync();
+
+    await Assert.That(async () =>
+      await bus.PublishAsync(new TestTargetedSignal(1)))
+      .Throws<ArgumentException>()
+      .Because("a Targeted signal must carry a Streams or Instance target — Broadcast is not a valid target for it");
+  }
+
+  [Test]
+  public async Task PublishAsync_BroadcastSignal_WithStreamsTarget_ThrowsAsync() {
+    var transport = new CapturingTransport();
+    var bus = new SignalBus([transport]);
+    await bus.StartAsync();
+
+    await Assert.That(async () =>
+      await bus.PublishAsync(new TestSignal(1), SignalTarget.Streams([Guid.NewGuid()])))
+      .Throws<ArgumentException>()
+      .Because("a Broadcast signal is delivered to every instance — a per-stream target is a caller error");
+  }
+
+  [Test]
+  public async Task PublishAsync_TargetedSignal_WithStreamsTarget_FlowsToTransportAsync() {
+    var transport = new CapturingTransport();
+    var bus = new SignalBus([transport]);
+    await bus.StartAsync();
+
+    await bus.PublishAsync(new TestTargetedSignal(1), SignalTarget.Streams([Guid.NewGuid()]));
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    await Assert.That(transport.Published[0].TargetKind).IsEqualTo(SignalTargetKind.Streams);
+  }
+
+  [Test]
+  public async Task PublishAsync_TargetedSignal_WithInstanceTarget_FlowsToTransportAsync() {
+    var transport = new CapturingTransport();
+    var bus = new SignalBus([transport]);
+    await bus.StartAsync();
+
+    await bus.PublishAsync(new TestTargetedSignal(1), SignalTarget.Instance(Guid.NewGuid()));
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    await Assert.That(transport.Published[0].TargetKind).IsEqualTo(SignalTargetKind.Instance);
+  }
+
+  [Test]
+  public async Task Ctor_NullTransports_ThrowsAsync() {
+    await Assert.That(() => new SignalBus(null!)).Throws<ArgumentNullException>();
+  }
+
+  private sealed class StartCountingTransport : ISignalTransport {
+    public int StartCallCount { get; private set; }
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) {
+      StartCallCount++;
+      return Task.CompletedTask;
+    }
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
+      where TSignal : ISignal => ValueTask.CompletedTask;
+  }
+
+  [Test]
+  public async Task StartAsync_StartsEveryTransportAsync() {
+    var a = new StartCountingTransport();
+    var b = new StartCountingTransport();
+    var bus = new SignalBus([a, b]);
+
+    await bus.StartAsync();
+
+    await Assert.That(a.StartCallCount).IsEqualTo(1);
+    await Assert.That(b.StartCallCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PublishAsync_FanoutToEveryTransportAsync() {
+    var a = new CapturingTransport();
+    var b = new CapturingTransport();
+    var bus = new SignalBus([a, b]);
+    await bus.StartAsync();
+
+    await bus.PublishAsync(new TestSignal(1));
+
+    await Assert.That(a.Published.Count).IsEqualTo(1);
+    await Assert.That(b.Published.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Subscribe_NullHandler_ThrowsAsync() {
+    var bus = new SignalBus([]);
+    await Assert.That(() => bus.Subscribe<TestSignal>(null!)).Throws<ArgumentNullException>();
   }
 }

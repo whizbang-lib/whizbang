@@ -15,8 +15,13 @@ public interface ISignalTransport {
   /// </summary>
   Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default);
 
-  /// <summary>Propagate a published signal (e.g. emit a <c>NOTIFY</c>, or loop back in-memory).</summary>
-  ValueTask PublishAsync<TSignal>(TSignal signal, CancellationToken cancellationToken = default)
+  /// <summary>
+  /// Propagate a published signal (e.g. emit a <c>NOTIFY</c>, or loop back in-memory). The
+  /// <paramref name="target"/> selects which channel the transport routes to (broadcast, or a
+  /// targeted set of streams/instance). Bus-level validation guarantees the target's kind
+  /// matches the signal's <see cref="SignalTargeting"/> before the transport sees it.
+  /// </summary>
+  ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
     where TSignal : ISignal;
 }
 

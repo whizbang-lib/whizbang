@@ -60,12 +60,13 @@ public sealed partial class PostgresSignalTransport(
   }
 
   /// <inheritdoc />
-  public async ValueTask PublishAsync<TSignal>(TSignal signal, CancellationToken cancellationToken = default)
+  public async ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
     where TSignal : ISignal {
     if (TSignal.Targeting != SignalTargeting.Broadcast) {
       throw new NotSupportedException(
         $"PostgresSignalTransport currently supports broadcast signals only; '{typeof(TSignal).FullName}' is targeted.");
     }
+    _ = target;   // Broadcast path — target has been validated as Broadcast by the bus.
     if (_typeToWireName is null || !_typeToWireName.TryGetValue(typeof(TSignal), out var wireName)) {
       // Not in the registry — cannot route on the wire (the type must be a discoverable ISignal).
       LogUnregisteredSignal(_logger, typeof(TSignal).FullName ?? typeof(TSignal).Name);

@@ -61,4 +61,22 @@ public class SignalTypeRegistryTests {
 
     await Assert.That(received).IsNotNull();
   }
+
+  [Test]
+  public async Task Register_NullSource_ThrowsAsync() {
+    await Assert.That(() => SignalTypeRegistry.Register(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task RegisteredCount_IncreasesWithEachRegisterAsync() {
+    // Use a unique-per-test wire-name so the assertion is robust to whatever else has registered
+    // into the process-wide static registry.
+    var before = SignalTypeRegistry.RegisteredCount;
+    SignalTypeRegistry.Register(new FakeSource([
+      new SignalTypeEntry(typeof(SigA), "utest-count", SignalDeliveryClass.BestEffort, SignalTargeting.Broadcast,
+        static (sink, ct) => sink.ReceiveAsync<SigA>(default, ct)),
+    ]));
+
+    await Assert.That(SignalTypeRegistry.RegisteredCount).IsEqualTo(before + 1);
+  }
 }

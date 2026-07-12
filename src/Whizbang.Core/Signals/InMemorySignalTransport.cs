@@ -18,8 +18,11 @@ public sealed class InMemorySignalTransport : ISignalTransport {
   }
 
   /// <inheritdoc />
-  public ValueTask PublishAsync<TSignal>(TSignal signal, CancellationToken cancellationToken = default)
+  public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
     where TSignal : ISignal {
+    // Target is irrelevant in-process — the single-process loopback delivers to every
+    // subscriber of TSignal on this sink regardless of broadcast/streams/instance targeting.
+    _ = target;
     var sink = _sink;
     if (sink is null) {
       // Not started: nothing to loop back to.

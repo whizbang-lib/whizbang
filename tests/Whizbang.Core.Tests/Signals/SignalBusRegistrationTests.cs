@@ -38,4 +38,25 @@ public class SignalBusRegistrationTests {
 
     await Assert.That(transports.Any(t => t is InMemorySignalTransport)).IsTrue();
   }
+
+  [Test]
+  public async Task AddWhizbangSignalBus_NullServices_ThrowsAsync() {
+    await Assert.That(() =>
+      SignalBusServiceCollectionExtensions.AddWhizbangSignalBus(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task AddWhizbangSignalBus_IsIdempotentAsync() {
+    // Second call must not add duplicate registrations (TryAddSingleton / TryAddEnumerable).
+    var services = new ServiceCollection();
+    services.AddWhizbangSignalBus();
+    services.AddWhizbangSignalBus();
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetServices<ISignalBus>().Count()).IsEqualTo(1);
+    await Assert.That(provider.GetServices<SignalBus>().Count()).IsEqualTo(1);
+    await Assert.That(provider.GetServices<ISignalTransport>()
+      .Count(t => t is InMemorySignalTransport)).IsEqualTo(1);
+  }
 }

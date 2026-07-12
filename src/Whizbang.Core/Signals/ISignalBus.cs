@@ -10,10 +10,12 @@ namespace Whizbang.Core.Signals;
 public interface ISignalBus {
   /// <summary>
   /// Publish a signal. Doorbell semantics: the signal carries no authoritative payload —
-  /// subscribers fetch current state from the database. Routing (targeted vs broadcast) and
-  /// reliability (best-effort vs durable) come from the signal type's static declarations.
+  /// subscribers fetch current state from the database. Reliability (best-effort vs durable)
+  /// and targeting-kind (broadcast vs targeted) come from the signal type's static declarations;
+  /// the per-call <paramref name="target"/> says <em>which</em> target for a targeted signal.
+  /// The target kind must match the signal's <see cref="SignalTargeting"/> — a mismatch throws.
   /// </summary>
-  ValueTask PublishAsync<TSignal>(TSignal signal, CancellationToken cancellationToken = default)
+  ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
     where TSignal : ISignal;
 
   /// <summary>
