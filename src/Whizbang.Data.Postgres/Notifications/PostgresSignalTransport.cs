@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
 
 namespace Whizbang.Data.Postgres.Notifications;
@@ -13,14 +14,24 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// notify connection, then routing the wire-name back to typed dispatch via
 /// <see cref="SignalTypeRegistry"/>. Payload is <em>doorbell-not-data</em> — only the signal's
 /// wire-name crosses the wire; the subscriber fetches authoritative state from the database.
-/// This increment handles <see cref="SignalTargeting.Broadcast"/>; targeted routing (owning-instance
-/// channels via <c>notify_instance_owners</c>) is a follow-on.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Targeting.</strong> Broadcast signals go to <c>wh_signal_broadcast</c> — every instance
+/// LISTENs and receives. Targeted signals go to <c>wh_work_i_&lt;instanceId&gt;</c> — one channel per
+/// instance, listened to by that instance only, so only the owner wakes.
+/// <see cref="SignalTarget.Streams"/> resolves owners via <c>notify_instance_owners(payload, uuid[])</c>
+/// (same helper the SQL store procs use, so the routing rule is unified: pinned owner from
+/// <c>wh_active_streams</c>, or deterministic partition-modulo target for unclaimed streams).
+/// <see cref="SignalTarget.Instance"/> emits <c>pg_notify</c> directly to that one instance's channel.
+/// </para>
+/// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 public sealed partial class PostgresSignalTransport(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
   ISharedNotifyConnection sharedConnection,
+  IServiceInstanceProvider instanceProvider,
   ILogger<PostgresSignalTransport> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null
 ) : ISignalTransport {
@@ -30,13 +41,18 @@ public sealed partial class PostgresSignalTransport(
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly ISharedNotifyConnection _sharedConnection = sharedConnection ?? throw new ArgumentNullException(nameof(sharedConnection));
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ILogger<PostgresSignalTransport> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
 
   private ISignalSink? _sink;
   private IDisposable? _broadcastSubscription;
+  private IDisposable? _instanceSubscription;
   private Dictionary<Type, string>? _typeToWireName;
   private Dictionary<string, SignalTypeEntry>? _wireNameToEntry;
+
+  /// <summary>The per-instance channel this transport LISTENs on for targeted signals.</summary>
+  internal string InstanceChannel => $"wh_work_i_{_instanceProvider.InstanceId:D}";
 
   /// <inheritdoc />
   public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) {
@@ -54,19 +70,15 @@ public sealed partial class PostgresSignalTransport(
     _typeToWireName = typeMap;
     _wireNameToEntry = wireMap;
 
-    // LISTEN on the broadcast channel through the one shared per-pod connection.
+    // LISTEN on broadcast (all instances) AND this instance's per-owner channel (targeted).
     _broadcastSubscription = _sharedConnection.Subscribe(new BroadcastSubscription(this));
+    _instanceSubscription = _sharedConnection.Subscribe(new InstanceSubscription(this));
     return Task.CompletedTask;
   }
 
   /// <inheritdoc />
   public async ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
     where TSignal : ISignal {
-    if (TSignal.Targeting != SignalTargeting.Broadcast) {
-      throw new NotSupportedException(
-        $"PostgresSignalTransport currently supports broadcast signals only; '{typeof(TSignal).FullName}' is targeted.");
-    }
-    _ = target;   // Broadcast path — target has been validated as Broadcast by the bus.
     if (_typeToWireName is null || !_typeToWireName.TryGetValue(typeof(TSignal), out var wireName)) {
       // Not in the registry — cannot route on the wire (the type must be a discoverable ISignal).
       LogUnregisteredSignal(_logger, typeof(TSignal).FullName ?? typeof(TSignal).Name);
@@ -75,19 +87,58 @@ public sealed partial class PostgresSignalTransport(
 
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
     if (resolution.ConnectionString is null) {
-      LogPublishSkippedNoConnection(_logger, BROADCAST_CHANNEL);
+      LogPublishSkippedNoConnection(_logger, wireName);
       return;
     }
 
     await using var conn = new NpgsqlConnection(resolution.ConnectionString);
     await conn.OpenAsync(cancellationToken);
+
+    switch (target.Kind) {
+      case SignalTargetKind.Broadcast:
+        await _publishBroadcastAsync(conn, wireName, cancellationToken);
+        break;
+      case SignalTargetKind.Instance:
+        await _publishInstanceAsync(conn, wireName, target.InstanceId, cancellationToken);
+        break;
+      case SignalTargetKind.Streams:
+        await _publishStreamsAsync(conn, wireName, target.StreamIds, cancellationToken);
+        break;
+    }
+  }
+
+  private static async Task _publishBroadcastAsync(NpgsqlConnection conn, string wireName, CancellationToken ct) {
     await using var cmd = new NpgsqlCommand("SELECT pg_notify(@channel, @payload)", conn);
     cmd.Parameters.AddWithValue("channel", BROADCAST_CHANNEL);
     cmd.Parameters.AddWithValue("payload", wireName);
-    _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    _ = await cmd.ExecuteScalarAsync(ct);
   }
 
-  private void _onBroadcast(string payload) {
+  private static async Task _publishInstanceAsync(NpgsqlConnection conn, string wireName, Guid instanceId, CancellationToken ct) {
+    await using var cmd = new NpgsqlCommand("SELECT pg_notify(@channel, @payload)", conn);
+    cmd.Parameters.AddWithValue("channel", $"wh_work_i_{instanceId:D}");
+    cmd.Parameters.AddWithValue("payload", wireName);
+    _ = await cmd.ExecuteScalarAsync(ct);
+  }
+
+  private static async Task _publishStreamsAsync(NpgsqlConnection conn, string wireName, IReadOnlyList<Guid> streamIds, CancellationToken ct) {
+    // Reuse the same notify_instance_owners helper the SQL store procs already call — one NOTIFY
+    // per unique owner across the input streams, with deterministic partition-modulo fallback for
+    // streams not yet pinned in wh_active_streams. See migration 045_NotifyInstanceOwners.sql.
+    await using var cmd = new NpgsqlCommand(
+      "SELECT notify_instance_owners(@payload, @stream_ids)", conn);
+    cmd.Parameters.AddWithValue("payload", wireName);
+    var streamArray = new Guid[streamIds.Count];
+    for (var i = 0; i < streamIds.Count; i++) {
+      streamArray[i] = streamIds[i];
+    }
+    cmd.Parameters.Add(new NpgsqlParameter("stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = streamArray,
+    });
+    _ = await cmd.ExecuteScalarAsync(ct);
+  }
+
+  private void _onNotification(string payload) {
     var sink = _sink;
     var map = _wireNameToEntry;
     if (sink is null || map is null) {
@@ -119,12 +170,18 @@ public sealed partial class PostgresSignalTransport(
   /// <summary>Per-transport broadcast LISTEN registration on the shared connection.</summary>
   private sealed class BroadcastSubscription(PostgresSignalTransport owner) : INotifySubscription {
     public string ChannelName => BROADCAST_CHANNEL;
-    public void OnNotification(string payload) => owner._onBroadcast(payload);
+    public void OnNotification(string payload) => owner._onNotification(payload);
+  }
+
+  /// <summary>Per-transport per-instance-owned LISTEN registration on the shared connection.</summary>
+  private sealed class InstanceSubscription(PostgresSignalTransport owner) : INotifySubscription {
+    public string ChannelName => owner.InstanceChannel;
+    public void OnNotification(string payload) => owner._onNotification(payload);
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Debug,
-    Message = "PostgresSignalTransport.PublishAsync skipped: no connection string resolved (channel={Channel})")]
-  static partial void LogPublishSkippedNoConnection(ILogger logger, string channel);
+    Message = "PostgresSignalTransport.PublishAsync skipped: no connection string resolved (wireName={WireName})")]
+  static partial void LogPublishSkippedNoConnection(ILogger logger, string wireName);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
     Message = "PostgresSignalTransport.PublishAsync: signal type {SignalType} is not in the SignalTypeRegistry; not routed to the wire")]

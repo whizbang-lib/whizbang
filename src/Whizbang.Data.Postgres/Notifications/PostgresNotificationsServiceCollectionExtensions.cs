@@ -103,6 +103,15 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // App-signal channel (publishes pg_notify on wh_app_<topic>).
     services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
 
+    // System Signal Bus — the Postgres NOTIFY push transport. Registered alongside the
+    // in-memory transport that AddWhizbangSignalBus registers by default. Both transports
+    // fan out from the same SignalBus so callers get NOTIFY-backed cross-process delivery
+    // plus in-process loopback for tests.
+    services.TryAddSingleton<PostgresSignalTransport>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalTransport>(
+      sp => sp.GetRequiredService<PostgresSignalTransport>()));
+
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
     // AddWhizbangNotificationDataSource), and no explicit
