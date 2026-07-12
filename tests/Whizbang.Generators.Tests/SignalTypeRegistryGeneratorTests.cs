@@ -31,6 +31,7 @@ namespace App.Signals {
     await Assert.That(code!).Contains("[ModuleInitializer]");
     await Assert.That(code!).Contains("global::Whizbang.Core.Signals.SignalTypeRegistry.Register");
     await Assert.That(code!).Contains("_entry<global::App.Signals.CacheInvalidated>(\"App.Signals.CacheInvalidated\")");
+    await Assert.That(code!).Contains("sink.ReceiveAsync<TSignal>(default!, ct)");
   }
 
   [Test]

@@ -25,10 +25,12 @@ public class SignalTypeRegistryTests {
     // Unique wire names so the assertions are robust to whatever else has registered into the
     // process-wide static registry (module initializers, other tests).
     var a = new FakeSource([
-      new SignalTypeEntry(typeof(SigA), "utest-sig-a", SignalDeliveryClass.BestEffort, SignalTargeting.Broadcast),
+      new SignalTypeEntry(typeof(SigA), "utest-sig-a", SignalDeliveryClass.BestEffort, SignalTargeting.Broadcast,
+        static (sink, ct) => sink.ReceiveAsync<SigA>(default, ct)),
     ]);
     var b = new FakeSource([
-      new SignalTypeEntry(typeof(SigB), "utest-sig-b", SignalDeliveryClass.Durable, SignalTargeting.Targeted),
+      new SignalTypeEntry(typeof(SigB), "utest-sig-b", SignalDeliveryClass.Durable, SignalTargeting.Targeted,
+        static (sink, ct) => sink.ReceiveAsync<SigB>(default, ct)),
     ]);
     SignalTypeRegistry.Register(a);
     SignalTypeRegistry.Register(b);
@@ -42,5 +44,21 @@ public class SignalTypeRegistryTests {
     await Assert.That(entryA!.SignalType).IsEqualTo(typeof(SigA));
     await Assert.That(entryA!.DeliveryClass).IsEqualTo(SignalDeliveryClass.BestEffort);
     await Assert.That(entryB!.Targeting).IsEqualTo(SignalTargeting.Targeted);
+  }
+
+  [Test]
+  public async Task Entry_Dispatch_DeliversDefaultDoorbellSignalToSinkAsync() {
+    // The generator emits this Dispatch shape: reconstruct a default doorbell instance and hand it
+    // to the sink (a wire subscriber then fetches authoritative state from the DB).
+    var bus = new SignalBus([]);
+    SigA? received = null;
+    using var sub = bus.Subscribe<SigA>(s => { received = s; return ValueTask.CompletedTask; });
+
+    var entry = new SignalTypeEntry(
+      typeof(SigA), "utest-dispatch", SignalDeliveryClass.BestEffort, SignalTargeting.Broadcast,
+      static (sink, ct) => sink.ReceiveAsync<SigA>(default, ct));
+    await entry.Dispatch(bus, default);
+
+    await Assert.That(received).IsNotNull();
   }
 }

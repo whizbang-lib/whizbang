@@ -111,7 +111,8 @@ public class SignalTypeRegistryGenerator : IIncrementalGenerator {
     source.AppendLine();
     source.AppendLine("  private static global::Whizbang.Core.Signals.SignalTypeEntry _entry<TSignal>(string wireName)");
     source.AppendLine("      where TSignal : global::Whizbang.Core.Signals.ISignal");
-    source.AppendLine("      => new(typeof(TSignal), wireName, TSignal.DeliveryClass, TSignal.Targeting);");
+    source.AppendLine("      => new(typeof(TSignal), wireName, TSignal.DeliveryClass, TSignal.Targeting,");
+    source.AppendLine("             static (sink, ct) => sink.ReceiveAsync<TSignal>(default!, ct));");
     source.AppendLine();
     source.AppendLine("  private static readonly global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Signals.SignalTypeEntry> _entries =");
     source.AppendLine("    new global::Whizbang.Core.Signals.SignalTypeEntry[] {");
