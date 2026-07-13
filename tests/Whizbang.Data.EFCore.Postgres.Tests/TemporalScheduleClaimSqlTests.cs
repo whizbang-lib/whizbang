@@ -58,7 +58,8 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
   private async Task<int> _claimAsync(NpgsqlConnection conn, Guid instanceId, DateTimeOffset now) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
-      SELECT count(*) FROM wh_claim_due_schedules(@i, @now, @lease, @pc, 100)";
+      SELECT count(*) FROM wh_claim_due_schedules(
+        p_instance_id => @i, p_lease_expiry => @lease, p_partition_count => @pc, p_limit => 100, p_now => @now)";
     cmd.Parameters.AddWithValue("i", instanceId);
     cmd.Parameters.Add(new NpgsqlParameter("now", NpgsqlDbType.TimestampTz) { Value = now });
     cmd.Parameters.Add(new NpgsqlParameter("lease", NpgsqlDbType.TimestampTz) { Value = now.AddMinutes(5) });

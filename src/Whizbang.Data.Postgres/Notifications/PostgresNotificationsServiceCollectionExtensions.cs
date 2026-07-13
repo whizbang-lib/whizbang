@@ -124,6 +124,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // Temporal engine (F2): backstop pull source for due schedules.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Whizbang.Core.Signals.ISignalSource, PgScheduleDuePollSource>());
+    // Temporal engine (F2): the authoritative claimer (wh_claim_due_schedules) + the firing worker.
+    // ScheduleWorker wakes on the ScheduleDueSignal doorbell (poll source / arm-on-mutation NOTIFY)
+    // and reconciles on its backstop interval, draining due schedules through the claimer.
+    services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleClaimer, PgScheduleClaimer>();
+    services.AddHostedService<Whizbang.Core.Temporal.ScheduleWorker>();
 
     // Durable-signal tail worker — delivers Delivery=Durable signals persisted to wh_signals
     // on a per-instance cursor. Must-not-miss signals (e.g. InstanceDied → orphan takeover)

@@ -19,10 +19,10 @@ SELECT __SCHEMA__.drop_all_overloads('wh_claim_due_schedules');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_claim_due_schedules(
   p_instance_id UUID,
-  p_now TIMESTAMPTZ,
   p_lease_expiry TIMESTAMPTZ,
   p_partition_count INTEGER,
-  p_limit INTEGER DEFAULT 100
+  p_limit INTEGER DEFAULT 100,
+  p_now TIMESTAMPTZ DEFAULT NULL
 ) RETURNS TABLE(
   o_schedule_id UUID,
   o_occurrence_id UUID,
@@ -36,6 +36,8 @@ DECLARE
   v_next TIMESTAMPTZ;
   v_completed BOOLEAN;
   v_message JSONB;
+  -- DB clock is authority for the due decision (avoids multi-instance skew). p_now is a test seam.
+  v_now TIMESTAMPTZ := COALESCE(p_now, NOW());
 BEGIN
   FOR v_sched IN
     SELECT sc.*
@@ -43,7 +45,7 @@ BEGIN
     JOIN __SCHEMA__.wh_active_streams s ON s.stream_id = sc.stream_id
     WHERE s.assigned_instance_id = p_instance_id
       AND sc.status = 0
-      AND sc.next_fire_at <= p_now
+      AND sc.next_fire_at <= v_now
     ORDER BY sc.next_fire_at
     LIMIT p_limit
     FOR UPDATE OF sc SKIP LOCKED
@@ -84,12 +86,12 @@ BEGIN
       'Flags', 0
     ));
     PERFORM __SCHEMA__.store_outbox_messages(
-      v_message, p_instance_id, p_lease_expiry, p_now, p_partition_count);
+      v_message, p_instance_id, p_lease_expiry, v_now, p_partition_count);
 
     -- Advance the schedule. Completed schedules keep their (past) next_fire_at — status 2 excludes
     -- them from the due-detect/notify queries so they never re-fire, satisfying the NOT NULL column.
     UPDATE __SCHEMA__.wh_schedules
-    SET last_fire_at = p_now,
+    SET last_fire_at = v_now,
         next_fire_at = COALESCE(v_next, next_fire_at),
         occurrence_count = occurrence_count + 1,
         status = CASE WHEN v_completed THEN 2 ELSE status END,
@@ -98,11 +100,11 @@ BEGIN
 
     INSERT INTO __SCHEMA__.wh_schedule_runs
       (schedule_id, occurrence_id, fired_at, status, instance_id)
-    VALUES (v_sched.schedule_id, v_occurrence_id, p_now, 0, p_instance_id);
+    VALUES (v_sched.schedule_id, v_occurrence_id, v_now, 0, p_instance_id);
 
     o_schedule_id := v_sched.schedule_id;
     o_occurrence_id := v_occurrence_id;
-    o_fired_at := p_now;
+    o_fired_at := v_now;
     o_next_fire_at := v_next;
     o_completed := v_completed;
     RETURN NEXT;
