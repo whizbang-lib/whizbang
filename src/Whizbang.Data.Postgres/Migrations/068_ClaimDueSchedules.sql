@@ -1,0 +1,116 @@
+-- Migration: 068_ClaimDueSchedules.sql
+-- Date: 2026-07-13 (F2 temporal engine — increment 4a: authoritative claim+advance)
+-- Description: The temporal engine's authoritative fire. For each due Active schedule owned by the
+--              calling instance, in ONE transaction:
+--                1. lease the row (FOR UPDATE SKIP LOCKED) so no two instances double-fire;
+--                2. spawn the occurrence event into the outbox via store_outbox_messages (the exact
+--                   same emit contract as any other event — deterministic occurrence-id so a
+--                   re-attempt of the same fire dedups at the outbox);
+--                3. compute the next fire via wh_schedule_next_fire and apply until_at / max_occurrences
+--                   bounds (a null/exceeded next completes the schedule: status 2);
+--                4. advance the row (last_fire_at, next_fire_at, occurrence_count, version);
+--                5. write a wh_schedule_runs row (status 0 = spawned/Success).
+--              Occurrence creation is therefore exactly-once even under concurrent claimers: the whole
+--              unit is atomic, and SKIP LOCKED serialises which instance owns each due row.
+-- Dependencies: 066 (wh_schedules/wh_schedule_runs), 067 (wh_schedule_next_fire), 062 (store_outbox_messages).
+-- Schedule status: 0=Active, 1=Paused, 2=Completed (bounds reached / one-shot fired).
+
+SELECT __SCHEMA__.drop_all_overloads('wh_claim_due_schedules');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_claim_due_schedules(
+  p_instance_id UUID,
+  p_now TIMESTAMPTZ,
+  p_lease_expiry TIMESTAMPTZ,
+  p_partition_count INTEGER,
+  p_limit INTEGER DEFAULT 100
+) RETURNS TABLE(
+  o_schedule_id UUID,
+  o_occurrence_id UUID,
+  o_fired_at TIMESTAMPTZ,
+  o_next_fire_at TIMESTAMPTZ,
+  o_completed BOOLEAN
+) AS $$
+DECLARE
+  v_sched RECORD;
+  v_occurrence_id UUID;
+  v_next TIMESTAMPTZ;
+  v_completed BOOLEAN;
+  v_message JSONB;
+BEGIN
+  FOR v_sched IN
+    SELECT sc.*
+    FROM __SCHEMA__.wh_schedules sc
+    JOIN __SCHEMA__.wh_active_streams s ON s.stream_id = sc.stream_id
+    WHERE s.assigned_instance_id = p_instance_id
+      AND sc.status = 0
+      AND sc.next_fire_at <= p_now
+    ORDER BY sc.next_fire_at
+    LIMIT p_limit
+    FOR UPDATE OF sc SKIP LOCKED
+  LOOP
+    -- Deterministic occurrence id (schedule + occurrence#) so a redelivered fire dedups at the outbox.
+    v_occurrence_id := md5(v_sched.schedule_id::text || ':' || v_sched.occurrence_count::text)::uuid;
+
+    -- Next fire for this recurrence, then apply bounds. A null (one-shot / past until / at cap) completes.
+    v_next := __SCHEMA__.wh_schedule_next_fire(
+      v_sched.recurrence_kind, v_sched.cron, v_sched.interval_ms, v_sched.timezone, v_sched.next_fire_at);
+
+    IF v_next IS NOT NULL AND v_sched.until_at IS NOT NULL AND v_next > v_sched.until_at THEN
+      v_next := NULL;
+    END IF;
+    IF v_next IS NOT NULL AND v_sched.max_occurrences IS NOT NULL
+       AND (v_sched.occurrence_count + 1) >= v_sched.max_occurrences THEN
+      v_next := NULL;
+    END IF;
+    v_completed := (v_next IS NULL);
+
+    -- Spawn the occurrence transactionally through the normal outbox emit.
+    v_message := jsonb_build_array(jsonb_build_object(
+      'MessageId', v_occurrence_id,
+      'MessageType', v_sched.event_type,
+      -- Envelope carries the event under 'Payload' (what _emit_event_store_chain extracts into
+      -- wh_event_store.event_data), plus the message id + empty hop list.
+      'Envelope', jsonb_build_object(
+        'Payload', COALESCE(v_sched.event_data, '{}'::jsonb),
+        'id', v_occurrence_id,
+        'hops', '[]'::jsonb),
+      'Metadata', jsonb_build_object(
+        'scheduleId', v_sched.schedule_id,
+        'occurrence', v_sched.occurrence_count,
+        'deliveryGuarantee', v_sched.delivery_guarantee),
+      'Scope', COALESCE(v_sched.scope, 'null'::jsonb),
+      'StreamId', v_sched.stream_id,
+      'IsEvent', true,
+      'Flags', 0
+    ));
+    PERFORM __SCHEMA__.store_outbox_messages(
+      v_message, p_instance_id, p_lease_expiry, p_now, p_partition_count);
+
+    -- Advance the schedule. Completed schedules keep their (past) next_fire_at — status 2 excludes
+    -- them from the due-detect/notify queries so they never re-fire, satisfying the NOT NULL column.
+    UPDATE __SCHEMA__.wh_schedules
+    SET last_fire_at = p_now,
+        next_fire_at = COALESCE(v_next, next_fire_at),
+        occurrence_count = occurrence_count + 1,
+        status = CASE WHEN v_completed THEN 2 ELSE status END,
+        version = version + 1
+    WHERE schedule_id = v_sched.schedule_id;
+
+    INSERT INTO __SCHEMA__.wh_schedule_runs
+      (schedule_id, occurrence_id, fired_at, status, instance_id)
+    VALUES (v_sched.schedule_id, v_occurrence_id, p_now, 0, p_instance_id);
+
+    o_schedule_id := v_sched.schedule_id;
+    o_occurrence_id := v_occurrence_id;
+    o_fired_at := p_now;
+    o_next_fire_at := v_next;
+    o_completed := v_completed;
+    RETURN NEXT;
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_claim_due_schedules IS
+  'Temporal engine authoritative fire: leases due Active owned schedules (SKIP LOCKED), spawns each '
+  'occurrence into the outbox, advances next_fire_at (wh_schedule_next_fire + until/max bounds; '
+  'completion => status 2), and logs a wh_schedule_runs row — all atomically (exactly-once creation).';
