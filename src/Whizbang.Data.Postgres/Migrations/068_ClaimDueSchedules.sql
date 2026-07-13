@@ -29,7 +29,9 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_claim_due_schedules(
   o_fired_at TIMESTAMPTZ,
   o_next_fire_at TIMESTAMPTZ,
   o_completed BOOLEAN
-) AS $$
+)
+SET timezone = 'UTC'   -- function-local: due comparison + spawn run in UTC regardless of caller session
+AS $$
 DECLARE
   v_sched RECORD;
   v_occurrence_id UUID;

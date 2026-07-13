@@ -106,6 +106,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_cron_next(
 ) RETURNS TIMESTAMPTZ
 LANGUAGE plpgsql
 STABLE
+SET timezone = 'UTC'   -- function-local: all timestamp handling is UTC regardless of caller session
 AS $$
 DECLARE
   v_fields TEXT[];
