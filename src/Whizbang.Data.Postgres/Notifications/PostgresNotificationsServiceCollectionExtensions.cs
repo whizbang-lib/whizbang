@@ -121,6 +121,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       Whizbang.Core.Signals.ISignalSource, PgInboxWorkAvailablePollSource>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Whizbang.Core.Signals.ISignalSource, PgPerspectiveWorkAvailablePollSource>());
+    // Temporal engine (F2): backstop pull source for due schedules.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalSource, PgScheduleDuePollSource>());
 
     // Durable-signal tail worker — delivers Delivery=Durable signals persisted to wh_signals
     // on a per-instance cursor. Must-not-miss signals (e.g. InstanceDied → orphan takeover)
