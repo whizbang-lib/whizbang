@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
@@ -598,7 +599,10 @@ public class PerspectiveDedupIntegrationTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
+      perspectiveDrainChannel: harness.DrainChannel,
+      // Match production (WorkerPipelineExtensions always wires this). Without it the drain refetch
+      // loop has no cooldown dedup and re-dispatches re-served events; see PerspectiveApplyExactlyOnceTests.
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider())
     );
     return (worker, harness);
   }
