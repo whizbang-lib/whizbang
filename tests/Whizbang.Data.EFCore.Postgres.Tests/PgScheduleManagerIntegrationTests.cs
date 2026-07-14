@@ -24,6 +24,9 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
   private static DateTimeOffset _utc(int y, int mo, int d, int h, int mi) =>
     new(y, mo, d, h, mi, 0, TimeSpan.Zero);
 
+  // Every schedule must name the principal its occurrences run as (explicit, no implicit creator-authority).
+  private static readonly Guid _authority = Guid.NewGuid();
+
   private PgScheduleManager _manager() {
     var opts = new WhizbangNotificationOptions { DirectConnectionString = ConnectionString };
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
@@ -50,6 +53,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     await Assert.That(async () => await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "E",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Interval
     })).Throws<ArgumentException>();
@@ -60,6 +64,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     await Assert.That(async () => await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "E",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Cron
     })).Throws<ArgumentException>();
@@ -70,18 +75,57 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     await Assert.That(async () => await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "  ",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.OneShot
     })).Throws<ArgumentException>();
   }
 
+  [Test]
+  public async Task Create_MissingAuthority_ThrowsAsync() {
+    var mgr = _manager();
+    await Assert.That(async () => await mgr.CreateAsync(new ScheduleDefinition {
+      EventType = "E",
+      AuthorityPrincipalId = Guid.Empty,   // no implicit creator-authority fallback
+      StreamId = Guid.NewGuid(),
+      Kind = RecurrenceKind.OneShot,
+      StartAt = _utc(2026, 07, 13, 09, 00)
+    })).Throws<ArgumentException>()
+      .Because("an occurrence fires with no interactive user, so the run-as principal must be explicit");
+  }
+
   // ---- DB-backed behavior ----
+
+  [Test]
+  public async Task Create_AuthorityIsCapturedOnTheScheduleAsync() {
+    var mgr = _manager();
+    var handle = await mgr.CreateAsync(new ScheduleDefinition {
+      EventType = "MgrAuth",
+      AuthorityPrincipalId = _authority,
+      AuthorityClaimsJson = """{"roles":["billing"]}""",
+      StreamId = Guid.NewGuid(),
+      Kind = RecurrenceKind.OneShot,
+      StartAt = _utc(2026, 07, 13, 09, 00)
+    });
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(
+      "SELECT authority_principal_id, authority_claims->'roles'->>0 FROM wh_schedules WHERE schedule_id = @p", conn);
+    cmd.Parameters.AddWithValue("p", handle.ScheduleId);
+    await using var r = await cmd.ExecuteReaderAsync();
+    _ = await r.ReadAsync();
+
+    await Assert.That(r.GetGuid(0)).IsEqualTo(_authority);      // run-as principal captured
+    await Assert.That(r.GetString(1)).IsEqualTo("billing");      // claims snapshotted at create
+  }
 
   [Test]
   public async Task Create_Cron_ReturnsHandleAndActivatesAsync() {
     var mgr = _manager();
     var handle = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrCron",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Cron,
       Cron = "0 9 * * *",
@@ -100,6 +144,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var start = _utc(2026, 07, 13, 09, 00);
     var handle = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrInt",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Interval,
       Interval = TimeSpan.FromMinutes(15),
@@ -115,6 +160,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     var first = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrKey",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Cron,
       Cron = "0 9 * * *",
@@ -123,6 +169,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     });
     var second = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrKey",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Cron,
       Cron = "0 17 * * *",
@@ -141,6 +188,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     var handle = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrTrans",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Interval,
       Interval = TimeSpan.FromMinutes(1),
@@ -161,6 +209,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     var handle = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrVer",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Interval,
       Interval = TimeSpan.FromMinutes(1),
@@ -201,6 +250,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var future = _utc(2027, 01, 01, 00, 00);
     var handle = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrTrig",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Interval,
       Interval = TimeSpan.FromHours(1),
@@ -221,6 +271,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     var handle = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrTrigTerm",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Interval,
       Interval = TimeSpan.FromHours(1),
@@ -238,6 +289,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     var handle = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrUpd",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Cron,
       Cron = "0 9 * * *",
@@ -261,6 +313,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     var handle = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrUpdVer",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Cron,
       Cron = "0 9 * * *",
@@ -283,6 +336,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     var mgr = _manager();
     var handle = await mgr.CreateAsync(new ScheduleDefinition {
       EventType = "MgrUpdTerm",
+      AuthorityPrincipalId = _authority,
       StreamId = Guid.NewGuid(),
       Kind = RecurrenceKind.Cron,
       Cron = "0 9 * * *",

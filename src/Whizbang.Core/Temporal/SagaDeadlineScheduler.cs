@@ -33,6 +33,8 @@ public sealed class SagaDeadlineScheduler : ISagaDeadlineScheduler {
       string deadlineName,
       DateTimeOffset at,
       string eventType,
+      Guid authorityPrincipalId,
+      string? authorityClaimsJson = null,
       string? eventDataJson = null,
       string? scopeJson = null,
       CancellationToken cancellationToken = default) {
@@ -48,6 +50,8 @@ public sealed class SagaDeadlineScheduler : ISagaDeadlineScheduler {
       Kind = RecurrenceKind.OneShot,
       StartAt = at,
       EventType = eventType,
+      AuthorityPrincipalId = authorityPrincipalId,
+      AuthorityClaimsJson = authorityClaimsJson,
       EventDataJson = eventDataJson,
       ScopeJson = scopeJson,
     }, cancellationToken);

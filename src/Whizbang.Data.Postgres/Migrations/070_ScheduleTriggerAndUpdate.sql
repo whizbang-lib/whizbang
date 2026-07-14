@@ -54,7 +54,8 @@ BEGIN
     v_sched.schedule_id, v_occurrence_id, v_sched.occurrence_count,
     v_sched.event_type, v_sched.event_data, v_sched.scope, v_sched.stream_id,
     v_sched.delivery_guarantee, p_instance_id, p_lease_expiry, v_now, p_partition_count,
-    3::SMALLINT);   -- 3 = TriggeredEarly
+    3::SMALLINT,   -- 3 = TriggeredEarly
+    v_sched.authority_principal_id, v_sched.authority_claims);
 
   -- Deliberately NOT advancing next_fire_at / last_fire_at / occurrence_count: the regular cadence
   -- continues exactly as it would have, and the manual fire does not consume a max_occurrences slot.

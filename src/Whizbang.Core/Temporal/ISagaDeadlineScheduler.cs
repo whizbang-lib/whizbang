@@ -15,13 +15,16 @@ namespace Whizbang.Core.Temporal;
 public interface ISagaDeadlineScheduler {
   /// <summary>
   /// Arm (or move) a deadline: at <paramref name="at"/>, spawn <paramref name="eventType"/> on the saga's
-  /// stream. Re-arming the same (saga, name) replaces the existing deadline in place.
+  /// stream, running as <paramref name="authorityPrincipalId"/>. Re-arming the same (saga, name) replaces
+  /// the existing deadline in place.
   /// </summary>
   Task<ScheduleHandle> SetDeadlineAsync(
     Guid sagaStreamId,
     string deadlineName,
     DateTimeOffset at,
     string eventType,
+    Guid authorityPrincipalId,
+    string? authorityClaimsJson = null,
     string? eventDataJson = null,
     string? scopeJson = null,
     CancellationToken cancellationToken = default);

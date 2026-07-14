@@ -54,6 +54,11 @@ public sealed class PgScheduleManager : IScheduleManager {
     if (string.IsNullOrWhiteSpace(definition.EventType)) {
       throw new ArgumentException("ScheduleDefinition.EventType is required.", nameof(definition));
     }
+    if (definition.AuthorityPrincipalId == Guid.Empty) {
+      throw new ArgumentException(
+        "ScheduleDefinition.AuthorityPrincipalId is required — an occurrence fires with no interactive user, "
+        + "so the principal it runs as must be stated explicitly.", nameof(definition));
+    }
     if (definition.Kind == RecurrenceKind.Interval && definition.Interval is null) {
       throw new ArgumentException("Interval recurrence requires ScheduleDefinition.Interval.", nameof(definition));
     }
@@ -74,7 +79,8 @@ public sealed class PgScheduleManager : IScheduleManager {
         p_start_at => @start, p_until_at => @until, p_max_occurrences => @maxocc,
         p_misfire_policy => @misfire, p_delivery_guarantee => @delivery,
         p_event_type => @etype, p_event_data => @edata, p_scope => @scope,
-        p_catch_up_lookback_ms => @lookback)";
+        p_catch_up_lookback_ms => @lookback,
+        p_authority_principal_id => @authority, p_authority_claims => @claims)";
     cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) {
       Value = definition.ScheduleId ?? TrackedGuid.NewMedo().Value
     });
@@ -97,6 +103,10 @@ public sealed class PgScheduleManager : IScheduleManager {
     cmd.Parameters.Add(new NpgsqlParameter("scope", NpgsqlDbType.Jsonb) { Value = (object?)definition.ScopeJson ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("lookback", NpgsqlDbType.Bigint) {
       Value = definition.CatchUpLookback is { } lb ? (long)lb.TotalMilliseconds : (object)DBNull.Value
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("authority", NpgsqlDbType.Uuid) { Value = definition.AuthorityPrincipalId });
+    cmd.Parameters.Add(new NpgsqlParameter("claims", NpgsqlDbType.Jsonb) {
+      Value = (object?)definition.AuthorityClaimsJson ?? DBNull.Value
     });
 
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);

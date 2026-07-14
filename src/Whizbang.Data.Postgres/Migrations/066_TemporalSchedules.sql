@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_schedules (
   event_type           TEXT NOT NULL,                -- occurrence event to spawn
   event_data           JSONB,
   scope                JSONB,                        -- PerspectiveScope (tenant/user)
+  -- Run-as authority. An async fire has no interactive user, so the security context must be captured.
+  -- EXPLICIT/REQUIRED: scheduling must name the principal the occurrence executes as (no implicit
+  -- creator-authority). Claims are SNAPSHOT here at create; the pre-fire hook may refresh them per fire.
+  authority_principal_id UUID,                       -- who the occurrence runs as (required by wh_create_schedule)
+  authority_claims       JSONB,                      -- snapshot of that principal's claims at create time
   version              BIGINT NOT NULL DEFAULT 0,    -- optimistic concurrency for updates
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -43,6 +48,12 @@ CREATE INDEX IF NOT EXISTS idx_wh_schedules_due
 CREATE INDEX IF NOT EXISTS idx_wh_schedules_key
   ON __SCHEMA__.wh_schedules (schedule_key)
   WHERE schedule_key IS NOT NULL;
+
+-- Find every schedule a principal runs as — the lookup a principal-lifecycle cascade needs
+-- (e.g. "this user was terminated: what scheduled work executes as them?").
+CREATE INDEX IF NOT EXISTS idx_wh_schedules_authority
+  ON __SCHEMA__.wh_schedules (authority_principal_id)
+  WHERE authority_principal_id IS NOT NULL;
 
 COMMENT ON TABLE __SCHEMA__.wh_schedules IS
   'Durable schedule definitions for the temporal engine (one-shot / interval / cron, + saga deadlines). Each due schedule spawns an occurrence event; next_fire_at is advanced atomically with the spawn. status: 0=Active, 1=Paused.';

@@ -11,6 +11,21 @@ public sealed record ScheduleDefinition {
   /// <summary>The occurrence event type to spawn each fire. Required.</summary>
   public required string EventType { get; init; }
 
+  /// <summary>
+  /// <b>Required.</b> The principal each occurrence <em>runs as</em>. An async fire has no interactive
+  /// user, so the security context must be stated explicitly — there is deliberately no implicit
+  /// "creator becomes the authority" fallback, because that decision has real consequences (see
+  /// <see cref="IScheduleFireHook"/> for what happens when that principal later becomes invalid).
+  /// </summary>
+  public required Guid AuthorityPrincipalId { get; init; }
+
+  /// <summary>
+  /// A <b>snapshot</b> of the authority principal's claims/roles at create time (JSON), carried on every
+  /// occurrence. It can go stale — the pre-fire hook is the seam for re-resolving it per fire, since the
+  /// framework can't know how to re-resolve an arbitrary principal.
+  /// </summary>
+  public string? AuthorityClaimsJson { get; init; }
+
   /// <summary>Explicit id; when null a time-ordered id is generated.</summary>
   public Guid? ScheduleId { get; init; }
 

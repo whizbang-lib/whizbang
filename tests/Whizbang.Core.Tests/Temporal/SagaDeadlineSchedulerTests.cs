@@ -37,13 +37,14 @@ public class SagaDeadlineSchedulerTests {
 
   private static readonly Guid _saga = Guid.Parse("11111111-2222-3333-4444-555555555555");
   private static readonly DateTimeOffset _at = new(2026, 07, 20, 09, 00, 00, TimeSpan.Zero);
+  private static readonly Guid _authority = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
 
   [Test]
   public async Task SetDeadline_CreatesKeyedOneShotOnSagaStreamAsync() {
     var fake = new FakeManager();
     var sut = new SagaDeadlineScheduler(fake);
 
-    _ = await sut.SetDeadlineAsync(_saga, "payment-timeout", _at, "PaymentTimedOut");
+    _ = await sut.SetDeadlineAsync(_saga, "payment-timeout", _at, "PaymentTimedOut", _authority);
 
     var def = fake.LastDefinition!;
     await Assert.That(def.Kind).IsEqualTo(RecurrenceKind.OneShot);
@@ -52,6 +53,7 @@ public class SagaDeadlineSchedulerTests {
     await Assert.That(def.EventType).IsEqualTo("PaymentTimedOut");
     await Assert.That(def.Key).IsEqualTo($"saga:{_saga:N}:payment-timeout");
     await Assert.That(def.ScheduleId).IsEqualTo(sut.DeadlineScheduleId(_saga, "payment-timeout"));
+    await Assert.That(def.AuthorityPrincipalId).IsEqualTo(_authority);   // a deadline runs as someone too
   }
 
   [Test]
@@ -91,7 +93,7 @@ public class SagaDeadlineSchedulerTests {
   public async Task SetDeadline_RejectsEmptyNameOrEventTypeAsync() {
     var sut = new SagaDeadlineScheduler(new FakeManager());
 
-    await Assert.That(async () => await sut.SetDeadlineAsync(_saga, "  ", _at, "E")).Throws<ArgumentException>();
-    await Assert.That(async () => await sut.SetDeadlineAsync(_saga, "d", _at, "  ")).Throws<ArgumentException>();
+    await Assert.That(async () => await sut.SetDeadlineAsync(_saga, "  ", _at, "E", _authority)).Throws<ArgumentException>();
+    await Assert.That(async () => await sut.SetDeadlineAsync(_saga, "d", _at, "  ", _authority)).Throws<ArgumentException>();
   }
 }

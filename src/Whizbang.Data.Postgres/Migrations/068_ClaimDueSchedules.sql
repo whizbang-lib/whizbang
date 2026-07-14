@@ -35,7 +35,9 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._wh_spawn_occurrence(
   p_lease_expiry TIMESTAMPTZ,
   p_now TIMESTAMPTZ,
   p_partition_count INTEGER,
-  p_run_status SMALLINT
+  p_run_status SMALLINT,
+  p_authority_principal_id UUID DEFAULT NULL,
+  p_authority_claims JSONB DEFAULT NULL
 ) RETURNS VOID
 LANGUAGE plpgsql
 SET timezone = 'UTC'
@@ -52,10 +54,14 @@ BEGIN
       'Payload', COALESCE(p_event_data, '{}'::jsonb),
       'id', p_occurrence_id,
       'hops', '[]'::jsonb),
+    -- The occurrence carries its schedule linkage, delivery dial, and the SNAPSHOT run-as authority, so
+    -- the pre-fire gate can check/refresh the security context before the job actually runs.
     'Metadata', jsonb_build_object(
       'scheduleId', p_schedule_id,
       'occurrence', p_occurrence_number,
-      'deliveryGuarantee', p_delivery_guarantee),
+      'deliveryGuarantee', p_delivery_guarantee,
+      'authorityPrincipalId', p_authority_principal_id,
+      'authorityClaims', p_authority_claims),
     'Scope', COALESCE(p_scope, 'null'::jsonb),
     'StreamId', p_stream_id,
     'IsEvent', true,
@@ -215,7 +221,7 @@ BEGIN
         v_sched.schedule_id, v_occurrence_id, v_sched.occurrence_count,
         v_sched.event_type, v_sched.event_data, v_sched.scope, v_sched.stream_id,
         v_sched.delivery_guarantee, p_instance_id, p_lease_expiry, v_now, p_partition_count,
-        0::SMALLINT);
+        0::SMALLINT, v_sched.authority_principal_id, v_sched.authority_claims);
     END IF;
 
     -- Advance the schedule. Completed schedules keep their (past) next_fire_at — status 2 excludes

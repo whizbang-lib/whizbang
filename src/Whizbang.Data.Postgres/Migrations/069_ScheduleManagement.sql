@@ -36,7 +36,9 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_create_schedule(
   p_event_type TEXT,
   p_event_data JSONB,
   p_scope JSONB,
-  p_catch_up_lookback_ms BIGINT DEFAULT NULL
+  p_catch_up_lookback_ms BIGINT DEFAULT NULL,
+  p_authority_principal_id UUID DEFAULT NULL,
+  p_authority_claims JSONB DEFAULT NULL
 ) RETURNS TABLE(o_schedule_id UUID, o_next_fire_at TIMESTAMPTZ, o_was_created BOOLEAN)
 LANGUAGE plpgsql
 SET timezone = 'UTC'
@@ -46,6 +48,13 @@ DECLARE
   v_id UUID;
   v_created BOOLEAN;
 BEGIN
+  -- Run-as authority is EXPLICIT and REQUIRED: an async fire has no interactive user, so the caller must
+  -- state whose authority the occurrence executes under. There is deliberately no implicit
+  -- creator-authority fallback — that decision must be made on purpose.
+  IF p_authority_principal_id IS NULL THEN
+    RAISE EXCEPTION 'Schedule requires an authority principal (the identity its occurrences run as).';
+  END IF;
+
   -- Initial next fire: one-shot fires at start (or now); interval fires one interval out (or at start);
   -- cron fires at the next matching time after start/now.
   v_next := CASE p_recurrence_kind
@@ -62,12 +71,12 @@ BEGIN
     INSERT INTO __SCHEMA__.wh_schedules AS sch (
       schedule_id, schedule_key, stream_id, partition_number, recurrence_kind, interval_ms, cron, timezone,
       next_fire_at, until_at, max_occurrences, misfire_policy, delivery_guarantee, status,
-      event_type, event_data, scope, catch_up_lookback_ms
+      event_type, event_data, scope, catch_up_lookback_ms, authority_principal_id, authority_claims
     ) VALUES (
       p_schedule_id, p_schedule_key, p_stream_id, COALESCE(p_partition_number, 0), p_recurrence_kind,
       p_interval_ms, p_cron, p_timezone, v_next, p_until_at, p_max_occurrences,
       COALESCE(p_misfire_policy, 0), COALESCE(p_delivery_guarantee, 0), 0, p_event_type, p_event_data, p_scope,
-      p_catch_up_lookback_ms
+      p_catch_up_lookback_ms, p_authority_principal_id, p_authority_claims
     )
     ON CONFLICT (schedule_key) WHERE schedule_key IS NOT NULL
     DO UPDATE SET
@@ -87,6 +96,8 @@ BEGIN
       event_data = EXCLUDED.event_data,
       scope = EXCLUDED.scope,
       catch_up_lookback_ms = EXCLUDED.catch_up_lookback_ms,
+      authority_principal_id = EXCLUDED.authority_principal_id,
+      authority_claims = EXCLUDED.authority_claims,
       version = sch.version + 1
     RETURNING sch.schedule_id, sch.next_fire_at, (sch.xmax = 0) AS was_created
   )
