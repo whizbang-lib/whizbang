@@ -190,8 +190,10 @@ public class PerspectiveDedupIntegrationTests {
     // Advance time past retention (5 min + buffer)
     fakeTime.Advance(TimeSpan.FromMinutes(6));
 
-    // Wait for more cycles where the expired entry should allow reprocessing
-    await coordinator.WaitForCyclesAsync(5, TimeSpan.FromSeconds(10));
+    // Wait for the reprocess itself, not for a cycle count: eviction happens on a sweep after the clock
+    // advances, so "5 cycles have elapsed" does not imply "the entry was evicted and reapplied". Under
+    // full-suite load that gap made this racy — wait on the exact condition we assert.
+    await runner.WaitForCallCountAsync(2, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -229,9 +231,14 @@ public class PerspectiveDedupIntegrationTests {
     // Wait for retention to be activated (InFlight → Retained) before advancing time
     await observer.WaitForRetentionActivatedAsync(TimeSpan.FromSeconds(5));
 
-    // Phase 2: Advance past retention → eviction
+    // Phase 2: Advance past retention → eviction.
     fakeTime.Advance(TimeSpan.FromMinutes(6));
+    // Cycles give the redelivered work a chance to be deduped...
     await coordinator.WaitForCyclesAsync(5, TimeSpan.FromSeconds(10));
+    // ...but eviction fires on a sweep, not on a cycle boundary, so wait on the eviction signal itself.
+    // Waiting only on cycles was racy: under full-suite load the worker could be cancelled before the
+    // sweep ran, and OnEvicted never fired.
+    await observer.WaitForEvictionAsync(TimeSpan.FromSeconds(10));
 
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -659,6 +666,7 @@ public class PerspectiveDedupIntegrationTests {
     private int _retentionActivatedCount;
     private int _evictionCount;
     private readonly TaskCompletionSource _retentionSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _evictionSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public int DedupCount => _dedupCount;
     public int InFlightCount => _inFlightCount;
@@ -672,6 +680,14 @@ public class PerspectiveDedupIntegrationTests {
     public Task WaitForRetentionActivatedAsync(TimeSpan timeout) =>
       _retentionSignal.Task.WaitAsync(timeout);
 
+    /// <summary>
+    /// Waits for at least one OnEvicted callback. Eviction happens on a sweep AFTER the clock is advanced
+    /// past retention, so waiting on a cycle count instead of this signal is racy: under load the sweep may
+    /// not have run by cycle N, and the test would cancel the worker before eviction ever fired.
+    /// </summary>
+    public Task WaitForEvictionAsync(TimeSpan timeout) =>
+      _evictionSignal.Task.WaitAsync(timeout);
+
     public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) =>
       Interlocked.Increment(ref _dedupCount);
     public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) =>
@@ -680,8 +696,10 @@ public class PerspectiveDedupIntegrationTests {
       Interlocked.Increment(ref _retentionActivatedCount);
       _retentionSignal.TrySetResult();
     }
-    public void OnEvicted(int count) =>
+    public void OnEvicted(int count) {
       Interlocked.Increment(ref _evictionCount);
+      _evictionSignal.TrySetResult();
+    }
     public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }
   }
 
