@@ -231,13 +231,14 @@ public class PerspectiveDedupIntegrationTests {
     // Wait for retention to be activated (InFlight → Retained) before advancing time
     await observer.WaitForRetentionActivatedAsync(TimeSpan.FromSeconds(5));
 
-    // Phase 2: Advance past retention → eviction.
+    // Phase 1b: while the entry is still RETAINED, a redelivery must be filtered. This has to happen
+    // BEFORE the clock moves — advancing first lets the entry expire, so the redelivery gets reprocessed
+    // instead of deduped and OnEventsDeduped never fires.
+    await observer.WaitForDedupAsync(TimeSpan.FromSeconds(10));
+
+    // Phase 2: Advance past retention → eviction. Wait on the eviction signal, not a cycle count:
+    // eviction fires on a sweep, not a cycle boundary, so "N cycles elapsed" doesn't imply "evicted".
     fakeTime.Advance(TimeSpan.FromMinutes(6));
-    // Cycles give the redelivered work a chance to be deduped...
-    await coordinator.WaitForCyclesAsync(5, TimeSpan.FromSeconds(10));
-    // ...but eviction fires on a sweep, not on a cycle boundary, so wait on the eviction signal itself.
-    // Waiting only on cycles was racy: under full-suite load the worker could be cancelled before the
-    // sweep ran, and OnEvicted never fired.
     await observer.WaitForEvictionAsync(TimeSpan.FromSeconds(10));
 
     cts.Cancel();
@@ -667,6 +668,7 @@ public class PerspectiveDedupIntegrationTests {
     private int _evictionCount;
     private readonly TaskCompletionSource _retentionSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _evictionSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _dedupSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public int DedupCount => _dedupCount;
     public int InFlightCount => _inFlightCount;
@@ -688,8 +690,18 @@ public class PerspectiveDedupIntegrationTests {
     public Task WaitForEvictionAsync(TimeSpan timeout) =>
       _evictionSignal.Task.WaitAsync(timeout);
 
-    public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) =>
+    /// <summary>
+    /// Waits for at least one OnEventsDeduped callback. A redelivery is only deduped while the entry is
+    /// still RETAINED, so this must be awaited BEFORE the clock is advanced past retention — otherwise the
+    /// entry expires first and the redelivery is reprocessed instead of filtered.
+    /// </summary>
+    public Task WaitForDedupAsync(TimeSpan timeout) =>
+      _dedupSignal.Task.WaitAsync(timeout);
+
+    public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) {
       Interlocked.Increment(ref _dedupCount);
+      _dedupSignal.TrySetResult();
+    }
     public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) =>
       Interlocked.Increment(ref _inFlightCount);
     public void OnRetentionActivated(int count) {
