@@ -4,8 +4,10 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Temporal;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.Postgres.Notifications;
 
@@ -24,15 +26,24 @@ public sealed class PgScheduleManager : IScheduleManager {
   private readonly IConfiguration _configuration;
   private readonly INotificationConnectionStringFallback? _connectionStringFallback;
   private readonly ILogger<PgScheduleManager> _logger;
+  private readonly IServiceInstanceProvider _instanceProvider;
+  private readonly int _partitionCount;
+  private readonly int _leaseSeconds;
 
   /// <summary>Constructor.</summary>
   public PgScheduleManager(
     IOptions<WhizbangNotificationOptions> options,
     IConfiguration configuration,
+    IServiceInstanceProvider instanceProvider,
+    IOptions<ClaimWorkerOptions> claimWorkerOptions,
+    IOptions<TemporalOptions> temporalOptions,
     ILogger<PgScheduleManager> logger,
     INotificationConnectionStringFallback? connectionStringFallback = null) {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+    _partitionCount = (claimWorkerOptions?.Value ?? new ClaimWorkerOptions()).PartitionCount;
+    _leaseSeconds = (temporalOptions?.Value ?? new TemporalOptions()).LeaseDurationSeconds;
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _connectionStringFallback = connectionStringFallback;
   }
@@ -103,6 +114,71 @@ public sealed class PgScheduleManager : IScheduleManager {
   /// <inheritdoc />
   public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) =>
     _transitionAsync(scheduleId, STATUS_CANCELLED, expectedVersion, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) {
+    await using var conn = await _openAsync(cancellationToken).ConfigureAwait(false);
+    if (conn is null) {
+      return null;
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT o_triggered, o_occurrence_id FROM wh_trigger_schedule_now(@id, @i, @lease, @pc)";
+    cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = scheduleId });
+    cmd.Parameters.Add(new NpgsqlParameter("i", NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
+    cmd.Parameters.Add(new NpgsqlParameter("lease", NpgsqlDbType.TimestampTz) {
+      Value = DateTimeOffset.UtcNow.AddSeconds(_leaseSeconds)
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("pc", NpgsqlDbType.Integer) { Value = _partitionCount });
+
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
+      return null;   // missing or terminal
+    }
+    return reader.GetGuid(1);
+  }
+
+  /// <inheritdoc />
+  public async Task<ScheduleUpdateResult?> UpdateAsync(
+      Guid scheduleId, ScheduleUpdate update, long? expectedVersion = null, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(update);
+    if (update.Kind == RecurrenceKind.Interval && update.Interval is null) {
+      throw new ArgumentException("Interval recurrence requires ScheduleUpdate.Interval.", nameof(update));
+    }
+    if (update.Kind == RecurrenceKind.Cron && string.IsNullOrWhiteSpace(update.Cron)) {
+      throw new ArgumentException("Cron recurrence requires ScheduleUpdate.Cron.", nameof(update));
+    }
+
+    await using var conn = await _openAsync(cancellationToken).ConfigureAwait(false);
+    if (conn is null) {
+      return null;
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      SELECT o_updated, o_next_fire_at, o_version FROM wh_update_schedule(
+        @id, @ver, @kind, @interval, @cron, @tz, @start, @until, @maxocc, @misfire, @delivery, @edata, @scope)";
+    cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = scheduleId });
+    cmd.Parameters.Add(new NpgsqlParameter("ver", NpgsqlDbType.Bigint) { Value = (object?)expectedVersion ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = (short)update.Kind });
+    cmd.Parameters.Add(new NpgsqlParameter("interval", NpgsqlDbType.Bigint) {
+      Value = update.Interval is { } iv ? (long)iv.TotalMilliseconds : (object)DBNull.Value
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("cron", NpgsqlDbType.Text) { Value = (object?)update.Cron ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("tz", NpgsqlDbType.Text) { Value = (object?)update.TimeZone ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("start", NpgsqlDbType.TimestampTz) { Value = (object?)update.StartAt ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("until", NpgsqlDbType.TimestampTz) { Value = (object?)update.UntilAt ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("maxocc", NpgsqlDbType.Bigint) { Value = (object?)update.MaxOccurrences ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("misfire", NpgsqlDbType.Smallint) { Value = (short)update.MisfirePolicy });
+    cmd.Parameters.Add(new NpgsqlParameter("delivery", NpgsqlDbType.Smallint) { Value = (short)update.DeliveryGuarantee });
+    cmd.Parameters.Add(new NpgsqlParameter("edata", NpgsqlDbType.Jsonb) { Value = (object?)update.EventDataJson ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("scope", NpgsqlDbType.Jsonb) { Value = (object?)update.ScopeJson ?? DBNull.Value });
+
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
+      return null;   // missing / terminal / version mismatch
+    }
+    var nextFire = new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
+    return new ScheduleUpdateResult(nextFire, reader.GetInt64(2));
+  }
 
   private async Task<bool> _transitionAsync(Guid scheduleId, short targetStatus, long? expectedVersion, CancellationToken cancellationToken) {
     await using var conn = await _openAsync(cancellationToken).ConfigureAwait(false);

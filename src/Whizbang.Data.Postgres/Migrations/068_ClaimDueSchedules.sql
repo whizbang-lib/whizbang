@@ -15,6 +15,65 @@
 -- Dependencies: 066 (wh_schedules/wh_schedule_runs), 067 (wh_schedule_next_fire), 062 (store_outbox_messages).
 -- Schedule status: 0=Active, 1=Paused, 2=Completed (bounds reached / one-shot fired).
 
+-- ---------------------------------------------------------------------------
+-- _wh_spawn_occurrence — the ONE place an occurrence is emitted. Shared by the scheduled fire
+-- (wh_claim_due_schedules, run status 0) and the manual fire (wh_trigger_schedule_now, run status 3)
+-- so both use the identical outbox/event-store emit contract and both land a wh_schedule_runs row.
+-- ---------------------------------------------------------------------------
+SELECT __SCHEMA__.drop_all_overloads('_wh_spawn_occurrence');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_spawn_occurrence(
+  p_schedule_id UUID,
+  p_occurrence_id UUID,
+  p_occurrence_number BIGINT,
+  p_event_type TEXT,
+  p_event_data JSONB,
+  p_scope JSONB,
+  p_stream_id UUID,
+  p_delivery_guarantee SMALLINT,
+  p_instance_id UUID,
+  p_lease_expiry TIMESTAMPTZ,
+  p_now TIMESTAMPTZ,
+  p_partition_count INTEGER,
+  p_run_status SMALLINT
+) RETURNS VOID
+LANGUAGE plpgsql
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  v_message JSONB;
+BEGIN
+  v_message := jsonb_build_array(jsonb_build_object(
+    'MessageId', p_occurrence_id,
+    'MessageType', p_event_type,
+    -- Envelope carries the event under 'Payload' (what _emit_event_store_chain extracts into
+    -- wh_event_store.event_data), plus the message id + empty hop list.
+    'Envelope', jsonb_build_object(
+      'Payload', COALESCE(p_event_data, '{}'::jsonb),
+      'id', p_occurrence_id,
+      'hops', '[]'::jsonb),
+    'Metadata', jsonb_build_object(
+      'scheduleId', p_schedule_id,
+      'occurrence', p_occurrence_number,
+      'deliveryGuarantee', p_delivery_guarantee),
+    'Scope', COALESCE(p_scope, 'null'::jsonb),
+    'StreamId', p_stream_id,
+    'IsEvent', true,
+    'Flags', 0
+  ));
+  PERFORM __SCHEMA__.store_outbox_messages(
+    v_message, p_instance_id, p_lease_expiry, p_now, p_partition_count);
+
+  INSERT INTO __SCHEMA__.wh_schedule_runs
+    (schedule_id, occurrence_id, fired_at, status, instance_id)
+  VALUES (p_schedule_id, p_occurrence_id, p_now, p_run_status, p_instance_id);
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__._wh_spawn_occurrence IS
+  'Emits one schedule occurrence through the normal outbox/event-store chain and logs a wh_schedule_runs '
+  'row. Shared by the scheduled fire (status 0) and trigger-now (status 3 TriggeredEarly).';
+
 SELECT __SCHEMA__.drop_all_overloads('wh_claim_due_schedules');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_claim_due_schedules(
@@ -37,7 +96,6 @@ DECLARE
   v_occurrence_id UUID;
   v_next TIMESTAMPTZ;
   v_completed BOOLEAN;
-  v_message JSONB;
   -- DB clock is authority for the due decision (avoids multi-instance skew). p_now is a test seam.
   v_now TIMESTAMPTZ := COALESCE(p_now, NOW());
 BEGIN
@@ -68,27 +126,12 @@ BEGIN
     END IF;
     v_completed := (v_next IS NULL);
 
-    -- Spawn the occurrence transactionally through the normal outbox emit.
-    v_message := jsonb_build_array(jsonb_build_object(
-      'MessageId', v_occurrence_id,
-      'MessageType', v_sched.event_type,
-      -- Envelope carries the event under 'Payload' (what _emit_event_store_chain extracts into
-      -- wh_event_store.event_data), plus the message id + empty hop list.
-      'Envelope', jsonb_build_object(
-        'Payload', COALESCE(v_sched.event_data, '{}'::jsonb),
-        'id', v_occurrence_id,
-        'hops', '[]'::jsonb),
-      'Metadata', jsonb_build_object(
-        'scheduleId', v_sched.schedule_id,
-        'occurrence', v_sched.occurrence_count,
-        'deliveryGuarantee', v_sched.delivery_guarantee),
-      'Scope', COALESCE(v_sched.scope, 'null'::jsonb),
-      'StreamId', v_sched.stream_id,
-      'IsEvent', true,
-      'Flags', 0
-    ));
-    PERFORM __SCHEMA__.store_outbox_messages(
-      v_message, p_instance_id, p_lease_expiry, v_now, p_partition_count);
+    -- Spawn the occurrence transactionally through the shared emit (run status 0 = fired on schedule).
+    PERFORM __SCHEMA__._wh_spawn_occurrence(
+      v_sched.schedule_id, v_occurrence_id, v_sched.occurrence_count,
+      v_sched.event_type, v_sched.event_data, v_sched.scope, v_sched.stream_id,
+      v_sched.delivery_guarantee, p_instance_id, p_lease_expiry, v_now, p_partition_count,
+      0::SMALLINT);
 
     -- Advance the schedule. Completed schedules keep their (past) next_fire_at — status 2 excludes
     -- them from the due-detect/notify queries so they never re-fire, satisfying the NOT NULL column.
@@ -99,10 +142,6 @@ BEGIN
         status = CASE WHEN v_completed THEN 2 ELSE status END,
         version = version + 1
     WHERE schedule_id = v_sched.schedule_id;
-
-    INSERT INTO __SCHEMA__.wh_schedule_runs
-      (schedule_id, occurrence_id, fired_at, status, instance_id)
-    VALUES (v_sched.schedule_id, v_occurrence_id, v_now, 0, p_instance_id);
 
     o_schedule_id := v_sched.schedule_id;
     o_occurrence_id := v_occurrence_id;
