@@ -7,6 +7,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Signals;
 using Whizbang.Core.Temporal;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Temporal;
 
@@ -30,21 +31,168 @@ public class ScheduleWorkerTests {
       Task.FromResult(NextFireTime);
   }
 
-  private static (ScheduleWorker Worker, FakeClaimer? Claimer) _create(
-      TemporalOptions? options = null, ISignalBus? bus = null, FakeClaimer? claimer = null, TimeProvider? clock = null) {
+  private static (ScheduleWorker Worker, IScheduleClaimer? Claimer) _create(
+      TemporalOptions? options = null, ISignalBus? bus = null, IScheduleClaimer? claimer = null, TimeProvider? clock = null,
+      ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
     if (claimer is not null) {
-      services.AddSingleton<IScheduleClaimer>(claimer);
+      services.AddSingleton(claimer);
     }
     var provider = services.BuildServiceProvider();
     var worker = new ScheduleWorker(
       provider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(options ?? new TemporalOptions()),
       NullLogger<ScheduleWorker>.Instance,
-      schemaReadyGate: null,
+      schemaReadyGate: gate,
       signalBus: bus,
       timeProvider: clock);
     return (worker, claimer);
+  }
+
+  /// <summary>
+  /// Claimer that signals each claim, so the ExecuteAsync tests can await the drain loop actually
+  /// reaching a claim rather than sleeping/polling for it.
+  /// </summary>
+  private sealed class SignallingClaimer : IScheduleClaimer {
+    private readonly TaskCompletionSource _firstClaim = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _secondClaim = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _calls;
+
+    /// <summary>When set, the claim throws — exercising the loop's error-swallow branch.</summary>
+    public bool Throw { get; set; }
+    public int Calls => Volatile.Read(ref _calls);
+    public Task FirstClaim => _firstClaim.Task;
+    public Task SecondClaim => _secondClaim.Task;
+
+    public Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default) {
+      var n = Interlocked.Increment(ref _calls);
+      if (n == 1) {
+        _firstClaim.TrySetResult();
+      } else if (n == 2) {
+        _secondClaim.TrySetResult();
+      }
+      return Throw
+        ? Task.FromException<int>(new InvalidOperationException("claim blew up"))
+        : Task.FromResult(0);
+    }
+
+    public Task<DateTimeOffset?> GetNextFireTimeAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult<DateTimeOffset?>(null);
+  }
+
+  /// <summary>Schema gate that stays closed until <see cref="Open"/> — models a host still migrating.</summary>
+  private sealed class ManualSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public bool IsReady => _ready.Task.IsCompleted;
+    public void Open() => _ready.TrySetResult();
+    public void MarkReady() => Open();
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) => _ready.Task.WaitAsync(cancellationToken);
+  }
+
+  // ==================== ExecuteAsync — the BackgroundService drain loop ====================
+
+  [Test]
+  public async Task Execute_Disabled_NeverClaimsAndShutsDownCleanlyAsync() {
+    var claimer = new SignallingClaimer();
+    var (worker, _) = _create(new TemporalOptions { Enabled = false }, claimer: claimer);
+
+    await worker.StartAsync(CancellationToken.None);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(claimer.Calls).IsEqualTo(0)
+      .Because("Enabled=false must park the loop entirely — a non-temporal host must never claim schedules");
+  }
+
+  [Test]
+  public async Task Execute_SchemaGateClosed_DoesNotClaimUntilReadyAsync() {
+    var claimer = new SignallingClaimer();
+    var gate = new ManualSchemaGate();
+    var (worker, _) = _create(claimer: claimer, gate: gate);
+
+    await worker.StartAsync(CancellationToken.None);
+    await Assert.That(claimer.Calls).IsEqualTo(0)
+      .Because("claiming before the schema exists would hit missing tables — the gate must hold the loop");
+
+    gate.Open();
+    await claimer.FirstClaim.WaitAsync(TimeSpan.FromSeconds(10));   // gate released → loop drains
+
+    await Assert.That(claimer.Calls).IsGreaterThanOrEqualTo(1);
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Execute_SchemaGateNeverOpens_CancellationExitsWithoutClaimingAsync() {
+    var claimer = new SignallingClaimer();
+    var (worker, _) = _create(claimer: claimer, gate: new ManualSchemaGate());
+
+    await worker.StartAsync(CancellationToken.None);
+    await worker.StopAsync(CancellationToken.None);   // cancels while still waiting on the gate
+
+    await Assert.That(claimer.Calls).IsEqualTo(0)
+      .Because("shutdown while gated must return cleanly, not claim and not hang");
+  }
+
+  [Test]
+  public async Task Execute_DoorbellSignal_WakesDrainBeforeBackstopAsync() {
+    var claimer = new SignallingClaimer();
+    // A backstop far longer than the test: any second claim can only come from the doorbell, never
+    // from the interval elapsing — that is what makes this a real assertion about the fast path.
+    var (worker, _) = _create(new TemporalOptions { BackstopIntervalMilliseconds = 600_000 }, claimer: claimer);
+
+    await worker.StartAsync(CancellationToken.None);
+    await claimer.FirstClaim.WaitAsync(TimeSpan.FromSeconds(10));   // startup pass
+
+    worker.RequestImmediateRun();                                   // ring the doorbell
+    await claimer.SecondClaim.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(claimer.Calls).IsGreaterThanOrEqualTo(2)
+      .Because("a ScheduleDueSignal doorbell must wake the drain immediately, not wait out the backstop");
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Execute_ClaimThrows_SwallowsAndKeepsLoopAliveAsync() {
+    var claimer = new SignallingClaimer { Throw = true };
+    var (worker, _) = _create(new TemporalOptions { BackstopIntervalMilliseconds = 600_000 }, claimer: claimer);
+
+    await worker.StartAsync(CancellationToken.None);
+    await claimer.FirstClaim.WaitAsync(TimeSpan.FromSeconds(10));
+
+    worker.RequestImmediateRun();
+    await claimer.SecondClaim.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(claimer.Calls).IsGreaterThanOrEqualTo(2)
+      .Because("a failed drain pass must be logged and retried on the next tick — one bad claim "
+        + "(a transient DB blip) must never kill the engine and silently stop every schedule");
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Execute_DoorbellArrivesViaSignalBus_WakesDrainAsync() {
+    var bus = new SignalBus([]);
+    var claimer = new SignallingClaimer();
+    var (worker, _) = _create(new TemporalOptions { BackstopIntervalMilliseconds = 600_000 }, bus: bus, claimer: claimer);
+
+    await worker.StartAsync(CancellationToken.None);
+    await claimer.FirstClaim.WaitAsync(TimeSpan.FromSeconds(10));   // startup pass
+
+    // The real doorbell path, end to end: a ScheduleDueSignal arriving on the bus (as the NOTIFY
+    // transport / poll-source backstop delivers it) must wake the drain, not wait out the backstop.
+    await ((ISignalSink)bus).ReceiveAsync(new ScheduleDueSignal());
+    await claimer.SecondClaim.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(claimer.Calls).IsGreaterThanOrEqualTo(2);
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Dispose_IsIdempotentAsync() {
+    var (worker, _) = _create(bus: new SignalBus([]), claimer: new FakeClaimer());
+
+    worker.Dispose();
+    worker.Dispose();   // double dispose must not throw (unsubscribes + disposes timer/semaphore once)
+
+    await Assert.That(worker.TimerForTests).IsNotNull();
   }
 
   [Test]
