@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Notifications.AppSignals;
+using Whizbang.Core.Signals;
 
 namespace Whizbang.Data.Postgres.Notifications;
 
@@ -103,10 +104,18 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // App-signal channel (publishes pg_notify on wh_app_<topic>).
     services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
 
-    // System Signal Bus — the Postgres NOTIFY push transport. Registered alongside the
-    // in-memory transport that AddWhizbangSignalBus registers by default. Both transports
-    // fan out from the same SignalBus so callers get NOTIFY-backed cross-process delivery
-    // plus in-process loopback for tests.
+    // System Signal Bus — ensure the bus itself is registered before we add the Postgres transport
+    // and the hosted services that DEPEND on it (PgDurableSignalTailWorker needs ISignalSink;
+    // PgInstanceLifecycleMonitor and ScheduleWorker need ISignalBus). AddWhizbang wires the bus for
+    // full hosts, but this extension is also used standalone — without this call those hosted
+    // services can't be constructed and GetServices<IHostedService>() throws. AddWhizbangSignalBus
+    // is fully idempotent (TryAdd throughout), so calling it here is safe when the bus is already
+    // registered.
+    services.AddWhizbangSignalBus();
+
+    // The Postgres NOTIFY push transport, registered alongside the in-memory transport that
+    // AddWhizbangSignalBus registers by default. Both transports fan out from the same SignalBus so
+    // callers get NOTIFY-backed cross-process delivery plus in-process loopback for tests.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Whizbang.Core.Signals.ISignalTransport, PostgresSignalTransport>());
 
