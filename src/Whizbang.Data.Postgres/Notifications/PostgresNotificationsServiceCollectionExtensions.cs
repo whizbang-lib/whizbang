@@ -121,6 +121,24 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       Whizbang.Core.Signals.ISignalSource, PgInboxWorkAvailablePollSource>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Whizbang.Core.Signals.ISignalSource, PgPerspectiveWorkAvailablePollSource>());
+    // Temporal engine (F2): backstop pull source for due schedules.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalSource, PgScheduleDuePollSource>());
+    // Temporal engine (F2): the authoritative claimer (wh_claim_due_schedules) + the firing worker.
+    // ScheduleWorker wakes on the ScheduleDueSignal doorbell (poll source / arm-on-mutation NOTIFY)
+    // and reconciles on its backstop interval, draining due schedules through the claimer.
+    services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleClaimer, PgScheduleClaimer>();
+    services.AddHostedService<Whizbang.Core.Temporal.ScheduleWorker>();
+    // Temporal engine (F2): the schedule management API (create / pause / resume / cancel / trigger / update).
+    services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleManager, PgScheduleManager>();
+    // Saga deadlines ride the same engine — a deadline is a keyed one-shot schedule.
+    services.TryAddSingleton<Whizbang.Core.Temporal.ISagaDeadlineScheduler, Whizbang.Core.Temporal.SagaDeadlineScheduler>();
+    // Pre-fire gate (F2 increment 6b): runs the developer's IScheduleFireHook right before a scheduled
+    // occurrence executes. Inert unless the developer registers an IScheduleFireHook — with none, the gate
+    // proceeds for everything and publishing is byte-for-byte unchanged.
+    services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleOccurrenceStore, PgScheduleOccurrenceStore>();
+    services.TryAddSingleton<Whizbang.Core.Workers.IOccurrencePublishGate,
+      Whizbang.Core.Temporal.ScheduleOccurrencePublishGate>();
 
     // Durable-signal tail worker — delivers Delivery=Durable signals persisted to wh_signals
     // on a per-instance cursor. Must-not-miss signals (e.g. InstanceDied → orphan takeover)

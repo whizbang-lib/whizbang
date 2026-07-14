@@ -104,12 +104,21 @@ public class PerspectiveApplyExactlyOnceTests {
     var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
     var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
 
-    // Act — drive the worker. Wait for TWO cycles: cycle 2 starting means cycle 1 finished
-    // (drain branch + standard branch + completion reporting all drained). No timing-based waits.
+    // Act — drive the worker.
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createWorker(coordinator, registry, eventStore);
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+
+    // First wait on the DISPATCH itself. Waiting only on a cycle count was racy: the coordinator
+    // increments its cycle at the top of a poll, so cycle 2 can begin before cycle 1's dispatched
+    // work has actually run — the worker would then be cancelled with zero invocations recorded and
+    // the "at least one path fired" assertion would fail for reasons unrelated to the contract.
+    await runner.WaitForInvocationsAsync(1, TimeSpan.FromSeconds(10));
+
+    // THEN let cycle 1 finish draining (drain branch + standard branch + completion reporting), so
+    // that if the guard is broken and BOTH paths fire, the second invocation is recorded before we
+    // assert. Without this the test could pass vacuously by asserting too early.
     await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
@@ -526,6 +535,8 @@ public class PerspectiveApplyExactlyOnceTests {
 
     private readonly ConcurrentBag<_Invocation> _invocations = [];
     private readonly TaskCompletionSource _terminalSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ConcurrentDictionary<int, TaskCompletionSource> _countWaiters = new();
+    private int _invocationCount;
 
     public IReadOnlyCollection<_Invocation> Invocations => [.. _invocations];
 
@@ -534,10 +545,31 @@ public class PerspectiveApplyExactlyOnceTests {
     /// cycle-count waits that race drain completion.</summary>
     public Task TerminalProcessed => _terminalSeen.Task;
 
+    /// <summary>
+    /// Completes once at least <paramref name="count"/> invocations have been recorded on ANY path.
+    /// Unlike <see cref="TerminalProcessed"/> — which only fires for the drain path, since the
+    /// standard path records <c>Guid.Empty</c> as its event id — this is path-agnostic, so a test
+    /// that does not know which path will win can still wait on the dispatch itself instead of on a
+    /// cycle boundary (a cycle can tick over before the dispatched work has actually run).
+    /// </summary>
+    public Task WaitForInvocationsAsync(int count, TimeSpan timeout) {
+      var tcs = _countWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      if (Volatile.Read(ref _invocationCount) >= count) {
+        tcs.TrySetResult();   // already reached before this waiter registered
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
     private void _record(_Invocation invocation) {
       _invocations.Add(invocation);
       if (invocation.EventId == AdvanceToEventId) {
         _terminalSeen.TrySetResult();
+      }
+      var seen = Interlocked.Increment(ref _invocationCount);
+      foreach (var waiter in _countWaiters) {
+        if (seen >= waiter.Key) {
+          waiter.Value.TrySetResult();
+        }
       }
     }
 
@@ -604,6 +636,9 @@ public class PerspectiveApplyExactlyOnceTests {
 
     public Task WaitForCyclesAsync(int minCycles, TimeSpan timeout) {
       var tcs = _cycleWaiters.GetOrAdd(minCycles, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      if (Volatile.Read(ref _cycleCount) >= minCycles) {
+        tcs.TrySetResult();   // cycle already passed before this waiter registered — don't hang
+      }
       return tcs.Task.WaitAsync(timeout);
     }
 

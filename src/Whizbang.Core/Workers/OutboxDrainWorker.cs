@@ -852,6 +852,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       Attempts = row.Attempts,
       Status = (MessageProcessingStatus)row.Status,
       Flags = WorkBatchOptions.None,
+      // Carry the raw metadata through: the typed envelope metadata is a closed shape, so the temporal
+      // engine's occurrence keys (scheduleId / authority / delivery guarantee) only survive here.
+      MetadataJson = row.Metadata,
     };
   }
 
