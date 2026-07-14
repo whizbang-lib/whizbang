@@ -525,6 +525,52 @@ public partial class JsonContextRegistryTests {
     await Assert.That(((TestOrderPlacedEvent)innerList[0]).OrderId).IsEqualTo(orderId);
   }
 
+  // ───────────────────────────────────────────────────────────────────────────────────────────────
+  // REPRO — composite NAME-resolution gap (the WorkflowService "Failed to resolve message type" storm).
+  // The generator registers a composite for POLYMORPHIC serialization (RegisterDerivedType<IMessage>) but
+  // NEVER emits RegisterTypeName for it (MessageJsonContextGenerator.cs:1638 filters IsCommand||IsEvent||
+  // IsSerializable — a composite is none). So GetTypeInfoByName — the by-name lookup the outbox-flush and
+  // inbox fan-out lifecycle deserializers use — returns null for every composite, and the deserialize throws.
+  // A normal event resolves by name; a composite must too. HelperRoundTripComposite/HelperInnerEvent are
+  // PUBLIC so the real source generator registers them exactly as a consumer's composite is registered.
+  // ───────────────────────────────────────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task GetTypeInfoByName_GeneratorRegisteredComposite_IsNameResolvableLikeAnEventAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Control: a generator-registered IEvent IS name-resolvable (the generator emits RegisterTypeName for it).
+    var eventInfo = JsonContextRegistry.GetTypeInfoByName(
+      typeof(HelperInnerEvent).AssemblyQualifiedName!, options);
+    await Assert.That(eventInfo).IsNotNull()
+      .Because("A generator-registered IEvent is name-resolvable via RegisterTypeName — the control for this repro.");
+
+    // The composite MUST be name-resolvable too: the outbox-flush lifecycle (LifecycleInvocationHelper.
+    // _processOutboxMessagesAsync) and the inbox fan-out (InboxDispatchWorker._resolveTypedEnvelope)
+    // deserialize each row BY NAME via GetTypeInfoByName. The generator emits only RegisterDerivedType<IMessage>
+    // (polymorphism) for a composite, never RegisterTypeName, so this returns null → "Failed to resolve
+    // message type" and the composite never fans out (its inner events never persist).
+    var compositeInfo = JsonContextRegistry.GetTypeInfoByName(
+      typeof(HelperRoundTripComposite).AssemblyQualifiedName!, options);
+    await Assert.That(compositeInfo).IsNotNull()
+      .Because("A CompositeEventBase is deserialized by name during outbox flush / inbox fan-out; excluding composites from RegisterTypeName makes GetTypeInfoByName return null → the resolve-storm and no fan-out.");
+  }
+
+  [Test]
+  public async Task LifecycleDeserializer_GeneratorRegisteredComposite_ResolvesByName_NotFailedToResolveAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var deserializer = new Whizbang.Core.Messaging.JsonLifecycleMessageDeserializer(options);
+    using var payload = System.Text.Json.JsonDocument.Parse("{}");
+
+    // Exactly what the outbox-flush lifecycle does per outbox row: deserialize the payload BY NAME. For a
+    // composite this currently throws InvalidOperationException "Failed to resolve message type '…'" (the
+    // 978× WorkflowService resolve-storm). Once the composite is name-resolvable it deserializes instead.
+    await Assert.That(() => deserializer.DeserializeFromJsonElement(
+        payload.RootElement, typeof(HelperRoundTripComposite).AssemblyQualifiedName!))
+      .ThrowsNothing()
+      .Because("The outbox-flush / inbox lifecycle deserializes every row by name; a composite must resolve, not throw 'Failed to resolve message type'.");
+  }
+
   [Test]
   public async Task MessageEnvelope_CompositeContainingComposite_RoundTripsCycleSafeAsync() {
     // Cycle-safety proof: a composite's inner list contains ANOTHER composite (a composite is itself

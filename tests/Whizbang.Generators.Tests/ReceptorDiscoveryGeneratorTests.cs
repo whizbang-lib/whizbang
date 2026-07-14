@@ -3080,5 +3080,83 @@ public class MarkerReceptor : IReceptor<IMyMarker> {
     await Assert.That(registry).Contains("MyApp.Events.MyContracts.NestedEventB");
   }
 
+  // Persistence-completeness fallback: the generated cascade type-switch (CascadeToOutboxAsync /
+  // CascadeToEventStoreOnlyAsync) must always end with an IEvent catch-all so an event with no concrete arm —
+  // e.g. a composite inner event whose type no receptor produces — is never silently dropped from the event store.
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_CascadeSwitch_EmitsIEventFallbackForPersistenceCompletenessAsync() {
+    // Arrange - an ordinary command→event receptor (concrete response type, no bare-interface response).
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateThing : ICommand { public string Id { get; init; } = string.Empty; }
+public record ThingCreated : IEvent { public string Id { get; init; } = string.Empty; }
+
+public class ThingReceptor : IReceptor<CreateThing, ThingCreated> {
+  public ValueTask<ThingCreated> HandleAsync(CreateThing message, CancellationToken ct = default)
+    => ValueTask.FromResult(new ThingCreated { Id = message.Id });
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - the cascade switch ends with the IEvent catch-all routing via runtime-typed dispatch, and it is
+    // present on the event-store-only path (composite fan-out persists inner events with no concrete arm).
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher).Contains("if (message is global::Whizbang.Core.IEvent) {")
+      .Because("every cascade switch must end with an IEvent catch-all so no event is silently dropped.");
+    await Assert.That(dispatcher).Contains("PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly: true)")
+      .Because("the event-store-only cascade fallback persists an unmatched inner event via runtime-typed dispatch.");
+    // Exactly one catch-all per cascade method (CascadeToOutboxAsync + CascadeToEventStoreOnlyAsync) → 2 total.
+    await Assert.That(_countOccurrences(dispatcher!, "if (message is global::Whizbang.Core.IEvent) {")).IsEqualTo(2)
+      .Because("the fallback is emitted once per cascade method (outbox + event-store-only).");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_CascadeSwitch_SkipsRedundantIEventFallback_WhenReceptorReturnsBareInterfaceAsync() {
+    // Arrange - a receptor whose RESPONSE type is the bare IEvent interface. That already emits an
+    // `if (message is IEvent)` interface arm in each cascade method, so the persistence-completeness fallback
+    // must be skipped (adding a second identical catch-all would be dead code).
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateThing : ICommand { public string Id { get; init; } = string.Empty; }
+public record ThingCreated : IEvent { public string Id { get; init; } = string.Empty; }
+
+public class ThingReceptor : IReceptor<CreateThing, IEvent> {
+  public ValueTask<IEvent> HandleAsync(CreateThing message, CancellationToken ct = default)
+    => ValueTask.FromResult<IEvent>(new ThingCreated { Id = message.Id });
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - the IEvent arm appears exactly twice (one interface arm per cascade method), NOT four times: the
+    // fallback was deduped against the existing bare-IEvent interface arm.
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(_countOccurrences(dispatcher!, "if (message is global::Whizbang.Core.IEvent) {")).IsEqualTo(2)
+      .Because("a bare-IEvent receptor response already emits the interface catch-all per cascade method; the fallback must dedup against it rather than emit a redundant second arm.");
+  }
+
+  private static int _countOccurrences(string haystack, string needle) =>
+    (haystack.Length - haystack.Replace(needle, "", StringComparison.Ordinal).Length) / needle.Length;
+
   #endregion
 }

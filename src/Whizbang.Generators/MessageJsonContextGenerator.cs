@@ -1350,8 +1350,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("  // Each case uses typeof() which is compile-time and AOT-safe");
     sb.AppendLine("  var typeInfo = assemblyQualifiedTypeName switch {");
 
-    // Only generate mappings for actual message types (commands/events), not nested types
-    var messageTypes = allTypes.Where(t => t.IsCommand || t.IsEvent);
+    // Only generate mappings for actual message types (commands/events/composites), not nested types.
+    // Composites are included so the (deprecated) per-assembly switch stays consistent with the modern
+    // JsonContextRegistry name map — both must resolve composites by name for outbox/inbox fan-out.
+    var messageTypes = allTypes.Where(t => t.IsCommand || t.IsEvent || t.IsComposite);
     var typeMappings = messageTypes.Select(type => {
       // Use CLR type name format (uses + for nested types) for runtime type resolution
       // ClrTypeName is like "MyApp.Commands.CreateOrder" or "MyApp.AuthContracts+LoginCommand"
@@ -1634,8 +1636,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Generate converter registrations (WhizbangId types)
     _generateConverterRegistrations(registrations, converters);
 
-    // Generate message type registrations for cross-assembly resolution
-    var messageTypes = messages.Where(m => m.IsCommand || m.IsEvent || m.IsSerializable).ToList();
+    // Generate message type registrations for cross-assembly resolution.
+    // Composites MUST be included: the outbox-flush and inbox fan-out lifecycle deserializers resolve every
+    // row BY NAME via JsonContextRegistry.GetTypeInfoByName. A composite is IMessage but not IEvent, so
+    // without this it gets RegisterDerivedType (polymorphism) only, never RegisterTypeName → GetTypeInfoByName
+    // returns null → "Failed to resolve message type" storm and the composite never fans out.
+    var messageTypes = messages.Where(m => m.IsCommand || m.IsEvent || m.IsComposite || m.IsSerializable).ToList();
     _generateMessageTypeRegistrations(registrations, messageTypes, actualAssemblyName);
 
     // Generate MessageEnvelope<T> wrapper type registrations for transport
