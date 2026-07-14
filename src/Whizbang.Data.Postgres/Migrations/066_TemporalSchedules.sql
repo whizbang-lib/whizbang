@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_schedules (
   max_occurrences      BIGINT,                       -- bound (optional)
   occurrence_count     BIGINT NOT NULL DEFAULT 0,
   misfire_policy       SMALLINT NOT NULL DEFAULT 0,  -- 0=Coalesce | 1=CatchUp | 2=Skip
-  catch_up_shape       SMALLINT NOT NULL DEFAULT 0,  -- 0=Coalesce | 1=ReplayEach
+  catch_up_shape       SMALLINT NOT NULL DEFAULT 0,  -- reserved (misfire_policy is the live dial)
+  catch_up_lookback_ms BIGINT,                       -- CatchUp burst bound: don't replay older than this (NULL = unbounded)
   delivery_guarantee   SMALLINT NOT NULL DEFAULT 0,  -- 0=AtLeastOnce | 1=AtMostOnce
   status               SMALLINT NOT NULL DEFAULT 0,  -- 0=Active | 1=Paused
   event_type           TEXT NOT NULL,                -- occurrence event to spawn

@@ -35,7 +35,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_create_schedule(
   p_delivery_guarantee SMALLINT,
   p_event_type TEXT,
   p_event_data JSONB,
-  p_scope JSONB
+  p_scope JSONB,
+  p_catch_up_lookback_ms BIGINT DEFAULT NULL
 ) RETURNS TABLE(o_schedule_id UUID, o_next_fire_at TIMESTAMPTZ, o_was_created BOOLEAN)
 LANGUAGE plpgsql
 SET timezone = 'UTC'
@@ -61,11 +62,12 @@ BEGIN
     INSERT INTO __SCHEMA__.wh_schedules AS sch (
       schedule_id, schedule_key, stream_id, partition_number, recurrence_kind, interval_ms, cron, timezone,
       next_fire_at, until_at, max_occurrences, misfire_policy, delivery_guarantee, status,
-      event_type, event_data, scope
+      event_type, event_data, scope, catch_up_lookback_ms
     ) VALUES (
       p_schedule_id, p_schedule_key, p_stream_id, COALESCE(p_partition_number, 0), p_recurrence_kind,
       p_interval_ms, p_cron, p_timezone, v_next, p_until_at, p_max_occurrences,
-      COALESCE(p_misfire_policy, 0), COALESCE(p_delivery_guarantee, 0), 0, p_event_type, p_event_data, p_scope
+      COALESCE(p_misfire_policy, 0), COALESCE(p_delivery_guarantee, 0), 0, p_event_type, p_event_data, p_scope,
+      p_catch_up_lookback_ms
     )
     ON CONFLICT (schedule_key) WHERE schedule_key IS NOT NULL
     DO UPDATE SET
@@ -84,6 +86,7 @@ BEGIN
       event_type = EXCLUDED.event_type,
       event_data = EXCLUDED.event_data,
       scope = EXCLUDED.scope,
+      catch_up_lookback_ms = EXCLUDED.catch_up_lookback_ms,
       version = sch.version + 1
     RETURNING sch.schedule_id, sch.next_fire_at, (sch.xmax = 0) AS was_created
   )

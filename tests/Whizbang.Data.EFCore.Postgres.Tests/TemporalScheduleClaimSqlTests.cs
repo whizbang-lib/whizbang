@@ -32,14 +32,17 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
   private async Task _insertScheduleAsync(
       NpgsqlConnection conn, Guid scheduleId, Guid streamId, DateTimeOffset nextFireAt,
       short kind = 1, long? intervalMs = 60_000, string? cron = null, string eventType = "TestOccurrence",
-      short status = 0, DateTimeOffset? untilAt = null, long? maxOccurrences = null, long occurrenceCount = 0) {
+      short status = 0, DateTimeOffset? untilAt = null, long? maxOccurrences = null, long occurrenceCount = 0,
+      short misfirePolicy = 0, long? catchUpLookbackMs = null) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       INSERT INTO wh_schedules
         (schedule_id, stream_id, partition_number, recurrence_kind, interval_ms, cron, timezone,
-         next_fire_at, until_at, max_occurrences, occurrence_count, status, event_type, event_data)
+         next_fire_at, until_at, max_occurrences, occurrence_count, status, event_type, event_data,
+         misfire_policy, catch_up_lookback_ms)
       VALUES (@id, @stream, 0, @kind, @interval, @cron, 'UTC',
-         @next, @until, @maxocc, @occ, @status, @etype, '{}'::jsonb);";
+         @next, @until, @maxocc, @occ, @status, @etype, '{}'::jsonb,
+         @misfire, @lookback);";
     cmd.Parameters.AddWithValue("id", scheduleId);
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = kind });
@@ -51,7 +54,34 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("occ", occurrenceCount);
     cmd.Parameters.Add(new NpgsqlParameter("status", NpgsqlDbType.Smallint) { Value = status });
     cmd.Parameters.AddWithValue("etype", eventType);
+    cmd.Parameters.Add(new NpgsqlParameter("misfire", NpgsqlDbType.Smallint) { Value = misfirePolicy });
+    cmd.Parameters.AddWithValue("lookback", (object?)catchUpLookbackMs ?? DBNull.Value);
     await cmd.ExecuteNonQueryAsync();
+  }
+
+  private async Task<(DateTimeOffset NextFire, long Count)> _readScheduleAsync(NpgsqlConnection conn, Guid id) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT next_fire_at, occurrence_count FROM wh_schedules WHERE schedule_id = @p";
+    cmd.Parameters.AddWithValue("p", id);
+    await using var r = await cmd.ExecuteReaderAsync();
+    _ = await r.ReadAsync();
+    var next = new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(0), DateTimeKind.Utc), TimeSpan.Zero);
+    return (next, r.GetInt64(1));
+  }
+
+  private async Task<long> _countOutboxAsync(NpgsqlConnection conn, string eventType) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT count(*) FROM wh_outbox WHERE message_type = @t";
+    cmd.Parameters.AddWithValue("t", eventType);
+    return (long)(await cmd.ExecuteScalarAsync() ?? 0L);
+  }
+
+  private async Task<long> _countRunsAsync(NpgsqlConnection conn, Guid id, short status) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT count(*) FROM wh_schedule_runs WHERE schedule_id = @p AND status = @s";
+    cmd.Parameters.AddWithValue("p", id);
+    cmd.Parameters.Add(new NpgsqlParameter("s", NpgsqlDbType.Smallint) { Value = status });
+    return (long)(await cmd.ExecuteScalarAsync() ?? 0L);
   }
 
   // Calls the claim function in autocommit; returns the number of claimed rows.
@@ -92,7 +122,10 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     var instance = Guid.NewGuid();
     var stream = Guid.NewGuid();
     var schedule = Guid.NewGuid();
-    var next = DateTimeOffset.UtcNow.AddMinutes(-1);
+    // Due, but only slightly overdue (well within one interval) — so this exercises the NORMAL advance
+    // path, not the misfire path. A schedule a full interval overdue is a misfire and coalesces instead
+    // (see Misfire_Coalesce_FiresOnceThenFastForwardsAsync).
+    var next = DateTimeOffset.UtcNow.AddSeconds(-5);
     await _pinStreamAsync(conn, stream, instance);
     await _insertScheduleAsync(conn, schedule, stream, next, kind: 1, intervalMs: 60_000, eventType: "OccA");
 
@@ -230,5 +263,91 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
       .IsEqualTo(1L);
     await Assert.That(await _scalarAsync(verify, "SELECT occurrence_count FROM wh_schedules WHERE schedule_id = @p", schedule))
       .IsEqualTo(1L);
+  }
+
+  // ---- misfire policies: a schedule that fell far behind must not grind through every missed fire ----
+
+  [Test]
+  public async Task Misfire_Coalesce_FiresOnceThenFastForwardsAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var instance = Guid.NewGuid();
+    var stream = Guid.NewGuid();
+    var schedule = Guid.NewGuid();
+    await _pinStreamAsync(conn, stream, instance);
+    // 60s interval, one hour behind => ~60 missed fires.
+    await _insertScheduleAsync(conn, schedule, stream, DateTimeOffset.UtcNow.AddHours(-1),
+      kind: 1, intervalMs: 60_000, eventType: "MisCoalesce", misfirePolicy: 0);
+
+    _ = await _claimAsync(conn, instance, DateTimeOffset.UtcNow);
+
+    await Assert.That(await _countOutboxAsync(conn, "MisCoalesce")).IsEqualTo(1L)
+      .Because("coalesce collapses the whole missed window into a single catch-up fire");
+    var (nextFire, count) = await _readScheduleAsync(conn, schedule);
+    await Assert.That(count).IsEqualTo(1L);
+    await Assert.That(nextFire > DateTimeOffset.UtcNow).IsTrue()
+      .Because("the missed window is fast-forwarded past now, so it does not re-fire immediately");
+  }
+
+  [Test]
+  public async Task Misfire_Skip_DoesNotFireAndLogsSkippedRunAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var instance = Guid.NewGuid();
+    var stream = Guid.NewGuid();
+    var schedule = Guid.NewGuid();
+    await _pinStreamAsync(conn, stream, instance);
+    await _insertScheduleAsync(conn, schedule, stream, DateTimeOffset.UtcNow.AddHours(-1),
+      kind: 1, intervalMs: 60_000, eventType: "MisSkip", misfirePolicy: 2);
+
+    _ = await _claimAsync(conn, instance, DateTimeOffset.UtcNow);
+
+    await Assert.That(await _countOutboxAsync(conn, "MisSkip")).IsEqualTo(0L)
+      .Because("skip does not fire for the missed window at all");
+    await Assert.That(await _countRunsAsync(conn, schedule, 2)).IsEqualTo(1L)
+      .Because("the skip is still auditable as a Skipped run");
+    var (nextFire, count) = await _readScheduleAsync(conn, schedule);
+    await Assert.That(count).IsEqualTo(0L);   // no occurrence consumed
+    await Assert.That(nextFire > DateTimeOffset.UtcNow).IsTrue();
+  }
+
+  [Test]
+  public async Task Misfire_CatchUp_ReplaysOneStepAtATimeAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var instance = Guid.NewGuid();
+    var stream = Guid.NewGuid();
+    var schedule = Guid.NewGuid();
+    var behind = DateTimeOffset.UtcNow.AddHours(-1);
+    await _pinStreamAsync(conn, stream, instance);
+    await _insertScheduleAsync(conn, schedule, stream, behind,
+      kind: 1, intervalMs: 60_000, eventType: "MisCatchUp", misfirePolicy: 1);
+
+    _ = await _claimAsync(conn, instance, DateTimeOffset.UtcNow);
+
+    await Assert.That(await _countOutboxAsync(conn, "MisCatchUp")).IsEqualTo(1L);
+    var (nextFire, _) = await _readScheduleAsync(conn, schedule);
+    await Assert.That(nextFire <= DateTimeOffset.UtcNow).IsTrue()
+      .Because("catch-up advances a single step, so it stays behind and replays the backlog");
+  }
+
+  [Test]
+  public async Task Misfire_CatchUpWithLookback_DropsAncientBacklogAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var instance = Guid.NewGuid();
+    var stream = Guid.NewGuid();
+    var schedule = Guid.NewGuid();
+    await _pinStreamAsync(conn, stream, instance);
+    // An hour behind, but only the last 5 minutes may be replayed.
+    await _insertScheduleAsync(conn, schedule, stream, DateTimeOffset.UtcNow.AddHours(-1),
+      kind: 1, intervalMs: 60_000, eventType: "MisLookback", misfirePolicy: 1, catchUpLookbackMs: 300_000);
+
+    _ = await _claimAsync(conn, instance, DateTimeOffset.UtcNow);
+
+    await Assert.That(await _countOutboxAsync(conn, "MisLookback")).IsEqualTo(1L);
+    var (nextFire, _) = await _readScheduleAsync(conn, schedule);
+    await Assert.That(nextFire > DateTimeOffset.UtcNow.AddMinutes(-6)).IsTrue()
+      .Because("the lookback horizon bounds the replay — the ancient backlog is dropped, not replayed");
   }
 }

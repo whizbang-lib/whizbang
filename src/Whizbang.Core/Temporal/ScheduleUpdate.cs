@@ -33,6 +33,12 @@ public sealed record ScheduleUpdate {
   /// <summary>Missed-fire handling.</summary>
   public MisfirePolicy MisfirePolicy { get; init; } = MisfirePolicy.Coalesce;
 
+  /// <summary>
+  /// Burst bound for <see cref="Temporal.MisfirePolicy.CatchUp"/> — never replay occurrences older than
+  /// this. <c>null</c> = unbounded.
+  /// </summary>
+  public TimeSpan? CatchUpLookback { get; init; }
+
   /// <summary>Per-schedule delivery guarantee.</summary>
   public ScheduleDeliveryGuarantee DeliveryGuarantee { get; init; } = ScheduleDeliveryGuarantee.AtLeastOnce;
 

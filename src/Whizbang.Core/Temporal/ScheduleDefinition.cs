@@ -47,6 +47,13 @@ public sealed record ScheduleDefinition {
   /// <summary>Missed-fire handling (default coalesce).</summary>
   public MisfirePolicy MisfirePolicy { get; init; } = MisfirePolicy.Coalesce;
 
+  /// <summary>
+  /// Burst bound for <see cref="Temporal.MisfirePolicy.CatchUp"/>: never replay occurrences older than
+  /// this. A long outage therefore replays only the recent window instead of an unbounded storm.
+  /// <c>null</c> = unbounded. Ignored by the other misfire policies (they fast-forward anyway).
+  /// </summary>
+  public TimeSpan? CatchUpLookback { get; init; }
+
   /// <summary>Per-schedule delivery guarantee (default at-least-once).</summary>
   public ScheduleDeliveryGuarantee DeliveryGuarantee { get; init; } = ScheduleDeliveryGuarantee.AtLeastOnce;
 

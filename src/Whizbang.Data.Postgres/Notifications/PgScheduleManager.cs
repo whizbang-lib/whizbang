@@ -73,7 +73,8 @@ public sealed class PgScheduleManager : IScheduleManager {
         p_recurrence_kind => @kind, p_interval_ms => @interval, p_cron => @cron, p_timezone => @tz,
         p_start_at => @start, p_until_at => @until, p_max_occurrences => @maxocc,
         p_misfire_policy => @misfire, p_delivery_guarantee => @delivery,
-        p_event_type => @etype, p_event_data => @edata, p_scope => @scope)";
+        p_event_type => @etype, p_event_data => @edata, p_scope => @scope,
+        p_catch_up_lookback_ms => @lookback)";
     cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) {
       Value = definition.ScheduleId ?? TrackedGuid.NewMedo().Value
     });
@@ -94,6 +95,9 @@ public sealed class PgScheduleManager : IScheduleManager {
     cmd.Parameters.Add(new NpgsqlParameter("etype", NpgsqlDbType.Text) { Value = definition.EventType });
     cmd.Parameters.Add(new NpgsqlParameter("edata", NpgsqlDbType.Jsonb) { Value = (object?)definition.EventDataJson ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("scope", NpgsqlDbType.Jsonb) { Value = (object?)definition.ScopeJson ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("lookback", NpgsqlDbType.Bigint) {
+      Value = definition.CatchUpLookback is { } lb ? (long)lb.TotalMilliseconds : (object)DBNull.Value
+    });
 
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
@@ -155,7 +159,8 @@ public sealed class PgScheduleManager : IScheduleManager {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       SELECT o_updated, o_next_fire_at, o_version FROM wh_update_schedule(
-        @id, @ver, @kind, @interval, @cron, @tz, @start, @until, @maxocc, @misfire, @delivery, @edata, @scope)";
+        @id, @ver, @kind, @interval, @cron, @tz, @start, @until, @maxocc, @misfire, @delivery, @edata, @scope,
+        @lookback)";
     cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = scheduleId });
     cmd.Parameters.Add(new NpgsqlParameter("ver", NpgsqlDbType.Bigint) { Value = (object?)expectedVersion ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = (short)update.Kind });
@@ -171,6 +176,9 @@ public sealed class PgScheduleManager : IScheduleManager {
     cmd.Parameters.Add(new NpgsqlParameter("delivery", NpgsqlDbType.Smallint) { Value = (short)update.DeliveryGuarantee });
     cmd.Parameters.Add(new NpgsqlParameter("edata", NpgsqlDbType.Jsonb) { Value = (object?)update.EventDataJson ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("scope", NpgsqlDbType.Jsonb) { Value = (object?)update.ScopeJson ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("lookback", NpgsqlDbType.Bigint) {
+      Value = update.CatchUpLookback is { } lb ? (long)lb.TotalMilliseconds : (object)DBNull.Value
+    });
 
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {

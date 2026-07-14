@@ -84,7 +84,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_update_schedule(
   p_misfire_policy SMALLINT,
   p_delivery_guarantee SMALLINT,
   p_event_data JSONB,
-  p_scope JSONB
+  p_scope JSONB,
+  p_catch_up_lookback_ms BIGINT DEFAULT NULL
 ) RETURNS TABLE(o_updated BOOLEAN, o_next_fire_at TIMESTAMPTZ, o_version BIGINT)
 LANGUAGE plpgsql
 SET timezone = 'UTC'
@@ -117,6 +118,7 @@ BEGIN
       delivery_guarantee = COALESCE(p_delivery_guarantee, delivery_guarantee),
       event_data = p_event_data,
       scope = p_scope,
+      catch_up_lookback_ms = p_catch_up_lookback_ms,
       version = version + 1
   WHERE schedule_id = p_schedule_id
     AND status IN (0, 1)                                       -- non-terminal only
