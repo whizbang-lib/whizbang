@@ -1480,6 +1480,26 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       sb.AppendLine();
     }
 
+    // Persistence-completeness fallback: any IEvent not matched by a concrete arm above still cascades via
+    // runtime-typed dispatch, so it is NEVER silently dropped. This is required for composite fan-out — an inner
+    // event whose type no receptor PRODUCES has no concrete arm (the arm set is built from receptor response
+    // types), and without this it would fall through and vanish from the event store with no error. All events
+    // are serializer-registered, so PublishToOutboxDynamicAsync resolves them by runtime type. Skipped when a
+    // receptor already declares a bare IEvent/IMessage response, whose interface arm above already covers every
+    // event (adding a second identical catch-all would be dead code).
+    var hasEventCatchAllArm =
+        interfaceTypes.Contains("global::Whizbang.Core.IEvent")
+        || interfaceTypes.Contains("global::Whizbang.Core.Messaging.IEvent")
+        || interfaceTypes.Contains("global::Whizbang.Core.IMessage")
+        || interfaceTypes.Contains("global::Whizbang.Core.Messaging.IMessage");
+    if (!hasEventCatchAllArm) {
+      sb.AppendLine("      if (message is global::Whizbang.Core.IEvent) {");
+      sb.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
+      sb.AppendLine($"        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope{eventStoreOnlyParam});");
+      sb.AppendLine(INDENT_6_CLOSE_BRACE);
+      sb.AppendLine();
+    }
+
     return sb;
   }
 
