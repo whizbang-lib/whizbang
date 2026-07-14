@@ -129,8 +129,10 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // and reconciles on its backstop interval, draining due schedules through the claimer.
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleClaimer, PgScheduleClaimer>();
     services.AddHostedService<Whizbang.Core.Temporal.ScheduleWorker>();
-    // Temporal engine (F2): the schedule management API (create / pause / resume / cancel).
+    // Temporal engine (F2): the schedule management API (create / pause / resume / cancel / trigger / update).
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleManager, PgScheduleManager>();
+    // Saga deadlines ride the same engine — a deadline is a keyed one-shot schedule.
+    services.TryAddSingleton<Whizbang.Core.Temporal.ISagaDeadlineScheduler, Whizbang.Core.Temporal.SagaDeadlineScheduler>();
 
     // Durable-signal tail worker — delivers Delivery=Durable signals persisted to wh_signals
     // on a per-instance cursor. Must-not-miss signals (e.g. InstanceDied → orphan takeover)
