@@ -1,10 +1,12 @@
 using Whizbang.Core;
+using Whizbang.Core.Attributes;
 
 namespace ECommerce.Contracts.Commands;
 
 /// <summary>
 /// Command to create a new product in the catalog
 /// </summary>
+[PinnedId("9fee35c4-d3fc-4cd6-9edf-4e9a2abecb0f")]
 public record CreateProductCommand : ICommand {
   [StreamId]
   public required ProductId ProductId { get; init; }

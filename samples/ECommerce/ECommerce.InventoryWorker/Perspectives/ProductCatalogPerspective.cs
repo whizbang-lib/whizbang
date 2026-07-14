@@ -1,6 +1,7 @@
 using ECommerce.Contracts.Events;
 using ECommerce.Contracts.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Attributes;
 
 namespace ECommerce.InventoryWorker.Perspectives;
 
@@ -9,6 +10,7 @@ namespace ECommerce.InventoryWorker.Perspectives;
 /// Handles ProductCreatedEvent, ProductUpdatedEvent, and ProductDeletedEvent.
 /// Pure functions - no I/O, no side effects, deterministic.
 /// </summary>
+[PinnedId("b209e62a-c9eb-4950-b382-97cf9bceb34a")]
 public class ProductCatalogPerspective :
   IPerspectiveFor<ProductDto, ProductCreatedEvent, ProductUpdatedEvent, ProductDeletedEvent> {
 

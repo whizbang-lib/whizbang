@@ -1,6 +1,7 @@
 using ECommerce.Contracts.Events;
 using ECommerce.Contracts.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Attributes;
 
 namespace ECommerce.InventoryWorker.Perspectives;
 
@@ -9,6 +10,7 @@ namespace ECommerce.InventoryWorker.Perspectives;
 /// Handles ProductCreatedEvent (initializes at 0), InventoryRestockedEvent, InventoryReservedEvent, and InventoryAdjustedEvent.
 /// Pure functions - no I/O, no side effects, deterministic.
 /// </summary>
+[PinnedId("a650008d-c3b2-486a-a22c-95df48c2c2a8")]
 public class InventoryLevelsPerspective :
   IPerspectiveFor<InventoryLevelDto, ProductCreatedEvent, InventoryRestockedEvent, InventoryReservedEvent, InventoryAdjustedEvent> {
 
