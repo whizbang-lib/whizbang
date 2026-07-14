@@ -23,19 +23,27 @@ public sealed partial class ScheduleWorker : BackgroundService {
   private readonly ISignalBus? _signalBus;
   private ISignalSubscription? _dueSubscription;
   private readonly SemaphoreSlim _wake = new(0, 1);
+  private readonly ScheduleTimer _timer;
 
-  /// <summary>Constructor. The schema gate and signal bus are optional (absent in narrow tests).</summary>
+  /// <summary>Constructor. The schema gate, signal bus, and time provider are optional (defaults suffice).</summary>
   public ScheduleWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<TemporalOptions> options,
     ILogger<ScheduleWorker> logger,
     ISchemaReadyGate? schemaReadyGate = null,
-    ISignalBus? signalBus = null) {
+    ISignalBus? signalBus = null,
+    TimeProvider? timeProvider = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _schemaReadyGate = schemaReadyGate;
     _signalBus = signalBus;
+
+    // The in-memory precise wake: when the earliest owned schedule is due, ring our own doorbell.
+    _timer = new ScheduleTimer(timeProvider ?? TimeProvider.System, () => {
+      RequestImmediateRun();
+      return ValueTask.CompletedTask;
+    });
 
     // Doorbell: a schedule-due signal (arm-on-mutation NOTIFY or the poll-source backstop) wakes the
     // drain immediately instead of waiting for the next backstop tick.
@@ -83,6 +91,9 @@ public sealed partial class ScheduleWorker : BackgroundService {
     while (!stoppingToken.IsCancellationRequested) {
       try {
         _ = await TickOnceAsync(stoppingToken);
+        // Arm the precise wake to the next owned fire time, so the following fire lands on time
+        // rather than at backstop latency. Re-armed every cycle (and on each ScheduleDueSignal).
+        await ArmTimerOnceAsync(stoppingToken);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
@@ -90,7 +101,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
       }
 
       try {
-        // Wake early on a ScheduleDueSignal; otherwise reconcile at the backstop cadence.
+        // Wake early on a ScheduleDueSignal or the in-memory timer; otherwise reconcile at the backstop.
         _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(_options.BackstopIntervalMilliseconds), stoppingToken);
       } catch (OperationCanceledException) {
         break;
@@ -120,12 +131,30 @@ public sealed partial class ScheduleWorker : BackgroundService {
     return total;
   }
 
+  /// <summary>
+  /// Query the earliest owned fire time and arm the in-memory timer to it (replacing any prior arming),
+  /// so the timer rings the doorbell exactly then. No-op when no claimer is registered. Public test seam.
+  /// </summary>
+  public async Task ArmTimerOnceAsync(CancellationToken cancellationToken = default) {
+    using var scope = _scopeFactory.CreateScope();
+    var claimer = scope.ServiceProvider.GetService<IScheduleClaimer>();
+    if (claimer is null) {
+      return;
+    }
+    var next = await claimer.GetNextFireTimeAsync(cancellationToken);
+    _timer.ArmFor(next);
+  }
+
   /// <summary>Test seam: consumes and reports whether a wake is currently pending.</summary>
   internal bool TryConsumeWakeForTests() => _wake.Wait(0);
+
+  /// <summary>Test seam: the in-memory timer (inspect <see cref="ScheduleTimer.ArmedFor"/> / WakeCount).</summary>
+  internal ScheduleTimer TimerForTests => _timer;
 
   /// <inheritdoc />
   public override void Dispose() {
     _dueSubscription?.Dispose();
+    _timer.Dispose();
     _wake.Dispose();
     base.Dispose();
   }

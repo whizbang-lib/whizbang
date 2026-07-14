@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -19,15 +20,18 @@ public class ScheduleWorkerTests {
   private sealed class FakeClaimer : IScheduleClaimer {
     private readonly Queue<int> _returns;
     public int Calls { get; private set; }
+    public DateTimeOffset? NextFireTime { get; set; }
     public FakeClaimer(params int[] returns) => _returns = new Queue<int>(returns);
     public Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default) {
       Calls++;
       return Task.FromResult(_returns.Count > 0 ? _returns.Dequeue() : 0);
     }
+    public Task<DateTimeOffset?> GetNextFireTimeAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(NextFireTime);
   }
 
   private static (ScheduleWorker Worker, FakeClaimer? Claimer) _create(
-      TemporalOptions? options = null, ISignalBus? bus = null, FakeClaimer? claimer = null) {
+      TemporalOptions? options = null, ISignalBus? bus = null, FakeClaimer? claimer = null, TimeProvider? clock = null) {
     var services = new ServiceCollection();
     if (claimer is not null) {
       services.AddSingleton<IScheduleClaimer>(claimer);
@@ -38,7 +42,8 @@ public class ScheduleWorkerTests {
       Options.Create(options ?? new TemporalOptions()),
       NullLogger<ScheduleWorker>.Instance,
       schemaReadyGate: null,
-      signalBus: bus);
+      signalBus: bus,
+      timeProvider: clock);
     return (worker, claimer);
   }
 
@@ -100,5 +105,41 @@ public class ScheduleWorkerTests {
     await ((ISignalSink)bus).ReceiveAsync(new ScheduleDueSignal());
 
     await Assert.That(worker.TryConsumeWakeForTests()).IsTrue();
+  }
+
+  [Test]
+  public async Task ArmTimerOnce_ArmsToClaimerNextTimeAsync() {
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
+    var next = clock.GetUtcNow().AddSeconds(30);
+    var claimer = new FakeClaimer { NextFireTime = next };
+    var (worker, _) = _create(claimer: claimer, clock: clock);
+
+    await worker.ArmTimerOnceAsync();
+
+    await Assert.That(worker.TimerForTests.ArmedFor).IsEqualTo(next);
+  }
+
+  [Test]
+  public async Task ArmTimerOnce_NoClaimer_LeavesTimerDisarmedAsync() {
+    var (worker, _) = _create();   // no claimer registered
+
+    await worker.ArmTimerOnceAsync();
+
+    await Assert.That(worker.TimerForTests.ArmedFor).IsNull();
+  }
+
+  [Test]
+  public async Task Timer_FiresAtNextFireTime_WakesWorkerAsync() {
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
+    var claimer = new FakeClaimer { NextFireTime = clock.GetUtcNow().AddSeconds(30) };
+    var (worker, _) = _create(claimer: claimer, clock: clock);
+    await worker.ArmTimerOnceAsync();
+
+    clock.Advance(TimeSpan.FromSeconds(29));
+    await Assert.That(worker.TryConsumeWakeForTests()).IsFalse();   // not yet due
+
+    clock.Advance(TimeSpan.FromSeconds(1));                          // now at the fire time
+    await Assert.That(worker.TryConsumeWakeForTests()).IsTrue();     // timer rang the doorbell
+    await Assert.That(worker.TimerForTests.WakeCount).IsEqualTo(1L);
   }
 }

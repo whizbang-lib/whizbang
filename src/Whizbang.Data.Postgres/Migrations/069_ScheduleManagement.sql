@@ -42,6 +42,8 @@ SET timezone = 'UTC'
 AS $$
 DECLARE
   v_next TIMESTAMPTZ;
+  v_id UUID;
+  v_created BOOLEAN;
 BEGIN
   -- Initial next fire: one-shot fires at start (or now); interval fires one interval out (or at start);
   -- cron fires at the next matching time after start/now.
@@ -55,7 +57,6 @@ BEGIN
     RAISE EXCEPTION 'Schedule has no valid next fire (kind=%, cron=%)', p_recurrence_kind, p_cron;
   END IF;
 
-  RETURN QUERY
   WITH upserted AS (
     INSERT INTO __SCHEMA__.wh_schedules AS sch (
       schedule_id, schedule_key, stream_id, partition_number, recurrence_kind, interval_ms, cron, timezone,
@@ -86,7 +87,18 @@ BEGIN
       version = sch.version + 1
     RETURNING sch.schedule_id, sch.next_fire_at, (sch.xmax = 0) AS was_created
   )
-  SELECT upserted.schedule_id, upserted.next_fire_at, upserted.was_created FROM upserted;
+  SELECT upserted.schedule_id, upserted.was_created INTO v_id, v_created FROM upserted;
+
+  -- Arm-on-mutation: ring the owning instance's schedule doorbell so it re-arms its in-memory timer
+  -- to this schedule's (possibly near-term) next_fire_at without waiting for the backstop.
+  IF p_stream_id IS NOT NULL THEN
+    PERFORM __SCHEMA__.notify_instance_owners('schedule', ARRAY[p_stream_id]);
+  END IF;
+
+  o_schedule_id := v_id;
+  o_next_fire_at := v_next;
+  o_was_created := v_created;
+  RETURN NEXT;
 END;
 $$;
 
@@ -108,6 +120,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   v_version BIGINT;
+  v_stream UUID;
 BEGIN
   -- Only Active(0) / Paused(1) are transitionable; Completed(2) / Cancelled(3) are terminal.
   UPDATE __SCHEMA__.wh_schedules
@@ -116,9 +129,14 @@ BEGIN
   WHERE schedule_id = p_schedule_id
     AND status IN (0, 1)
     AND (p_expected_version IS NULL OR version = p_expected_version)
-  RETURNING version INTO v_version;
+  RETURNING version, stream_id INTO v_version, v_stream;
 
   IF FOUND THEN
+    -- Arm-on-mutation: ring the owning instance's schedule doorbell so it re-arms its timer
+    -- (a resume may add a near-term fire; a pause/cancel removes one from the minimum).
+    IF v_stream IS NOT NULL THEN
+      PERFORM __SCHEMA__.notify_instance_owners('schedule', ARRAY[v_stream]);
+    END IF;
     RETURN QUERY SELECT TRUE, v_version;
   ELSE
     RETURN QUERY SELECT FALSE, NULL::BIGINT;

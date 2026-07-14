@@ -13,4 +13,11 @@ public interface IScheduleClaimer {
   /// fired (0 when nothing is due). The caller drains by repeating while the count equals the limit.
   /// </summary>
   Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// The earliest upcoming <c>next_fire_at</c> among this instance's owned Active schedules, or
+  /// <c>null</c> when none are pending. Drives the in-memory timer so the worker wakes exactly at the
+  /// next fire instead of at backstop latency.
+  /// </summary>
+  Task<DateTimeOffset?> GetNextFireTimeAsync(CancellationToken cancellationToken = default);
 }

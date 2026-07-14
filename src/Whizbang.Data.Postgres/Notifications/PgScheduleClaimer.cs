@@ -70,4 +70,27 @@ public sealed partial class PgScheduleClaimer : IScheduleClaimer {
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return result is null or DBNull ? 0 : Convert.ToInt32(result, CultureInfo.InvariantCulture);
   }
+
+  /// <inheritdoc />
+  public async Task<DateTimeOffset?> GetNextFireTimeAsync(CancellationToken cancellationToken = default) {
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    if (resolution.ConnectionString is null) {
+      return null;
+    }
+
+    await using var conn = new NpgsqlConnection(resolution.ConnectionString);
+    await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      SELECT MIN(sc.next_fire_at)
+      FROM wh_schedules sc
+      JOIN wh_active_streams s ON s.stream_id = sc.stream_id
+      WHERE s.assigned_instance_id = @i AND sc.status = 0";
+    cmd.Parameters.Add(new NpgsqlParameter("i", NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    if (result is null or DBNull) {
+      return null;
+    }
+    return new DateTimeOffset(DateTime.SpecifyKind((DateTime)result, DateTimeKind.Utc), TimeSpan.Zero);
+  }
 }
