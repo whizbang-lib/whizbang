@@ -1344,6 +1344,14 @@ public record OutboxWork : IHasMessageIdAndStatus {
   public required int Attempts { get; init; }
 
   /// <summary>
+  /// The message's raw <c>wh_outbox.metadata</c> JSON, as stored. The typed envelope metadata is a closed
+  /// shape, so provider-stamped keys (e.g. the temporal engine's <c>scheduleId</c> /
+  /// <c>deliveryGuarantee</c> / <c>authorityPrincipalId</c> on a schedule occurrence) only survive here.
+  /// Consumed by <c>IOccurrencePublishGate</c> to recognise an occurrence before it is published.
+  /// </summary>
+  public string? MetadataJson { get; init; }
+
+  /// <summary>
   /// Current processing status flags.
   /// Indicates which stages have been completed (e.g., Stored, EventStored, Published).
   /// </summary>

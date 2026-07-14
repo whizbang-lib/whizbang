@@ -133,6 +133,12 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleManager, PgScheduleManager>();
     // Saga deadlines ride the same engine — a deadline is a keyed one-shot schedule.
     services.TryAddSingleton<Whizbang.Core.Temporal.ISagaDeadlineScheduler, Whizbang.Core.Temporal.SagaDeadlineScheduler>();
+    // Pre-fire gate (F2 increment 6b): runs the developer's IScheduleFireHook right before a scheduled
+    // occurrence executes. Inert unless the developer registers an IScheduleFireHook — with none, the gate
+    // proceeds for everything and publishing is byte-for-byte unchanged.
+    services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleOccurrenceStore, PgScheduleOccurrenceStore>();
+    services.TryAddSingleton<Whizbang.Core.Workers.IOccurrencePublishGate,
+      Whizbang.Core.Temporal.ScheduleOccurrencePublishGate>();
 
     // Durable-signal tail worker — delivers Delivery=Durable signals persisted to wh_signals
     // on a per-instance cursor. Must-not-miss signals (e.g. InstanceDied → orphan takeover)

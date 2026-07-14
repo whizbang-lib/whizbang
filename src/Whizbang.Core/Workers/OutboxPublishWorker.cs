@@ -53,8 +53,11 @@ public sealed partial class OutboxPublishWorker(
   IDeadLetterStore? deadLetterStore = null,
   IGenerationProvider? generationProvider = null,
   Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
-  IPinnedConnectionPool? pinnedPool = null) : BackgroundService {
+  IPinnedConnectionPool? pinnedPool = null,
+  IOccurrencePublishGate? occurrenceGate = null) : BackgroundService {
   private readonly IPinnedConnectionPool _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
+  // Defaults to the no-op gate, so hosts that never registered one publish exactly as before.
+  private readonly IOccurrencePublishGate _occurrenceGate = occurrenceGate ?? new NoOpOccurrencePublishGate();
   private const string LIFECYCLE_PRE_OUTBOX_ASYNC = "Lifecycle PreOutboxDetached";
   private const string LIFECYCLE_PRE_OUTBOX_INLINE = "Lifecycle PreOutboxInline";
   private const string LIFECYCLE_POST_OUTBOX_ASYNC = "Lifecycle PostOutboxDetached";
@@ -176,6 +179,24 @@ public sealed partial class OutboxPublishWorker(
           await using var pin = await _pinnedPool.TryPinForAsync(typeof(OutboxPublishWorker), leaseCt);
           using var __ctx = PinnedConnectionContext.Push(pin.Connection);
           await using var scope = _scopeFactory.CreateAsyncScope();
+
+          // Pre-fire gate (F2): for a schedule occurrence this runs the developer's IScheduleFireHook
+          // BEFORE the job executes — check security / refresh the run-as authority / skip / cancel /
+          // defer. Non-occurrence messages (and hosts with no hook) short-circuit to Proceed, so the
+          // normal publish path is untouched. Runs before the pre-outbox lifecycle so a dropped
+          // occurrence does nothing at all.
+          var gateDecision = await _occurrenceGate.EvaluateAsync(work, leaseCt);
+          if (gateDecision is not OccurrencePublishDecision.Proceed) {
+            if (gateDecision is OccurrencePublishDecision.Drop) {
+              // Complete it without publishing — the occurrence is dropped, not delivered.
+              await _outboxCompletionChannel.EnqueueAsync(work.MessageId, leaseCt);
+            } else {
+              // Deferred: the gate already rescheduled the message; just let go of it.
+              _workChannelWriter.RemoveInFlight(work.MessageId);
+            }
+            return;
+          }
+
           await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, leaseCt);
           var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
           var traceContext = _extractTraceContext(work);
