@@ -21,15 +21,22 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
   private async Task<CreateResult> _createAsync(
       NpgsqlConnection conn, Guid scheduleId, short kind,
       long? intervalMs = null, string? cron = null, DateTimeOffset? startAt = null,
-      string? key = null, string eventType = "MgmtOcc") {
+      string? key = null, string eventType = "MgmtOcc", Guid? authority = null) {
     await using var cmd = conn.CreateCommand();
+    // p_misfire_policy / p_delivery_guarantee are SMALLINT. A bare `0` literal is INTEGER, and
+    // integer→smallint is not an implicit cast, so Postgres fails to RESOLVE the overload and
+    // reports the misleading "function wh_create_schedule(...) does not exist" — the function is
+    // there, the argument types just don't match. Cast explicitly.
+    // p_authority_principal_id is REQUIRED (the function raises without it): a schedule must name
+    // the principal its occurrences run as.
     cmd.CommandText = @"
       SELECT o_schedule_id, o_next_fire_at, o_was_created FROM wh_create_schedule(
         p_schedule_id => @id, p_schedule_key => @key, p_stream_id => @id, p_partition_number => 0,
         p_recurrence_kind => @kind, p_interval_ms => @interval, p_cron => @cron, p_timezone => 'UTC',
         p_start_at => @start, p_until_at => NULL, p_max_occurrences => NULL,
-        p_misfire_policy => 0, p_delivery_guarantee => 0,
-        p_event_type => @etype, p_event_data => '{}'::jsonb, p_scope => NULL)";
+        p_misfire_policy => 0::SMALLINT, p_delivery_guarantee => 0::SMALLINT,
+        p_event_type => @etype, p_event_data => '{}'::jsonb, p_scope => NULL,
+        p_authority_principal_id => @authority)";
     cmd.Parameters.AddWithValue("id", scheduleId);
     cmd.Parameters.AddWithValue("key", (object?)key ?? DBNull.Value);
     cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = kind });
@@ -37,6 +44,7 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("cron", (object?)cron ?? DBNull.Value);
     cmd.Parameters.Add(new NpgsqlParameter("start", NpgsqlDbType.TimestampTz) { Value = (object?)startAt ?? DBNull.Value });
     cmd.Parameters.AddWithValue("etype", eventType);
+    cmd.Parameters.AddWithValue("authority", authority ?? Guid.NewGuid());
     await using var r = await cmd.ExecuteReaderAsync();
     _ = await r.ReadAsync();
     var next = new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
@@ -62,6 +70,29 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
     await using var r = await cmd.ExecuteReaderAsync();
     _ = await r.ReadAsync();
     return (r.GetInt16(0), r.GetInt64(1), r.GetInt64(2));
+  }
+
+  [Test]
+  public async Task Create_WithoutAuthorityPrincipal_RaisesAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      SELECT o_schedule_id FROM wh_create_schedule(
+        p_schedule_id => @id, p_schedule_key => NULL, p_stream_id => @id, p_partition_number => 0,
+        p_recurrence_kind => 1::SMALLINT, p_interval_ms => 60000, p_cron => NULL, p_timezone => 'UTC',
+        p_start_at => NOW(), p_until_at => NULL, p_max_occurrences => NULL,
+        p_misfire_policy => 0::SMALLINT, p_delivery_guarantee => 0::SMALLINT,
+        p_event_type => 'NoAuthOcc', p_event_data => '{}'::jsonb, p_scope => NULL,
+        p_authority_principal_id => NULL)";
+    cmd.Parameters.AddWithValue("id", Guid.NewGuid());
+
+    var ex = await Assert.ThrowsAsync<PostgresException>(async () => await cmd.ExecuteScalarAsync());
+
+    await Assert.That(ex!.MessageText).Contains("authority principal")
+      .Because("LOCK-IN: run-as authority is EXPLICIT and REQUIRED — there is no implicit "
+        + "creator-authority fallback, so scheduling without naming a principal must be rejected "
+        + "at the DB, not silently defaulted.");
   }
 
   [Test]
