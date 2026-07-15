@@ -38,8 +38,8 @@ public class HeartbeatWorkerTests {
     }
 
     // Unused — fail loud if any other path is exercised.
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default)
-      => throw new InvalidOperationException("HeartbeatWorker test must not call ProcessWorkBatchAsync");
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default)
+      => throw new InvalidOperationException("HeartbeatWorker test must not call ClaimWorkAsync");
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default)
       => Task.CompletedTask;

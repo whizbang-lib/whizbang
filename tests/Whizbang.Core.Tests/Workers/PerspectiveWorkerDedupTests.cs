@@ -228,7 +228,7 @@ public class PerspectiveWorkerDedupTests {
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
     // Wait for next cycle to ensure in-flight marking is complete
-    await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForClaimCallsAsync(2, TimeSpan.FromSeconds(5));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -263,7 +263,7 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await coordinator.WaitForProcessWorkBatchCallsAsync(3, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForClaimCallsAsync(3, TimeSpan.FromSeconds(5));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -295,7 +295,7 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await coordinator.WaitForProcessWorkBatchCallsAsync(3, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForClaimCallsAsync(3, TimeSpan.FromSeconds(5));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -361,7 +361,7 @@ public class PerspectiveWorkerDedupTests {
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForClaimCallsAsync(2, TimeSpan.FromSeconds(5));
     await Task.Delay(200);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -401,7 +401,7 @@ public class PerspectiveWorkerDedupTests {
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForClaimCallsAsync(2, TimeSpan.FromSeconds(5));
     await Task.Delay(200);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -607,7 +607,7 @@ public class PerspectiveWorkerDedupTests {
 
     /// <summary>
     /// Background loop that pumps cycles through the harness while the worker is alive.
-    /// Each cycle simulates one legacy ProcessWorkBatchAsync round-trip. Stops on cancellation.
+    /// Each cycle simulates one claim cycle. Stops on cancellation.
     /// </summary>
     public async Task RunPumpLoopAsync(PerspectiveWorkerTestHarness harness, CancellationToken ct) {
       try {
@@ -621,8 +621,8 @@ public class PerspectiveWorkerDedupTests {
     }
 
     /// <summary>
-    /// Pump one batch of work through the harness, simulating a single ProcessWorkBatchAsync cycle.
-    /// Increments _callCount so WaitForProcessWorkBatchCallsAsync still resolves. Tests call this
+    /// Pump one batch of work through the harness, simulating a single claim cycle.
+    /// Increments _callCount so WaitForClaimCallsAsync still resolves. Tests call this
     /// repeatedly to drive multi-cycle scenarios.
     /// </summary>
     public async Task PumpCycleAsync(PerspectiveWorkerTestHarness harness, CancellationToken ct = default) {
@@ -650,17 +650,17 @@ public class PerspectiveWorkerDedupTests {
       }
     }
 
-    public async Task WaitForProcessWorkBatchCallsAsync(int count, TimeSpan timeout) {
+    public async Task WaitForClaimCallsAsync(int count, TimeSpan timeout) {
       ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _waiters.Length);
       using var cts = new CancellationTokenSource(timeout);
       try {
         await _waiters[count - 1].Task.WaitAsync(cts.Token);
       } catch (OperationCanceledException) {
-        throw new TimeoutException($"ProcessWorkBatchAsync was not called {count} times within {timeout}. Current count: {_callCount}");
+        throw new TimeoutException($"ClaimWorkAsync was not called {count} times within {timeout}. Current count: {_callCount}");
       }
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var currentCall = Interlocked.Increment(ref _callCount);
 
       List<PerspectiveWork> work;

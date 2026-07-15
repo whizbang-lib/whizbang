@@ -7,10 +7,9 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Encapsulates the queue state shared across work coordinator strategies.
-/// Owns the message/completion/failure lists and provides add, clear, audit merge,
-/// and <see cref="ProcessWorkBatchRequest"/> construction helpers.
-/// This is a composition helper -- each strategy owns an instance and delegates queue
-/// operations to it while keeping its own FlushAsync, logging, and lifecycle logic.
+/// Owns the message/completion/failure lists and provides add, clear, and audit-merge
+/// helpers. This is a composition helper -- each strategy owns an instance and delegates
+/// queue operations to it while keeping its own FlushAsync, logging, and lifecycle logic.
 /// </summary>
 internal sealed class WorkCoordinatorQueues {
   internal readonly List<OutboxMessage> OutboxMessages = [];
@@ -109,41 +108,6 @@ internal sealed class WorkCoordinatorQueues {
     OutboxFailures.Count == 0 &&
     InboxCompletions.Count == 0 &&
     InboxFailures.Count == 0;
-
-  /// <summary>
-  /// Builds a <see cref="ProcessWorkBatchRequest"/> from the current queue contents
-  /// and the provided instance/options metadata.
-  /// </summary>
-  internal ProcessWorkBatchRequest BuildRequest(
-    IServiceInstanceProvider instanceProvider,
-    WorkCoordinatorOptions options,
-    WorkBatchOptions flags
-  ) {
-    return new ProcessWorkBatchRequest {
-      InstanceId = instanceProvider.InstanceId,
-      ServiceName = instanceProvider.ServiceName,
-      HostName = instanceProvider.HostName,
-      ProcessId = instanceProvider.ProcessId,
-      Metadata = null,
-      OutboxCompletions = [.. OutboxCompletions],
-      OutboxFailures = [.. OutboxFailures],
-      InboxCompletions = [.. InboxCompletions],
-      InboxFailures = [.. InboxFailures],
-      ReceptorCompletions = [],
-      ReceptorFailures = [],
-      PerspectiveCompletions = [],
-      PerspectiveEventCompletions = [],
-      PerspectiveFailures = [],
-      NewOutboxMessages = [.. OutboxMessages],
-      NewInboxMessages = [.. InboxMessages],
-      RenewOutboxLeaseIds = [],
-      RenewInboxLeaseIds = [],
-      Flags = flags | (options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None),
-      PartitionCount = options.PartitionCount,
-      LeaseSeconds = options.LeaseSeconds,
-      AbandonStaleInstanceThresholdSeconds = options.AbandonStaleInstanceThresholdSeconds
-    };
-  }
 
   /// <summary>
   /// Clears all queues after a successful flush,

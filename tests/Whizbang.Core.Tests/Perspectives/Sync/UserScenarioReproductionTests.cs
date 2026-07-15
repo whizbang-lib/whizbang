@@ -246,36 +246,31 @@ internal sealed class MockWorkCoordinatorWithTracker(ISyncEventTracker tracker, 
   private readonly ISyncEventTracker _tracker = tracker;
   private readonly string _perspectiveName = perspectiveName;
 
-  public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
-    // Check if there are any pending events for any of the sync inquiries
+  public Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+    IReadOnlyList<SyncInquiry> inquiries,
+    CancellationToken cancellationToken = default) {
+    // Check if there are any pending events for any of the sync inquiries.
     var results = new List<SyncInquiryResult>();
 
-    if (request.PerspectiveSyncInquiries is { Length: > 0 }) {
-      foreach (var inquiry in request.PerspectiveSyncInquiries) {
-        var pendingEvents = _tracker.GetPendingEvents(
-          inquiry.StreamId,
-          inquiry.PerspectiveName ?? _perspectiveName,
-          null); // EventTypes filtering done by tracker
+    foreach (var inquiry in inquiries) {
+      var pendingEvents = _tracker.GetPendingEvents(
+        inquiry.StreamId,
+        inquiry.PerspectiveName ?? _perspectiveName,
+        null); // EventTypes filtering done by tracker
 
-        // If no pending events, we're synced
-        var pendingCount = pendingEvents.Count;
+      // If no pending events, we're synced
+      var pendingCount = pendingEvents.Count;
 
-        results.Add(new SyncInquiryResult {
-          InquiryId = inquiry.InquiryId,
-          StreamId = inquiry.StreamId,
-          PendingCount = pendingCount,
-          ProcessedCount = pendingCount == 0 ? 1 : 0,
-          ProcessedEventIds = pendingCount == 0 ? inquiry.EventIds : []
-        });
-      }
+      results.Add(new SyncInquiryResult {
+        InquiryId = inquiry.InquiryId,
+        StreamId = inquiry.StreamId,
+        PendingCount = pendingCount,
+        ProcessedCount = pendingCount == 0 ? 1 : 0,
+        ProcessedEventIds = pendingCount == 0 ? inquiry.EventIds : []
+      });
     }
 
-    return Task.FromResult(new WorkBatch {
-      OutboxWork = [],
-      InboxWork = [],
-      PerspectiveWork = [],
-      SyncInquiryResults = results
-    });
+    return Task.FromResult<IReadOnlyList<SyncInquiryResult>>(results);
   }
 
   public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {

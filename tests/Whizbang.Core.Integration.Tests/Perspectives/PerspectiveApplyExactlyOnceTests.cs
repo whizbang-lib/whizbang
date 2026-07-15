@@ -406,7 +406,7 @@ public class PerspectiveApplyExactlyOnceTests {
 
   /// <summary>
   /// Suspect #2 in the plan: the generator or consumer DI code registers the same
-  /// <c>IPerspectiveRunner&lt;T&gt;</c> twice, so every <c>ProcessWorkBatchAsync</c> cycle
+  /// <c>IPerspectiveRunner&lt;T&gt;</c> twice, so every <c>ClaimWorkAsync</c> cycle
   /// invokes both registrations.
   /// </summary>
   [Test]
@@ -820,7 +820,7 @@ public class PerspectiveApplyExactlyOnceTests {
       return tcs.Task.WaitAsync(timeout);
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
       foreach (var kvp in _cycleWaiters) {
         if (current >= kvp.Key) {

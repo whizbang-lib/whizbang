@@ -789,7 +789,7 @@ public class PerspectiveSyncAwaiterTests {
 
     // Mock returns synced with ProcessedEventIds matching expected
     var coordinator = new MockWorkCoordinator((request, _) => {
-      var inquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      var inquiry = (request.Count > 0 ? request[0] : null);
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],

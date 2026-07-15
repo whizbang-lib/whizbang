@@ -237,7 +237,7 @@ public class PerspectiveWorkerEventTypeProviderTests {
       }
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
       PerspectiveWorkToReturn.Clear();
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = work });

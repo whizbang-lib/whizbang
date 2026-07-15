@@ -498,19 +498,8 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
 
     public async Task WaitForFlushAsync(TimeSpan timeout) {
       if (!await _flushSignal.WaitAsync(timeout)) {
-        throw new TimeoutException("ProcessWorkBatchAsync was not called within timeout");
+        throw new TimeoutException("The work coordinator store path was not called within timeout");
       }
-    }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
     }
 
     public Task StoreOutboxMessagesAsync(
@@ -548,13 +537,6 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
   }
 
   private sealed class BatchFullCoverageThrowingCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,

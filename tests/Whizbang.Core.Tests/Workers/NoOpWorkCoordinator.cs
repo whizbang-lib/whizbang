@@ -22,7 +22,7 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
   /// <summary>All inbox messages stored via StoreInboxMessagesAsync, for test inspection.</summary>
   public List<InboxMessage> StoredMessages { get; } = [];
 
-  public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) =>
+  public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
     Task.FromResult(new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
