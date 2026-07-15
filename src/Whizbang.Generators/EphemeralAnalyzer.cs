@@ -15,6 +15,7 @@ namespace Whizbang.Generators;
 /// and the compiler build (<c>dotnet build</c>).
 /// </summary>
 /// <remarks>This file lands WHIZ130 (mixed-mode Apply). WHIZ131-134 follow.</remarks>
+/// <docs>fundamentals/events/ephemeral-events</docs>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class EphemeralAnalyzer : DiagnosticAnalyzer {
   private const string CATEGORY = "Whizbang.Ephemeral";

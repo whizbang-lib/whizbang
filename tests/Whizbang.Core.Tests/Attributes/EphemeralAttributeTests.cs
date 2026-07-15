@@ -13,6 +13,7 @@ namespace Whizbang.Core.Tests.Attributes;
 /// marker interface), the inheritance flag, the enum values, and the shipped default-profile marker.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+/// <tests>Whizbang.Core/Attributes/EphemeralAttribute.cs</tests>
 [Category("Core")]
 [Category("Attributes")]
 public class EphemeralAttributeTests {

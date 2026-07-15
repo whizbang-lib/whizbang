@@ -11,6 +11,7 @@ namespace Whizbang.Generators.Tests;
 /// implemented interfaces, most-specific-wins — so <c>[Ephemeral]</c> composed on a base or interface
 /// propagates, and a receiver/registry can read the mode without the compiled attribute.
 /// </summary>
+/// <tests>Whizbang.Generators/MessageTypeCatalogGenerator.cs</tests>
 public class MessageTypeCatalogEphemeralTests {
   private static async Task<string> _generateAsync(string source) {
     var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
