@@ -116,12 +116,16 @@ public class WorkflowSchemaEvolutionComplexTypeTests : IAsyncDisposable {
         .UseNpgsql(_dataSource)
         .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     _context = new WorkflowEvoDbContext(optionsBuilder.Options);
+    // Subscribe the coalescer hook. It only coalesces models that have a registered coalescer, so the bug
+    // characterization tests (which don't register one) are unaffected; the FIX tests register one.
+    PerspectiveDataCoalescer.EnsureHooked(_context);
 
     await _initializeSchemaAsync();
   }
 
   [After(Test)]
   public async Task TeardownAsync() {
+    PerspectiveDataCoalescer.Clear();  // global registry — reset so tests stay independent
     if (_context != null) { await _context.DisposeAsync(); _context = null; }
     if (_dataSource != null) { await _dataSource.DisposeAsync(); _dataSource = null; }
     if (_testDatabaseName != null) {
@@ -333,5 +337,82 @@ public class WorkflowSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await Assert.That(saveError).IsTypeOf<InvalidOperationException>();
     await Assert.That(saveError!.Message).Contains("null value when saving changes")
       .Because("this is the exact PrepareToSave failure (InvalidOperationException over a null complex collection) reported in the July 13–14 incident.");
+  }
+
+  // The per-model coalescer a generator would emit (alongside the SplitMode hydrators already generated in
+  // EFCoreServiceRegistrationGenerator): null-coalesce every nested collection in Data — and the framework's
+  // PerspectiveScope.Extensions, a required complex collection that materializes null the same way.
+  private static void _registerCoalescer() {
+    PerspectiveDataCoalescer.Register(typeof(PerspectiveRow<WorkflowLikeModel>), entity => {
+      var row = (PerspectiveRow<WorkflowLikeModel>)entity;
+#pragma warning disable CS8073 // EF materializes these non-nullable collections as null — the defect being fixed
+      row.Scope.Extensions ??= [];
+      var data = row.Data;
+      if (data is null) {
+        return;
+      }
+      data.Stages ??= [];
+      foreach (var stage in data.Stages) {
+        stage.Steps ??= [];
+        foreach (var step in stage.Steps) {
+          step.AllowedPersonaIds ??= [];
+        }
+      }
+#pragma warning restore CS8073
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Test 6 (THE FIX — read) — with the coalescer registered, an OLD-SHAPE row reads back with an EMPTY nested
+  // collection instead of null. No more poison-on-touch: consumers/Apply can read the new field safely.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  [Test]
+  [Timeout(120000)]
+  public async Task WithCoalescer_OldShapeRow_ReadsBackEmptyNestedCollection_NotNullAsync(CancellationToken ct) {
+    _registerCoalescer();
+    Guid id = _idProvider.NewGuid();
+    await _seedOldShapeRowAsync(id);
+
+    // Tracked read → ChangeTracker.Tracked fires → PerspectiveDataCoalescer coalesces the null collection to empty.
+    var row = await _context!.Set<PerspectiveRow<WorkflowLikeModel>>().FirstAsync(r => r.Id == id, ct);
+
+    await Assert.That(row.Data.Stages[0].Steps[0].AllowedPersonaIds).IsNotNull()
+      .Because("the coalescer replaces the JSON-absent nested collection (null on EF Core 10) with an empty list.");
+    await Assert.That(row.Data.Stages[0].Steps[0].AllowedPersonaIds!).Count().IsEqualTo(0)
+      .Because("old-shape rows must read back with an EMPTY collection, not null — the materialization-coalesce fix.");
+    await Assert.That(row.Data.Stages[0].Steps[1].AllowedPersonaIds!).Count().IsEqualTo(0)
+      .Because("every step's new nested collection is coalesced, not just the first.");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Test 7 (THE FIX — save) — with the coalescer, a tracked load→mutate→save over an OLD-SHAPE row SAVES
+  // CLEANLY: the coalescer fills the null complex collections before PrepareToSave inspects them, so the
+  // incident's InvalidOperationException never fires (compare Test 5, which throws without the coalescer).
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  [Test]
+  [Timeout(120000)]
+  public async Task WithCoalescer_RawEfLoadMutateSave_OverOldShapeRow_SavesCleanlyAsync(CancellationToken ct) {
+    _registerCoalescer();
+    Guid id = _idProvider.NewGuid();
+    await _seedOldShapeRowAsync(id);
+
+    var row = await _context!.Set<PerspectiveRow<WorkflowLikeModel>>().FirstAsync(r => r.Id == id, ct);
+    row.Data.Stages[0].Steps.Add(new StepLike { Label = "Step 3 (tracked-add)", AllowedPersonaIds = [Guid.NewGuid()] });
+    row.UpdatedAt = DateTime.UtcNow;
+
+    Exception? saveError = null;
+    try {
+      await _context.SaveChangesAsync(ct);
+    } catch (Exception ex) {
+      saveError = ex;
+    }
+
+    await Assert.That(saveError).IsNull()
+      .Because($"with the coalescer, the previously-null complex collections are empty before save, so PrepareToSave.CheckForNullComplexProperties passes (Test 5 throws here without it). Threw: {saveError}");
+
+    _context.ChangeTracker.Clear();
+    var reread = await _context.Set<PerspectiveRow<WorkflowLikeModel>>().AsNoTracking().FirstAsync(r => r.Id == id, ct);
+    await Assert.That(reread.Data.Stages[0].Steps).Count().IsEqualTo(3)
+      .Because("the coalesced-and-grown collection persisted.");
   }
 }
