@@ -113,10 +113,13 @@ jobs:
               echo "All $COUNT coverage artifacts present."
               exit 0
             fi
-            FAILED=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
-              --jq '[.jobs[] | select((.name | test("Tests")) and (.conclusion == "failure" or .conclusion == "cancelled"))] | length' 2>/dev/null || echo 0)
-            if [ "${FAILED:-0}" -gt 0 ]; then
-              echo "::error::$FAILED test job(s) failed — aborting quality analysis."
+            # Fail fast when coverage will never arrive: a test job that failed, was
+            # cancelled, or was SKIPPED (e.g. its build dependency failed), or a failed
+            # build job itself.
+            DEAD=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
+              --jq '[.jobs[] | select(((.name | test("Tests")) and (.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "skipped")) or ((.name | startswith("Build")) and (.conclusion == "failure" or .conclusion == "cancelled")))] | length' 2>/dev/null || echo 0)
+            if [ "${DEAD:-0}" -gt 0 ]; then
+              echo "::error::$DEAD job(s) failed, were cancelled, or were skipped — coverage will never arrive; aborting quality analysis."
               exit 1
             fi
             echo "[$i/90] $COUNT/$EXPECTED coverage artifacts present; no failed test jobs — sleeping 30s"
