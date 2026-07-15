@@ -39,6 +39,12 @@ jobs:
         with:
           filters: |
             code:
+              # Workflow/script changes must run the full matrix — they can break the
+              # build/test/publish contracts they define (a workflow-only PR otherwise
+              # skips the very checks that validate it).
+              - '.github/workflows/**'
+              - '.github/actions/**'
+              - 'scripts/**'
               - 'src/**'
               - 'tests/**'
               - 'samples/**'
