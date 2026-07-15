@@ -437,4 +437,50 @@ public class WorkflowSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await Assert.That(model.Stages[0].Steps[1].AllowedPersonaIds!).Count().IsEqualTo(0)
       .Because("the JSON-absent field reads back as an empty list on every step.");
   }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Test 9 (the PRODUCTION RUNNER rhythm — repeated updates, same context) — the July 13–14 incident's
+  // rebuild-path crash is a THIRD facet of the EF 10 complex-JSON tracking defect family:
+  //   InvalidOperationException: The property 'Steps' belongs to the type '…StageInstance', but is being
+  //   used with an instance of type '…StepInstance'  (InternalEntryBase.GetCurrentValue in PrepareToSave)
+  // — parent/child complex-entry mis-association when tracked complex collections change shape across saves.
+  // A perspective runner (and rebuildPerspective!) saves the SAME stream repeatedly through the SAME
+  // DbContext via BaseUpsertStrategy, with the nested collections growing/shrinking between events. The
+  // current strategy avoids tracked mutation entirely (detach + AsNoTracking + fresh row + Update), so this
+  // sequence must never corrupt the tracker. Single-update coverage lives in Tests 2/3; this locks the
+  // repeated-save rhythm the production stack trace shows.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  [Test]
+  [Timeout(120000)]
+  public async Task RepeatedUpserts_SameContextSameStream_GrowAndShrinkNestedCollections_NeverCorruptTrackerAsync(CancellationToken ct) {
+    Guid id = _idProvider.NewGuid();
+    var strategy = new PostgresUpsertStrategy();
+
+    // v1 — insert (1 stage / 2 steps).
+    await strategy.UpsertPerspectiveRowAsync(_context!, TableName, id, _newShapeModel(withPersonas: true), _meta(), new PerspectiveScope(), ct);
+
+    // v2 — grow the deepest collection (3 steps).
+    var v2 = _newShapeModel(withPersonas: true);
+    v2.Stages[0].Steps.Add(new StepLike { Label = "Step 3", AllowedPersonaIds = [Guid.NewGuid()] });
+    await strategy.UpsertPerspectiveRowAsync(_context!, TableName, id, v2, _meta(), new PerspectiveScope(), ct);
+
+    // v3 — shrink it (1 step) — shape change in the other direction.
+    var v3 = _newShapeModel(withPersonas: true);
+    v3.Stages[0].Steps.RemoveAt(1);
+    await strategy.UpsertPerspectiveRowAsync(_context!, TableName, id, v3, _meta(), new PerspectiveScope(), ct);
+
+    // v4 — grow the PARENT collection (2 stages) while the child shape changes again.
+    var v4 = _newShapeModel(withPersonas: true);
+    v4.Stages.Add(new StageLike { Title = "Stage B", Steps = [new StepLike { Label = "B1", AllowedPersonaIds = [] }] });
+    await strategy.UpsertPerspectiveRowAsync(_context!, TableName, id, v4, _meta(), new PerspectiveScope(), ct);
+
+    _context!.ChangeTracker.Clear();
+    var final = await _context.Set<PerspectiveRow<WorkflowLikeModel>>().AsNoTracking().FirstAsync(r => r.Id == id, ct);
+    await Assert.That(final.Data.Stages).Count().IsEqualTo(2)
+      .Because("four same-stream saves through one DbContext with growing AND shrinking nested collections must never trip EF's complex-entry parent/child mis-association ('property Steps belongs to StageInstance, used with StepInstance').");
+    await Assert.That(final.Data.Stages[0].Steps).Count().IsEqualTo(2);
+    await Assert.That(final.Data.Stages[1].Steps).Count().IsEqualTo(1);
+    await Assert.That(final.Version).IsEqualTo(4)
+      .Because("each of the four upserts bumped the row version — all four saves committed.");
+  }
 }
