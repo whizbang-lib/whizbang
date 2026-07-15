@@ -486,7 +486,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         TableBaseName: tableBaseName,
         NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
         Keys: keys,
-        PhysicalFields: physicalFields
+        PhysicalFields: physicalFields,
+        CoalesceBody: _buildDataCoalesceStatements(modelType)
     );
   }
 
@@ -511,7 +512,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         TableName: tableName,
         NamespaceHint: candidate.NamespaceHint,
         Keys: candidate.Keys,
-        PhysicalFields: candidate.PhysicalFields
+        PhysicalFields: candidate.PhysicalFields,
+        CoalesceBody: candidate.CoalesceBody
     );
   }
 
@@ -575,6 +577,140 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     return [.. physicalFields];
+  }
+
+  // ─── WORKAROUND(dotnet/efcore#38625) — perspective Data null-collection coalescing ─────────────────────────
+  // EF Core 10's ComplexProperty().ToJson() materializes a JSON-absent complex collection as null (the CLR
+  // `= []` initializer is ignored), so rows written before a nested collection property was added ("old-shape"
+  // rows after schema evolution) are poison-on-touch: reads NRE, and tracked saves throw
+  // InvalidOperationException in PrepareToSave.CheckForNullComplexProperties. Reproduces through EF Core
+  // 10.0.10. The methods below generate per-model PerspectiveDataCoalescer registrations that restore every
+  // non-nullable List<T>/array in the Data graph (and the framework's PerspectiveScope.Extensions) to empty on
+  // materialization. DELETE this region, PerspectiveDataCoalescer, and its call sites (grep
+  // "WORKAROUND(dotnet/efcore#38625)") once a fixed EF Core release ships.
+
+  /// <summary>Defensive nesting cap for the coalesce walker (real perspective models are 2–3 levels deep).</summary>
+  private const int MAX_COALESCE_DEPTH = 8;
+
+  /// <summary>
+  /// WORKAROUND(dotnet/efcore#38625): builds the null-coalesce statements for a perspective model's collection
+  /// graph — `data.X ??= …` for every public, settable, non-nullable List&lt;T&gt;/array property, recursing
+  /// through complex references (null-guarded) and complex collection elements (foreach), cycle-guarded and
+  /// depth-capped. Nullable-annotated collections are skipped: null is a legitimate state there. Returns an
+  /// empty string when the model graph has no coalescible collections.
+  /// </summary>
+  private static string _buildDataCoalesceStatements(ITypeSymbol modelType) {
+    var sb = new StringBuilder();
+    var varCounter = 0;
+    _appendCoalesceStatements(sb, modelType, "data", "          ", 0, new HashSet<string>(StringComparer.Ordinal), ref varCounter);
+    return sb.ToString();
+  }
+
+  private static void _appendCoalesceStatements(
+      StringBuilder sb,
+      ITypeSymbol type,
+      string expr,
+      string indent,
+      int depth,
+      HashSet<string> typesOnPath,
+      ref int varCounter) {
+    if (depth > MAX_COALESCE_DEPTH) {
+      return;
+    }
+
+    var typeName = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    if (!typesOnPath.Add(typeName)) {
+      return; // cycle guard — self/mutually-recursive model types
+    }
+
+    foreach (var property in _enumerateInstanceProperties(type)) {
+      if (_isCoalescibleCollection(property.Type, out var elementType)) {
+        // init-only setters can't be assigned post-construction (`??=` would be CS8852 in generated code).
+        var coalesced = property.Type.NullableAnnotation != NullableAnnotation.Annotated
+            && property.SetMethod is { DeclaredAccessibility: Accessibility.Public, IsInitOnly: false };
+        if (coalesced) {
+          sb.AppendLine($"{indent}{expr}.{property.Name} ??= {_emptyCollectionExpression(property.Type, elementType!)};");
+        }
+
+        // Recurse into complex element types so deeper collections coalesce too.
+        if (elementType is not null && _isComplexModelClass(elementType)) {
+          var inner = new StringBuilder();
+          var loopVar = $"_c{varCounter++}";
+          _appendCoalesceStatements(inner, elementType, loopVar, coalesced ? indent + "  " : indent + "    ", depth + 1, typesOnPath, ref varCounter);
+          if (inner.Length > 0) {
+            if (coalesced) {
+              sb.AppendLine($"{indent}foreach (var {loopVar} in {expr}.{property.Name}) {{");
+              sb.Append(inner);
+              sb.AppendLine($"{indent}}}");
+            } else {
+              // Collection was left possibly-null (nullable-annotated or non-settable) — guard the walk.
+              sb.AppendLine($"{indent}if ({expr}.{property.Name} is not null) {{");
+              sb.AppendLine($"{indent}  foreach (var {loopVar} in {expr}.{property.Name}) {{");
+              sb.Append(inner);
+              sb.AppendLine($"{indent}  }}");
+              sb.AppendLine($"{indent}}}");
+            }
+          }
+        }
+      } else if (_isComplexModelClass(property.Type)) {
+        // Non-collection complex reference — walk THROUGH it (null-guarded) to reach nested collections.
+        // Deliberately no `??= new()`: a null reference may be legitimate; only collections are coalesced.
+        var inner = new StringBuilder();
+        var refVar = $"_c{varCounter++}";
+        _appendCoalesceStatements(inner, property.Type, refVar, indent + "  ", depth + 1, typesOnPath, ref varCounter);
+        if (inner.Length > 0) {
+          sb.AppendLine($"{indent}if ({expr}.{property.Name} is {{ }} {refVar}) {{");
+          sb.Append(inner);
+          sb.AppendLine($"{indent}}}");
+        }
+      }
+    }
+
+    typesOnPath.Remove(typeName);
+  }
+
+  /// <summary>Public instance properties with a getter, walking base types (models may inherit).</summary>
+  private static IEnumerable<IPropertySymbol> _enumerateInstanceProperties(ITypeSymbol type) {
+    var current = type;
+    while (current is INamedTypeSymbol named && named.SpecialType == SpecialType.None) {
+      foreach (var property in named.GetMembers().OfType<IPropertySymbol>()) {
+        if (!property.IsStatic && !property.IsIndexer
+            && property.DeclaredAccessibility == Accessibility.Public
+            && property.GetMethod is not null) {
+          yield return property;
+        }
+      }
+      current = named.BaseType;
+    }
+  }
+
+  /// <summary>List&lt;T&gt; or T[] — the collection shapes EF Core complex-mode maps (Dictionary is banned).</summary>
+  private static bool _isCoalescibleCollection(ITypeSymbol type, out ITypeSymbol? elementType) {
+    if (type is IArrayTypeSymbol array) {
+      elementType = array.ElementType;
+      return true;
+    }
+    if (type is INamedTypeSymbol { IsGenericType: true } named
+        && named.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.List<T>") {
+      elementType = named.TypeArguments[0];
+      return true;
+    }
+    elementType = null;
+    return false;
+  }
+
+  /// <summary>A user-model class worth recursing into: class, not a primitive/string, not a System type.</summary>
+  private static bool _isComplexModelClass(ITypeSymbol type) =>
+    type.TypeKind == TypeKind.Class
+    && type.SpecialType == SpecialType.None
+    && !type.ToDisplayString().StartsWith("System.", StringComparison.Ordinal);
+
+  /// <summary>Empty-collection expression matching the property's shape (List&lt;T&gt; vs array).</summary>
+  private static string _emptyCollectionExpression(ITypeSymbol collectionType, ITypeSymbol elementType) {
+    var element = elementType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    return collectionType is IArrayTypeSymbol
+        ? $"global::System.Array.Empty<{element}>()"
+        : $"new global::System.Collections.Generic.List<{element}>()";
   }
 
   /// <summary>
@@ -1322,6 +1458,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
 
+    foreach (var model in group.Models) {
+      _appendDataCoalescerRegistration(sb, model);
+    }
+
     _generateMultiLensQueryRegistrations(context, sb, group.DbContext, group.Models, multiLensQueries);
 
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
@@ -1340,6 +1480,31 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     _generatePhysicalFieldHydratorRegistration(sb, model);
     _generateChangeTrackerHydratorRegistration(sb, model);
+  }
+
+  /// <summary>
+  /// WORKAROUND(dotnet/efcore#38625): emits the <c>PerspectiveDataCoalescer.Register</c> call for one model.
+  /// Registered for EVERY perspective model: the framework's <c>PerspectiveScope.Extensions</c> (a required
+  /// complex collection) null-materializes on complex-mode rows regardless of the model's own shape, and the
+  /// model-graph statements are appended when the model has coalescible collections. For split/polymorphic
+  /// models (jsonb POCO mapping via System.Text.Json, where absent keys keep the CLR initializer) the
+  /// registered coalescer is a harmless no-op. Remove alongside PerspectiveDataCoalescer when EF ships a fix.
+  /// </summary>
+  private static void _appendDataCoalescerRegistration(StringBuilder sb, PerspectiveModelInfo model) {
+    var rowType = $"global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>";
+    sb.AppendLine("        // WORKAROUND(dotnet/efcore#38625): EF Core 10 ComplexProperty().ToJson() materializes JSON-absent");
+    sb.AppendLine("        // complex collections as null (old-shape rows after schema evolution) — coalesce to empty on");
+    sb.AppendLine("        // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream.");
+    sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PerspectiveDataCoalescer.Register(typeof({rowType}), entity => {{");
+    sb.AppendLine($"          var row = ({rowType})entity;");
+    sb.AppendLine("          if (row.Scope is not null) { row.Scope.Extensions ??= new global::System.Collections.Generic.List<global::Whizbang.Core.Lenses.ScopeExtension>(); }");
+    if (!string.IsNullOrEmpty(model.CoalesceBody)) {
+      sb.AppendLine("          var data = row.Data;");
+      sb.AppendLine("          if (data is null) { return; }");
+      sb.Append(model.CoalesceBody);
+    }
+    sb.AppendLine(CLOSE_BRACE_INDENT_8);
+    sb.AppendLine();
   }
 
   /// <summary>Emits the EFCORE100 completion diagnostic summarising how many models/DbContexts
@@ -2487,7 +2652,8 @@ internal sealed record PerspectiveModelInfo(
     string TableName,
     string NamespaceHint,
     string[] Keys,
-    ImmutableArray<PhysicalFieldInfo> PhysicalFields);
+    ImmutableArray<PhysicalFieldInfo> PhysicalFields,
+    string CoalesceBody);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -2500,6 +2666,8 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph
+/// (WORKAROUND(dotnet/efcore#38625)); empty when the model has no coalescible collections</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -2507,7 +2675,8 @@ internal sealed record PerspectiveModelCandidate(
     string TableBaseName,
     string NamespaceHint,
     string[] Keys,
-    ImmutableArray<PhysicalFieldInfo> PhysicalFields);
+    ImmutableArray<PhysicalFieldInfo> PhysicalFields,
+    string CoalesceBody);
 
 /// <summary>
 /// Information about a discovered multi-model ILensQuery constructor parameter.

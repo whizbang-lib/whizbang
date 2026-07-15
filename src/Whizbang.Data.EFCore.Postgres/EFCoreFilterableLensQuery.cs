@@ -91,7 +91,7 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
     }
 
     var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
+    return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
   }
 
   private IScopedLensAccess<TModel> _createScopedAccess(QueryScope scope, ScopeFilterOverride? overrideValues) {
@@ -176,7 +176,7 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
 
     public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
       var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-      return row?.Data;
+      return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
     }
   }
 
@@ -202,7 +202,7 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
 
     public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
       var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-      return row?.Data;
+      return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
     }
   }
 
