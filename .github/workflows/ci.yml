@@ -102,8 +102,9 @@ jobs:
     name: Build
     needs: [version, changes]
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
-    # still run there with the placeholder version below.
-    if: ${{ !failure() && !cancelled() && (needs.changes.outputs.code == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    # still run there with the placeholder version below. Pushes honor the change filter
+    # too: a docs-only merge runs no build/tests and publishes no package.
+    if: ${{ !failure() && !cancelled() && (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch') }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-build.yml
@@ -183,7 +184,7 @@ jobs:
     # while they run, then waits for their coverage artifacts internally (failing fast
     # if any test job fails). actions:read is required for that polling.
     needs: [changes]
-    if: needs.changes.outputs.code == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       actions: read
@@ -194,6 +195,32 @@ jobs:
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ============================================================================
+  # CI Result - the ONE ruleset-required status check
+  # ============================================================================
+
+  ci-result:
+    name: CI Result
+    # Sole required context in the develop ruleset. Skipped jobs are fine — docs-only
+    # PRs/pushes skip the matrix by design, and version/pr-version are event-exclusive —
+    # but any failure or cancellation fails the gate. Requiring only this context also
+    # means test jobs can be renamed/sharded without touching the ruleset.
+    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Evaluate required jobs
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$RESULTS" | jq -e '[.[] | select(.result == "failure" or .result == "cancelled")] | length > 0' > /dev/null; then
+            echo "::error::One or more required jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All jobs succeeded or were legitimately skipped."
 
   # ============================================================================
   # Pack NuGet Packages - validates packability and produces artifacts
