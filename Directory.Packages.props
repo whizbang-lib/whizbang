@@ -22,6 +22,11 @@
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.1.0" />
     <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.1.0" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
+    <!-- Transitive via Aspire.Hosting -> StreamJsonRpc. Pinned to patch CVE-2026-48109
+         (GHSA-hv8m-jj95-wg3x, LZ4 OOB read); 2.5.192 is vulnerable, 2.5.301 is the patched
+         2.x release. Consumed via direct PackageReferences in the Whizbang.Hosting.* projects.
+         Backported from develop — the advisory postdates the 0.290 line. -->
+    <PackageVersion Include="MessagePack" Version="2.5.301" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageVersion Include="Bogus" Version="35.6.5" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4">
