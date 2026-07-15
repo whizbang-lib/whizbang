@@ -1,3 +1,5 @@
+using Whizbang.Core.Attributes;
+
 namespace Whizbang.Core;
 
 /// <summary>
@@ -21,6 +23,15 @@ public sealed record MessageTypeCatalogEntry(
   /// a stale <c>wh_message_type_registry</c> row (old name -&gt; current name) in place.
   /// </summary>
   public IReadOnlyList<string> FormerNames { get; init; } = System.Array.Empty<string>();
+
+  /// <summary>
+  /// The type's resolved ephemeral mode, or <c>null</c> when it is Sourced (the durable default). The
+  /// generator resolves this from <c>[Ephemeral]</c> at compile time — whether declared directly, on a
+  /// base record, or on a marker interface — so no reflection is needed to know how a message wants to
+  /// be treated. Only events carry it; commands and perspectives are always Sourced here (a perspective's
+  /// effective mode is <em>derived</em> from the events it applies, separately).
+  /// </summary>
+  public EphemeralInfo? Ephemeral { get; init; }
 }
 
 /// <summary>

@@ -118,12 +118,72 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       pinnedId = pinnedIdValue;
     }
 
+    // Ephemeral mode is an EVENT property. Commands are never ephemeral, and a perspective's effective
+    // mode is DERIVED from the events it applies (a separate step), not read from an attribute here.
+    (string Destruction, string Storage)? ephemeral = kind == "event" ? _resolveEphemeral(typeSymbol) : null;
+
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
         ClrTypeName: clrTypeName,
         Kind: kind,
-        PinnedId: pinnedId
+        PinnedId: pinnedId,
+        EphemeralDestruction: ephemeral?.Destruction,
+        EphemeralStorage: ephemeral?.Storage
     );
+  }
+
+  private const string EPHEMERAL_ATTR = "global::Whizbang.Core.Attributes.EphemeralAttribute";
+
+  /// <summary>
+  /// Resolves a type's effective ephemeral mode at compile time — most-specific wins: the type's own
+  /// <c>[Ephemeral]</c> first, then the nearest base record's, then an implemented interface's (the
+  /// CLR only honours attribute inheritance for base classes and never for interfaces, so the walk is
+  /// explicit). Returns the resolved (Destruction, Storage) enum-member names, or null when Sourced.
+  /// Genuine conflicts between sibling profile interfaces are the analyzer's job (WHIZ134); here the
+  /// interface search is name-ordered so the emitted catalog is deterministic.
+  /// </summary>
+  private static (string Destruction, string Storage)? _resolveEphemeral(INamedTypeSymbol type) {
+    var attr = _findEphemeralOn(type);
+    for (var b = type.BaseType; b is not null && attr is null; b = b.BaseType) {
+      attr = _findEphemeralOn(b);
+    }
+    if (attr is null) {
+      foreach (var iface in type.AllInterfaces.OrderBy(i => i.ToDisplayString(), System.StringComparer.Ordinal)) {
+        attr = _findEphemeralOn(iface);
+        if (attr is not null) {
+          break;
+        }
+      }
+    }
+    return attr is null
+      ? null
+      : (_enumArgName(attr, "Destruction", "WhenConsumed"), _enumArgName(attr, "Storage", "InMemory"));
+  }
+
+  private static AttributeData? _findEphemeralOn(INamedTypeSymbol type) =>
+    type.GetAttributes().FirstOrDefault(a =>
+      a.AttributeClass is not null &&
+      TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == EPHEMERAL_ATTR);
+
+  /// <summary>
+  /// Reads a named enum property off the attribute and returns its member NAME (so the generated code
+  /// can emit <c>Destruction.WhenConsumed</c> etc.), falling back to the default when the property was
+  /// not set (a bare or partially-configured <c>[Ephemeral]</c>).
+  /// </summary>
+  private static string _enumArgName(AttributeData attr, string propertyName, string defaultMember) {
+    foreach (var na in attr.NamedArguments) {
+      if (na.Key == propertyName
+          && na.Value.Type is INamedTypeSymbol enumType
+          && na.Value.Value is not null) {
+        var member = enumType.GetMembers()
+          .OfType<IFieldSymbol>()
+          .FirstOrDefault(f => f.HasConstantValue && Equals(f.ConstantValue, na.Value.Value));
+        if (member is not null) {
+          return member.Name;
+        }
+      }
+    }
+    return defaultMember;
   }
 
   private static void _generateCatalog(
@@ -177,14 +237,21 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     source.AppendLine("  private static readonly IReadOnlyList<MessageTypeCatalogEntry> _all = new MessageTypeCatalogEntry[] {");
     foreach (var info in ordered) {
       var pinnedIdLiteral = info.PinnedId is null ? "null" : $"\"{info.PinnedId}\"";
-      var formerInit = "";
+      var initParts = new List<string>();
       if (info.PinnedId is not null &&
           formerByPinnedId.TryGetValue(info.PinnedId, out var formers) &&
           formers.Count > 0) {
         var arr = string.Join(", ", formers.Select(f => $"\"{f}\""));
-        formerInit = $" {{ FormerNames = new string[] {{ {arr} }} }}";
+        initParts.Add($"FormerNames = new string[] {{ {arr} }}");
       }
-      source.AppendLine($"    new(typeof({info.TypeName}), \"{info.ClrTypeName}\", \"{info.Kind}\", {pinnedIdLiteral}){formerInit},");
+      if (info.EphemeralDestruction is not null) {
+        initParts.Add(
+          "Ephemeral = new global::Whizbang.Core.Attributes.EphemeralInfo(" +
+          $"global::Whizbang.Core.Attributes.Destruction.{info.EphemeralDestruction}, " +
+          $"global::Whizbang.Core.Attributes.TransientStorage.{info.EphemeralStorage})");
+      }
+      var initializer = initParts.Count > 0 ? $" {{ {string.Join(", ", initParts)} }}" : "";
+      source.AppendLine($"    new(typeof({info.TypeName}), \"{info.ClrTypeName}\", \"{info.Kind}\", {pinnedIdLiteral}){initializer},");
     }
     source.AppendLine("  };");
     source.AppendLine();
@@ -217,5 +284,7 @@ internal sealed record MessageTypeCatalogEntryInfo(
     string TypeName,
     string ClrTypeName,
     string Kind,
-    string? PinnedId
+    string? PinnedId,
+    string? EphemeralDestruction = null,
+    string? EphemeralStorage = null
 );
