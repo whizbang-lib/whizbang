@@ -415,4 +415,26 @@ public class WorkflowSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await Assert.That(reread.Data.Stages[0].Steps).Count().IsEqualTo(3)
       .Because("the coalesced-and-grown collection persisted.");
   }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Test 8 (THE FIX — production seam) — the perspective store's GetByStreamIdAsync is the read the
+  // perspective Apply path uses. It is a no-tracking read (the Tracked hook can't fire), so it routes through
+  // PerspectiveDataCoalescer.CoalescedData — an old-shape row must come back with EMPTY nested collections.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  [Test]
+  [Timeout(120000)]
+  public async Task PerspectiveStore_GetByStreamId_OverOldShapeRow_ReturnsCoalescedModelAsync(CancellationToken ct) {
+    _registerCoalescer();
+    Guid id = _idProvider.NewGuid();
+    await _seedOldShapeRowAsync(id);
+
+    var store = new EFCorePostgresPerspectiveStore<WorkflowLikeModel>(_context!, TableName);
+    var model = await store.GetByStreamIdAsync(id, ct);
+
+    await Assert.That(model).IsNotNull();
+    await Assert.That(model!.Stages[0].Steps[0].AllowedPersonaIds).IsNotNull()
+      .Because("the store's no-tracking read routes through CoalescedData, so the Apply path never sees a null-materialized nested collection (WORKAROUND(dotnet/efcore#38625)).");
+    await Assert.That(model.Stages[0].Steps[1].AllowedPersonaIds!).Count().IsEqualTo(0)
+      .Because("the JSON-absent field reads back as an empty list on every step.");
+  }
 }
