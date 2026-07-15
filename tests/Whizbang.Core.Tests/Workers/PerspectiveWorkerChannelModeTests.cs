@@ -77,11 +77,11 @@ public class PerspectiveWorkerChannelModeTests {
     await worker.ProcessChannelBatchAsync([], CancellationToken.None);
 
     // Assert — the pending completion was routed through IPerspectiveCompletionChannel,
-    // not through the legacy ProcessWorkBatchAsync.
+    // not through the legacy claim-based polling.
     await Assert.That(completionCapture.Cursors).IsNotEmpty()
       .Because("ProcessChannelBatchAsync must route pending completions through the channel");
-    await Assert.That(coordinator.ProcessWorkBatchAsyncCallCount).IsEqualTo(0)
-      .Because("Channel-mode must not call legacy ProcessWorkBatchAsync");
+    await Assert.That(coordinator.ClaimWorkAsyncCallCount).IsEqualTo(0)
+      .Because("Channel-mode must not call the legacy claim path");
   }
 
   [Test]
@@ -125,8 +125,8 @@ public class PerspectiveWorkerChannelModeTests {
     // This must not throw and must not touch the legacy poll path.
     await worker.ProcessChannelBatchAsync([], [streamId], CancellationToken.None);
 
-    await Assert.That(coordinator.ProcessWorkBatchAsyncCallCount).IsEqualTo(0)
-      .Because("Channel-mode must never call legacy ProcessWorkBatchAsync, even with drain stream IDs");
+    await Assert.That(coordinator.ClaimWorkAsyncCallCount).IsEqualTo(0)
+      .Because("Channel-mode must never call legacy claim-based polling, even with drain stream IDs");
   }
 
   // ---------- Test fakes ----------
@@ -134,13 +134,13 @@ public class PerspectiveWorkerChannelModeTests {
   private sealed record TestEvent(string Data) : IEvent;
 
   private sealed class FakeWorkCoordinatorReturningCursor : IWorkCoordinator {
-    public int ProcessWorkBatchAsyncCallCount { get; private set; }
+    public int ClaimWorkAsyncCallCount { get; private set; }
     public int CommitHandlerResultCallCount { get; private set; }
     public int GetStreamEventsCallCount { get; private set; }
     public Guid? LastStreamEventsRequestedFor { get; private set; }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
-      ProcessWorkBatchAsyncCallCount++;
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
+      ClaimWorkAsyncCallCount++;
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],

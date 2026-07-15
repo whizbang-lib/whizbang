@@ -821,7 +821,7 @@ public class RewindScenarioTests {
       return waiter.Task.WaitAsync(timeout);
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
       foreach (var kvp in _cycleWaiters) {
         if (current >= kvp.Key) {
@@ -1112,7 +1112,7 @@ public class RewindScenarioTests {
     public Task WaitForAllArrivalsProcessedAsync(TimeSpan timeout) =>
       _allProcessed.Task.WaitAsync(timeout);
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       // If there's a pending rewind, keep returning the triggering work item until the
       // worker reports completion. Otherwise deliver the next scripted arrival.
       if (_cursor.Status.HasFlag(PerspectiveProcessingStatus.RewindRequired)) {
@@ -1252,7 +1252,7 @@ public class RewindScenarioTests {
 
     public Task WaitForAllRewindsAsync(TimeSpan timeout) => _allRewinds.Task.WaitAsync(timeout);
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       if (_currentLateIdx >= _lateIndices.Length) {
         return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
       }

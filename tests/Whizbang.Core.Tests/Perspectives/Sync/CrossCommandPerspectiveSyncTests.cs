@@ -258,7 +258,7 @@ public class CrossCommandPerspectiveSyncTests {
 
     // Mock coordinator returns "no pending events" from DB discovery
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      var inquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      var inquiry = (request.Count > 0 ? request[0] : null);
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],

@@ -1452,7 +1452,7 @@ public class BatchWorkCoordinatorStrategyTests {
       // Assert — ExecuteFlushAsync signals publisher but does not write to channel
       await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
         .Because("ExecuteFlushAsync signals publisher but does not write to channel");
-      // Work was still persisted via ProcessWorkBatchAsync
+      // Work was still persisted via StoreOutboxMessagesAsync
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
     } finally {
       await sut.DisposeAsync();
@@ -1511,24 +1511,12 @@ public class BatchWorkCoordinatorStrategyTests {
     public void Dispose() => _flushSignal.Dispose();
 
     /// <summary>
-    /// Waits for at least one call to ProcessWorkBatchAsync.
+    /// Waits for at least one call to the work coordinator's store path.
     /// </summary>
     public async Task WaitForFlushAsync(TimeSpan timeout) {
       if (!await _flushSignal.WaitAsync(timeout)) {
-        throw new TimeoutException("ProcessWorkBatchAsync was not called within timeout");
+        throw new TimeoutException("The work coordinator store path was not called within timeout");
       }
-    }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Post-Phase-H: not in the live path. Counting and signaling live in
-      // Store{Outbox,Inbox}MessagesAsync below.
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = WorkToReturn,
-        InboxWork = [],
-        PerspectiveWork = []
-      });
     }
 
     public Task StoreOutboxMessagesAsync(
@@ -1585,13 +1573,6 @@ public class BatchWorkCoordinatorStrategyTests {
   private sealed class BatchThrowingWorkCoordinator : IWorkCoordinator {
     public Action? OnProcessCalled { get; set; }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback; not in live path.
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
@@ -1627,23 +1608,12 @@ public class BatchWorkCoordinatorStrategyTests {
 
     public async Task WaitForProcessingStartedAsync(TimeSpan timeout) {
       if (!await _processingStarted.WaitAsync(timeout)) {
-        throw new TimeoutException("ProcessWorkBatchAsync was not started within timeout");
+        throw new TimeoutException("StoreOutboxMessagesAsync was not started within timeout");
       }
     }
 
     public void ReleaseProcessing() {
       try { _releaseProcessing.Release(); } catch (SemaphoreFullException) { }
-    }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
     }
 
     public async Task StoreOutboxMessagesAsync(

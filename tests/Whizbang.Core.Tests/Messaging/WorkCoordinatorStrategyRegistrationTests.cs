@@ -96,7 +96,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
   // ========================================
   // WORK CHANNEL WRITER INJECTION TESTS
   // These prove that singleton strategies receive the IWorkChannelWriter
-  // so outbox work returned from ProcessWorkBatchAsync reaches the channel.
+  // so the flush path can signal the publisher (which then claims work from the DB).
   // ========================================
 
   [Test]
@@ -581,16 +581,6 @@ public class WorkCoordinatorStrategyRegistrationTests {
   // ========================================
 
   private sealed class RegFakeWorkCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -638,32 +628,6 @@ public class WorkCoordinatorStrategyRegistrationTests {
   }
 
   private sealed class RegFakeWorkCoordinatorWithOutboxWork : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      var messageId = Guid.CreateVersion7();
-      var envelope = new MessageEnvelope<JsonElement> {
-        MessageId = MessageId.From(messageId),
-        Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = [],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-      };
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [
-          new OutboxWork {
-            MessageId = messageId,
-            Destination = "test-topic",
-            Envelope = envelope,
-            EnvelopeType = "TestEnvelope",
-            MessageType = "TestMessage",
-            Attempts = 0
-          }
-        ],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) => Task.CompletedTask;

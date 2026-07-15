@@ -1429,16 +1429,6 @@ public class ServiceCollectionExtensionsTests {
   /// Stub IWorkCoordinator for DI resolution tests.
   /// </summary>
   private sealed class StubWorkCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-        ProcessWorkBatchRequest request,
-        CancellationToken cancellationToken = default) {
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
         PerspectiveCursorCompletion completion,
         CancellationToken cancellationToken = default) {

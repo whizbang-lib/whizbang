@@ -25,7 +25,7 @@ namespace Whizbang.Core.Integration.Tests;
 /// </summary>
 /// <remarks>
 /// Uses synchronized work coordinators with realistic latency to simulate the real pipeline:
-/// SQL → ProcessWorkBatchAsync → dedup filter → runner → completion → next cycle.
+/// SQL → ClaimWorkAsync → dedup filter → runner → completion → next cycle.
 /// Tests are deterministic via TaskCompletionSource signals — no arbitrary delays.
 /// </remarks>
 [Category("Integration")]
@@ -734,7 +734,7 @@ public class PerspectiveDedupIntegrationTests {
       await waiter.Task.WaitAsync(timeout);
     }
 
-    public async Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       if (SimulatedLatencyMs > 0) {
         await Task.Delay(SimulatedLatencyMs, cancellationToken);
       }
@@ -780,7 +780,7 @@ public class PerspectiveDedupIntegrationTests {
       await waiter.Task.WaitAsync(timeout);
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
       foreach (var kvp in _cycleWaiters) {
         if (current >= kvp.Key) {
@@ -817,7 +817,7 @@ public class PerspectiveDedupIntegrationTests {
 
     public List<List<PerspectiveWork>> WorkPerCycle { get; } = [];
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
       var idx = current - 1;
       var work = idx < WorkPerCycle.Count ? [.. WorkPerCycle[idx]] : new List<PerspectiveWork>();

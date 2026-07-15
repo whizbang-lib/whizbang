@@ -15,32 +15,13 @@ namespace Whizbang.Core.Tests.Messaging;
 ///     NotImplementedException naming the missing member so a mis-wired backend fails loudly.
 ///   - Optional surfaces (maintenance, drain fetches, lifecycle reconciliation, ...) no-op
 ///     with empty/zero results so in-memory coordinators and test fakes need no overrides.
-/// A fake that overrode any of these (like NoOpWorkCoordinator does for ProcessWorkBatchAsync)
-/// would bypass the default body, so this file uses its own non-overriding stub.
+/// A fake that overrode any of these would bypass the default body, so this file uses its
+/// own non-overriding stub.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public class WorkCoordinatorDefaultInterfaceTests {
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Default interface members are only dispatchable through the interface type — that dispatch IS the behavior under test")]
   private readonly IWorkCoordinator _coordinator = new MinimalWorkCoordinator();
-
-  // ========================================
-  // Compatibility default: ProcessWorkBatchAsync
-  // ========================================
-
-  [Test]
-  public async Task ProcessWorkBatchAsync_DefaultImplementation_ReturnsEmptyWorkBatchAsync() {
-    var request = _createRequest();
-
-    var batch = await _coordinator.ProcessWorkBatchAsync(request);
-
-    await Assert.That(batch.OutboxWork.Count).IsEqualTo(0);
-    await Assert.That(batch.InboxWork.Count).IsEqualTo(0);
-    await Assert.That(batch.PerspectiveWork.Count).IsEqualTo(0);
-    await Assert.That(batch.PerspectiveStreamIds.Count).IsEqualTo(0);
-    await Assert.That(batch.OutboxStreamIds.Count).IsEqualTo(0);
-    await Assert.That(batch.InboxStreamIds.Count).IsEqualTo(0);
-    await Assert.That(batch.SyncInquiryResults).IsNull();
-  }
 
   // ========================================
   // Throwing defaults (Postgres-only surfaces)
@@ -365,28 +346,6 @@ public class WorkCoordinatorDefaultInterfaceTests {
       return ex.Message;
     }
     return string.Empty;
-  }
-
-  private static ProcessWorkBatchRequest _createRequest() {
-    return new ProcessWorkBatchRequest {
-      InstanceId = (Guid)TrackedGuid.NewMedo(),
-      ServiceName = "TestService",
-      HostName = "test-host",
-      ProcessId = 123,
-      OutboxCompletions = [],
-      OutboxFailures = [],
-      InboxCompletions = [],
-      InboxFailures = [],
-      ReceptorCompletions = [],
-      ReceptorFailures = [],
-      PerspectiveCompletions = [],
-      PerspectiveEventCompletions = [],
-      PerspectiveFailures = [],
-      NewOutboxMessages = [],
-      NewInboxMessages = [],
-      RenewOutboxLeaseIds = [],
-      RenewInboxLeaseIds = []
-    };
   }
 
   private static HandlerCommitRequest _createHandlerCommitRequest() {

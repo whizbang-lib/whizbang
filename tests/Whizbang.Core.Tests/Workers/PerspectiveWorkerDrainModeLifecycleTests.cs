@@ -68,7 +68,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
   /// <summary>
   /// Work coordinator that supports drain mode with configurable stream events.
-  /// Signals batch completion on the SECOND ProcessWorkBatchAsync call (meaning the first
+  /// Signals batch completion on the SECOND ClaimWorkAsync call (meaning the first
   /// batch including Phase 5 PostLifecycle has fully completed).
   /// </summary>
   private sealed class DrainWorkCoordinator : IWorkCoordinator {
@@ -84,7 +84,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       await _batchCycleComplete.Task.WaitAsync(cts.Token);
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var batch = Interlocked.Increment(ref _batchCount);
       if (batch >= 2) {
         // Second call means first batch (including Phase 5 PostLifecycle) is complete
@@ -107,7 +107,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
       // Do NOT signal here — this fires during perspective processing (before Phase 5).
-      // Signal is in ProcessWorkBatchAsync 2nd call, which happens AFTER Phase 5 completes.
+      // Signal is in ClaimWorkAsync 2nd call, which happens AFTER Phase 5 completes.
       return Task.CompletedTask;
     }
 

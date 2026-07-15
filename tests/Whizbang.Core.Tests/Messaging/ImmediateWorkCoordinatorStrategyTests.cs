@@ -76,9 +76,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     // Act
     await sut.FlushAsync(WorkBatchOptions.None);
 
-    // Assert - FlushAsync should immediately call ProcessWorkBatchAsync
+    // Assert - FlushAsync should immediately call the work coordinator's store path
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
-      .Because("Immediate strategy should call ProcessWorkBatchAsync on FlushAsync");
+      .Because("Immediate strategy should call the work coordinator on FlushAsync");
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
   }
@@ -514,7 +514,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     // Assert — ExecuteFlushAsync signals publisher but does not write to channel
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
       .Because("ExecuteFlushAsync signals publisher but does not write to channel");
-    // Work was still persisted via ProcessWorkBatchAsync
+    // Work was still persisted via StoreOutboxMessagesAsync
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
   }
 
@@ -628,17 +628,6 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
     public WorkBatchOptions LastFlags { get; private set; }
     public List<OutboxWork> WorkToReturn { get; set; } = [];
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = WorkToReturn,
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,

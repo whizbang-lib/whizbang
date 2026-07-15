@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
 /// Tests for ScopedWorkCoordinatorStrategy immediate processing of returned work.
-/// Verifies that work returned from ProcessWorkBatchAsync is written to channel immediately.
+/// Verifies flush behavior: returned work is signalled to the publisher, not written to the channel.
 /// </summary>
 public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   // Helper method to create test envelope
@@ -205,16 +205,6 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   // Test helper - Mock work coordinator
   private sealed class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = WorkToReturn,
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
 
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,

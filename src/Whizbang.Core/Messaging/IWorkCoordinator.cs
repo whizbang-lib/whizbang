@@ -23,178 +23,6 @@ public sealed record PartitionRecomputeResult {
 }
 
 /// <summary>
-/// Parameter object for ProcessWorkBatchAsync to reduce method complexity.
-/// Groups related parameters for better maintainability and caller ergonomics.
-/// </summary>
-public sealed record ProcessWorkBatchRequest {
-  /// <summary>
-  /// Unique ID for the service instance (should be UUIDv7 for time-ordered IDs).
-  /// Used for partition assignment and work claiming.
-  /// </summary>
-  public required Guid InstanceId { get; init; }
-
-  /// <summary>
-  /// Name of the service (e.g., "OrderService").
-  /// Used for monitoring and instance identification.
-  /// </summary>
-  public required string ServiceName { get; init; }
-
-  /// <summary>
-  /// Host name where service is running (e.g., "web-server-01").
-  /// Used for monitoring and debugging.
-  /// </summary>
-  public required string HostName { get; init; }
-
-  /// <summary>
-  /// Operating system process ID.
-  /// Used for monitoring and debugging.
-  /// </summary>
-  public required int ProcessId { get; init; }
-
-  /// <summary>
-  /// Optional JSONB metadata dictionary to persist with the instance.
-  /// Includes acknowledgement counts for completion tracking (outbox_completions_processed, inbox_completions_processed, etc.).
-  /// Pass null for no metadata.
-  /// </summary>
-  public Dictionary<string, JsonElement>? Metadata { get; init; }
-
-  /// <summary>
-  /// Array of outbox message completions to report.
-  /// Indicates which outbox messages were successfully published.
-  /// Empty array if no completions.
-  /// </summary>
-  public required MessageCompletion[] OutboxCompletions { get; init; }
-
-  /// <summary>
-  /// Array of outbox message failures to report.
-  /// Includes error details and partial completion tracking.
-  /// Empty array if no failures.
-  /// </summary>
-  public required MessageFailure[] OutboxFailures { get; init; }
-
-  /// <summary>
-  /// Array of inbox message completions to report.
-  /// Indicates which inbox messages were successfully processed.
-  /// Empty array if no completions.
-  /// </summary>
-  public required MessageCompletion[] InboxCompletions { get; init; }
-
-  /// <summary>
-  /// Array of inbox message failures to report.
-  /// Includes error details and partial completion tracking.
-  /// Empty array if no failures.
-  /// </summary>
-  public required MessageFailure[] InboxFailures { get; init; }
-
-  /// <summary>
-  /// Array of receptor processing completions (event handler completions).
-  /// Many receptors can process the same event.
-  /// Empty array if no completions.
-  /// </summary>
-  public required ReceptorProcessingCompletion[] ReceptorCompletions { get; init; }
-
-  /// <summary>
-  /// Array of receptor processing failures (event handler failures).
-  /// Includes error details for debugging.
-  /// Empty array if no failures.
-  /// </summary>
-  public required ReceptorProcessingFailure[] ReceptorFailures { get; init; }
-
-  /// <summary>
-  /// Array of perspective cursor completions (read model projection cursors).
-  /// Tracks last processed event per stream.
-  /// Empty array if no completions.
-  /// </summary>
-  public required PerspectiveCursorCompletion[] PerspectiveCompletions { get; init; }
-
-  /// <summary>
-  /// Array of perspective event completions (work IDs to delete from wh_perspective_events).
-  /// Used to clean up ephemeral event tracking rows after processing.
-  /// Empty array if no completions.
-  /// </summary>
-  public required PerspectiveEventCompletion[] PerspectiveEventCompletions { get; init; }
-
-  /// <summary>
-  /// Array of perspective cursor failures (read model projection failures).
-  /// Includes error details and last attempted event.
-  /// Empty array if no failures.
-  /// </summary>
-  public required PerspectiveCursorFailure[] PerspectiveFailures { get; init; }
-
-  /// <summary>
-  /// Array of new outbox messages to store.
-  /// These will be immediately returned as work in the same call (immediate processing pattern).
-  /// Empty array if no new messages.
-  /// </summary>
-  public required OutboxMessage[] NewOutboxMessages { get; init; }
-
-  /// <summary>
-  /// Array of new inbox messages to store.
-  /// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
-  /// Empty array if no new messages.
-  /// </summary>
-  public required InboxMessage[] NewInboxMessages { get; init; }
-
-  /// <summary>
-  /// Array of outbox message IDs to renew leases for.
-  /// Extends the lease expiry time to prevent orphan detection.
-  /// Empty array if no renewals needed.
-  /// </summary>
-  public required Guid[] RenewOutboxLeaseIds { get; init; }
-
-  /// <summary>
-  /// Array of inbox message IDs to renew leases for.
-  /// Extends the lease expiry time to prevent orphan detection.
-  /// Empty array if no renewals needed.
-  /// </summary>
-  public required Guid[] RenewInboxLeaseIds { get; init; }
-
-  /// <summary>
-  /// Array of sync inquiries to check perspective event processing status.
-  /// Results are returned in WorkBatch.SyncInquiryResults.
-  /// Null if no sync inquiries.
-  /// </summary>
-  /// <docs>fundamentals/perspectives/sync</docs>
-  public SyncInquiry[]? PerspectiveSyncInquiries { get; init; }
-
-  /// <summary>
-  /// Work batch flags for controlling behavior.
-  /// Examples: SkipNewWork, ForceClaimAll.
-  /// Defaults to None for normal operation.
-  /// </summary>
-  public WorkBatchOptions Flags { get; init; } = WorkBatchOptions.None;
-
-  /// <summary>
-  /// Total number of virtual partitions for consistent hashing (default: 10,000).
-  /// Determines partition number range [0, PartitionCount-1].
-  /// Higher values provide better distribution but increase computation.
-  /// </summary>
-  public int PartitionCount { get; init; } = 10_000;
-
-  /// <summary>
-  /// How long to hold work leases in seconds (default: 300 = 5 minutes).
-  /// Messages with expired leases become orphaned and can be reclaimed by other instances.
-  /// </summary>
-  public int LeaseSeconds { get; init; } = 300;
-
-  /// <summary>
-  /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
-  /// After this, the instance's message leases are released and its stream ownership no longer
-  /// blocks other instances from claiming fresh work. Heartbeats occur every
-  /// PollingIntervalMilliseconds (default 1 s); 30 s = 30 missed heartbeats.
-  /// Shorten for faster recovery after SIGKILL / crash; lengthen to tolerate longer pauses
-  /// (GC, disk stalls, network blips) without triggering work reassignment.
-  /// </summary>
-  public int AbandonStaleInstanceThresholdSeconds { get; init; } = 30;
-
-  /// <summary>
-  /// Maximum number of streams to return per batch for perspective processing.
-  /// Controls how many distinct streams the SQL returns per tick. Default: 300.
-  /// </summary>
-  public int MaxStreamsPerBatch { get; init; } = 300;
-}
-
-/// <summary>
 /// Coordinates work processing across multiple service instances using virtual partition assignment with consistent hashing.
 /// Provides atomic operations for heartbeat updates, message completion tracking,
 /// event store integration, and orphaned work recovery.
@@ -212,23 +40,6 @@ public sealed record ProcessWorkBatchRequest {
 public interface IWorkCoordinator {
 
   /// <summary>
-  /// Compatibility-only: returns an empty <see cref="WorkBatch"/>. The legacy orchestrator
-  /// SQL function <c>process_work_batch</c> has been dropped — work coordination is now
-  /// handled by <see cref="ClaimWorkAsync"/>, <see cref="StoreOutboxMessagesAsync"/>,
-  /// <see cref="StoreInboxMessagesAsync"/>, the per-completion / per-failure channel
-  /// flushers, and <see cref="CommitHandlerBatchAsync"/>. Retained so test fakes that
-  /// historically overrode the method continue to compile while migration completes.
-  /// </summary>
-  Task<WorkBatch> ProcessWorkBatchAsync(
-    ProcessWorkBatchRequest request,
-    CancellationToken cancellationToken = default
-  ) => Task.FromResult(new WorkBatch {
-    OutboxWork = [],
-    InboxWork = [],
-    PerspectiveWork = []
-  });
-
-  /// <summary>
   /// Deregisters this instance on graceful shutdown.
   /// Releases all leases (outbox, inbox, perspective events, receptors, active streams),
   /// logs shutdown to wh_log, and removes the instance from wh_service_instances.
@@ -237,8 +48,7 @@ public interface IWorkCoordinator {
   Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// Records a heartbeat for this instance. Decoupled from <see cref="ProcessWorkBatchAsync"/>
-  /// so the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
+  /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
   /// Sub-millisecond UPSERT against <c>wh_service_instances</c>. Default impl throws so existing
   /// non-Postgres backends (test fakes, in-memory) only opt in when ready.
   /// Phase B of work-pump decomposition.
@@ -454,8 +264,7 @@ public interface IWorkCoordinator {
   /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
   /// </summary>
   /// <param name="messages">Inbox messages to store</param>
-  /// <param name="partitionCount">Number of partitions for load balancing. Must match
-  /// <see cref="ProcessWorkBatchRequest.PartitionCount"/> used by the publisher worker
+  /// <param name="partitionCount">Number of partitions for load balancing. Must match the PartitionCount used by the publisher worker
   /// in this service — otherwise wh_inbox.partition_number and wh_active_streams.partition_number
   /// disagree for the same stream and claim_orphaned_inbox deadlocks.</param>
   /// <param name="cancellationToken">Cancellation token</param>
@@ -942,7 +751,7 @@ public record PerspectiveCursorInfo {
 }
 
 /// <summary>
-/// Result of ProcessWorkBatchAsync containing work that needs processing.
+/// Result of a claim/drain cycle containing work that needs processing.
 /// </summary>
 /// <summary>
 /// Statistics gathered periodically for observability gauges.

@@ -1627,19 +1627,6 @@ public class PerspectiveWorkerSecurityContextTests {
       }
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-        ProcessWorkBatchRequest request,
-        CancellationToken cancellationToken = default) {
-      var work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
-      PerspectiveWorkToReturn.Clear();
-
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = work
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
         PerspectiveCursorCompletion completion,
         CancellationToken cancellationToken = default) {

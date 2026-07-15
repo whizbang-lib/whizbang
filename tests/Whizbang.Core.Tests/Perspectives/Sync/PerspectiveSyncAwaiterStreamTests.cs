@@ -238,7 +238,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     private readonly int _pendingCount = pendingCount;
     private readonly int _processedCount = processedCount;
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],

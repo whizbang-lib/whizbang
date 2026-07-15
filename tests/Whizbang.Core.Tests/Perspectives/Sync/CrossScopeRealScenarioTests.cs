@@ -42,7 +42,7 @@ public class CrossScopeRealScenarioTests {
     // - Event is NOT yet in wh_perspective_events (worker hasn't processed it)
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
       // Verify the inquiry has DiscoverPendingFromOutbox = true
-      var inquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      var inquiry = (request.Count > 0 ? request[0] : null);
 
       // Return: event is PENDING (discovered from event store, not yet processed)
       return Task.FromResult(new WorkBatch {
@@ -101,7 +101,7 @@ public class CrossScopeRealScenarioTests {
         PerspectiveWork = [],
         SyncInquiryResults = [
           new SyncInquiryResult {
-            InquiryId = request.PerspectiveSyncInquiries?.FirstOrDefault()?.InquiryId ?? Guid.NewGuid(),
+            InquiryId = (request.Count > 0 ? request[0].InquiryId : Guid.NewGuid()),
             StreamId = streamId,
             PendingCount = 0,  // No pending events
             ProcessedCount = 1, // Event WAS processed
@@ -146,7 +146,7 @@ public class CrossScopeRealScenarioTests {
         PerspectiveWork = [],
         SyncInquiryResults = [
           new SyncInquiryResult {
-            InquiryId = request.PerspectiveSyncInquiries?.FirstOrDefault()?.InquiryId ?? Guid.NewGuid(),
+            InquiryId = (request.Count > 0 ? request[0].InquiryId : Guid.NewGuid()),
             StreamId = streamId,
             PendingCount = 0,
             ProcessedCount = 0,
@@ -184,7 +184,7 @@ public class CrossScopeRealScenarioTests {
     SyncInquiry? capturedInquiry = null;
 
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      capturedInquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      capturedInquiry = (request.Count > 0 ? request[0] : null);
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -235,7 +235,7 @@ public class CrossScopeRealScenarioTests {
     SyncInquiry? capturedInquiry = null;
 
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      capturedInquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      capturedInquiry = (request.Count > 0 ? request[0] : null);
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],

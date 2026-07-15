@@ -170,7 +170,7 @@ public class DispatcherSingletonTrackerTests {
     SyncInquiry? capturedInquiry = null;
 
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      capturedInquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      capturedInquiry = (request.Count > 0 ? request[0] : null);
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],

@@ -5,7 +5,6 @@ using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -14,8 +13,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Property-surface and record-semantics tests for the DTOs declared alongside
 /// <see cref="IWorkCoordinator"/> in IWorkCoordinator.cs. Complements
 /// CoordinatorRecordSurfaceTests (which pins PartitionRecomputeResult,
-/// WorkCoordinatorStatistics, and the flusher payloads) by covering the members the
-/// unit suite never touched: ProcessWorkBatchRequest init accessors, the optional
+/// WorkCoordinatorStatistics, and the flusher payloads) by covering the optional
 /// getters on OutboxWork/InboxWork/PerspectiveWork/StreamEventData and the drain batch
 /// rows, plus the compiler-generated equality/ToString/with/Deconstruct members on the
 /// positional records (PurgedOrphanInboxRow, MaintenanceResult, RewindCursorInfo,
@@ -23,152 +21,6 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 /// <docs>messaging/work-coordination</docs>
 public class WorkCoordinatorDtoSurfaceTests {
-
-  // ========================================
-  // ProcessWorkBatchRequest
-  // ========================================
-
-  [Test]
-  public async Task ProcessWorkBatchRequest_FullInitialization_RoundTripsAllPropertiesAsync() {
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var renewOutboxId = (Guid)TrackedGuid.NewMedo();
-    var renewInboxId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    using var doc = JsonDocument.Parse("{\"n\":1}");
-    var metadata = new Dictionary<string, JsonElement> { ["n"] = doc.RootElement.Clone() };
-    var outboxCompletion = new MessageCompletion {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
-      Status = MessageProcessingStatus.Stored
-    };
-    var inboxFailure = new MessageFailure {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
-      CompletedStatus = MessageProcessingStatus.Stored,
-      Error = "inbox boom"
-    };
-    var receptorCompletion = new ReceptorProcessingCompletion {
-      EventId = (Guid)TrackedGuid.NewMedo(),
-      ReceptorName = "OrderReceptor",
-      Status = ReceptorProcessingStatus.Completed
-    };
-    var receptorFailure = new ReceptorProcessingFailure {
-      EventId = (Guid)TrackedGuid.NewMedo(),
-      ReceptorName = "OrderReceptor",
-      Status = ReceptorProcessingStatus.Failed,
-      Error = "receptor boom"
-    };
-    var perspectiveCompletion = new PerspectiveCursorCompletion {
-      StreamId = streamId,
-      PerspectiveName = "OrderPerspective",
-      LastEventId = (Guid)TrackedGuid.NewMedo(),
-      Status = PerspectiveProcessingStatus.Completed
-    };
-    var perspectiveEventCompletion = new PerspectiveEventCompletion {
-      EventWorkId = (Guid)TrackedGuid.NewMedo()
-    };
-    var perspectiveFailure = new PerspectiveCursorFailure {
-      StreamId = streamId,
-      PerspectiveName = "OrderPerspective",
-      LastEventId = (Guid)TrackedGuid.NewMedo(),
-      Status = PerspectiveProcessingStatus.Failed,
-      Error = "perspective boom"
-    };
-    var newOutboxMessage = _createOutboxMessage();
-    var newInboxMessage = _createInboxMessage();
-    var syncInquiry = new SyncInquiry { StreamId = streamId, PerspectiveName = "OrderPerspective" };
-
-    var request = new ProcessWorkBatchRequest {
-      InstanceId = instanceId,
-      ServiceName = "OrderService",
-      HostName = "web-server-01",
-      ProcessId = 4242,
-      Metadata = metadata,
-      OutboxCompletions = [outboxCompletion],
-      OutboxFailures = [],
-      InboxCompletions = [],
-      InboxFailures = [inboxFailure],
-      ReceptorCompletions = [receptorCompletion],
-      ReceptorFailures = [receptorFailure],
-      PerspectiveCompletions = [perspectiveCompletion],
-      PerspectiveEventCompletions = [perspectiveEventCompletion],
-      PerspectiveFailures = [perspectiveFailure],
-      NewOutboxMessages = [newOutboxMessage],
-      NewInboxMessages = [newInboxMessage],
-      RenewOutboxLeaseIds = [renewOutboxId],
-      RenewInboxLeaseIds = [renewInboxId],
-      PerspectiveSyncInquiries = [syncInquiry],
-      Flags = WorkBatchOptions.SkipInboxClaiming,
-      PartitionCount = 64,
-      LeaseSeconds = 60,
-      AbandonStaleInstanceThresholdSeconds = 10,
-      MaxStreamsPerBatch = 50
-    };
-
-    await Assert.That(request.InstanceId).IsEqualTo(instanceId);
-    await Assert.That(request.ServiceName).IsEqualTo("OrderService");
-    await Assert.That(request.HostName).IsEqualTo("web-server-01");
-    await Assert.That(request.ProcessId).IsEqualTo(4242);
-    var requestMetadata = request.Metadata ?? new Dictionary<string, JsonElement>();
-    await Assert.That(requestMetadata.ContainsKey("n")).IsTrue();
-    await Assert.That(request.OutboxCompletions.Length).IsEqualTo(1);
-    await Assert.That(request.OutboxCompletions[0]).IsEqualTo(outboxCompletion);
-    await Assert.That(request.OutboxFailures.Length).IsEqualTo(0);
-    await Assert.That(request.InboxCompletions.Length).IsEqualTo(0);
-    await Assert.That(request.InboxFailures.Length).IsEqualTo(1);
-    await Assert.That(request.InboxFailures[0]).IsEqualTo(inboxFailure);
-    await Assert.That(request.ReceptorCompletions.Length).IsEqualTo(1);
-    await Assert.That(request.ReceptorCompletions[0]).IsEqualTo(receptorCompletion);
-    await Assert.That(request.ReceptorFailures.Length).IsEqualTo(1);
-    await Assert.That(request.ReceptorFailures[0]).IsEqualTo(receptorFailure);
-    await Assert.That(request.PerspectiveCompletions.Length).IsEqualTo(1);
-    await Assert.That(request.PerspectiveEventCompletions.Length).IsEqualTo(1);
-    await Assert.That(request.PerspectiveEventCompletions[0]).IsEqualTo(perspectiveEventCompletion);
-    await Assert.That(request.PerspectiveFailures.Length).IsEqualTo(1);
-    await Assert.That(request.NewOutboxMessages.Length).IsEqualTo(1);
-    await Assert.That(request.NewOutboxMessages[0]).IsEqualTo(newOutboxMessage);
-    await Assert.That(request.NewInboxMessages.Length).IsEqualTo(1);
-    await Assert.That(request.NewInboxMessages[0]).IsEqualTo(newInboxMessage);
-    await Assert.That(request.RenewOutboxLeaseIds[0]).IsEqualTo(renewOutboxId);
-    await Assert.That(request.RenewInboxLeaseIds[0]).IsEqualTo(renewInboxId);
-    var inquiries = request.PerspectiveSyncInquiries ?? [];
-    await Assert.That(inquiries.Length).IsEqualTo(1);
-    await Assert.That(inquiries[0]).IsEqualTo(syncInquiry);
-    await Assert.That(request.Flags).IsEqualTo(WorkBatchOptions.SkipInboxClaiming);
-    await Assert.That(request.PartitionCount).IsEqualTo(64);
-    await Assert.That(request.LeaseSeconds).IsEqualTo(60);
-    await Assert.That(request.AbandonStaleInstanceThresholdSeconds).IsEqualTo(10);
-    await Assert.That(request.MaxStreamsPerBatch).IsEqualTo(50);
-  }
-
-  [Test]
-  public async Task ProcessWorkBatchRequest_Defaults_MatchDocumentedValuesAsync() {
-    var request = new ProcessWorkBatchRequest {
-      InstanceId = (Guid)TrackedGuid.NewMedo(),
-      ServiceName = "OrderService",
-      HostName = "web-server-01",
-      ProcessId = 1,
-      OutboxCompletions = [],
-      OutboxFailures = [],
-      InboxCompletions = [],
-      InboxFailures = [],
-      ReceptorCompletions = [],
-      ReceptorFailures = [],
-      PerspectiveCompletions = [],
-      PerspectiveEventCompletions = [],
-      PerspectiveFailures = [],
-      NewOutboxMessages = [],
-      NewInboxMessages = [],
-      RenewOutboxLeaseIds = [],
-      RenewInboxLeaseIds = []
-    };
-
-    await Assert.That(request.Metadata).IsNull();
-    await Assert.That(request.PerspectiveSyncInquiries).IsNull();
-    await Assert.That(request.Flags).IsEqualTo(WorkBatchOptions.None);
-    await Assert.That(request.PartitionCount).IsEqualTo(10_000);
-    await Assert.That(request.LeaseSeconds).IsEqualTo(300);
-    await Assert.That(request.AbandonStaleInstanceThresholdSeconds).IsEqualTo(30);
-    await Assert.That(request.MaxStreamsPerBatch).IsEqualTo(300);
-  }
 
   // ========================================
   // Completion / failure records
@@ -518,31 +370,4 @@ public class WorkCoordinatorDtoSurfaceTests {
     };
   }
 
-  private static OutboxMessage _createOutboxMessage() {
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    return new OutboxMessage {
-      MessageId = messageId,
-      Destination = "orders-topic",
-      Envelope = _createJsonEnvelope(),
-      EnvelopeType = "EnvType, TestAssembly",
-      MessageType = "MsgType, TestAssembly",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
-      IsEvent = true,
-      Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
-    };
-  }
-
-  private static InboxMessage _createInboxMessage() {
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    return new InboxMessage {
-      MessageId = messageId,
-      HandlerName = "ServiceBusConsumer",
-      Envelope = _createJsonEnvelope(),
-      EnvelopeType = "EnvType, TestAssembly",
-      MessageType = "MsgType, TestAssembly",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
-      IsEvent = true,
-      Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
-    };
-  }
 }

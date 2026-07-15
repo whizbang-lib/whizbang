@@ -561,17 +561,6 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
@@ -607,13 +596,6 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
   }
 
   private sealed class ScopedCoverageThrowingCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
