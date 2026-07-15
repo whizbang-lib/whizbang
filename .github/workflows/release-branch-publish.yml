@@ -9,8 +9,11 @@ name: Release Branch Publish
 # (release/v0.290.3-alpha.1 -> 0.290.3-alpha.1), NOT GitVersion — on old-line hotfix branches
 # GitVersion derives from the highest repo-wide version source (observed: 0.860.8-pr340.5
 # computed on a 0.290-line PR) and the release-branch GitVersion config is unlabeled, so it
-# would mint a wrong — and STABLE-looking — version. Tests run on the PR into the release
-# branch; this workflow publishes the merge result.
+# would mint a wrong — and STABLE-looking — version.
+#
+# The publish is GATED on the full test matrix (unit + the 4 integration suites this line has)
+# running against the pushed merge result itself — the same suites ci.yml runs on PRs — so a
+# bad merge cannot ship even if the PR into the release branch was green.
 #
 # The branch-creation push is skipped (the base cut has no changes yet).
 #
@@ -26,15 +29,16 @@ on:
     branches:
       - 'release/v*'
 
+# Least-privilege: write permissions granted per-job (S8233) — only the publish job needs them.
 permissions:
-  contents: write   # nuget-publish creates tags and GitHub releases
-  id-token: write   # NuGet OIDC trusted publishing
+  contents: read
 
 jobs:
   version:
     name: Version From Branch Name
     if: ${{ !github.event.created }}
     runs-on: ubuntu-latest
+    permissions: {}
     outputs:
       version: ${{ steps.extract.outputs.version }}
     steps:
@@ -49,9 +53,66 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Publishing version: $VERSION"
 
+  build:
+    name: Build
+    needs: version
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+
+  unit-tests:
+    name: Unit Tests
+    needs: build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-test-unit.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
+
+  postgres-integration:
+    name: PostgreSQL Integration
+    needs: build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-test-postgres.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
+
+  inmemory-integration:
+    name: InMemory Integration
+    needs: build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-test-inmemory.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
+
+  rabbitmq-integration:
+    name: RabbitMQ Integration
+    needs: build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-test-rabbitmq.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
+
+  servicebus-integration:
+    name: Service Bus Integration
+    needs: build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-test-servicebus.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
+
   publish:
     name: Publish From Release Branch
-    needs: version
+    needs: [version, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration]
+    permissions:
+      contents: write   # nuget-publish creates tags and GitHub releases
+      id-token: write   # NuGet OIDC trusted publishing
     uses: ./.github/workflows/nuget-publish.yml
     with:
       version: ${{ needs.version.outputs.version }}

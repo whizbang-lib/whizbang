@@ -52,14 +52,17 @@ on:
       PUSHOVER_USER_KEY_10:
         required: false
 
+# Least-privilege: write permissions are granted per-job below (S8233) — the pack job needs
+# neither contents:write nor id-token.
 permissions:
-  contents: write   # tag + GitHub release creation
-  id-token: write   # NuGet OIDC trusted publishing (nuget-push.yml)
+  contents: read
 
 jobs:
   pack:
     name: Build & Pack
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -100,6 +103,9 @@ jobs:
   push:
     name: Push (Trusted Publishing)
     needs: pack
+    permissions:
+      contents: read
+      id-token: write   # NuGet OIDC trusted publishing
     uses: ./.github/workflows/nuget-push.yml
     with:
       version: ${{ inputs.version }}
@@ -111,7 +117,7 @@ jobs:
     needs: [pack, push]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # tag + GitHub release creation (only job that needs write)
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
