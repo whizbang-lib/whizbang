@@ -14,7 +14,12 @@ namespace Whizbang.Generators;
 /// is an ordinary <see cref="DiagnosticAnalyzer"/> diagnostic, so it surfaces in both the IDE (squiggle)
 /// and the compiler build (<c>dotnet build</c>).
 /// </summary>
-/// <remarks>This file lands WHIZ130 (mixed-mode Apply). WHIZ131-134 follow.</remarks>
+/// <remarks>
+/// Compile-time guards: <c>WHIZ130</c> (mixed-mode Apply) and <c>WHIZ134</c> (ambiguous composition) —
+/// both statically resolvable from type symbols. <c>WHIZ131</c> (rebuild/rewind targets a runtime string
+/// perspective name), <c>WHIZ133</c> (a stream is a runtime id), and <c>WHIZ132</c> (re-emit dataflow)
+/// aren't statically resolvable, so their enforcement is the runtime guard rather than this analyzer.
+/// </remarks>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class EphemeralAnalyzer : DiagnosticAnalyzer {
@@ -43,8 +48,26 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
     description: "Ephemeral is viral: a perspective fed by an ephemeral event is authoritative state that "
       + "is never rebuilt from a log. Mixing a Sourced event into the same perspective is a contradiction.");
 
+  /// <summary>
+  /// WHIZ134: Error — a type inherits its ephemeral mode from two or more sibling profile interfaces
+  /// that disagree, with no more-specific override to break the tie. Resolve it by declaring an explicit
+  /// <c>[Ephemeral]</c> on the type. Error (not warning): the generator would otherwise pick one silently,
+  /// so the type's runtime behaviour would be order-dependent.
+  /// </summary>
+  public static readonly DiagnosticDescriptor AmbiguousComposition = new(
+    id: "WHIZ134",
+    title: "Ambiguous ephemeral composition",
+    messageFormat: "Type '{0}' inherits [Ephemeral] from two or more profiles that disagree, and nothing "
+      + "more specific breaks the tie. Declare an explicit [Ephemeral(...)] on '{0}' to resolve it.",
+    category: CATEGORY,
+    defaultSeverity: DiagnosticSeverity.Error,
+    isEnabledByDefault: true,
+    description: "When a type composes conflicting ephemeral profiles, the effective mode is otherwise "
+      + "resolved by a deterministic-but-arbitrary rule; an explicit declaration makes the choice clear.");
+
   /// <inheritdoc/>
-  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [MixedModePerspective];
+  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
+    [MixedModePerspective, AmbiguousComposition];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -54,10 +77,15 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
   }
 
   private static void _analyzeType(SymbolAnalysisContext context) {
-    if (context.Symbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Class) {
+    if (context.Symbol is not INamedTypeSymbol symbol
+        || (symbol.TypeKind != TypeKind.Class && symbol.TypeKind != TypeKind.Struct)) {
       return;
     }
+    _checkMixedModePerspective(context, symbol);   // WHIZ130
+    _checkAmbiguousComposition(context, symbol);   // WHIZ134
+  }
 
+  private static void _checkMixedModePerspective(SymbolAnalysisContext context, INamedTypeSymbol symbol) {
     var events = _appliedEventTypes(symbol);
     if (events.Count == 0) {
       return;   // not a perspective
@@ -76,6 +104,15 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
         symbol.Name,
         string.Join(", ", ephemeral),
         string.Join(", ", sourced)));
+    }
+  }
+
+  private static void _checkAmbiguousComposition(SymbolAnalysisContext context, INamedTypeSymbol symbol) {
+    if (EphemeralResolver.IsAmbiguousComposition(symbol)) {
+      context.ReportDiagnostic(Diagnostic.Create(
+        AmbiguousComposition,
+        symbol.Locations.FirstOrDefault() ?? Location.None,
+        symbol.Name));
     }
   }
 

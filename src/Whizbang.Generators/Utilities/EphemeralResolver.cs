@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 
@@ -30,6 +31,42 @@ internal static class EphemeralResolver {
     return attr is null
       ? null
       : (_enumArgName(attr, "Destruction", "WhenConsumed"), _enumArgName(attr, "Storage", "InMemory"));
+  }
+
+  /// <summary>
+  /// True when a type's ephemeral mode is <em>ambiguously composed</em> — it has no own or base
+  /// <c>[Ephemeral]</c> to settle the tie, yet implements two or more sibling profile interfaces that
+  /// carry <c>[Ephemeral]</c> with <em>different</em> configs. A refined profile that extends another
+  /// (more-specific) is NOT ambiguous; only unrelated siblings that disagree are. The developer resolves
+  /// it by declaring an explicit <c>[Ephemeral]</c> on the type. (WHIZ134.)
+  /// </summary>
+  public static bool IsAmbiguousComposition(INamedTypeSymbol type) {
+    if (_on(type) is not null) {
+      return false;
+    }
+    for (var b = type.BaseType; b is not null; b = b.BaseType) {
+      if (_on(b) is not null) {
+        return false;
+      }
+    }
+
+    var carriers = new List<(INamedTypeSymbol Iface, string Destruction, string Storage)>();
+    foreach (var iface in type.AllInterfaces) {
+      var a = _on(iface);
+      if (a is not null) {
+        carriers.Add((iface, _enumArgName(a, "Destruction", "WhenConsumed"), _enumArgName(a, "Storage", "InMemory")));
+      }
+    }
+    if (carriers.Count < 2) {
+      return false;
+    }
+
+    // Keep only the most-derived carriers: drop any interface that another carrier extends.
+    var maximal = carriers.Where(c => !carriers.Any(o =>
+      !SymbolEqualityComparer.Default.Equals(o.Iface, c.Iface)
+      && o.Iface.AllInterfaces.Contains(c.Iface, SymbolEqualityComparer.Default))).ToList();
+
+    return maximal.Select(c => (c.Destruction, c.Storage)).Distinct().Count() > 1;
   }
 
   private static AttributeData? _find(INamedTypeSymbol type) {
