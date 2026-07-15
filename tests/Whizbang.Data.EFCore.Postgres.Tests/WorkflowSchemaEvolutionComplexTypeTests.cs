@@ -483,4 +483,61 @@ public class WorkflowSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await Assert.That(final.Version).IsEqualTo(4)
       .Because("each of the four upserts bumped the row version — all four saves committed.");
   }
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Test 10 (characterization) — WRITE SHAPE of empty collections. EF ToJson writes empty collections with
+  // the key present ("AllowedPersonaIds": [], "ex": []). An empty PRIMITIVE collection round-trips to [].
+  // An empty framework Scope.Extensions (ComplexCollection with HasJsonPropertyName) materializes as NULL
+  // even though the JSON is perfect — the quirk the coalescer's Scope line exists for. Pins both behaviors.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  [Test]
+  [Timeout(120000)]
+  public async Task FreshRow_EmptyCollections_WriteShapeAndMaterializationAsync(CancellationToken ct) {
+    Guid id = _idProvider.NewGuid();
+    var strategy = new PostgresUpsertStrategy();
+    // Insert with EMPTY AllowedPersonaIds (withPersonas:false) — NO SQL stripping.
+    await strategy.UpsertPerspectiveRowAsync(_context!, TableName, id, _newShapeModel(withPersonas: false), _meta(), new PerspectiveScope(), ct);
+    _context!.ChangeTracker.Clear();
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(ct);
+    var dataJson = await connection.ExecuteScalarAsync<string>($"SELECT data::text FROM {TableName} WHERE id = @id", new { id });
+    var scopeJson = await connection.ExecuteScalarAsync<string>($"SELECT scope::text FROM {TableName} WHERE id = @id", new { id });
+    await Assert.That(dataJson!).Contains("\"AllowedPersonaIds\": []")
+      .Because("EF ToJson writes an empty primitive collection with the key present — fresh rows are new-shape.");
+    await Assert.That(scopeJson!).Contains("\"ex\": []")
+      .Because("the scope JSON also carries the empty Extensions key.");
+
+    var row = await _context.Set<PerspectiveRow<WorkflowLikeModel>>().AsNoTracking().FirstAsync(r => r.Id == id, ct);
+    await Assert.That(row.Data.Stages[0].Steps[0].AllowedPersonaIds).IsNotNull()
+      .Because("an empty PRIMITIVE collection with the key present round-trips to [], not null.");
+    await Assert.That(row.Scope.Extensions).IsNull()
+      .Because("EF materializes the framework's EMPTY complex collection (Scope.Extensions, ComplexCollection+HasJsonPropertyName) as null even with perfect JSON — the quirk the coalescer's Scope line neutralizes (WORKAROUND(dotnet/efcore#38625)).");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Test 11 (characterization) — an empty nested COMPLEX collection in the Data graph ("Steps": []): pins
+  // whether it round-trips to [] on this stack (it does on the 0.290 line). If this ever flips to null,
+  // rebuilt rows with empty complex collections become poison-on-touch and the coalescer is load-bearing
+  // for them too.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  [Test]
+  [Timeout(120000)]
+  public async Task FreshRow_EmptyComplexCollection_RoundTripsToEmptyListAsync(CancellationToken ct) {
+    Guid id = _idProvider.NewGuid();
+    var strategy = new PostgresUpsertStrategy();
+    var model = new WorkflowLikeModel { Name = "WF-empty", Stages = [new StageLike { Title = "Stage A", Steps = [] }] };
+    await strategy.UpsertPerspectiveRowAsync(_context!, TableName, id, model, _meta(), new PerspectiveScope(), ct);
+    _context!.ChangeTracker.Clear();
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(ct);
+    var dataJson = await connection.ExecuteScalarAsync<string>($"SELECT data::text FROM {TableName} WHERE id = @id", new { id });
+    await Assert.That(dataJson!).Contains("\"Steps\": []")
+      .Because("the stored JSON has the key present and empty.");
+
+    var row = await _context.Set<PerspectiveRow<WorkflowLikeModel>>().AsNoTracking().FirstAsync(r => r.Id == id, ct);
+    await Assert.That(row.Data.Stages[0].Steps).IsNotNull()
+      .Because("an empty nested complex collection stored as [] must round-trip to an empty list.");
+    await Assert.That(row.Data.Stages[0].Steps).Count().IsEqualTo(0);
+  }
 }
