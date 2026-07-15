@@ -325,6 +325,24 @@ public partial class PerspectiveWorker(
   public event PerspectiveEventProcessedHandler? OnPerspectiveEventProcessed;
 
   /// <summary>
+  /// Fired the moment a worker thread finds the intra-pod stream-affinity gate for a
+  /// <c>(streamId, perspectiveName)</c> already held and must wait for it — i.e., a second thread
+  /// contended for the same stream's apply slot.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// In production a sustained rate of these for the same key signals same-stream apply pressure
+  /// (events arriving faster than a single applier can drain the stream) — a useful ops/OTel signal.
+  /// </para>
+  /// <para>
+  /// It is also a deterministic test-synchronization point: it fires exactly when a second consumer
+  /// PARKS on the gate, letting a test observe serialization without polling or timing guesses.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+  public event Action<(Guid StreamId, string PerspectiveName)>? OnStreamAffinityGateContended;
+
+  /// <summary>
   /// Groups per-stream perspective processing parameters that travel together through lifecycle phases.
   /// </summary>
   private readonly record struct PerspectiveStreamContext(
@@ -1109,7 +1127,13 @@ public partial class PerspectiveWorker(
     _ensureCursorCacheEvictionSubscribed();
     var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
     Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
-    await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
+    // Fast path: take the gate synchronously when it's free (the common case — different streams, or
+    // one applier per stream). Only when it's already HELD do we surface contention + park. Wait(0)
+    // never blocks; it just reports whether the slot was free.
+    if (!gateEntry.Semaphore.Wait(0, CancellationToken.None)) {
+      OnStreamAffinityGateContended?.Invoke((streamId, perspectiveName));
+      await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
+    }
     try {
       await body().ConfigureAwait(false);
     } finally {

@@ -357,32 +357,41 @@ public class PerspectiveApplyExactlyOnceTests {
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createWorker(coordinator, registry, eventStore,
       o => { o.MaxConcurrentDrainConsumers = 2; o.DrainLoopMaxIterations = 1; });
+
+    // Completion signal for "a second consumer PARKED on the affinity gate for our (stream, perspective)".
+    // This is the deterministic seam that replaces any timing guess: the gate fires it the instant a
+    // second thread finds the gate held. If the gate is missing, this never fires and B reaches the
+    // runner instead — so we race the two signals and assert which one wins. No Task.Delay, no polling.
+    var gateParked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateContended += key => {
+      if (key.StreamId == streamId && key.PerspectiveName == perspectiveName) {
+        gateParked.TrySetResult();
+      }
+    };
     var workerTask = worker.StartAsync(cts.Token);
 
     try {
-      // Consumer A picks up the first signal, enters the runner, and BLOCKS before cooldown is marked.
+      // Consumer A picks up the first signal, enters the runner, and BLOCKS before cooldown is marked
+      // — so A holds the gate for (stream, perspective) the whole time B is trying.
       await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
       await runner.FirstEntered.WaitAsync(TimeSpan.FromSeconds(10));
 
-      // Second signal, same stream. The idle consumer B picks it up. A is blocked (cooldown unmarked),
-      // so the ONLY thing that can stop B from applying the same event again is the affinity gate.
+      // Second signal, same stream. The idle consumer B picks it up. With the gate, B parks (gateParked
+      // fires). Without it, B races through the still-fresh cooldown check into the runner (SecondEntered
+      // fires). Exactly one of these happens — wait for whichever, then assert it was the parking.
       await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-
-      // LOCK-IN: B must NOT enter the runner while A holds the gate. Without the drain-path gate, B races
-      // through the still-fresh cooldown check and SecondEntered completes quickly (RED).
-      var second = runner.SecondEntered;
-      var timeout = Task.Delay(TimeSpan.FromSeconds(5));
-      var raced = await Task.WhenAny(second, timeout);
-      await Assert.That(raced == second).IsFalse().Because(
+      var winner = await Task.WhenAny(gateParked.Task, runner.SecondEntered)
+        .WaitAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(winner == gateParked.Task).IsTrue().Because(
         "the drain path must hold the same per-(streamId,perspectiveName) affinity gate the standard path "
-        + "holds — a second consumer draining the same stream must serialize behind the first, never apply "
-        + "the same event concurrently on stale state (the production saga-strand race).");
+        + "holds — a second consumer draining the same stream must PARK behind the first, never race into "
+        + "the runner and apply the same event concurrently on stale state (the production saga-strand race).");
     } finally {
       // Always unblock A — even if the assertion above threw — so no drain task is left parked.
       runner.Release();
     }
 
-    // A now returns, marks cooldown, and releases the gate BEFORE B can acquire it (finally runs after
+    // A now returns, marks cooldown, and releases the gate BEFORE B can acquire it (the finally runs after
     // the apply). B then acquires, sees the event cooled, and skips. Waiting for A's apply to return
     // guarantees the cooldown mark (its next, synchronous step) happens before we tear down.
     await runner.FirstReturned.WaitAsync(TimeSpan.FromSeconds(10));
