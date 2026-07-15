@@ -164,7 +164,7 @@ internal sealed class UnfilteredScopedAccess<TModel>(DbContext context) : IScope
 
   public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
     var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
+    return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
   }
 }
 
@@ -190,7 +190,7 @@ internal sealed class FilteredScopedAccess<TModel>(DbContext context, ScopeFilte
 
   public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
     var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
+    return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
   }
 }
 
