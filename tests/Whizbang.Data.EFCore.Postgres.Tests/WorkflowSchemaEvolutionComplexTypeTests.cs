@@ -121,6 +121,7 @@ public class WorkflowSchemaEvolutionComplexTypeTests : IAsyncDisposable {
 
   [After(Test)]
   public async Task TeardownAsync() {
+    PerspectiveDataCoalescer.Clear();  // global registry — reset so tests stay independent
     if (_context != null) { await _context.DisposeAsync(); _context = null; }
     if (_dataSource != null) { await _dataSource.DisposeAsync(); _dataSource = null; }
     if (_testDatabaseName != null) {
@@ -306,6 +307,26 @@ public class WorkflowSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await Assert.That(row.Data.Stages[0].Steps).Count().IsEqualTo(0);
   }
 
+  // The per-model coalescer the (backported) generator emits for real perspectives — registered manually here
+  // because this ad-hoc test model isn't a generator-discovered perspective. WORKAROUND(dotnet/efcore#38625).
+  private static void _registerCoalescer() {
+    PerspectiveDataCoalescer.Register(typeof(PerspectiveRow<WorkflowLikeModel>), entity => {
+      var row = (PerspectiveRow<WorkflowLikeModel>)entity;
+      if (row.Scope is not null) { row.Scope.Extensions ??= []; }
+      var data = row.Data;
+      if (data is null) {
+        return;
+      }
+      data.Stages ??= [];
+      foreach (var stage in data.Stages) {
+        stage.Steps ??= [];
+        foreach (var step in stage.Steps) {
+          step.AllowedPersonaIds ??= [];
+        }
+      }
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────────────────────
   // Test 6 (THE PROD CRASH CHAIN — runner rhythm) — exactly what the generated perspective runner does:
   // load the current model via IPerspectiveStore.GetByStreamIdAsync, mutate it like Apply, save via the
@@ -317,6 +338,7 @@ public class WorkflowSchemaEvolutionComplexTypeTests : IAsyncDisposable {
   [Test]
   [Timeout(120000)]
   public async Task RunnerChain_StoreLoad_ApplyMutate_Upsert_Reload_OverOldShapeRow_StaysHealthyAsync(CancellationToken ct) {
+    _registerCoalescer();
     Guid id = _idProvider.NewGuid();
     await _seedOldShapeRowAsync(id);
     var strategy = new PostgresUpsertStrategy();
@@ -351,6 +373,7 @@ public class WorkflowSchemaEvolutionComplexTypeTests : IAsyncDisposable {
   [Test]
   [Timeout(120000)]
   public async Task PerspectiveStore_GetByStreamId_OverOldShapeRow_ReturnsCoalescedModelAsync(CancellationToken ct) {
+    _registerCoalescer();
     Guid id = _idProvider.NewGuid();
     await _seedOldShapeRowAsync(id);
 

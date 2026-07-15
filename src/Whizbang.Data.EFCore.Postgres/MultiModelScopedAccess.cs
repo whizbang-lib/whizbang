@@ -36,7 +36,7 @@ internal static class MultiModelScopeHelper {
       where T : class {
     var query = GetQuery<T>(context, filterInfo);
     var row = await query.FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
+    return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
   }
 
   internal static ScopeFilterInfo? BuildFilterInfo(
