@@ -2211,4 +2211,112 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   #endregion
+
+  #region PerspectiveDataCoalescer registration — WORKAROUND(dotnet/efcore#38625)
+
+  // EF Core 10's ComplexProperty().ToJson() materializes a JSON-absent complex collection as null (the CLR
+  // `= []` initializer is ignored), so rows written before a nested collection property was added are
+  // poison-on-touch. The generator emits a PerspectiveDataCoalescer registration per perspective model that
+  // restores every non-nullable List<T>/array in the Data graph (and PerspectiveScope.Extensions) to empty.
+  // These tests pin that emission; remove them with the workaround once a fixed EF Core release ships.
+
+  [Test]
+  public async Task Generator_ModelWithNestedCollections_EmitsRecursiveDataCoalescerRegistrationAsync() {
+    // Arrange - a model two complex-collection levels deep, with a nullable collection that must be skipped.
+    var source = """
+      #nullable enable
+      using System;
+      using System.Collections.Generic;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record NestedEvent : IEvent;
+
+      public class ItemEntry {
+        public string Label { get; set; } = "";
+        public List<Guid> TagIds { get; set; } = [];
+        public List<Guid>? OptionalIds { get; set; }
+      }
+
+      public class GroupEntry {
+        public string Title { get; set; } = "";
+        public List<ItemEntry> Items { get; set; } = [];
+      }
+
+      public class NestedModel {
+        public string Name { get; set; } = "";
+        public List<GroupEntry> Groups { get; set; } = [];
+      }
+
+      public class NestedPerspective : IPerspectiveFor<NestedModel, NestedEvent> {
+        public NestedModel Apply(NestedModel currentData, NestedEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var registration = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("EFCoreModelRegistration"));
+    await Assert.That(registration).IsNotNull();
+    var sourceText = registration!.SourceText.ToString();
+
+    // The registration is emitted, marked with the upstream-issue token for future removal.
+    await Assert.That(sourceText).Contains("PerspectiveDataCoalescer.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.NestedModel>)");
+    await Assert.That(sourceText).Contains("WORKAROUND(dotnet/efcore#38625)");
+
+    // The framework's Scope.Extensions is always coalesced (it null-materializes on complex-mode rows too).
+    await Assert.That(sourceText).Contains("row.Scope.Extensions ??=");
+
+    // The model graph is walked recursively: top-level, nested complex elements, and the deepest Guid list.
+    await Assert.That(sourceText).Contains("data.Groups ??= new global::System.Collections.Generic.List<global::TestApp.GroupEntry>();");
+    await Assert.That(sourceText).Contains(".Items ??= new global::System.Collections.Generic.List<global::TestApp.ItemEntry>();");
+    await Assert.That(sourceText).Contains(".TagIds ??= new global::System.Collections.Generic.List<global::System.Guid>();");
+
+    // Nullable-annotated collections are a legitimate null — never coalesced.
+    await Assert.That(sourceText).DoesNotContain("OptionalIds ??=");
+  }
+
+  [Test]
+  public async Task Generator_ModelWithoutCollections_EmitsScopeOnlyCoalescerRegistrationAsync() {
+    // Arrange - the flat boilerplate model (string Id only): no data-graph statements, but the registration
+    // still exists for the framework-level Scope.Extensions coalesce.
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var registration = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("EFCoreModelRegistration"));
+    await Assert.That(registration).IsNotNull();
+    var sourceText = registration!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("PerspectiveDataCoalescer.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.TestModel>)");
+    await Assert.That(sourceText).Contains("row.Scope.Extensions ??=");
+    // A model with no coalescible collections gets no data-graph walk.
+    await Assert.That(sourceText).DoesNotContain("var data = row.Data;");
+  }
+
+  #endregion
 }

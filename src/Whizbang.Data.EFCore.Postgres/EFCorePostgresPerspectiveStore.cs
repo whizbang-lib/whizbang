@@ -52,7 +52,7 @@ public class EFCorePostgresPerspectiveStore<TModel>(
         .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
 
     // Return the model data, or null if not found
-    return row?.Data;
+    return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
   }
 
   /// <inheritdoc/>
@@ -94,7 +94,7 @@ public class EFCorePostgresPerspectiveStore<TModel>(
         .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
 
     // Return the model data, or null if not found
-    return row?.Data;
+    return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
   }
 
   /// <inheritdoc/>
