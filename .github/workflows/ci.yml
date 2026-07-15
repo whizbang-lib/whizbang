@@ -9,10 +9,10 @@ on:
     branches: [main, develop, 'release/**']
   workflow_dispatch:
 
-# Least-privilege: write permissions are granted per-job below (S8233) — only the publish
-# jobs need contents/id-token write, and only version-comment needs pull-requests write.
-permissions:
-  contents: read
+# Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
+# what it needs. Only the publish jobs get contents/id-token write, and only
+# version-comment gets pull-requests write.
+permissions: {}
 
 concurrency:
   # Use head branch for PRs, ref_name for pushes - ensures push and PR from same branch share group
@@ -26,6 +26,7 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
@@ -61,12 +62,16 @@ jobs:
 
   version:
     name: Version
+    permissions:
+      contents: read
     uses: ./.github/workflows/reusable-version.yml
 
   build:
     name: Build
     needs: [version, changes]
     if: needs.changes.outputs.code == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
     uses: ./.github/workflows/reusable-build.yml
     with:
       version: ${{ needs.version.outputs.semver }}
@@ -74,6 +79,8 @@ jobs:
   unit-tests:
     name: Unit Tests
     needs: build
+    permissions:
+      contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
       # Use pre-built artifacts with in-job instrumentation for coverage
@@ -82,6 +89,8 @@ jobs:
   postgres-integration:
     name: PostgreSQL Integration
     needs: build
+    permissions:
+      contents: read
     uses: ./.github/workflows/reusable-test-postgres.yml
     with:
       artifact-name: build-${{ github.run_id }}
@@ -89,6 +98,8 @@ jobs:
   inmemory-integration:
     name: InMemory Integration
     needs: build
+    permissions:
+      contents: read
     uses: ./.github/workflows/reusable-test-inmemory.yml
     with:
       artifact-name: build-${{ github.run_id }}
@@ -96,6 +107,8 @@ jobs:
   rabbitmq-integration:
     name: RabbitMQ Integration
     needs: build
+    permissions:
+      contents: read
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
     with:
       artifact-name: build-${{ github.run_id }}
@@ -103,6 +116,8 @@ jobs:
   servicebus-integration:
     name: Service Bus Integration
     needs: build
+    permissions:
+      contents: read
     uses: ./.github/workflows/reusable-test-servicebus.yml
     with:
       artifact-name: build-${{ github.run_id }}
@@ -110,6 +125,8 @@ jobs:
   azureblob-integration:
     name: AzureBlob Integration
     needs: build
+    permissions:
+      contents: read
     uses: ./.github/workflows/reusable-test-azureblob.yml
     with:
       artifact-name: build-${{ github.run_id }}
@@ -117,6 +134,8 @@ jobs:
   quality:
     name: Quality
     needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
+    permissions:
+      contents: read
     uses: ./.github/workflows/reusable-quality.yml
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -130,6 +149,8 @@ jobs:
     name: Pack NuGet Packages
     needs: [version, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -316,6 +337,8 @@ jobs:
   notify-success:
     name: Notify Success
     needs: [changes, quality]
+    permissions:
+      contents: read
     if: |
       always() &&
       github.ref != 'refs/heads/develop' &&
@@ -341,6 +364,8 @@ jobs:
   notify-failure:
     name: Notify Failure
     needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
+    permissions:
+      contents: read
     if: failure() && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
@@ -361,6 +386,8 @@ jobs:
   notify-cancelled:
     name: Notify Cancelled
     needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
+    permissions:
+      contents: read
     if: cancelled() && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
