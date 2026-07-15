@@ -155,8 +155,8 @@ public class CompositeFanoutPersistenceIntegrationTests {
     // CascadeToEventStoreOnlyAsync type-switch has no concrete arm for it — the arm set is built from receptor
     // response types) must STILL persist to the event store. The generated IEvent catch-all fallback routes it
     // via runtime-typed dispatch (PublishToOutboxDynamicAsync). Without this, the override silently returned
-    // without persisting — no exception, no Warning — which is why WorkflowService's composite never
-    // materialized its instance: its stream-creating WorkflowAssignedEvent is not receptor-produced.
+    // without persisting — no exception, no Warning — so a composite whose stream-creating inner event is
+    // not receptor-produced never materializes its read-model instance.
     var (dispatcher, strategy) = _createOwnedCompositeDispatcher();
     var streamId = (Guid)TrackedGuid.NewMedo();
 

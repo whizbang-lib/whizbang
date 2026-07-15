@@ -45,7 +45,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// there surfaces as JSON null in read-only projections, not a crash.
 /// </para>
 /// </remarks>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkflowSchemaEvolutionComplexTypeTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderSchemaEvolutionComplexTypeTests.cs</tests>
 public static class PerspectiveDataCoalescer {
   /// <summary>
   /// Coalescers keyed by closed generic type <c>typeof(PerspectiveRow&lt;TModel&gt;)</c>. Each delegate walks the

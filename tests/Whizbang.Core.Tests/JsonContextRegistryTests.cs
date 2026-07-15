@@ -526,7 +526,7 @@ public partial class JsonContextRegistryTests {
   }
 
   // ───────────────────────────────────────────────────────────────────────────────────────────────
-  // REPRO — composite NAME-resolution gap (the WorkflowService "Failed to resolve message type" storm).
+  // REPRO — composite NAME-resolution gap (a consuming service's "Failed to resolve message type" storm).
   // The generator registers a composite for POLYMORPHIC serialization (RegisterDerivedType<IMessage>) but
   // NEVER emits RegisterTypeName for it (MessageJsonContextGenerator.cs:1638 filters IsCommand||IsEvent||
   // IsSerializable — a composite is none). So GetTypeInfoByName — the by-name lookup the outbox-flush and
@@ -564,7 +564,7 @@ public partial class JsonContextRegistryTests {
 
     // Exactly what the outbox-flush lifecycle does per outbox row: deserialize the payload BY NAME. For a
     // composite this currently throws InvalidOperationException "Failed to resolve message type '…'" (the
-    // 978× WorkflowService resolve-storm). Once the composite is name-resolvable it deserializes instead.
+    // production resolve-retry storm). Once the composite is name-resolvable it deserializes instead.
     await Assert.That(() => deserializer.DeserializeFromJsonElement(
         payload.RootElement, typeof(HelperRoundTripComposite).AssemblyQualifiedName!))
       .ThrowsNothing()
