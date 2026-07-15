@@ -22,6 +22,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
   // IPerspectiveBase<TModel, TEvent1, ...> is the unified marker extended by IPerspectiveFor and
   // IPerspectiveWithActionsFor; the events are the type arguments from index 1 on.
   private const string PERSPECTIVE_BASE = "Whizbang.Core.Perspectives.IPerspectiveBase";
+  private const string DANGEROUS_MIX_OPT_IN = "DangerouslyAllowMixedEphemeralAndSourcedEventsAttribute";
 
   /// <summary>
   /// WHIZ130: Warning — a perspective whose <c>Apply</c> methods span both modes (a viral ephemeral
@@ -67,7 +68,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
       (EphemeralResolver.IsEphemeral(evt) ? ephemeral : sourced).Add(evt.Name);
     }
 
-    if (ephemeral.Count > 0 && sourced.Count > 0) {
+    if (ephemeral.Count > 0 && sourced.Count > 0 && !_hasDangerousMixOptIn(symbol)) {
       context.ReportDiagnostic(Diagnostic.Create(
         MixedModePerspective,
         symbol.Locations.FirstOrDefault() ?? Location.None,
@@ -76,6 +77,16 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
         string.Join(", ", sourced)));
     }
   }
+
+  /// <summary>
+  /// True when the perspective carries <c>[DangerouslyAllowMixedEphemeralAndSourcedEvents]</c> — the
+  /// developer's explicit, in-code acknowledgement of the mixed-mode path. Matched by simple name so it
+  /// works even when the source compilation can't fully bind the attribute.
+  /// </summary>
+  private static bool _hasDangerousMixOptIn(INamedTypeSymbol perspective) =>
+    perspective.GetAttributes().Any(a =>
+      a.AttributeClass?.Name == DANGEROUS_MIX_OPT_IN
+      || a.AttributeClass?.Name == "DangerouslyAllowMixedEphemeralAndSourcedEvents");
 
   /// <summary>
   /// The distinct event types a perspective applies — the type arguments (from index 1) of every

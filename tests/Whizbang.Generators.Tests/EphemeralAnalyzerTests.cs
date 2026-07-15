@@ -82,6 +82,25 @@ public class EphemeralAnalyzerTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task MixedPerspectiveWithDangerousOptIn_NoWHIZ130Async() {
+    // Explicit, in-code opt-in: the developer has acknowledged the dangerous path. The warning goes away
+    // BECAUSE they decorated the perspective — a first-class escape hatch for teams that run
+    // warnings-as-errors with no #pragma/editorconfig suppression, and a greppable, reviewable choice.
+    const string source = HEADER + """
+      [DangerouslyAllowMixedEphemeralAndSourcedEvents]
+      public class DeliberatelyMixedProjection
+        : IPerspectiveFor<Model, PresencePing>, IPerspectiveFor<Model, OrderPlaced> {
+        public Model Apply(Model current, PresencePing e) => current;
+        public Model Apply(Model current, OrderPlaced e) => current;
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<EphemeralAnalyzer>(source);
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ130")).IsFalse();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task MixViaComposedProfileInterface_StillReportsWHIZ130Async() {
     // The ephemeral event gets its mode from a profile interface, not a direct attribute — the analyzer
     // must resolve it the same way the generator does (walk base/interfaces), or virality goes unenforced.
