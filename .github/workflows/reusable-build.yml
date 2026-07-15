@@ -19,8 +19,6 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    # Single-threaded (-maxcpucount:1) Release build of the full solution; 15m was razor-thin
-    # (observed 15m02s) once the collective-events feature landed. Bumped for headroom.
     timeout-minutes: 20
 
     steps:
@@ -45,27 +43,28 @@ jobs:
       - name: Restore Dependencies
         run: dotnet restore
 
-      - name: Clean Solution
-        run: dotnet clean --configuration Release
-
       - name: Build Solution
         run: |
           VERSION_ARGS=""
           if [ -n "${{ inputs.version }}" ]; then
             VERSION_ARGS="-p:Version=${{ inputs.version }}"
           fi
-          dotnet build --no-restore --configuration Release -maxcpucount:1 $VERSION_ARGS
+          dotnet build --no-restore --configuration Release $VERSION_ARGS
 
-      - name: Verify Code Formatting
-        run: dotnet format --verify-no-changes --no-restore
+      # Formatting verification runs as a separate parallel job (ci.yml `format`) so it
+      # stays off the build -> test-suites critical path.
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
+          # Test jobs execute test modules directly from bin/ (Run-Tests.ps1 -NoBuild uses
+          # --test-modules, no MSBuild), so only src/ needs obj/ intermediates — pack
+          # (dotnet pack --no-build) reads them. Test/sample/tool intermediates are dead
+          # weight in the artifact.
           name: build-${{ github.run_id }}
           path: |
             **/bin/Release
-            **/obj/Release
+            src/**/obj/Release
             !**/obj/Release/**/ref/**
             !**/obj/Release/**/refint/**
           retention-days: 1
