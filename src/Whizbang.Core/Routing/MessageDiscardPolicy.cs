@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Routing;
@@ -84,6 +85,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   private readonly IReceptorRegistryQuery _registry;
   private readonly ILogger<MessageDiscardPolicy> _logger;
   private readonly Counter<long> _skippedCounter;
+  private readonly IReadOnlySet<string> _absorbedNamespaces;
 
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
   /// <summary>OTel meter name for the discard counter.</summary>
@@ -94,10 +96,22 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
 #pragma warning restore CA1707
 
   /// <summary>Construct the default policy.</summary>
-  public MessageDiscardPolicy(IReceptorRegistryQuery registry, ILogger<MessageDiscardPolicy> logger, Meter meter) {
+  /// <param name="registry">Consumer registry for the receive/inbox no-consumer gates.</param>
+  /// <param name="logger">Diagnostic logger.</param>
+  /// <param name="meter">OTel meter for the discard counter.</param>
+  /// <param name="routingOptions">Routing options; supplies the <see cref="RoutingOptions.AbsorbedNamespaces"/>
+  /// allow-list so unconsumed events on an absorbed namespace are kept (persisted) rather than dropped.
+  /// Optional — when null, no namespace is absorbed and behavior is unchanged.</param>
+  public MessageDiscardPolicy(
+      IReceptorRegistryQuery registry,
+      ILogger<MessageDiscardPolicy> logger,
+      Meter meter,
+      IOptions<RoutingOptions>? routingOptions = null) {
     _registry = registry ?? throw new ArgumentNullException(nameof(registry));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     ArgumentNullException.ThrowIfNull(meter);
+    _absorbedNamespaces = routingOptions?.Value.AbsorbedNamespaces
+      ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     _skippedCounter = meter.CreateCounter<long>(
       COUNTER_NAME,
       unit: "{message}",
@@ -112,12 +126,28 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     if (_isBodyClaimEnvelope(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
-    return _registry.HasAnyConsumer(payloadClrType)
-      ? new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None)
-      : new MessageDiscardDecision(
-          ShouldDiscard: true,
-          Reason: MessageDiscardReason.NoLocalConsumer,
-          Detail: $"No local receptor or perspective consumes payload type '{payloadClrType}'");
+    // Keep the message if a consumer exists OR its namespace is absorbed (persist-for-later, even with no
+    // consumer). Absorbed events still reach the inbox → the unconditional event-store write captures them.
+    if (_registry.HasAnyConsumer(payloadClrType) || _isAbsorbedNamespace(payloadClrType)) {
+      return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
+    }
+    return new MessageDiscardDecision(
+      ShouldDiscard: true,
+      Reason: MessageDiscardReason.NoLocalConsumer,
+      Detail: $"No local receptor or perspective consumes payload type '{payloadClrType}'");
+  }
+
+  /// <summary>
+  /// True when the payload's event namespace is in <see cref="RoutingOptions.AbsorbedNamespaces"/>. The
+  /// namespace is derived from the payload type name (transport-agnostic — the transport's <c>topic</c>
+  /// argument can be a queue name like <c>{svc}-{ns}</c>, so it is not used here).
+  /// </summary>
+  private bool _isAbsorbedNamespace(string payloadClrType) {
+    if (_absorbedNamespaces.Count == 0) {
+      return false;
+    }
+    var ns = TypeNameFormatter.GetPayloadNamespace(payloadClrType);
+    return ns is not null && _absorbedNamespaces.Contains(ns);
   }
 
   /// <inheritdoc />
