@@ -26,15 +26,16 @@ on:
     branches:
       - 'release/v*'
 
+# Least-privilege: write permissions granted per-job (S8233) — the version job needs none.
 permissions:
-  contents: write   # nuget-publish creates tags and GitHub releases
-  id-token: write   # NuGet OIDC trusted publishing
+  contents: read
 
 jobs:
   version:
     name: Version From Branch Name
     if: ${{ !github.event.created }}
     runs-on: ubuntu-latest
+    permissions: {}
     outputs:
       version: ${{ steps.extract.outputs.version }}
     steps:
@@ -52,6 +53,9 @@ jobs:
   publish:
     name: Publish From Release Branch
     needs: version
+    permissions:
+      contents: write   # nuget-publish creates tags and GitHub releases
+      id-token: write   # NuGet OIDC trusted publishing
     uses: ./.github/workflows/nuget-publish.yml
     with:
       version: ${{ needs.version.outputs.version }}
