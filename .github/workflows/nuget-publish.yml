@@ -5,7 +5,10 @@ name: NuGet Publish
 # Publishing policy (pushing from any other workflow fails OIDC token exchange with
 # "Workflow mismatch for policy") — then create the git tag + GitHub release.
 #
-# Used by: manual workflow_dispatch, and release-branch-publish.yml (release/v* branch pushes).
+# Used by: manual workflow_dispatch, and ci.yml's release-publish job (release/v* branch
+# pushes). When the caller already built, tested, and packed the bits (ci.yml), it passes
+# artifact-name and the pack job here is skipped — the pushed packages are the exact bits
+# that went through the test matrix.
 
 on:
   workflow_dispatch:
@@ -28,6 +31,13 @@ on:
         description: 'Git ref to checkout'
         required: false
         type: string
+      artifact-name:
+        description: >-
+          Name of an existing NuGet packages artifact uploaded earlier in the calling run.
+          When set, the pack job is skipped and these packages are pushed/released as-is.
+        required: false
+        type: string
+        default: ''
     secrets:
       PUSHOVER_API_TOKEN:
         required: false
@@ -52,14 +62,15 @@ on:
       PUSHOVER_USER_KEY_10:
         required: false
 
-# Least-privilege: write permissions are granted per-job below (S8233) — the pack job needs
-# neither contents:write nor id-token.
-permissions:
-  contents: read
+# Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
+# what it needs.
+permissions: {}
 
 jobs:
   pack:
     name: Build & Pack
+    # Skipped when the caller supplies an already-tested packages artifact.
+    if: ${{ inputs.artifact-name == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -103,18 +114,21 @@ jobs:
   push:
     name: Push (Trusted Publishing)
     needs: pack
+    # pack is skipped (not failed) when artifact-name is supplied; run on skip, stop on failure.
+    if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
       id-token: write   # NuGet OIDC trusted publishing
     uses: ./.github/workflows/nuget-push.yml
     with:
       version: ${{ inputs.version }}
-      artifact-name: nuget-packages-publish-${{ github.run_id }}
+      artifact-name: ${{ inputs.artifact-name || format('nuget-packages-publish-{0}', github.run_id) }}
     secrets: inherit
 
   release:
     name: Tag & GitHub Release
     needs: [pack, push]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write   # tag + GitHub release creation (only job that needs write)
@@ -128,7 +142,7 @@ jobs:
       - name: Download packages artifact
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          name: nuget-packages-publish-${{ github.run_id }}
+          name: ${{ inputs.artifact-name || format('nuget-packages-publish-{0}', github.run_id) }}
           path: ./packages
 
       - name: Generate SHA256 Hashes

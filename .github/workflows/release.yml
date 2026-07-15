@@ -499,7 +499,8 @@ jobs:
 
           MISSING=0
           for pkg in "${EXPECTED_PACKAGES[@]}"; do
-            if [ ! -f ./packages/${pkg}.*.nupkg ]; then
+            # compgen -G: glob-match test — [ -f glob ] breaks when a glob matches more than one file
+            if ! compgen -G "./packages/${pkg}.*.nupkg" > /dev/null; then
               echo "ERROR: ${pkg} package not created"
               MISSING=$((MISSING + 1))
             else

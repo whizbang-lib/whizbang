@@ -170,33 +170,44 @@ jobs:
               return;
             }
 
+            // NOTE: multi-line markdown is built with join('\n') — template-literal
+            // continuation lines at column 0 would end the YAML block scalar and make this
+            // workflow file unparseable (GitHub then spawns a 0s failed run on every push).
             let suggestion = '';
             if (head.startsWith('feature/') || head.startsWith('feat/') || head.startsWith('fix/')) {
-              suggestion = `Feature and fix branches should target \`develop\`, not \`${base}\`.
-
-**To fix:** Change the base branch to \`develop\` using the "Edit" button above.`;
+              suggestion = [
+                `Feature and fix branches should target \`develop\`, not \`${base}\`.`,
+                '',
+                '**To fix:** Change the base branch to `develop` using the "Edit" button above.',
+              ].join('\n');
             } else if (head.startsWith('release/') && base === 'develop') {
-              suggestion = `Release branches should target \`main\`, not \`develop\`.
-
-After merging to main, changes automatically sync back to develop.`;
+              suggestion = [
+                'Release branches should target `main`, not `develop`.',
+                '',
+                'After merging to main, changes automatically sync back to develop.',
+              ].join('\n');
             } else if (head === 'develop' && base === 'main') {
-              suggestion = `Don't merge \`develop\` directly to \`main\`.
-
-**Instead:** Use the [Start Release workflow](../../actions/workflows/start-release.yml) to create a proper release.`;
+              suggestion = [
+                "Don't merge `develop` directly to `main`.",
+                '',
+                '**Instead:** Use the [Start Release workflow](../../actions/workflows/start-release.yml) to create a proper release.',
+              ].join('\n');
             } else {
-              suggestion = `This branch direction doesn't match our Git Flow rules.`;
+              suggestion = "This branch direction doesn't match our Git Flow rules.";
             }
 
-            const body = `## ❌ Git Flow Branch Direction Error
-
-**\`${head}\` → \`${base}\`** is not an allowed branch direction.
-
-${suggestion}
-
-📚 **[Read the full branching guide](.github/BRANCHING.md)**
-
----
-<sub>This check ensures we follow Git Flow for clean releases. If you believe this is incorrect, please contact a maintainer.</sub>`;
+            const body = [
+              '## ❌ Git Flow Branch Direction Error',
+              '',
+              `**\`${head}\` → \`${base}\`** is not an allowed branch direction.`,
+              '',
+              suggestion,
+              '',
+              '📚 **[Read the full branching guide](.github/BRANCHING.md)**',
+              '',
+              '---',
+              '<sub>This check ensures we follow Git Flow for clean releases. If you believe this is incorrect, please contact a maintainer.</sub>',
+            ].join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
