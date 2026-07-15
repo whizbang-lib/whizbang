@@ -4,19 +4,22 @@ on:
   push:
     branches:
       - develop        # release.yml handles post-merge to main
+      - 'release/v**'  # branch-name-versioned publish (release-publish job)
   pull_request:
     branches: [main, develop, 'release/**']
   workflow_dispatch:
 
+# Least-privilege: write permissions are granted per-job below (S8233) — only the publish
+# jobs need contents/id-token write, and only version-comment needs pull-requests write.
 permissions:
-  contents: write    # Required for nuget-publish to create tags and releases
-  id-token: write    # Required for NuGet OIDC trusted publishing
-  pull-requests: write  # Required for version comment on PRs
+  contents: read
 
 concurrency:
   # Use head branch for PRs, ref_name for pushes - ensures push and PR from same branch share group
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  # PRs cancel superseded runs; pushes (develop/release publishes) queue instead — a publish
+  # must never be cancelled mid-push.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -182,7 +185,8 @@ jobs:
 
           MISSING=0
           for pkg in "${EXPECTED_PACKAGES[@]}"; do
-            if [ ! -f ./packages/${pkg}.*.nupkg ]; then
+            # compgen -G: glob-match test — [ -f glob ] breaks when a glob matches more than one file
+            if ! compgen -G "./packages/${pkg}.*.nupkg" > /dev/null; then
               echo "ERROR: ${pkg} package not created"
               MISSING=$((MISSING + 1))
             else
@@ -247,12 +251,17 @@ jobs:
 
   # ============================================================================
   # Prerelease NuGet Publish - Auto-publish on develop push
+  # Gated on the full test matrix: a package can only ship from a commit whose
+  # packed bits passed every suite in this same run.
   # ============================================================================
 
   prerelease-publish:
     name: Publish Prerelease NuGet
-    needs: [version, pack]
+    needs: [version, pack, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    permissions:
+      contents: read
+      id-token: write   # NuGet OIDC trusted publishing
     uses: ./.github/workflows/nuget-push.yml
     with:
       version: ${{ needs.version.outputs.semver }}
@@ -271,6 +280,30 @@ jobs:
       PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
 
   # ============================================================================
+  # Release NuGet Publish - Auto-publish on release/v* push (e.g. hotfix merge)
+  # Same gating as develop; the VERSION comes from the branch name
+  # (release/v0.290.3-alpha.1 -> 0.290.3-alpha.1) via reusable-version's
+  # release-line override, NOT GitVersion. Delegates to nuget-publish.yml with
+  # this run's tested pack artifact, so the pushed packages are the exact bits
+  # that passed the matrix — plus the git tag + GitHub release.
+  # The branch-creation push is skipped (the base cut has no changes yet).
+  # ============================================================================
+
+  release-publish:
+    name: Publish Release NuGet
+    needs: [version, pack, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created
+    permissions:
+      contents: write   # nuget-publish creates the tag + GitHub release
+      id-token: write   # NuGet OIDC trusted publishing
+    uses: ./.github/workflows/nuget-publish.yml
+    with:
+      version: ${{ needs.version.outputs.semver }}
+      ref: ${{ github.sha }}
+      artifact-name: nuget-packages-${{ github.run_id }}
+    secrets: inherit
+
+  # ============================================================================
   # Notifications - Send push notifications on build completion
   # ============================================================================
 
@@ -280,6 +313,7 @@ jobs:
     if: |
       always() &&
       github.ref != 'refs/heads/develop' &&
+      !startsWith(github.ref, 'refs/heads/release/v') &&
       (needs.quality.result == 'success' || (needs.changes.outputs.code != 'true' && github.event_name == 'pull_request')) &&
       vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
@@ -301,7 +335,7 @@ jobs:
   notify-failure:
     name: Notify Failure
     needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
-    if: failure() && github.ref != 'refs/heads/develop' && vars.PUSHOVER_ENABLED == 'true'
+    if: failure() && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: failure
@@ -321,7 +355,7 @@ jobs:
   notify-cancelled:
     name: Notify Cancelled
     needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
-    if: cancelled() && github.ref != 'refs/heads/develop' && vars.PUSHOVER_ENABLED == 'true'
+    if: cancelled() && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: cancelled
