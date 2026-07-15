@@ -1095,6 +1095,31 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
+  /// Runs <paramref name="body"/> while holding the per-<c>(streamId, perspectiveName)</c> affinity
+  /// semaphore, so at most one thread inside this pod applies for that key at a time. This is the
+  /// intra-pod half of the "one applier per stream anywhere" invariant (the cross-pod half is
+  /// <c>wh_active_streams</c> ownership). BOTH the standard per-event path and the drain path route
+  /// their apply through this gate — if only one did (as was the case before the drain path was wired
+  /// in), a second consumer draining the same stream would race the cooldown/cursor check while the
+  /// first is mid-apply and double-apply on stale state (the production saga-strand race, 019ee73d /
+  /// 019ef473). See <c>plans/perspective-worker-stream-affinity.md</c>.
+  /// </summary>
+  private async Task _withStreamAffinityGateAsync(
+      Guid streamId, string perspectiveName, Func<Task> body, CancellationToken ct) {
+    _ensureCursorCacheEvictionSubscribed();
+    var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
+    Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+    await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
+    try {
+      await body().ConfigureAwait(false);
+    } finally {
+      Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+      _ = gateEntry.Semaphore.Release();
+      _sweepIdleStreamAffinityGatesIfDue();
+    }
+  }
+
+  /// <summary>
   /// Activity-triggered sweep of <see cref="_streamAffinityGates"/>. Called from every
   /// gate release; throttled to run at most once per
   /// <see cref="PerspectiveStreamAffinityOptions.SweepInterval"/> via a single CAS so a
@@ -1476,8 +1501,14 @@ public partial class PerspectiveWorker(
           // failure-mode OCEs; anything that bubbles is either expected shutdown propagation
           // or an unhandled edge case, neither of which should poison sibling perspectives.
           try {
-            await _runDrainModePerspectiveAsync(
-              streamId, perspectiveName, filteredEvents, currentContext, ct);
+            // Intra-pod stream-affinity gate — serialize apply for this (stream, perspective) across
+            // the parallel consumer loops AND against the standard path, closing the same-pod
+            // double-apply window the standard path already gated. See _withStreamAffinityGateAsync.
+            var pName = perspectiveName;
+            var pEvents = filteredEvents;
+            var pContext = currentContext;
+            await _withStreamAffinityGateAsync(streamId, pName, () =>
+              _runDrainModePerspectiveAsync(streamId, pName, pEvents, pContext, ct), ct);
           } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             // Worker shutdown — propagate out of the loop, Parallel.ForEachAsync handles it.
             throw;
