@@ -1,15 +1,22 @@
 name: Release Branch Publish
 
 # Auto-publishes a NuGet prerelease when a release/v* branch receives a push (e.g. a hotfix PR
-# merge) — the release-branch mirror of ci.yml's develop auto-publish. The version comes from the
-# BRANCH NAME (release/v0.290.3-alpha.1 -> 0.290.3-alpha.1), NOT GitVersion: on old-line hotfix
-# branches GitVersion derives from the highest reachable/repo tag (observed: 0.860.8-pr340.5 on a
-# 0.290-line PR) and the release-branch config is unlabeled, so it would mint a wrong — and
-# STABLE-looking — version. The branch-creation push is skipped (base cut has no changes yet).
+# merge) — the release-branch mirror of ci.yml's develop auto-publish. Delegates to
+# nuget-publish.yml, the canonical explicit-version pipeline (build → pack → push via the
+# policy-trusted nuget-push.yml → tag + GitHub release), so the steps match the develop flow.
 #
-# NOTE for old-line hotfixes: push-triggered workflows run the workflow file AT THE PUSHED REF, so
-# when cutting a release/v* base branch from an old commit, cherry-pick this workflow onto the
-# hotfix branch (so it lands in the merge commit) or the merge will not auto-publish.
+# The one deliberate difference from develop: the VERSION comes from the BRANCH NAME
+# (release/v0.290.3-alpha.1 -> 0.290.3-alpha.1), NOT GitVersion — on old-line hotfix branches
+# GitVersion derives from the highest repo-wide version source (observed: 0.860.8-pr340.5
+# computed on a 0.290-line PR) and the release-branch GitVersion config is unlabeled, so it
+# would mint a wrong — and STABLE-looking — version. Tests run on the PR into the release
+# branch; this workflow publishes the merge result.
+#
+# The branch-creation push is skipped (the base cut has no changes yet).
+#
+# NOTE for old-line hotfixes: push-triggered workflows run the workflow file AT THE PUSHED REF,
+# so when cutting a release/v* base branch from an old commit, cherry-pick this workflow (and
+# the current nuget-publish.yml) onto the hotfix branch or the merge will not auto-publish.
 #
 # The publish still pauses at the 'nuget-publish' protected environment for required-reviewer
 # approval — identical to the develop auto-publish path.
