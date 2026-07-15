@@ -1,7 +1,20 @@
 name: Quality (Reusable)
 
+# Runs coverage merge + threshold + SonarCloud analysis. To keep the expensive
+# Sonar-wrapped build OFF the test-suite critical path, this job starts alongside the
+# suites: SonarScanner begins and the solution builds while tests run elsewhere, then a
+# wait step polls for the suites' coverage artifacts (failing fast if any test job
+# fails), and only the cheap merge/threshold/scanner-end steps happen after that.
+# The caller must grant `actions: read` (artifact/job polling) in addition to
+# `contents: read`.
+
 on:
   workflow_call:
+    inputs:
+      coverage-artifact-count:
+        description: 'Number of coverage-* artifacts the test suites upload in this run'
+        type: number
+        required: true
     secrets:
       SONAR_TOKEN:
         description: "SonarCloud token"
@@ -14,7 +27,7 @@ jobs:
   quality:
     name: Quality Analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -39,6 +52,82 @@ jobs:
           dotnet tool install --global dotnet-sonarscanner
           dotnet tool install --global dotnet-reportgenerator-globaltool
 
+      # SonarCloud free plan only supports main branch + PR analysis, so the scanner is
+      # skipped for push events to non-main branches (e.g. develop).
+      - name: SonarScanner Begin
+        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # coverageReportPaths is a path only — the file is produced later, after the
+          # suites' coverage artifacts arrive; the scanner reads it at the End step.
+          SONAR_ARGS=(
+            /k:"whizbang-lib_whizbang" /o:"whizbang-lib"
+            /d:sonar.token="${SONAR_TOKEN}"
+            /d:sonar.host.url="https://sonarcloud.io"
+            /d:sonar.qualitygate.wait=true
+            /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml"
+          )
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            SONAR_ARGS+=(
+              /d:sonar.pullrequest.key="$PR_NUMBER"
+              /d:sonar.pullrequest.branch="$HEAD_REF"
+              /d:sonar.pullrequest.base="$BASE_REF"
+            )
+          fi
+
+          # Load ALL sonar.* properties from shared config (single source of truth with local scripts)
+          while IFS='=' read -r key value; do
+            # Skip comments and empty lines
+            [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+            key=$(echo "$key" | xargs)  # trim
+            value=$(echo "$value" | xargs)  # trim
+            SONAR_ARGS+=(/d:"$key=$value")
+          done < sonar.config
+
+          dotnet-sonarscanner begin "${SONAR_ARGS[@]}"
+
+      # Single build serves both the scanner (analysis hooks) and ReportGenerator
+      # (source-generated files must exist before the coverage merge). Runs while the
+      # test suites are still executing in their own jobs.
+      - name: Build (analyzed)
+        run: dotnet build --configuration Release
+
+      - name: Wait for test suites to publish coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED: ${{ inputs.coverage-artifact-count }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Waiting for $EXPECTED coverage-* artifacts on run $RUN_ID..."
+          for i in $(seq 1 90); do
+            COUNT=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq '[.artifacts[].name | select(startswith("coverage-"))] | length' 2>/dev/null || echo 0)
+            if [ "${COUNT:-0}" -ge "$EXPECTED" ]; then
+              echo "All $COUNT coverage artifacts present."
+              exit 0
+            fi
+            # Fail fast when coverage will never arrive: a test job that failed, was
+            # cancelled, or was SKIPPED (e.g. its build dependency failed), or a failed
+            # build job itself.
+            DEAD=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
+              --jq '[.jobs[] | select(((.name | test("Tests")) and (.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "skipped")) or ((.name | startswith("Build")) and (.conclusion == "failure" or .conclusion == "cancelled")))] | length' 2>/dev/null || echo 0)
+            if [ "${DEAD:-0}" -gt 0 ]; then
+              echo "::error::$DEAD job(s) failed, were cancelled, or were skipped — coverage will never arrive; aborting quality analysis."
+              exit 1
+            fi
+            echo "[$i/90] $COUNT/$EXPECTED coverage artifacts present; no failed test jobs — sleeping 30s"
+            sleep 30
+          done
+          echo "::error::Timed out waiting for coverage artifacts."
+          exit 1
+
       - name: Download All Coverage Artifacts
         uses: actions/download-artifact@v6
         with:
@@ -61,13 +150,6 @@ jobs:
           fail_ci_if_error: false
           flags: alltests
           name: codecov-merged
-
-      - name: Build Project for Source-Generated Files
-        run: |
-          echo "Building project to ensure all source-generated files exist before merging coverage..."
-          dotnet clean --configuration Release
-          dotnet build --configuration Release -maxcpucount:1
-          echo "Build complete - all source-generated files now exist"
 
       - name: Check Coverage Files
         id: check-coverage
@@ -141,48 +223,9 @@ jobs:
             echo "✅ Coverage ${COVERAGE}% meets threshold ${THRESHOLD}%"
           fi
 
-      - name: SonarCloud Analysis
+      - name: SonarScanner End
+        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_REF: ${{ github.head_ref }}
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          # SonarCloud free plan only supports main branch + PR analysis.
-          # Skip SonarCloud entirely for push events to non-main branches (e.g. develop).
-          if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
-            echo "Skipping SonarCloud analysis for non-main branch push (free plan limitation)"
-            exit 0
-          fi
-
-          # Build PR-specific parameters if this is a pull request
-          PR_PARAMS=""
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            PR_PARAMS="/d:sonar.pullrequest.key=$PR_NUMBER /d:sonar.pullrequest.branch=$HEAD_REF /d:sonar.pullrequest.base=$BASE_REF"
-          fi
-
-          # Load ALL sonar.* properties from shared config (single source of truth with local scripts)
-          SONAR_EXTRA_ARGS=""
-          while IFS='=' read -r key value; do
-            # Skip comments and empty lines
-            [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
-            key=$(echo "$key" | xargs)  # trim
-            value=$(echo "$value" | xargs)  # trim
-            SONAR_EXTRA_ARGS="$SONAR_EXTRA_ARGS /d:$key=\"$value\""
-          done < sonar.config
-
-          eval dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" \
-            /d:sonar.token="${SONAR_TOKEN}" \
-            /d:sonar.host.url="https://sonarcloud.io" \
-            /d:sonar.qualitygate.wait=true \
-            ${PR_PARAMS} \
-            /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml" \
-            $SONAR_EXTRA_ARGS
-
-          # Build for SonarScanner to analyze code
-          dotnet clean --configuration Release
-          dotnet build --configuration Release -maxcpucount:1
-
-          dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
+        run: dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"

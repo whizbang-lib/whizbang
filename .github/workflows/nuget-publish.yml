@@ -62,10 +62,9 @@ on:
       PUSHOVER_USER_KEY_10:
         required: false
 
-# Least-privilege: write permissions are granted per-job below (S8233) — the pack job needs
-# neither contents:write nor id-token.
-permissions:
-  contents: read
+# Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
+# what it needs.
+permissions: {}
 
 jobs:
   pack:

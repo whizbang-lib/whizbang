@@ -60,25 +60,64 @@ jobs:
               - 'global.json'
               - 'nuget.config'
 
+  # On pushes (and dispatch) the real version must be stamped into assemblies before
+  # anything ships, so build waits for GitVersion. On PRs nothing ships — build starts
+  # immediately with a placeholder while pr-version computes the real number in
+  # parallel, purely for the PR comment.
   version:
     name: Version
+    if: github.event_name != 'pull_request'
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-version.yml
 
+  pr-version:
+    name: PR Version
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-version.yml
+
+  format:
+    name: Verify Code Formatting
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Verify Code Formatting
+        run: dotnet format --verify-no-changes --no-restore
+
   build:
     name: Build
     needs: [version, changes]
-    if: needs.changes.outputs.code == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
+    # still run there with the placeholder version below. Pushes honor the change filter
+    # too: a docs-only merge runs no build/tests and publishes no package.
+    if: ${{ !failure() && !cancelled() && (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch') }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-build.yml
     with:
-      version: ${{ needs.version.outputs.semver }}
+      version: ${{ needs.version.outputs.semver || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number) }}
 
+  # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
+  # skipped on PRs) poisons the default success() status check transitively — without an
+  # explicit if, every suite is skipped even though build succeeded.
   unit-tests:
     name: Unit Tests
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
@@ -89,6 +128,7 @@ jobs:
   postgres-integration:
     name: PostgreSQL Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-postgres.yml
@@ -98,6 +138,7 @@ jobs:
   inmemory-integration:
     name: InMemory Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-inmemory.yml
@@ -107,6 +148,7 @@ jobs:
   rabbitmq-integration:
     name: RabbitMQ Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
@@ -114,17 +156,30 @@ jobs:
       artifact-name: build-${{ github.run_id }}
 
   servicebus-integration:
+    # Single-dimension matrix so GitHub renders the leg names itself ("Service Bus
+    # Integration (whizbang)") — matrix expressions in `name:` don't render on
+    # reusable-workflow-call jobs.
     name: Service Bus Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
+    # The two AzureServiceBus-tagged projects run sequentially inside one job (shared
+    # containers), so one project per runner halves the suite's wall-clock.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [whizbang, ecommerce]
     uses: ./.github/workflows/reusable-test-servicebus.yml
     with:
       artifact-name: build-${{ github.run_id }}
+      project-filter: ${{ matrix.shard == 'whizbang' && 'Whizbang\.Transports\.AzureServiceBus' || 'ECommerce\.AzureServiceBus' }}
+      shard-name: ${{ matrix.shard }}
 
   azureblob-integration:
     name: AzureBlob Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-azureblob.yml
@@ -133,13 +188,47 @@ jobs:
 
   quality:
     name: Quality
-    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
+    # Deliberately does NOT need the test suites: it starts its Sonar-wrapped build
+    # while they run, then waits for their coverage artifacts internally (failing fast
+    # if any test job fails). actions:read is required for that polling.
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
+      actions: read
     uses: ./.github/workflows/reusable-quality.yml
+    with:
+      # unit, postgres, inmemory, rabbitmq, azureblob + 2 servicebus shards
+      coverage-artifact-count: 7
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ============================================================================
+  # CI Result - the ONE ruleset-required status check
+  # ============================================================================
+
+  ci-result:
+    name: CI Result
+    # Sole required context in the develop ruleset. Skipped jobs are fine — docs-only
+    # PRs/pushes skip the matrix by design, and version/pr-version are event-exclusive —
+    # but any failure or cancellation fails the gate. Requiring only this context also
+    # means test jobs can be renamed/sharded without touching the ruleset.
+    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Evaluate required jobs
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$RESULTS" | jq -e '[.[] | select(.result == "failure" or .result == "cancelled")] | length > 0' > /dev/null; then
+            echo "::error::One or more required jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All jobs succeeded or were legitimately skipped."
 
   # ============================================================================
   # Pack NuGet Packages - validates packability and produces artifacts
@@ -148,6 +237,8 @@ jobs:
   pack:
     name: Pack NuGet Packages
     needs: [version, build]
+    # version is skipped (not failed) on PRs; pack still validates packability there.
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -170,7 +261,7 @@ jobs:
 
       - name: Pack NuGet packages (no rebuild)
         env:
-          VERSION: ${{ needs.version.outputs.semver }}
+          VERSION: ${{ needs.version.outputs.semver || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number) }}
         run: |
           # NU5017 false positive for analyzer packages in .NET 10 SDK
           dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
@@ -234,6 +325,8 @@ jobs:
         run: ls -la ./packages
 
       - name: Upload NuGet packages
+        # On PRs pack is a packability gate only — nothing consumes the artifact.
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nuget-packages-${{ github.run_id }}
@@ -242,7 +335,7 @@ jobs:
 
   version-comment:
     name: Comment Version on PR
-    needs: version
+    needs: pr-version
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -253,9 +346,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-          SEMVER: ${{ needs.version.outputs.semver }}
-          FULLSEMVER: ${{ needs.version.outputs.fullsemver }}
-          PRERELEASE: ${{ needs.version.outputs.prerelease || 'none' }}
+          SEMVER: ${{ needs.pr-version.outputs.semver }}
+          FULLSEMVER: ${{ needs.pr-version.outputs.fullsemver }}
+          PRERELEASE: ${{ needs.pr-version.outputs.prerelease || 'none' }}
         run: |
           BODY="📦 **Version Information**: \`$SEMVER\`
 
@@ -284,7 +377,7 @@ jobs:
 
   prerelease-publish:
     name: Publish Prerelease NuGet
-    needs: [version, pack, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
+    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     permissions:
       contents: read
@@ -318,7 +411,7 @@ jobs:
 
   release-publish:
     name: Publish Release NuGet
-    needs: [version, pack, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
+    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created
     permissions:
       contents: write   # nuget-publish creates the tag + GitHub release
@@ -363,7 +456,7 @@ jobs:
 
   notify-failure:
     name: Notify Failure
-    needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
+    needs: [build, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
     permissions:
       contents: read
     if: failure() && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
@@ -385,7 +478,7 @@ jobs:
 
   notify-cancelled:
     name: Notify Cancelled
-    needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
+    needs: [build, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
     permissions:
       contents: read
     if: cancelled() && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
