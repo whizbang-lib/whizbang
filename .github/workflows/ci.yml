@@ -111,9 +111,13 @@ jobs:
     with:
       version: ${{ needs.version.outputs.semver || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number) }}
 
+  # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
+  # skipped on PRs) poisons the default success() status check transitively — without an
+  # explicit if, every suite is skipped even though build succeeded.
   unit-tests:
     name: Unit Tests
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
@@ -124,6 +128,7 @@ jobs:
   postgres-integration:
     name: PostgreSQL Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-postgres.yml
@@ -133,6 +138,7 @@ jobs:
   inmemory-integration:
     name: InMemory Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-inmemory.yml
@@ -142,6 +148,7 @@ jobs:
   rabbitmq-integration:
     name: RabbitMQ Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
@@ -149,8 +156,12 @@ jobs:
       artifact-name: build-${{ github.run_id }}
 
   servicebus-integration:
-    name: Service Bus Integration (${{ matrix.shard }})
+    # Single-dimension matrix so GitHub renders the leg names itself ("Service Bus
+    # Integration (whizbang)") — matrix expressions in `name:` don't render on
+    # reusable-workflow-call jobs.
+    name: Service Bus Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     # The two AzureServiceBus-tagged projects run sequentially inside one job (shared
@@ -158,20 +169,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - shard: whizbang
-            project-filter: 'Whizbang\.Transports\.AzureServiceBus'
-          - shard: ecommerce
-            project-filter: 'ECommerce\.AzureServiceBus'
+        shard: [whizbang, ecommerce]
     uses: ./.github/workflows/reusable-test-servicebus.yml
     with:
       artifact-name: build-${{ github.run_id }}
-      project-filter: ${{ matrix.project-filter }}
+      project-filter: ${{ matrix.shard == 'whizbang' && 'Whizbang\.Transports\.AzureServiceBus' || 'ECommerce\.AzureServiceBus' }}
       shard-name: ${{ matrix.shard }}
 
   azureblob-integration:
     name: AzureBlob Integration
     needs: build
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-azureblob.yml
@@ -317,6 +325,8 @@ jobs:
         run: ls -la ./packages
 
       - name: Upload NuGet packages
+        # On PRs pack is a packability gate only — nothing consumes the artifact.
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nuget-packages-${{ github.run_id }}

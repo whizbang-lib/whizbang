@@ -58,13 +58,14 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           # Test jobs execute test modules directly from bin/ (Run-Tests.ps1 -NoBuild uses
-          # --test-modules, no MSBuild), so only src/ needs obj/ intermediates — pack
-          # (dotnet pack --no-build) reads them. Test/sample/tool intermediates are dead
-          # weight in the artifact.
+          # --test-modules, no MSBuild), so only PACKABLE projects (src/ + tools/ — CLI,
+          # Migrate) need obj/ intermediates for pack's dotnet pack --no-build.
+          # Test/sample/benchmark intermediates are dead weight in the artifact.
           name: build-${{ github.run_id }}
           path: |
             **/bin/Release
             src/**/obj/Release
+            tools/**/obj/Release
             !**/obj/Release/**/ref/**
             !**/obj/Release/**/refint/**
           retention-days: 1
