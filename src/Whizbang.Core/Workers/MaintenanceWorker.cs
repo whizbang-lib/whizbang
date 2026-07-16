@@ -77,6 +77,20 @@ public sealed partial class MaintenanceWorker(
       LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
     }
 
+    // Tier-2 deep maintenance (E1 #13b3): prune ancient ephemeral pointers. The backing SQL self-gates on
+    // the opt-in flag (disabled by default) and a ~monthly interval, so this per-cycle call is a cheap
+    // no-op when disabled or not due. Best-effort: a prune failure is logged and never fails the cycle.
+    try {
+      var prune = await coordinator.PruneAncientEphemeralPointersAsync(ct);
+      if (prune.RowsPruned > 0) {
+        LogPointerPrune(_logger, prune.RowsPruned);
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogPointerPruneFailed(_logger, ex);
+    }
+
     // v0.657 slice 5: structural stuck-row sentinel. Runs after the regular
     // maintenance cycle so backings that don't implement it (default no-op
     // returning empty list) pay zero cost; Postgres backends use the partial
@@ -144,6 +158,14 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 21, Level = LogLevel.Warning,
     Message = "Reap-driven ephemeral snapshot failed for perspective {Perspective} on stream {StreamId} (non-fatal — body held for a later cycle)")]
   static partial void LogReapDrivenSnapshotFailed(ILogger logger, Exception ex, string perspective, Guid streamId);
+
+  [LoggerMessage(EventId = 22, Level = LogLevel.Information,
+    Message = "Tier-2 deep maintenance pruned {RowsPruned} ancient ephemeral event-store pointers (newest pointer per stream retained)")]
+  static partial void LogPointerPrune(ILogger logger, long rowsPruned);
+
+  [LoggerMessage(EventId = 23, Level = LogLevel.Warning,
+    Message = "Tier-2 ephemeral pointer prune failed (non-fatal — retried next due interval)")]
+  static partial void LogPointerPruneFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Maintenance task '{TaskName}' affected {RowsAffected} rows in {DurationMs}ms")]

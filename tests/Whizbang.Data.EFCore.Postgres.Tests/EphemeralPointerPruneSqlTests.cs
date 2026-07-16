@@ -305,6 +305,37 @@ public class EphemeralPointerPruneSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Coordinator_PruneAncientEphemeralPointers_InvokesSqlAndParsesResultAsync() {
+    // #13b3b plumbing: the EFCore coordinator override calls the SQL function and surfaces (rows, status).
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      dbContext, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    // Fresh DB => the opt-in flag is at its default (false).
+    var whenDisabled = await coordinator.PruneAncientEphemeralPointersAsync();
+    await Assert.That(whenDisabled.Status).IsEqualTo("disabled");
+    await Assert.That(whenDisabled.RowsPruned).IsEqualTo(0L);
+
+    // Enable + seed a stream with two ancient, reaped ephemeral pointers => one prunes, newest kept.
+    var streamId = Guid.NewGuid();
+    var older = Guid.NewGuid();
+    var newer = Guid.NewGuid();
+    await _commitAsync(connection, older, streamId, "Whizbang.Tests.PruneViaCoordinator", flags: 8);
+    await _commitAsync(connection, newer, streamId, "Whizbang.Tests.PruneViaCoordinator", flags: 8);
+    foreach (var e in new[] { older, newer }) {
+      await _reapBodyAsync(connection, e);
+      await _agePointerAsync(connection, e, 200);
+    }
+    await _enableDeepMaintenanceAsync(connection, true);
+
+    var whenEnabled = await coordinator.PruneAncientEphemeralPointersAsync();
+    await Assert.That(whenEnabled.Status).IsEqualTo("ok");
+    await Assert.That(whenEnabled.RowsPruned).IsEqualTo(1L)
+      .Because("The coordinator path prunes the older pointer and keeps the newest tombstone, same as the raw SQL.");
+  }
+
+  [Test]
   public async Task Prune_DebugMode_IsSkippedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

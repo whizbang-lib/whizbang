@@ -564,6 +564,21 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<EphemeralSnapshotTarget>>([]);
 
   /// <summary>
+  /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
+  /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
+  /// and the perspective cursor's last-event target survive the prune. The backing implementation is
+  /// OPT-IN (disabled by default) and self-gated to a long interval, so calling this every maintenance
+  /// cycle is cheap; it only actually prunes when enabled AND due. Default: unsupported no-op (engines
+  /// without the ephemeral body offload have nothing to prune).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Rows pruned plus a status string (<c>disabled</c> | <c>not due</c> | <c>ok</c> | …).</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(new EphemeralPointerPruneResult(0, "unsupported"));
+
+  /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
   /// Called per-stream immediately after processing (drain mode — no buffering).
   /// </summary>
@@ -843,6 +858,15 @@ public sealed record EphemeralTypeGrace(string EventTypeName, int GraceSeconds);
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record EphemeralSnapshotTarget(Guid StreamId, string PerspectiveName, Guid LastEventId);
+
+/// <summary>
+/// Result of the tier-2 ancient-ephemeral-pointer prune
+/// (<see cref="IWorkCoordinator.PruneAncientEphemeralPointersAsync"/>): how many pointers were deleted and
+/// why/why-not (<c>disabled</c> | <c>skipped (debug_mode=true)</c> | <c>not due</c> | <c>ok</c> |
+/// <c>unsupported</c>).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status);
 
 /// <summary>
 /// A stored type-definition fingerprint row — one distinct type-definition-version keyed by its content

@@ -479,6 +479,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return list;
   }
 
+  /// <inheritdoc />
+  public async Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "prune_ancient_ephemeral_pointers");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT rows_pruned, status FROM {fn}()";
+#pragma warning restore S2077
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+    return new EphemeralPointerPruneResult(reader.GetInt64(0), reader.GetString(1));
+  }
+
   // Issues a guarded UPDATE on wh_service_instances. No-op when the
   // instance provider isn't wired (the EFCoreWorkCoordinator can be
   // constructed without one — historical contract) or when the heartbeat
