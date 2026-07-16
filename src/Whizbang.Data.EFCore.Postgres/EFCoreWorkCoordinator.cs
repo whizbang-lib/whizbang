@@ -463,7 +463,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       $"LEFT JOIN {grace} g ON g.event_type = es.event_type " +
       $"JOIN {assoc} ma ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective' " +
       $"JOIN {cursors} c ON c.stream_id = es.stream_id AND c.perspective_name = ma.target_name " +
-      $"WHERE es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
+      // #13b4 safety gate: scope to EPHEMERAL events explicitly — once sourced bodies live in
+      // wh_event_body (full split), consumed sourced events must not become snapshot targets.
+      "WHERE (es.flags & 8) = 8 " +
+      $"AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
       $"    (SELECT setting_value::int FROM {settings} WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
       $"  * INTERVAL '1 second') " +
       "AND es.commit_sequence IS NOT NULL AND c.last_event_id IS NOT NULL " +

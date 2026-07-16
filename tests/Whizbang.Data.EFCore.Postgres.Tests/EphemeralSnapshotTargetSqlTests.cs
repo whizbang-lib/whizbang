@@ -94,6 +94,51 @@ public class EphemeralSnapshotTargetSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task GetEphemeralPairsNeedingSnapshot_SourcedBodyRow_IsNotATargetAsync() {
+    // #13b4 safety gate. Post-split, SOURCED bodies live in wh_event_body too — the reap-driven snapshot
+    // query must be explicitly gated on the event being ephemeral (flags&8), or every consumed sourced
+    // event would become a bogus bootstrap-snapshot target.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    const string sourcedType = "Whizbang.Tests.SourcedSnapTarget";
+    await _execAsync(connection,
+      "INSERT INTO wh_message_associations (id, message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at) " +
+      "VALUES (gen_random_uuid(), @t, 'perspective', @p, 'test', @t, NOW(), NOW()) ON CONFLICT DO NOTHING",
+      ("t", sourcedType), ("p", Perspective));
+
+    // A SOURCED event (flags 0) committed through the emit chain…
+    var request = $$"""
+      {
+        "instance_id": "{{Guid.NewGuid()}}", "service_name": "test", "host_name": "h", "process_id": 1,
+        "new_outbox_messages": [{
+          "MessageId": "{{eventId}}", "Destination": "out", "MessageType": "{{sourcedType}}", "EnvelopeType": null,
+          "Envelope": {"Payload": {"OrderId": 42}, "MessageId": "{{eventId}}", "Hops": []},
+          "Metadata": {}, "Scope": null, "StreamId": "{{streamId}}", "IsEvent": true, "Flags": 0
+        }]
+      }
+      """;
+    await _execAsync(connection, "SELECT commit_handler_result(@req::jsonb)", ("req", request));
+
+    // …whose body has been moved into wh_event_body (post-split), consumed, stamped, aged, with a cursor.
+    await _execAsync(connection,
+      "INSERT INTO wh_event_body (event_id, event_data, metadata) SELECT event_id, event_data, metadata FROM wh_event_store WHERE event_id = @id",
+      ("id", eventId));
+    await _execAsync(connection, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_id = @id", ("id", eventId));
+    await _execAsync(connection, "UPDATE wh_event_store SET commit_sequence = 5, created_at = NOW() - INTERVAL '10 minutes' WHERE event_id = @id", ("id", eventId));
+    await _execAsync(connection,
+      "INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status) VALUES (@sid, @p, @eid, 1)",
+      ("sid", streamId), ("p", Perspective), ("eid", eventId));
+
+    var pairs = await coordinator.GetEphemeralPairsNeedingSnapshotAsync();
+    await Assert.That(pairs.Any(t => t.StreamId == streamId)).IsFalse()
+      .Because("A sourced body row is never a reap-driven snapshot target — the query's ephemeral gate (flags&8) excludes it.");
+  }
+
+  [Test]
   public async Task GetEphemeralPairsNeedingSnapshot_ExcludesNotYetAgedAndNotConsumedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

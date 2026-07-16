@@ -289,6 +289,33 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Reap_SourcedBodyInBodyTable_IsNeverReapedAsync() {
+    // #13b4 safety gate. The full split moves SOURCED bodies into wh_event_body too, breaking the
+    // "wh_event_body holds ONLY ephemeral bodies by construction" invariant the reaper leaned on. The reap
+    // must be explicitly gated on the event being ephemeral (flags&8) — a sourced body in the body table is
+    // the durable log and must NEVER be reaped, no matter how consumed/aged/covered it is.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);   // fully aged; no association => consumed + vacuously covered
+
+    var eventId = Guid.NewGuid();
+    await _commitAsync(connection, Guid.NewGuid(), eventId, Guid.NewGuid(), "Whizbang.Tests.SourcedSplitBody", flags: 0);
+
+    // Simulate the post-split world: the sourced body lives in wh_event_body.
+    await using (var mv = connection.CreateCommand()) {
+      mv.CommandText = "INSERT INTO wh_event_body (event_id, event_data, metadata) " +
+        "SELECT event_id, event_data, metadata FROM wh_event_store WHERE event_id = @id";
+      mv.Parameters.AddWithValue("id", eventId);
+      await mv.ExecuteNonQueryAsync();
+    }
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L);
+
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("A SOURCED body row is the durable log — the reaper's ephemeral gate (flags&8) must never touch it, even when consumed, aged past grace, and snapshot-covered.");
+  }
+
+  [Test]
   public async Task Reap_SourcedEvent_InlineBodyUntouchedByMaintenanceAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

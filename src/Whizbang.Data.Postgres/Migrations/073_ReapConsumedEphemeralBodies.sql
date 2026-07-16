@@ -262,6 +262,10 @@ BEGIN
     USING __SCHEMA__.wh_event_store es
     LEFT JOIN __SCHEMA__.wh_ephemeral_type_grace g ON g.event_type = es.event_type
     WHERE es.event_id = eb.event_id
+      -- #13b4 safety gate: the reap is scoped to EPHEMERAL events explicitly. Pre-split this was
+      -- guaranteed "by construction" (wh_event_body held only ephemeral bodies); once SOURCED bodies
+      -- move into the body table (full split), this gate is what keeps the durable log un-reapable.
+      AND (es.flags & 8) = 8
       AND es.created_at < NOW() - (COALESCE(g.grace_seconds, v_ephemeral_grace_seconds) * INTERVAL '1 second')
       AND NOT EXISTS (
         SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
