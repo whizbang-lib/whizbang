@@ -312,6 +312,79 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
   }
 
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<TypeDefinitionInfo>> GetTypeDefinitionsAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var table = BuildSchemaQualifiedName(schema, "wh_type_definitions");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    cmd.CommandText =
+      $"SELECT definition_id, event_type, encode(settings_hash, 'hex'), encode(schema_hash, 'hex'), schema_version FROM {table}";
+#pragma warning restore S2077
+    var list = new List<TypeDefinitionInfo>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      list.Add(new TypeDefinitionInfo(
+        reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt32(4)));
+    }
+    return list;
+  }
+
+  /// <inheritdoc />
+  public async Task<TypeDefinitionRegistration> RegisterTypeDefinitionAsync(
+    string eventTypeName, string settingsHashHex, string schemaHashHex, int schemaVersion,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypeName);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "register_type_definition");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    cmd.CommandText = $"SELECT definition_id, is_new, previous_definition_id FROM {fn}(@t, @sh, @sch, @v)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("t", NpgsqlTypes.NpgsqlDbType.Text) { Value = eventTypeName });
+    cmd.Parameters.Add(new NpgsqlParameter("sh", NpgsqlTypes.NpgsqlDbType.Bytea) { Value = Convert.FromHexString(settingsHashHex) });
+    cmd.Parameters.Add(new NpgsqlParameter("sch", NpgsqlTypes.NpgsqlDbType.Bytea) { Value = Convert.FromHexString(schemaHashHex) });
+    cmd.Parameters.Add(new NpgsqlParameter("v", NpgsqlTypes.NpgsqlDbType.Integer) { Value = schemaVersion });
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      return TypeDefinitionRegistration.None;
+    }
+    var prev = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? (int?)null : reader.GetInt32(2);
+    return new TypeDefinitionRegistration(reader.GetInt32(0), reader.GetBoolean(1), prev);
+  }
+
+  /// <inheritdoc />
+  public async Task RecordDefinitionLineageAsync(
+    int fromDefinitionId, int toDefinitionId, DefinitionRelationship relationship, string? migrationRef,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "record_definition_lineage");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    cmd.CommandText = $"SELECT {fn}(@from, @to, @rel, @ref)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("from", NpgsqlTypes.NpgsqlDbType.Integer) { Value = fromDefinitionId });
+    cmd.Parameters.Add(new NpgsqlParameter("to", NpgsqlTypes.NpgsqlDbType.Integer) { Value = toDefinitionId });
+    cmd.Parameters.Add(new NpgsqlParameter("rel", NpgsqlTypes.NpgsqlDbType.Smallint) { Value = (short)relationship });
+    cmd.Parameters.Add(new NpgsqlParameter("ref", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)migrationRef ?? DBNull.Value });
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
   // Issues a guarded UPDATE on wh_service_instances. No-op when the
   // instance provider isn't wired (the EFCoreWorkCoordinator can be
   // constructed without one — historical contract) or when the heartbeat

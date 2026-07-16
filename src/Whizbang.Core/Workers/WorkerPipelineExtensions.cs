@@ -51,6 +51,15 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<InboxDrainWorker>();
     services.TryAddSingleton<DeadLetterRecoveryWorker>();
     services.TryAddSingleton<TransportDeadLetterDrainWorker>();
+    // Type-definition fingerprint reconciler (F-4): detect-by-default, act-by-opt-in. Inert without a
+    // catalog (GetService returns null) or without the fingerprint tables (coordinator defaults no-op).
+    services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>();
+    services.TryAddSingleton(sp => new Whizbang.Core.Fingerprint.TypeDefinitionReconciler(
+      sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.EphemeralOptions>>(),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Fingerprint.TypeDefinitionReconciler>>(),
+      sp.GetService<Whizbang.Core.IMessageTypeCatalog>()));
+    services.TryAddSingleton<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>();
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
     services.TryAddSingleton<IDeadLetterRecoveryPolicy, DefaultDeadLetterRecoveryPolicy>();
     services.TryAddSingleton<Whizbang.Core.Observability.DeadLetterMetrics>();
@@ -143,6 +152,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>());
 
     // Slice 4 of zero-idle-polling: register the coordinator as a hosted service
     // AND its touch-hook binder so the subscriptions wire up at startup. The

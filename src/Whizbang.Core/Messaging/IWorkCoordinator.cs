@@ -485,6 +485,44 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(0L);
 
   /// <summary>
+  /// Loads every stored type-definition fingerprint (a pre-register snapshot the reconciler diffs the
+  /// code's current definitions against). Empty on engines without the fingerprint tables.
+  /// </summary>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  Task<IReadOnlyList<TypeDefinitionInfo>> GetTypeDefinitionsAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<TypeDefinitionInfo>>([]);
+
+  /// <summary>
+  /// Registers a type's current definition (content hashes) — idempotent by hash. Reports whether it was
+  /// newly inserted plus the type's previous definition id, so the reconciler can record a lineage edge.
+  /// No-op sentinel on engines without the fingerprint tables.
+  /// </summary>
+  /// <param name="eventTypeName">The type's (current) CLR name.</param>
+  /// <param name="settingsHashHex">Lowercase-hex settings hash from the catalog entry.</param>
+  /// <param name="schemaHashHex">Lowercase-hex schema hash from the catalog entry.</param>
+  /// <param name="schemaVersion">Developer-declared schema version (0 until [SchemaVersion] exists).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  Task<TypeDefinitionRegistration> RegisterTypeDefinitionAsync(
+    string eventTypeName,
+    string settingsHashHex,
+    string schemaHashHex,
+    int schemaVersion,
+    CancellationToken cancellationToken = default) => Task.FromResult(TypeDefinitionRegistration.None);
+
+  /// <summary>
+  /// Records a lineage edge between two definitions (how one superseded another + the migration that
+  /// bridges them). No-op on engines without the fingerprint tables.
+  /// </summary>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  Task RecordDefinitionLineageAsync(
+    int fromDefinitionId,
+    int toDefinitionId,
+    DefinitionRelationship relationship,
+    string? migrationRef,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
   /// Called per-stream immediately after processing (drain mode — no buffering).
   /// </summary>
@@ -748,6 +786,42 @@ public sealed record EphemeralReclassificationResult(
   long StreamsBlocked) {
   /// <summary>Nothing reclassified — the default/no-op result.</summary>
   public static EphemeralReclassificationResult Empty { get; } = new(0, 0, 0);
+}
+
+/// <summary>
+/// A stored type-definition fingerprint row — one distinct type-definition-version keyed by its content
+/// hashes (lowercase hex). Loaded on startup so the reconciler can diff the code's current definitions.
+/// </summary>
+/// <docs>fundamentals/events/type-definition-fingerprint</docs>
+public sealed record TypeDefinitionInfo(
+  int DefinitionId,
+  string EventType,
+  string SettingsHashHex,
+  string SchemaHashHex,
+  int SchemaVersion);
+
+/// <summary>
+/// Result of <see cref="IWorkCoordinator.RegisterTypeDefinitionAsync"/>: the definition's id, whether it
+/// was newly inserted, and the type's previous definition id (non-null only on a genuinely new insert).
+/// </summary>
+/// <docs>fundamentals/events/type-definition-fingerprint</docs>
+public sealed record TypeDefinitionRegistration(int DefinitionId, bool IsNew, int? PreviousDefinitionId) {
+  /// <summary>No-op sentinel for engines without the fingerprint tables.</summary>
+  public static TypeDefinitionRegistration None { get; } = new(0, false, null);
+}
+
+/// <summary>
+/// How one type definition superseded another — labels a <c>wh_definition_lineage</c> edge so a stale
+/// definition names the kind of migration that brings its events current.
+/// </summary>
+/// <docs>fundamentals/events/type-definition-fingerprint</docs>
+public enum DefinitionRelationship {
+  /// <summary>The payload schema changed — events need upcasting.</summary>
+  SchemaUpgradedTo = 0,
+  /// <summary>The storage classification changed (e.g. Sourced → Ephemeral) — events need reclassifying.</summary>
+  ReclassifiedTo = 1,
+  /// <summary>Behavioral settings changed without a storage-class or schema change.</summary>
+  MetadataChangedTo = 2,
 }
 
 /// <summary>
