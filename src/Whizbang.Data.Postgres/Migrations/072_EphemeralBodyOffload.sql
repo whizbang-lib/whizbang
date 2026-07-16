@@ -166,7 +166,11 @@ BEGIN
     FROM computed c
     JOIN stored_events se ON se.event_id = c.message_id
     WHERE (c.flags & c_flag_ephemeral) = c_flag_ephemeral
-    ON CONFLICT (event_id) DO NOTHING
+    -- Constraint-LESS form (event_id PK is wh_event_body's only constraint, so semantics are
+    -- identical) — keeps the emit-chain source free of constraint-specific ON CONFLICT forms,
+    -- which the version-ordering regression lock forbids (a specific-constraint form on
+    -- wh_event_store once let idx_event_store_stream conflicts bubble up as PG 23505).
+    ON CONFLICT DO NOTHING
     RETURNING event_id
   )
   SELECT array_agg(event_id) INTO v_stored_event_ids FROM stored_events;
@@ -417,7 +421,11 @@ BEGIN
     FROM computed c
     JOIN stored_events se ON se.event_id = c.message_id
     WHERE (c.flags & c_flag_ephemeral) = c_flag_ephemeral
-    ON CONFLICT (event_id) DO NOTHING
+    -- Constraint-LESS form (event_id PK is wh_event_body's only constraint, so semantics are
+    -- identical) — keeps the emit-chain source free of constraint-specific ON CONFLICT forms,
+    -- which the version-ordering regression lock forbids (a specific-constraint form on
+    -- wh_event_store once let idx_event_store_stream conflicts bubble up as PG 23505).
+    ON CONFLICT DO NOTHING
     RETURNING event_id
   )
   SELECT array_agg(event_id) INTO v_stored_event_ids FROM stored_events;
