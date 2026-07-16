@@ -525,3 +525,146 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox IS
 'Phase 4.5B + 4.6 equivalent — back-fills wh_event_store + wh_perspective_events from inbox rows that arrived via TransportConsumerWorker direct-INSERT. Called by claim_work after claim_orphaned_inbox so the new path preserves the legacy self-healing guarantee. Migration 061: carries flags into wh_event_store + routes collective events (flags & 1) to the __collective__ sink perspective.';
+
+-- ── Read paths: COALESCE the offloaded ephemeral body back in ──────────────────────────────────
+-- CREATE OR REPLACE the two body-read fns (verbatim from 059 / 043) so an ephemeral event's body is
+-- read from wh_event_body when the inline wh_event_store body is NULL. Sourced events read inline
+-- exactly as before (COALESCE short-circuits on the non-NULL inline value). Only the SELECT body
+-- columns + a LEFT JOIN change; the claim CTE / ownership gate / ordering are byte-identical.
+
+SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
+  p_instance_id UUID,
+  p_stream_ids UUID[],
+  p_now TIMESTAMPTZ DEFAULT NOW(),
+  p_lease_seconds INTEGER DEFAULT 300
+) RETURNS TABLE(
+  out_stream_id UUID,
+  out_event_id UUID,
+  out_event_type TEXT,
+  out_event_data TEXT,
+  out_metadata TEXT,
+  out_scope TEXT,
+  out_event_work_id UUID,
+  out_perspective_name VARCHAR(200),
+  out_commit_sequence BIGINT,
+  out_attempts INTEGER
+) AS $$
+DECLARE
+  v_lease_expiry TIMESTAMPTZ;
+  v_stamp_grace CONSTANT INTERVAL := INTERVAL '5 seconds';
+  v_stamp_cutoff TIMESTAMPTZ;
+BEGIN
+  v_lease_expiry := p_now + (p_lease_seconds || ' seconds')::INTERVAL;
+  v_stamp_cutoff := p_now - v_stamp_grace;
+
+  -- Atomic claim+fetch (slice 25) + grace-windowed unstamped gate (mig 058) + live-owner gate
+  -- (mig 059). A row is claimable only if its stream is NOT owned by a DIFFERENT live instance —
+  -- enforcing single-writer-per-stream so two pods never apply one stream concurrently.
+  WITH eligible AS (
+    SELECT pe.event_work_id, pe.instance_id, pe.attempts
+    FROM wh_perspective_events pe
+    INNER JOIN wh_event_store es
+      ON es.stream_id = pe.stream_id
+      AND es.event_id = pe.event_id
+    WHERE pe.stream_id = ANY(p_stream_ids)
+      AND pe.processed_at IS NULL
+      AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
+      AND (
+        pe.instance_id IS NULL
+        OR pe.lease_expiry < p_now
+      )
+      AND (es.commit_sequence IS NOT NULL OR pe.created_at <= v_stamp_cutoff)
+      -- mig 059: single-writer gate. Do not claim a row whose stream is owned by a different
+      -- LIVE instance (mirrors claim_orphaned's liveness: a wh_service_instances row exists, or a
+      -- live LISTEN connection in pg_stat_activity). Caller-owned / unowned / dead-owner streams
+      -- stay claimable.
+      AND NOT EXISTS (
+        SELECT 1 FROM wh_active_streams ast
+        WHERE ast.stream_id = pe.stream_id
+          AND ast.assigned_instance_id IS NOT NULL
+          AND ast.assigned_instance_id <> p_instance_id
+          AND (
+            EXISTS (
+              SELECT 1 FROM wh_service_instances si
+              WHERE si.instance_id = ast.assigned_instance_id
+            )
+            OR EXISTS (
+              SELECT 1 FROM pg_stat_activity sa
+              WHERE sa.application_name = 'whizbang-' || ast.assigned_instance_id::text
+            )
+          )
+      )
+    ORDER BY pe.event_work_id
+    FOR UPDATE OF pe SKIP LOCKED
+  )
+  UPDATE wh_perspective_events pe
+  SET instance_id = p_instance_id,
+      lease_expiry = v_lease_expiry,
+      attempts = pe.attempts + 1
+  FROM eligible e
+  WHERE pe.event_work_id = e.event_work_id;
+
+  RETURN QUERY
+  SELECT
+    pe.stream_id,
+    es.event_id,
+    es.event_type::TEXT,
+    COALESCE(es.event_data, eb.event_data)::TEXT,
+    COALESCE(es.metadata, eb.metadata)::TEXT,
+    es.scope::TEXT,
+    pe.event_work_id,
+    pe.perspective_name,
+    es.commit_sequence,
+    pe.attempts
+  FROM wh_perspective_events pe
+  INNER JOIN wh_event_store es
+    ON pe.stream_id = es.stream_id
+    AND pe.event_id = es.event_id
+  -- Migration 072: COALESCE the offloaded ephemeral body back in. Sourced events have a non-NULL
+  -- inline body so the join contributes nothing; ephemeral events read their body from wh_event_body.
+  LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+  WHERE pe.instance_id = p_instance_id
+    AND pe.lease_expiry > p_now
+    AND pe.processed_at IS NULL
+    AND pe.stream_id = ANY(p_stream_ids)
+    AND (es.commit_sequence IS NOT NULL OR pe.created_at <= v_stamp_cutoff)
+  ORDER BY pe.stream_id, es.commit_sequence ASC NULLS LAST, es.event_id;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.get_stream_events IS
+'Mig 059 — atomic per-stream claim+fetch with the grace-windowed unstamped gate (058) AND a single-writer ownership gate: a row whose stream is owned by a different live instance is not claimable, so two pods never apply one stream concurrently (the cross-pod lost-update that stranded production saga 019ee73d). Caller-owned / unowned / dead-owner streams stay claimable for clean failover. Supersedes mig 058.';
+
+SELECT __SCHEMA__.drop_all_overloads('fetch_events_by_ids');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_events_by_ids(
+  p_event_ids UUID[]
+) RETURNS TABLE(
+  out_stream_id UUID,
+  out_event_id UUID,
+  out_event_type TEXT,
+  out_event_data TEXT,
+  out_metadata TEXT,
+  out_scope TEXT
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    es.stream_id,
+    es.event_id,
+    es.event_type::TEXT,
+    COALESCE(es.event_data, eb.event_data)::TEXT,
+    COALESCE(es.metadata, eb.metadata)::TEXT,
+    es.scope::TEXT
+  FROM wh_event_store es
+  -- Migration 072: COALESCE the offloaded ephemeral body (see get_stream_events above).
+  LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+  WHERE es.event_id = ANY(p_event_ids)
+  ORDER BY es.event_id ASC;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.fetch_events_by_ids IS
+'Returns event bodies from wh_event_store for the given event_id list, ordered by event_id ASC. The perspective drainer calls this AFTER the cooldown + cursor + inversion filters reduce the prefetched (event_work_id, event_id) tuples to only those needing apply. event_work_id is intentionally NOT returned — drainer pairs results back to its prefetch tuples by event_id in C#. Replaces the per-stream JOIN in get_stream_events for the precise-lookup case.';
