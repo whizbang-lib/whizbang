@@ -177,12 +177,16 @@ public class DapperPostgresEventStore(
   /// Returns the PostgreSQL-specific SQL for inserting events with 3-column JSONB structure.
   /// </summary>
   /// <tests>No tests found</tests>
+  // Full split (E1 #13b4-3, migration 078): the pointer is narrow — the body goes to wh_event_body.
+  // Two statements in one Dapper batch; the same parameter set serves both.
   protected override string GetAppendSql() => @"
     INSERT INTO wh_event_store
-      (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, event_data, metadata, scope, created_at)
+      (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope, created_at)
     VALUES
-      (@EventId, @StreamId, @AggregateId, @AggregateType, @Version, @EventType,
-       @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)";
+      (@EventId, @StreamId, @AggregateId, @AggregateType, @Version, @EventType, @Scope::jsonb, @CreatedAt);
+    INSERT INTO wh_event_body (event_id, event_data, metadata)
+    VALUES (@EventId, @EventData::jsonb, @Metadata::jsonb)
+    ON CONFLICT DO NOTHING";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for reading events from a stream by sequence number.
@@ -190,25 +194,27 @@ public class DapperPostgresEventStore(
   /// <tests>No tests found</tests>
   protected override string GetReadSql() => @"
     SELECT
-      event_type AS EventType,
-      event_data::text AS EventData,
-      metadata::text AS Metadata,
-      scope::text AS Scope
-    FROM wh_event_store
-    WHERE stream_id = @StreamId AND version >= @FromSequence
-    ORDER BY version";
+      es.event_type AS EventType,
+      eb.event_data::text AS EventData,
+      eb.metadata::text AS Metadata,
+      es.scope::text AS Scope
+    FROM wh_event_store es
+    LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+    WHERE es.stream_id = @StreamId AND es.version >= @FromSequence
+    ORDER BY es.version";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for querying events between two checkpoint IDs.
   /// Guid.Empty means "no upper bound" - read all events for the stream.
   /// </summary>
   protected override string GetEventsBetweenSql() => @"
-    SELECT event_type AS EventType, event_data::text AS EventData, metadata::text AS Metadata, scope::text AS Scope
-    FROM wh_event_store
-    WHERE stream_id = @StreamId
-      AND (@UpToEventId = '00000000-0000-0000-0000-000000000000' OR event_id <= @UpToEventId)
-      AND (@AfterEventId IS NULL OR event_id > @AfterEventId)
-    ORDER BY event_id";
+    SELECT es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope
+    FROM wh_event_store es
+    LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+    WHERE es.stream_id = @StreamId
+      AND (@UpToEventId = '00000000-0000-0000-0000-000000000000' OR es.event_id <= @UpToEventId)
+      AND (@AfterEventId IS NULL OR es.event_id > @AfterEventId)
+    ORDER BY es.event_id";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for retrieving the last sequence number in a stream.
@@ -332,22 +338,24 @@ public class DapperPostgresEventStore(
   /// </summary>
   private static string _getReadByEventIdSql(Guid? fromEventId) {
     if (fromEventId == null) {
-      return @"SELECT event_type AS EventType,
-                 event_data::text AS EventData,
-                 metadata::text AS Metadata,
-                 scope::text AS Scope
-          FROM wh_event_store
-          WHERE stream_id = @StreamId
-          ORDER BY event_id";
+      return @"SELECT es.event_type AS EventType,
+                 eb.event_data::text AS EventData,
+                 eb.metadata::text AS Metadata,
+                 es.scope::text AS Scope
+          FROM wh_event_store es
+          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+          WHERE es.stream_id = @StreamId
+          ORDER BY es.event_id";
     }
 
-    return @"SELECT event_type AS EventType,
-                 event_data::text AS EventData,
-                 metadata::text AS Metadata,
-                 scope::text AS Scope
-          FROM wh_event_store
-          WHERE stream_id = @StreamId AND event_id > @FromEventId
-          ORDER BY event_id";
+    return @"SELECT es.event_type AS EventType,
+                 eb.event_data::text AS EventData,
+                 eb.metadata::text AS Metadata,
+                 es.scope::text AS Scope
+          FROM wh_event_store es
+          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+          WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
+          ORDER BY es.event_id";
   }
 
   /// <summary>

@@ -64,16 +64,16 @@ public class EphemeralReclassifySqlTests : EFCoreTestBase {
     return (rd.GetInt64(0), rd.GetInt64(1), rd.GetInt64(2));
   }
 
-  private static async Task<(int flags, bool inlineNull, long bodyCount)> _rowStateAsync(NpgsqlConnection connection, Guid eventId) {
+  private static async Task<(int flags, long bodyCount)> _rowStateAsync(NpgsqlConnection connection, Guid eventId) {
     await using var v = connection.CreateCommand();
     v.CommandText = @"
-      SELECT es.flags, (es.event_data IS NULL),
+      SELECT es.flags,
              (SELECT count(*) FROM wh_event_body eb WHERE eb.event_id = es.event_id)
       FROM wh_event_store es WHERE es.event_id = @id";
     v.Parameters.AddWithValue("id", eventId);
     await using var rd = await v.ExecuteReaderAsync();
     await rd.ReadAsync();
-    return (rd.GetInt32(0), rd.GetBoolean(1), rd.GetInt64(2));
+    return (rd.GetInt32(0), rd.GetInt64(1));
   }
 
   [Test]
@@ -88,8 +88,7 @@ public class EphemeralReclassifySqlTests : EFCoreTestBase {
     await _commitAsync(connection, eventId, Guid.NewGuid(), eventType, flags: 0);
     var before = await _rowStateAsync(connection, eventId);
     await Assert.That(before.flags & 8).IsEqualTo(0).Because("It was stored as a Sourced event.");
-    await Assert.That(before.inlineNull).IsTrue().Because("Post-077 the pointer's inline columns are always NULL.");
-    await Assert.That(before.bodyCount).IsEqualTo(1L).Because("Post-077 every body is offloaded at store time.");
+    await Assert.That(before.bodyCount).IsEqualTo(1L).Because("Full split: every body is offloaded at store time.");
 
     // The type is now [Ephemeral]; reclassify its history.
     var (reclassified, streams, blocked) = await _reclassifyAsync(connection, eventType);
@@ -99,8 +98,7 @@ public class EphemeralReclassifySqlTests : EFCoreTestBase {
 
     var after = await _rowStateAsync(connection, eventId);
     await Assert.That(after.flags & 8).IsEqualTo(8).Because("The historical event is now stamped ephemeral.");
-    await Assert.That(after.inlineNull).IsTrue().Because("Its inline body was moved out.");
-    await Assert.That(after.bodyCount).IsEqualTo(1L).Because("The body was offloaded to wh_event_body — as if emitted ephemeral.");
+    await Assert.That(after.bodyCount).IsEqualTo(1L).Because("Its body stays in wh_event_body — reclassification is a pure flags stamp post-078.");
 
     // Offloaded body carries the real payload …
     await using (var b = connection.CreateCommand()) {

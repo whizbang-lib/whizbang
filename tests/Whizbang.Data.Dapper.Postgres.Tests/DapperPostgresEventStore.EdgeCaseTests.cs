@@ -442,10 +442,12 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     await Executor.ExecuteAsync(
       connection,
       @"INSERT INTO wh_event_store
-          (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, event_data, metadata, scope, created_at)
+          (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope, created_at)
         VALUES
           (@EventId, @StreamId, @AggregateId, @AggregateType, @Version, @EventType,
-           @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)",
+           @Scope::jsonb, @CreatedAt);
+        INSERT INTO wh_event_body (event_id, event_data, metadata)
+        VALUES (@EventId, @EventData::jsonb, @Metadata::jsonb)",
       new {
         EventId = (Guid)TrackedGuid.NewMedo(),
         StreamId = streamId,

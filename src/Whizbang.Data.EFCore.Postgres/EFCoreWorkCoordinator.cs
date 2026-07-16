@@ -1453,7 +1453,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
 #pragma warning disable S2077
       var sql = $@"
-        SELECT e.event_id, e.stream_id, COALESCE(e.event_data, eb.event_data) AS event_data, COALESCE(e.metadata, eb.metadata) AS metadata, e.event_type, e.scope
+        SELECT e.event_id, e.stream_id, eb.event_data AS event_data, eb.metadata AS metadata, e.event_type, e.scope
         FROM {eventStoreTable} e
         LEFT JOIN {bodyTable} eb ON eb.event_id = e.event_id
         WHERE e.event_type = {{0}}

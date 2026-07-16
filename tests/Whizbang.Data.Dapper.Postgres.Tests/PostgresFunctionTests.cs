@@ -117,8 +117,8 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert event in event store first
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { eventId, streamId, now = DateTimeOffset.UtcNow });
 
     await connection.ExecuteAsync(@"
@@ -401,8 +401,8 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert event in event store first
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { eventId, streamId, now });
 
     // Insert perspective event
@@ -478,10 +478,10 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert event-store rows for the three real events (FK requirement).
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-      VALUES (@e1, @s1, @s1, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
-             (@e2, @s1, @s1, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
-             (@e3, @s2, @s2, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@e1, @s1, @s1, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now),
+             (@e2, @s1, @s1, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now),
+             (@e3, @s2, @s2, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { e1 = event1, e2 = event2, e3 = event3, s1 = stream1, s2 = stream2, now });
 
     await connection.ExecuteAsync(@"
@@ -546,11 +546,11 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert events in event store
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
       VALUES
-        (@event1Id, @streamId, @streamId, 'Test', 'Event1', '{}'::jsonb, '{}'::jsonb, 1, @now),
-        (@event2Id, @streamId, @streamId, 'Test', 'Event2', '{}'::jsonb, '{}'::jsonb, 2, @now),
-        (@event3Id, @streamId, @streamId, 'Test', 'Event3', '{}'::jsonb, '{}'::jsonb, 3, @now)",
+        (@event1Id, @streamId, @streamId, 'Test', 'Event1', 1, @now),
+        (@event2Id, @streamId, @streamId, 'Test', 'Event2', 2, @now),
+        (@event3Id, @streamId, @streamId, 'Test', 'Event3', 3, @now)",
       new { event1Id, event2Id, event3Id, streamId, now });
 
     // Insert perspective events (1 and 2 processed, 3 not processed)
@@ -630,13 +630,13 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Event store rows for FK
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
       VALUES
-        (@eA1, @sA, @sA, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
-        (@eA2, @sA, @sA, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
-        (@eA3, @sA, @sA, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
-        (@eB1, @sB, @sB, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
-        (@eC1, @sC, @sC, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+        (@eA1, @sA, @sA, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now),
+        (@eA2, @sA, @sA, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now),
+        (@eA3, @sA, @sA, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now),
+        (@eB1, @sB, @sB, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now),
+        (@eC1, @sC, @sC, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { eA1, eA2, eA3, eB1, eC1, sA = streamA, sB = streamB, sC = streamC, now });
 
     // Pair A: events 1,2 processed; 3 pending → expect last_event_id=eA2, status stays 0
@@ -734,8 +734,8 @@ public class PostgresFunctionTests : PostgresTestBase {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-      VALUES (@e, @s, @s, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@e, @s, @s, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { e = eventId, s = streamId, now });
 
     // Insert with an existing status (bit 0 set) + a non-null instance lease,
@@ -829,12 +829,12 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Event-store rows for FK
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
       VALUES
-        (@e1, @sN, @sN, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
-        (@e2, @sN, @sN, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
-        (@e3, @sN, @sN, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now),
-        (@p1, @sNP, @sNP, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+        (@e1, @sN, @sN, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now),
+        (@e2, @sN, @sN, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now),
+        (@e3, @sN, @sN, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now),
+        (@p1, @sNP, @sNP, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { e1 = event1Id, e2 = event2Id, e3 = event3Id, p1 = pendingEventId, sN = newPair, sNP = noProgressPair, now });
 
     // newPair: events 1 & 2 processed; 3 pending → gap-free is event2
@@ -1048,8 +1048,8 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert event in event store first
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { eventId, streamId, now });
 
     // Insert perspective event with high attempt count
@@ -1093,8 +1093,8 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert event in event store first
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { eventId, streamId, now });
 
     // Insert perspective event
@@ -1187,8 +1187,8 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert event in event store first
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @now)",
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', 1, @now)",
       new { eventId, streamId, now });
 
     // Prepare event
@@ -1383,11 +1383,11 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert events in event store
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
       VALUES
-        (@event1Id, @streamId, @streamId, 'Test', 'Event1', '{}'::jsonb, '{}'::jsonb, 1, @now),
-        (@event2Id, @streamId, @streamId, 'Test', 'Event2', '{}'::jsonb, '{}'::jsonb, 2, @now),
-        (@event3Id, @streamId, @streamId, 'Test', 'Event3', '{}'::jsonb, '{}'::jsonb, 3, @now)",
+        (@event1Id, @streamId, @streamId, 'Test', 'Event1', 1, @now),
+        (@event2Id, @streamId, @streamId, 'Test', 'Event2', 2, @now),
+        (@event3Id, @streamId, @streamId, 'Test', 'Event3', 3, @now)",
       new { event1Id, event2Id, event3Id, streamId, now });
 
     // Insert perspective events - event1 claimed elsewhere, event2 and event3 orphaned
@@ -1443,10 +1443,10 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert events in event store
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
       VALUES
-        (@event1Id, @streamId, @streamId, 'Test', 'Event1', '{}'::jsonb, '{}'::jsonb, 1, @now),
-        (@event2Id, @streamId, @streamId, 'Test', 'Event2', '{}'::jsonb, '{}'::jsonb, 2, @now)",
+        (@event1Id, @streamId, @streamId, 'Test', 'Event1', 1, @now),
+        (@event2Id, @streamId, @streamId, 'Test', 'Event2', 2, @now)",
       new { event1Id, event2Id, streamId, now });
 
     // Insert perspective events - both orphaned

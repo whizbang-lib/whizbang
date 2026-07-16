@@ -54,15 +54,14 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
       _ = await call.ExecuteScalarAsync();
     }
 
-    // Pointer row exists with the ephemeral flag, but the inline body is NULL (offloaded).
+    // Pointer row exists with the ephemeral flag. (078: the inline body columns no longer exist —
+    // the pointer is structurally narrow; the body lives only in wh_event_body.)
     await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT flags, (event_data IS NULL), (metadata IS NULL) FROM wh_event_store WHERE event_id = @id";
+      v.CommandText = "SELECT flags FROM wh_event_store WHERE event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
       await using var r = await v.ExecuteReaderAsync();
       await Assert.That(await r.ReadAsync()).IsTrue().Because("The ephemeral event must still get a wh_event_store pointer row.");
       await Assert.That(r.GetInt32(0)).IsEqualTo(8).Because("flags carries EventFlags.Ephemeral.");
-      await Assert.That(r.GetBoolean(1)).IsTrue().Because("Inline event_data is NULL — the body is offloaded.");
-      await Assert.That(r.GetBoolean(2)).IsTrue().Because("Inline metadata is NULL — offloaded with the body.");
     }
 
     // The real body lives in wh_event_body.
@@ -102,10 +101,10 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
     }
 
     await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT (event_data IS NULL AND metadata IS NULL) FROM wh_event_store WHERE event_id = @id";
+      v.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
-      var inlineNull = (bool)(await v.ExecuteScalarAsync())!;
-      await Assert.That(inlineNull).IsTrue().Because("The pointer is narrow — inline body columns are always NULL post-077.");
+      await Assert.That((long)(await v.ExecuteScalarAsync())!).IsEqualTo(1L)
+        .Because("The narrow pointer row exists; post-078 there are no inline body columns at all.");
     }
   }
 
@@ -246,14 +245,13 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
 
     await using (var v = connection.CreateCommand()) {
       v.CommandText = @"
-        SELECT (es.event_data IS NULL), (eb.event_data ->> 'OrderId')
+        SELECT (eb.event_data ->> 'OrderId')
         FROM wh_event_store es LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
         WHERE es.event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
       await using var r = await v.ExecuteReaderAsync();
       await Assert.That(await r.ReadAsync()).IsTrue().Because("The inbox emit chain must store the ephemeral event's pointer.");
-      await Assert.That(r.GetBoolean(0)).IsTrue().Because("Inbox emit chain nulls the inline body for ephemeral events too.");
-      await Assert.That(r.GetString(1)).IsEqualTo("42").Because("The (rehydrated) full body is offloaded to wh_event_body on the receive path.");
+      await Assert.That(r.GetString(0)).IsEqualTo("42").Because("The (rehydrated) full body is offloaded to wh_event_body on the receive path.");
     }
   }
 
@@ -336,9 +334,9 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
         .Because("A large Sourced body is offloaded to wh_event_body at full length — the durable content is never truncated by the split.");
     }
     await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT (event_data IS NULL) FROM wh_event_store WHERE event_id = @id";
+      v.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
-      await Assert.That((bool)(await v.ExecuteScalarAsync())!).IsTrue().Because("The pointer stays narrow — no inline copy of the large body.");
+      await Assert.That((long)(await v.ExecuteScalarAsync())!).IsEqualTo(1L).Because("The narrow pointer row exists — no inline copy of the large body is possible post-078.");
     }
   }
 }

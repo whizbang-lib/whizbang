@@ -81,8 +81,8 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
       // Oracle row: event_type already holds the correct '+' full name; aggregate_type written the
       // legacy Dapper way (bare simple name) to also exercise the aggregate_type fix.
       await conn.ExecuteAsync(
-        @"INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-          VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'CreatedEvent', @Plus || ', Acme.Contracts', '{}'::jsonb, '{}'::jsonb, 1, NOW())",
+        @"INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+          VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'CreatedEvent', @Plus || ', Acme.Contracts', 1, NOW())",
         new { Plus = plusForm });
       // Stale registry row written by the old catalog generator ('.'-nested).
       await conn.ExecuteAsync(

@@ -35,8 +35,8 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
       var id = (Guid)TrackedGuid.NewMedo();
       ids.Add(id);
       await using var cmd = new NpgsqlCommand(
-        "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, created_at, version) " +
-        "VALUES (@event_id, @stream_id, @stream_id, 'Test', 'Test', '{}', '{}', NOW(), @version)", conn);
+        "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, created_at, version) " +
+        "VALUES (@event_id, @stream_id, @stream_id, 'Test', 'Test', NOW(), @version)", conn);
       cmd.Parameters.AddWithValue("event_id", id);
       cmd.Parameters.AddWithValue("stream_id", streamId);
       cmd.Parameters.AddWithValue("version", i + 1);
@@ -96,8 +96,8 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
           perThreadIds[localIdx].Add(id);
           var version = Interlocked.Increment(ref versionCounter);
           await using var cmd = new NpgsqlCommand(
-            "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, created_at, version) " +
-            "VALUES (@event_id, @stream_id, @stream_id, 'Test', 'Test', '{}', '{}', NOW(), @version)", localConn);
+            "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, created_at, version) " +
+            "VALUES (@event_id, @stream_id, @stream_id, 'Test', 'Test', NOW(), @version)", localConn);
           cmd.Parameters.AddWithValue("event_id", id);
           cmd.Parameters.AddWithValue("stream_id", streamId);
           cmd.Parameters.AddWithValue("version", version);
@@ -161,8 +161,8 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
     foreach (var id in shuffled) {
       version++;
       await using var cmd = new NpgsqlCommand(
-        "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, created_at, version) " +
-        "VALUES (@event_id, @stream_id, @stream_id, 'Test', 'Test', '{}', '{}', NOW(), @version)", conn);
+        "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, created_at, version) " +
+        "VALUES (@event_id, @stream_id, @stream_id, 'Test', 'Test', NOW(), @version)", conn);
       cmd.Parameters.AddWithValue("event_id", id);
       cmd.Parameters.AddWithValue("stream_id", streamId);
       cmd.Parameters.AddWithValue("version", version);

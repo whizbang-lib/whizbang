@@ -77,10 +77,11 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
     await conn.ExecuteAsync(@"
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-         event_data, metadata, scope, created_at, commit_sequence)
+         scope, created_at, commit_sequence)
       VALUES (@id, @stream, @stream, 'TestAgg', @version, 'Test.OrderCreated, Test',
-              '{""amount"": 42}'::jsonb, '{""Hops"": []}'::jsonb,
-              '{""t"": ""tenant-7""}'::jsonb, NOW(), @cs)",
+              '{""t"": ""tenant-7""}'::jsonb, NOW(), @cs);
+      INSERT INTO wh_event_body (event_id, event_data, metadata)
+      VALUES (@id, '{""amount"": 42}'::jsonb, '{""Hops"": []}'::jsonb)",
       new { id = eventId, stream = streamId, version, cs = commitSequence });
   }
 

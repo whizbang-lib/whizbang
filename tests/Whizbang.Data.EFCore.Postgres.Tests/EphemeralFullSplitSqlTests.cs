@@ -76,9 +76,6 @@ public class EphemeralFullSplitSqlTests : EFCoreTestBase {
     await Assert.That(await _scalarAsync<long>(connection,
         "SELECT count(*) FROM wh_event_body WHERE event_id = @id", ("id", eventId))).IsEqualTo(1L)
       .Because("Post-077 the emit chain offloads EVERY body, sourced included.");
-    await Assert.That(await _scalarAsync<bool>(connection,
-        "SELECT (event_data IS NULL AND metadata IS NULL) FROM wh_event_store WHERE event_id = @id", ("id", eventId))).IsTrue()
-      .Because("The pointer is narrow: inline body columns are always NULL post-077.");
 
     // Round-trip through the body-aware reader: the payload is intact.
     var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
@@ -106,9 +103,6 @@ public class EphemeralFullSplitSqlTests : EFCoreTestBase {
     await Assert.That(await _scalarAsync<long>(connection,
         "SELECT count(*) FROM wh_event_body WHERE event_id = @id", ("id", eventId))).IsEqualTo(1L)
       .Because("AppendAsync writes the body to wh_event_body post-077.");
-    await Assert.That(await _scalarAsync<bool>(connection,
-        "SELECT (event_data IS NULL AND metadata IS NULL) FROM wh_event_store WHERE event_id = @id", ("id", eventId))).IsTrue()
-      .Because("AppendAsync leaves the pointer's inline columns NULL post-077.");
 
     var envelopes = new List<MessageEnvelope<OrderCreatedEvent>>();
     await foreach (var env in eventStore.ReadAsync<OrderCreatedEvent>(streamId, (Guid?)null)) {
@@ -119,31 +113,22 @@ public class EphemeralFullSplitSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task BackfillEventBodies_MovesLegacyInlineRow_IdempotentAsync() {
+  public async Task WhEventStore_InlineBodyColumns_AreDroppedAsync() {
+    // #13b4-3 (078): the invariant is STRUCTURAL — wh_event_store has no inline body columns at all,
+    // so nothing can ever write an inline body again. The body lives only in wh_event_body.
     await using var context = CreateDbContext();
     var connection = await _openAsync(context);
 
-    // A legacy pre-077 row: sourced body still INLINE, no wh_event_body row.
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var streamId = Guid.NewGuid();
-    await _execAsync(connection,
-      "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at, flags) " +
-      "VALUES (@id, @sid, @sid, 'Legacy', 'Whizbang.Tests.LegacyInlineEvent', '{\"V\": 1}'::jsonb, '{\"MessageId\": \"" + eventId + "\", \"Hops\": []}'::jsonb, 1, NOW(), 0)",
-      ("id", eventId), ("sid", streamId));
+    var count = await _scalarAsync<long>(connection,
+      "SELECT count(*) FROM information_schema.columns " +
+      "WHERE table_name = 'wh_event_store' AND column_name IN ('event_data', 'metadata')");
+    await Assert.That(count).IsEqualTo(0L)
+      .Because("Migration 078 drops the vestigial inline body columns — the pointer table is structurally narrow.");
 
-    var moved = await _scalarAsync<long>(connection, "SELECT wh_backfill_event_bodies()");
-    await Assert.That(moved).IsEqualTo(1L).Because("One legacy inline body is moved.");
-    await Assert.That(await _scalarAsync<long>(connection,
-        "SELECT count(*) FROM wh_event_body WHERE event_id = @id", ("id", eventId))).IsEqualTo(1L);
-    await Assert.That(await _scalarAsync<bool>(connection,
-        "SELECT (event_data IS NULL AND metadata IS NULL) FROM wh_event_store WHERE event_id = @id", ("id", eventId))).IsTrue()
-      .Because("The inline body is nulled only after its copy is durable in wh_event_body.");
-    await Assert.That(await _scalarAsync<string>(connection,
-        "SELECT (event_data->>'V') FROM wh_event_body WHERE event_id = @id", ("id", eventId))).IsEqualTo("1")
-      .Because("The body content survives the move.");
-
-    // Idempotent: a second run moves nothing and changes nothing.
-    var second = await _scalarAsync<long>(connection, "SELECT wh_backfill_event_bodies()");
-    await Assert.That(second).IsEqualTo(0L);
+    // And the backfill helper is gone with them (purpose fulfilled; its body referenced the columns).
+    var fn = await _scalarAsync<long>(connection,
+      "SELECT count(*) FROM pg_proc WHERE proname = 'wh_backfill_event_bodies'");
+    await Assert.That(fn).IsEqualTo(0L)
+      .Because("The 077 backfill function is dropped by 078 once the columns it moves no longer exist.");
   }
 }

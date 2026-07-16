@@ -64,8 +64,10 @@ public sealed class EFCoreEventStore<TDbContext>(
       Version = e.Version,
       CommitSequence = e.CommitSequence,
       Scope = e.Scope,
-      EventData = b != null ? (JsonElement?)b.EventData : (JsonElement?)e.EventData,
-      Metadata = b != null ? b.Metadata : e.Metadata,
+      // #13b4-3 (078): the inline columns are dropped — the body table IS the body. A missing body
+      // row (reaped ephemeral) surfaces as NULL and the caller skips it.
+      EventData = b != null ? (JsonElement?)b.EventData : null,
+      Metadata = b != null ? b.Metadata : null,
     };
 
   /// <summary>

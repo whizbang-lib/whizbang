@@ -120,8 +120,8 @@ public class GetPerspectiveCursorsCommitSequenceTests : EFCoreTestBase {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_event_store
-        (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, created_at, commit_sequence)
-      VALUES (@evt, @stream, @stream, 'agg', @type, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 1, NOW(), @seq)";
+        (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at, commit_sequence)
+      VALUES (@evt, @stream, @stream, 'agg', @type, '{}'::jsonb, 1, NOW(), @seq)";
     ins.Parameters.AddWithValue("evt", eventId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("type", eventType);

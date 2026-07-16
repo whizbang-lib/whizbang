@@ -65,9 +65,9 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
       ins.CommandText = @"
         INSERT INTO wh_event_store
           (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-           event_data, metadata, created_at, commit_sequence)
+           created_at, commit_sequence)
         VALUES (@id, @stream, @stream, 'TestAgg', 1, 'TestEvt',
-                '{}'::jsonb, '{}'::jsonb, NOW(), nextval('wh_commit_seq'))";
+                NOW(), nextval('wh_commit_seq'))";
       ins.Parameters.AddWithValue("id", eventId);
       ins.Parameters.AddWithValue("stream", streamId);
       await ins.ExecuteNonQueryAsync();
@@ -132,9 +132,9 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
       ins.CommandText = @"
         INSERT INTO wh_event_store
           (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-           event_data, metadata, created_at, commit_sequence)
+           created_at, commit_sequence)
         VALUES (@id, @stream, @stream, 'TestAgg', 1, 'TestEvt',
-                '{}'::jsonb, '{}'::jsonb, NOW(), @cs)";
+                NOW(), @cs)";
       ins.Parameters.AddWithValue("id", eventId);
       ins.Parameters.AddWithValue("stream", streamId);
       ins.Parameters.AddWithValue("cs", stampedCommitSequence);
@@ -197,9 +197,9 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
       ins.CommandText = @"
         INSERT INTO wh_event_store
           (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-           event_data, metadata, created_at, commit_sequence)
+           created_at, commit_sequence)
         VALUES (@id, @stream, @stream, 'TestAgg', 1, 'TestEvt',
-                '{}'::jsonb, '{}'::jsonb, NOW(), @cs)";
+                NOW(), @cs)";
       ins.Parameters.AddWithValue("id", eventId);
       ins.Parameters.AddWithValue("stream", streamId);
       ins.Parameters.AddWithValue("cs", stampedCommitSequence);
@@ -252,8 +252,10 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = @"
         INSERT INTO wh_event_store
-          (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, created_at)
-        VALUES (@evt, @stream, @stream, 'agg', 'My.Type', '{""payload"":42}'::jsonb, '{""hop"":1}'::jsonb, '{""tenant"":""t1""}'::jsonb, 1, NOW())";
+          (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at)
+        VALUES (@evt, @stream, @stream, 'agg', 'My.Type', '{""tenant"":""t1""}'::jsonb, 1, NOW());
+        INSERT INTO wh_event_body (event_id, event_data, metadata)
+        VALUES (@evt, '{""payload"":42}'::jsonb, '{""hop"":1}'::jsonb)";
       ins.Parameters.AddWithValue("evt", eventId);
       ins.Parameters.AddWithValue("stream", streamId);
       await ins.ExecuteNonQueryAsync();

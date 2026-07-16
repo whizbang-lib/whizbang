@@ -114,17 +114,16 @@ public class EphemeralBlobOffloadEndToEndTests : EFCoreTestBase {
       _ = await emit.ExecuteScalarAsync();
     }
 
-    // ── Assert: inline body NULL, and the FULL rehydrated body is offloaded to wh_event_body ──
+    // ── Assert: the FULL rehydrated body is offloaded to wh_event_body (the pointer is narrow, 078) ──
     await using (var v = connection.CreateCommand()) {
       v.CommandText = @"
-        SELECT (es.event_data IS NULL), length(eb.event_data ->> 'blob')
+        SELECT length(eb.event_data ->> 'blob')
         FROM wh_event_store es LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
         WHERE es.event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
       await using var r = await v.ExecuteReaderAsync();
       await Assert.That(await r.ReadAsync()).IsTrue().Because("The ephemeral event must be stored.");
-      await Assert.That(r.GetBoolean(0)).IsTrue().Because("Inline body is NULL — the offloaded body lives in wh_event_body.");
-      await Assert.That(r.GetInt32(1)).IsEqualTo(bigLen)
+      await Assert.That(r.GetInt32(0)).IsEqualTo(bigLen)
         .Because("The full 300 KB body survived blob-offload upload -> rehydrate -> ephemeral event store, intact, in wh_event_body.");
     }
   }

@@ -113,10 +113,11 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.AggregateType).HasColumnName("aggregate_type").IsRequired();
       entity.Property(e => e.Version).HasColumnName("version").IsRequired();
       entity.Property(e => e.EventType).HasColumnName("event_type").IsRequired();
-      // Full split (#13b4-2 / 077): the inline body columns are nullable — every body lives in
-      // wh_event_body and the pointer stores NULL here (readers resolve body-first with inline fallback).
-      entity.Property(e => e.EventData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB);
-      entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB);
+      // Full split (#13b4-3 / 078): the inline body COLUMNS ARE DROPPED — every body lives in
+      // wh_event_body (EventBodyRecord). The CLR properties remain on the shared EventStoreRecord for
+      // inline-body providers (SQLite/Dapper-SQLite) but are unmapped here.
+      entity.Ignore(e => e.EventData);
+      entity.Ignore(e => e.Metadata);
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
       // Slice 26.

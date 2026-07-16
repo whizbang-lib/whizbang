@@ -89,15 +89,14 @@ public class EphemeralReclassifyCoordinatorTests : EFCoreTestBase {
     await Assert.That(await coordinator.CountSourcedEventsForTypesAsync(new[] { eventType })).IsEqualTo(0L)
       .Because("After reclassification there is no Sourced drift left.");
     await using (var v = connection.CreateCommand()) {
-      v.CommandText = @"SELECT es.flags, (es.event_data IS NULL),
+      v.CommandText = @"SELECT es.flags,
                           (SELECT count(*) FROM wh_event_body eb WHERE eb.event_id = es.event_id)
                         FROM wh_event_store es WHERE es.event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
       await using var r = await v.ExecuteReaderAsync();
       await r.ReadAsync();
       await Assert.That(r.GetInt32(0) & 8).IsEqualTo(8).Because("Now stamped ephemeral.");
-      await Assert.That(r.GetBoolean(1)).IsTrue().Because("Inline body moved out.");
-      await Assert.That(r.GetInt64(2)).IsEqualTo(1L).Because("Body offloaded to wh_event_body.");
+      await Assert.That(r.GetInt64(1)).IsEqualTo(1L).Because("Body lives in wh_event_body (full split).");
     }
   }
 

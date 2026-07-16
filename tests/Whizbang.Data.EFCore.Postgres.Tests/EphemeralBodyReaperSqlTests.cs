@@ -234,13 +234,12 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
     await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(0L)
       .Because("Once every consuming perspective has processed the event, the ephemeral body is reaped.");
 
-    // The pointer stays — body-NULL is the deterministic rebuild-guard signal, not a lost event.
+    // The pointer stays — a pointer with no body row is the deterministic rebuild-guard signal, not a lost event.
     await using (var ptr = connection.CreateCommand()) {
-      ptr.CommandText = "SELECT (event_data IS NULL) FROM wh_event_store WHERE event_id = @id";
+      ptr.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";
       ptr.Parameters.AddWithValue("id", eventId);
-      await using var r = await ptr.ExecuteReaderAsync();
-      await Assert.That(await r.ReadAsync()).IsTrue().Because("The wh_event_store pointer row survives the reap.");
-      await Assert.That(r.GetBoolean(0)).IsTrue().Because("Inline body was already NULL (offloaded); the reap leaves the pointer.");
+      await Assert.That((long)(await ptr.ExecuteScalarAsync())!).IsEqualTo(1L)
+        .Because("The wh_event_store pointer row survives the reap; only the wh_event_body row is deleted.");
     }
   }
 
