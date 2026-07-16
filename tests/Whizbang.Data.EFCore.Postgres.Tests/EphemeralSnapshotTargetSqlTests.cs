@@ -123,10 +123,7 @@ public class EphemeralSnapshotTargetSqlTests : EFCoreTestBase {
       """;
     await _execAsync(connection, "SELECT commit_handler_result(@req::jsonb)", ("req", request));
 
-    // …whose body has been moved into wh_event_body (post-split), consumed, stamped, aged, with a cursor.
-    await _execAsync(connection,
-      "INSERT INTO wh_event_body (event_id, event_data, metadata) SELECT event_id, event_data, metadata FROM wh_event_store WHERE event_id = @id",
-      ("id", eventId));
+    // …whose body lives in wh_event_body from birth (full split, 077); consumed, stamped, aged, with a cursor.
     await _execAsync(connection, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_id = @id", ("id", eventId));
     await _execAsync(connection, "UPDATE wh_event_store SET commit_sequence = 5, created_at = NOW() - INTERVAL '10 minutes' WHERE event_id = @id", ("id", eventId));
     await _execAsync(connection,

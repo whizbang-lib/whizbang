@@ -75,7 +75,9 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task EmitChain_SourcedEvent_KeepsBodyInline_NoEventBodyRowAsync() {
+  public async Task EmitChain_SourcedEvent_BodyOffloaded_PointerInlineNullAsync() {
+    // Full split (#13b4-2 / 077): SOURCED bodies are offloaded to wh_event_body too — the pointer's
+    // inline columns are always NULL. (Pre-077 sourced stayed inline; 077 unified the storage.)
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
@@ -91,19 +93,19 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
       _ = await call.ExecuteScalarAsync();
     }
 
-    // Sourced: inline body present, and NOTHING in wh_event_body.
+    // Sourced: body in wh_event_body, pointer inline NULL.
     await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT (event_data->>'OrderId') FROM wh_event_store WHERE event_id = @id";
+      v.CommandText = "SELECT (event_data->>'OrderId') FROM wh_event_body WHERE event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
-      var inline = (string?)await v.ExecuteScalarAsync();
-      await Assert.That(inline).IsEqualTo("42").Because("Sourced events keep their body inline in wh_event_store — the durable path is untouched.");
+      var bodyValue = (string?)await v.ExecuteScalarAsync();
+      await Assert.That(bodyValue).IsEqualTo("42").Because("Post-077 every body — sourced included — lives in wh_event_body.");
     }
 
     await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT count(*) FROM wh_event_body WHERE event_id = @id";
+      v.CommandText = "SELECT (event_data IS NULL AND metadata IS NULL) FROM wh_event_store WHERE event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
-      var count = (long)(await v.ExecuteScalarAsync())!;
-      await Assert.That(count).IsEqualTo(0L).Because("Sourced events never write to wh_event_body.");
+      var inlineNull = (bool)(await v.ExecuteScalarAsync())!;
+      await Assert.That(inlineNull).IsTrue().Because("The pointer is narrow — inline body columns are always NULL post-077.");
     }
   }
 
@@ -297,7 +299,7 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task LargeBody_SourcedEvent_StoredInlineFull_NotTruncatedByOffloadAsync() {
+  public async Task LargeBody_SourcedEvent_OffloadedFull_NotTruncatedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
@@ -325,18 +327,18 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
       _ = await call.ExecuteScalarAsync();
     }
 
-    // Sourced: full body inline, nothing in wh_event_body.
+    // Full split (077): the large Sourced body lands in wh_event_body at FULL length — no truncation.
     await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT length(event_data::jsonb ->> 'blob') FROM wh_event_store WHERE event_id = @id";
+      v.CommandText = "SELECT length(event_data::jsonb ->> 'blob') FROM wh_event_body WHERE event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
       var len = (int)(await v.ExecuteScalarAsync())!;
       await Assert.That(len).IsEqualTo(bigLen)
-        .Because("A large Sourced body stays inline in wh_event_store at full length — the durable path is untouched by any offload.");
+        .Because("A large Sourced body is offloaded to wh_event_body at full length — the durable content is never truncated by the split.");
     }
     await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT count(*) FROM wh_event_body WHERE event_id = @id";
+      v.CommandText = "SELECT (event_data IS NULL) FROM wh_event_store WHERE event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
-      await Assert.That((long)(await v.ExecuteScalarAsync())!).IsEqualTo(0L).Because("Sourced events never touch wh_event_body regardless of size.");
+      await Assert.That((bool)(await v.ExecuteScalarAsync())!).IsTrue().Because("The pointer stays narrow — no inline copy of the large body.");
     }
   }
 }

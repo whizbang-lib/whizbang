@@ -137,12 +137,19 @@ public sealed class EFCoreEventStore<TDbContext>(
       // This matches wh_message_associations format and enables auto-checkpoint creation
       // Fuzzy matching in migration 006 handles AssemblyQualifiedName (long form) differences
       EventType = TypeNameFormatter.Format(typeof(TMessage)),
+      // Full split (#13b4-2 / migration 077): the pointer is narrow — the body lives in wh_event_body.
+      EventData = null,
+      Metadata = null,
+      CreatedAt = DateTime.UtcNow
+    };
+    var body = new EventBodyRecord {
+      EventId = record.Id,
       EventData = eventData,
       Metadata = metadata,
-      CreatedAt = DateTime.UtcNow
     };
 
     await _context.Set<EventStoreRecord>().AddAsync(record, cancellationToken);
+    await _context.Set<EventBodyRecord>().AddAsync(body, cancellationToken);
 
     try {
       await _context.SaveChangesAsync(cancellationToken);

@@ -301,13 +301,7 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
     var eventId = Guid.NewGuid();
     await _commitAsync(connection, Guid.NewGuid(), eventId, Guid.NewGuid(), "Whizbang.Tests.SourcedSplitBody", flags: 0);
 
-    // Simulate the post-split world: the sourced body lives in wh_event_body.
-    await using (var mv = connection.CreateCommand()) {
-      mv.CommandText = "INSERT INTO wh_event_body (event_id, event_data, metadata) " +
-        "SELECT event_id, event_data, metadata FROM wh_event_store WHERE event_id = @id";
-      mv.Parameters.AddWithValue("id", eventId);
-      await mv.ExecuteNonQueryAsync();
-    }
+    // Full split (077): the sourced body lives in wh_event_body from birth.
     await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L);
 
     await _runMaintenanceAsync(connection);
@@ -316,24 +310,26 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Reap_SourcedEvent_InlineBodyUntouchedByMaintenanceAsync() {
+  public async Task Reap_SourcedEvent_BodyRowUntouchedByMaintenanceAsync() {
+    // Full split (077): a Sourced event's body lives in wh_event_body from birth. Maintenance must never
+    // touch it — the reaper's ephemeral gate (flags&8, #13b4-0) is what protects the durable log.
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);   // even fully aged, sourced is never reap-eligible
 
     var eventId = Guid.NewGuid();
     await _commitAsync(connection, Guid.NewGuid(), eventId, Guid.NewGuid(), "Whizbang.Tests.OrderPlacedEvent", flags: 0);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("Post-077 the sourced body is offloaded to wh_event_body at emit time.");
 
     await _runMaintenanceAsync(connection);
 
-    // The reaper only ever touches wh_event_body (ephemeral); a Sourced event's inline body is untouched.
     await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT (event_data->>'OrderId') FROM wh_event_store WHERE event_id = @id";
+      v.CommandText = "SELECT (event_data->>'OrderId') FROM wh_event_body WHERE event_id = @id";
       v.Parameters.AddWithValue("id", eventId);
-      var inline = (string?)await v.ExecuteScalarAsync();
-      await Assert.That(inline).IsEqualTo("42")
-        .Because("Maintenance never deletes a Sourced event's inline body — the reaper is scoped to wh_event_body.");
+      var body = (string?)await v.ExecuteScalarAsync();
+      await Assert.That(body).IsEqualTo("42")
+        .Because("Maintenance never deletes a Sourced event's body — the reaper is gated on flags&8.");
     }
-    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(0L)
-      .Because("A Sourced event never had a wh_event_body row to begin with.");
   }
 }
