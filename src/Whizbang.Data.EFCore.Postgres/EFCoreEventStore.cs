@@ -32,6 +32,43 @@ public sealed class EFCoreEventStore<TDbContext>(
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
 
   /// <summary>
+  /// Body-aware read projection (E1 #13b4-1). Since the body offload (072) an ephemeral event's
+  /// payload/metadata live in <c>wh_event_body</c> and the pointer's inline columns are NULL — so reads
+  /// must resolve body-first with inline fallback (the same COALESCE the SQL read functions use), and a
+  /// projection is required because materializing the full <see cref="EventStoreRecord"/> throws on the
+  /// NULL inline columns. A row with BOTH sides NULL is a reaped ephemeral body: consumed,
+  /// snapshot-covered history that readers skip rather than throw on.
+  /// </summary>
+  private sealed class EventRow {
+    public Guid Id { get; init; }
+    public string EventType { get; init; } = string.Empty;
+    public int Version { get; init; }
+    public long? CommitSequence { get; init; }
+    public JsonElement? EventData { get; init; }
+    public EnvelopeMetadata? Metadata { get; init; }
+    public PerspectiveScope? Scope { get; init; }
+  }
+
+  /// <summary>
+  /// Projects a (filtered, ordered) pointer query into body-aware rows via LEFT JOIN on
+  /// <c>wh_event_body</c>. Apply Where/OrderBy on the pointer query BEFORE calling this.
+  /// </summary>
+  private IQueryable<EventRow> _bodyAwareRows(IQueryable<EventStoreRecord> pointers) =>
+    from e in pointers
+    join body in _context.Set<EventBodyRecord>().AsNoTracking()
+      on e.Id equals body.EventId into bodies
+    from b in bodies.DefaultIfEmpty()
+    select new EventRow {
+      Id = e.Id,
+      EventType = e.EventType,
+      Version = e.Version,
+      CommitSequence = e.CommitSequence,
+      Scope = e.Scope,
+      EventData = b != null ? (JsonElement?)b.EventData : (JsonElement?)e.EventData,
+      Metadata = b != null ? b.Metadata : e.Metadata,
+    };
+
+  /// <summary>
   /// Appends an event to the specified stream.
   /// Assigns the next sequence number automatically.
   /// Ensures optimistic concurrency through unique constraint on (StreamId, Sequence).
@@ -134,21 +171,25 @@ public sealed class EFCoreEventStore<TDbContext>(
       long fromSequence,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
-    // Query events from the specified sequence onwards
-    var query = _context.Set<EventStoreRecord>()
+    // Query events from the specified sequence onwards (body-aware: offloaded bodies join in,
+    // reaped pointer-only rows are skipped).
+    var query = _bodyAwareRows(_context.Set<EventStoreRecord>()
       .AsNoTracking()
       .Where(e => e.StreamId == streamId && e.Version >= fromSequence)
-      .OrderBy(e => e.Version)
+      .OrderBy(e => e.Version))
       .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
+      if (record.EventData is null || record.Metadata is null) {
+        continue;   // reaped ephemeral body — consumed, snapshot-covered history
+      }
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
-      var eventDataJson = record.EventData.GetRawText();
+      var eventDataJson = record.EventData.Value.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
 
-      var hops = _restoreScopeInHops(record);
+      var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -176,28 +217,30 @@ public sealed class EFCoreEventStore<TDbContext>(
       Guid? fromEventId,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
-    // Query events from the specified event ID onwards
+    // Query events from the specified event ID onwards (body-aware).
     // UUIDv7 is time-ordered, so we can order by Id directly
-    var query = fromEventId == null
+    var query = _bodyAwareRows(fromEventId == null
       ? _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId)
           .OrderBy(e => e.Id)
-          .AsAsyncEnumerable()
       : _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
-          .OrderBy(e => e.Id)
-          .AsAsyncEnumerable();
+          .OrderBy(e => e.Id))
+      .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
+      if (record.EventData is null || record.Metadata is null) {
+        continue;   // reaped ephemeral body — consumed, snapshot-covered history
+      }
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
-      var eventDataJson = record.EventData.GetRawText();
+      var eventDataJson = record.EventData.Value.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
 
-      var hops = _restoreScopeInHops(record);
+      var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -245,35 +288,37 @@ public sealed class EFCoreEventStore<TDbContext>(
     // commit_sequence) fall to the tail and still get processed; for the common case
     // where the stamper has caught up, replay order matches live-apply commit-completion
     // order regardless of UUIDv7 generation timing.
-    var query = fromEventId == null
+    var query = _bodyAwareRows(fromEventId == null
       ? _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId)
           .OrderBy(e => e.CommitSequence == null)
           .ThenBy(e => e.CommitSequence)
           .ThenBy(e => e.Id)
-          .AsAsyncEnumerable()
       : _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
           .OrderBy(e => e.CommitSequence == null)
           .ThenBy(e => e.CommitSequence)
-          .ThenBy(e => e.Id)
-          .AsAsyncEnumerable();
+          .ThenBy(e => e.Id))
+      .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
       // Look up the concrete type from the EventType column (canonical resolver — skip unknowns)
       if (!EventTypeMatchingHelper.TryResolveType(typeMap, record.EventType, out var concreteType)) {
         continue;
       }
+      if (record.EventData is null || record.Metadata is null) {
+        continue;   // reaped ephemeral body — consumed, snapshot-covered history
+      }
 
       // Deserialize the event payload to the concrete type
-      var eventDataJson = record.EventData.GetRawText();
+      var eventDataJson = record.EventData.Value.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
-      var hops = _restoreScopeInHops(record);
+      var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
       // Reconstruct the message envelope with the polymorphic payload cast to IEvent.
       // LocalCommitSequence carries the wh_event_store.commit_sequence stamp so the
@@ -321,21 +366,23 @@ public sealed class EFCoreEventStore<TDbContext>(
       query = query.Where(e => e.Id > afterEventId.Value);
     }
 
-    // Order by UUID v7 (time-ordered)
-    var records = await query
-      .OrderBy(e => e.Id)
+    // Order by UUID v7 (time-ordered); body-aware projection
+    var records = await _bodyAwareRows(query.OrderBy(e => e.Id))
       .ToListAsync(cancellationToken);
 
     // Deserialize to message envelopes
     var envelopes = new List<MessageEnvelope<TMessage>>(records.Count);
 
     foreach (var record in records) {
-      var eventDataJson = record.EventData.GetRawText();
+      if (record.EventData is null || record.Metadata is null) {
+        continue;   // reaped ephemeral body — consumed, snapshot-covered history
+      }
+      var eventDataJson = record.EventData.Value.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage));
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
-      var hops = _restoreScopeInHops(record);
+      var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
       envelopes.Add(new MessageEnvelope<TMessage> {
         MessageId = record.Metadata.MessageId,
@@ -390,9 +437,8 @@ public sealed class EFCoreEventStore<TDbContext>(
       query = query.Where(e => e.Id > afterEventId.Value);
     }
 
-    // Order by UUID v7 (time-ordered)
-    var records = await query
-      .OrderBy(e => e.Id)
+    // Order by UUID v7 (time-ordered); body-aware projection
+    var records = await _bodyAwareRows(query.OrderBy(e => e.Id))
       .ToListAsync(cancellationToken);
 
     // Canonical normalized stored-EventType -> Type lookup, shared by every read path.
@@ -406,13 +452,16 @@ public sealed class EFCoreEventStore<TDbContext>(
       if (!EventTypeMatchingHelper.TryResolveType(typeLookup, record.EventType, out var concreteType)) {
         continue;
       }
+      if (record.EventData is null || record.Metadata is null) {
+        continue;   // reaped ephemeral body — consumed, snapshot-covered history
+      }
 
-      var eventDataJson = record.EventData.GetRawText();
+      var eventDataJson = record.EventData.Value.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
-      var hops = _restoreScopeInHops(record);
+      var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
       envelopes.Add(new MessageEnvelope<IEvent> {
         MessageId = record.Metadata.MessageId,
@@ -447,13 +496,13 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Restores scope from the dedicated scope column into the first hop's ScopeDelta.
   /// Returns the (possibly modified) hops list.
   /// </summary>
-  private static List<MessageHop> _restoreScopeInHops(EventStoreRecord record) {
-    var hops = record.Metadata.Hops.ToList();
-    if (record.Scope == null || hops.Count == 0 || hops[0].Scope != null) {
+  private static List<MessageHop> _restoreScopeInHops(EnvelopeMetadata metadata, PerspectiveScope? scope) {
+    var hops = metadata.Hops.ToList();
+    if (scope == null || hops.Count == 0 || hops[0].Scope != null) {
       return hops;
     }
 
-    var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+    var scopeDelta = ScopeDelta.FromPerspectiveScope(scope);
     if (scopeDelta == null) {
       return hops;
     }

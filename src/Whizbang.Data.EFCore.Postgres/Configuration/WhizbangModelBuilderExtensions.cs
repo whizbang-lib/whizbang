@@ -127,6 +127,17 @@ public static class WhizbangModelBuilderExtensions {
       entity.HasIndex(e => e.StreamId);
       entity.HasIndex(e => e.CreatedAt);
     });
+
+    // E1 #13b: the body half of the pointer/body split. Holds offloaded (payload, metadata) keyed by
+    // event_id; readers resolve body-first with inline fallback. Created by migration 072.
+    modelBuilder.Entity<EventBodyRecord>(entity => {
+      entity.ToTable("wh_event_body");
+      entity.HasKey(e => e.EventId);
+
+      entity.Property(e => e.EventId).HasColumnName("event_id");
+      entity.Property(e => e.EventData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+    });
   }
 
   private static void _configureServiceInstance(ModelBuilder modelBuilder) {
