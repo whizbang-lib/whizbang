@@ -73,6 +73,13 @@ public sealed class EventSubscriptionDiscovery {
         ns.StartsWith(ownedPrefix, StringComparison.OrdinalIgnoreCase));
     }
 
+    // Absorbed namespaces are subscribed unconditionally: add them AFTER the owned-domain subtraction so it
+    // can never strip a topic we explicitly chose to absorb, and so the binding is always created (otherwise
+    // absorbed events would never reach the transport consumer to be stored).
+    foreach (var ns in _routingOptions.AbsorbedNamespaces) {
+      namespaces.Add(ns);
+    }
+
     return namespaces;
   }
 

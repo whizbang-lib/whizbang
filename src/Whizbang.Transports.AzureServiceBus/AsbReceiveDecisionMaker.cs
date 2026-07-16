@@ -48,7 +48,8 @@ internal sealed class AsbReceiveDecisionMaker {
       JsonSerializerOptions jsonOptions,
       Func<Type, bool>? isHandledLocally = null,
       IRawReceptorRegistry? rawReceptorRegistry = null,
-      IMessageTypeBinder? typeBinder = null) {
+      IMessageTypeBinder? typeBinder = null,
+      IReadOnlySet<string>? absorbedNamespaces = null) {
     ArgumentNullException.ThrowIfNull(applicationProperties);
     ArgumentNullException.ThrowIfNull(getTypeInfoByName);
 
@@ -131,7 +132,8 @@ internal sealed class AsbReceiveDecisionMaker {
     var payloadType = envelope.Payload?.GetType();
     if (isHandledLocally != null && payloadType != null
         && envelope.Payload is not Whizbang.Core.Offloads.BodyClaimEnvelopePayload
-        && !isHandledLocally(payloadType)) {
+        && !isHandledLocally(payloadType)
+        && !_isAbsorbedNamespace(payloadType, absorbedNamespaces)) {
       return new AsbReceiveDecision {
         Action = AsbReceiveAction.AckAndDrop,
         Envelope = envelope,
@@ -148,6 +150,19 @@ internal sealed class AsbReceiveDecisionMaker {
       Reason = AsbReceiveReason.OK,
       Description = "Envelope deserialized; ready for handler dispatch",
     };
+  }
+
+  /// <summary>
+  /// True when the payload's namespace is in the caller's absorbed-namespace set. An unconsumed event on an
+  /// absorbed namespace is KEPT (persisted for a later rebuild) instead of dropped at the Slice-2 no-consumer
+  /// filter — mirrors the core <c>MessageDiscardPolicy</c> absorb bypass for the ASB receive path.
+  /// </summary>
+  private static bool _isAbsorbedNamespace(Type payloadType, IReadOnlySet<string>? absorbedNamespaces) {
+    if (absorbedNamespaces is null || absorbedNamespaces.Count == 0) {
+      return false;
+    }
+    var ns = payloadType.Namespace;
+    return ns != null && absorbedNamespaces.Contains(ns);
   }
 
   /// <summary>

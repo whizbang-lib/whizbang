@@ -170,6 +170,26 @@ public class AsbReceiveDecisionMakerTests {
     await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
   }
 
+  [Test]
+  public async Task Decide_UnconsumedPayload_OnAbsorbedNamespace_ReturnsProcessAsync() {
+    // A payload with NO local consumer whose NAMESPACE is absorbed must NOT be dropped — it's kept so the
+    // inbox -> event-store write can persist it for a later rebuild. (JsonElement's namespace = System.Text.Json.)
+    var decider = new AsbReceiveDecisionMaker();
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var envelope = _makeEnvelope();
+    var body = JsonSerializer.Serialize(envelope, typeInfo);
+
+    static bool _isHandledLocally(Type t) => false; // no local consumer
+    var absorbed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System.Text.Json" };
+
+    var decision = decider.Decide(
+      props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally, absorbedNamespaces: absorbed);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
+  }
+
   // ============================================================
   // Body-offload (claim-check) — a message whose serialized body exceeds the transport limit is
   // offloaded: the wire payload becomes BodyClaimEnvelopePayload, the ORIGINAL type is carried in
