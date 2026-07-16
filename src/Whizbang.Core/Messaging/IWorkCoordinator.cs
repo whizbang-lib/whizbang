@@ -455,6 +455,36 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RewindCursorInfo>>([]);
 
   /// <summary>
+  /// Reclassifies a formerly-Sourced event type to Ephemeral across its stored history: stamps
+  /// <c>EventFlags.Ephemeral</c> on the historical rows and offloads their inline bodies to
+  /// <c>wh_event_body</c>, so the tier-1 reaper then reaps them consumption-gated. Pass the type's FULL
+  /// name set (current CLR type name + former names) so a renamed type's history is matched under every
+  /// name it was stored as. Streams that would become mixed (the type plus a Sourced event of another
+  /// type) are skipped and reported, preserving the homogeneous-stream invariant. Deliberate,
+  /// developer-invoked — never run implicitly. No-op on engines without the ephemeral body offload.
+  /// </summary>
+  /// <param name="eventTypeNames">The logical type's name set (current + former).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Counts of events reclassified, streams reclassified, and streams skipped as mixed.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<EphemeralReclassificationResult> ReclassifyEventsEphemeralAsync(
+    IReadOnlyList<string> eventTypeNames,
+    CancellationToken cancellationToken = default) => Task.FromResult(EphemeralReclassificationResult.Empty);
+
+  /// <summary>
+  /// Counts stored Sourced (not-yet-ephemeral) events for the given type name set. Used by the startup
+  /// reconciler to DETECT historical drift — a type made <c>[Ephemeral]</c> that still has pre-existing
+  /// Sourced events the reaper cannot see. Read-only; returns 0 on engines without the offload.
+  /// </summary>
+  /// <param name="eventTypeNames">The logical type's name set (current + former).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of stored Sourced events across those names.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<long> CountSourcedEventsForTypesAsync(
+    IReadOnlyList<string> eventTypeNames,
+    CancellationToken cancellationToken = default) => Task.FromResult(0L);
+
+  /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
   /// Called per-stream immediately after processing (drain mode — no buffering).
   /// </summary>
@@ -705,6 +735,20 @@ public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? Last
 /// <param name="Envelope">The deserialized message envelope for receptor invocation.</param>
 /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
 public sealed record OrphanedLifecycleEvent(Guid EventId, Guid StreamId, IMessageEnvelope Envelope);
+
+/// <summary>
+/// Outcome of <see cref="IWorkCoordinator.ReclassifyEventsEphemeralAsync"/>: how many historical events of
+/// a type were reclassified Sourced→Ephemeral, across how many streams, and how many streams were skipped
+/// because reclassifying there would have produced a mixed (part-Sourced, part-Ephemeral) stream.
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralReclassificationResult(
+  long EventsReclassified,
+  long StreamsReclassified,
+  long StreamsBlocked) {
+  /// <summary>Nothing reclassified — the default/no-op result.</summary>
+  public static EphemeralReclassificationResult Empty { get; } = new(0, 0, 0);
+}
 
 /// <summary>
 /// Information about a perspective cursor.

@@ -249,6 +249,69 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }
 
+  /// <inheritdoc />
+  public async Task<EphemeralReclassificationResult> ReclassifyEventsEphemeralAsync(
+    IReadOnlyList<string> eventTypeNames, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypeNames);
+    if (eventTypeNames.Count == 0) {
+      return EphemeralReclassificationResult.Empty;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "reclassify_events_ephemeral");
+    var names = eventTypeNames as string[] ?? [.. eventTypeNames];
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    cmd.CommandText = $"SELECT events_reclassified, streams_reclassified, streams_blocked FROM {functionName}(@p_names)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("p_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = names });
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      return EphemeralReclassificationResult.Empty;
+    }
+    return new EphemeralReclassificationResult(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2));
+  }
+
+  /// <inheritdoc />
+  public async Task<long> CountSourcedEventsForTypesAsync(
+    IReadOnlyList<string> eventTypeNames, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypeNames);
+    if (eventTypeNames.Count == 0) {
+      return 0L;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var eventStore = BuildSchemaQualifiedName(schema, "wh_event_store");
+    var normalizeFn = BuildSchemaQualifiedName(schema, "normalize_event_type");
+    var names = eventTypeNames as string[] ?? [.. eventTypeNames];
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    cmd.CommandText =
+      $"SELECT count(*) FROM {eventStore} es " +
+      "WHERE (es.flags & 8) = 0 " +
+      $"AND es.event_type IN (SELECT {normalizeFn}(t) FROM unnest(@p_names) AS t)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("p_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = names });
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
   // Issues a guarded UPDATE on wh_service_instances. No-op when the
   // instance provider isn't wired (the EFCoreWorkCoordinator can be
   // constructed without one — historical contract) or when the heartbeat
