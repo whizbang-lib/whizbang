@@ -64,7 +64,14 @@ public sealed partial class MaintenanceWorker(
 
   internal async Task RunMaintenanceOnceAsync(CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
-    var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var sp = scope.ServiceProvider;
+    var coordinator = sp.GetRequiredService<IWorkCoordinator>();
+
+    // Reap-driven ephemeral snapshots — run BEFORE perform_maintenance so a snapshot rewind-floor exists for
+    // every (stream, perspective) whose consumed, aged-past-grace ephemeral bodies the reaper (Task 8) is
+    // about to delete. This is what makes the coverage gate safe on low-volume / idle streams.
+    await _reapDrivenEphemeralSnapshotAsync(coordinator, sp, ct);
+
     var results = await coordinator.PerformMaintenanceAsync(ct);
     foreach (var r in results) {
       LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
@@ -76,6 +83,31 @@ public sealed partial class MaintenanceWorker(
     // indexes added in migration 054 for O(log N) scan on a ~0-sized index.
     if (_options.StuckRowSentinelEnabled) {
       await _runStuckRowSentinelAsync(coordinator, ct);
+    }
+  }
+
+  // Snapshots each (stream, perspective) the reaper is about to strand, using the runner's bootstrap hook.
+  // No-op without a runner registry (non-perspective host) or without ephemeral bodies. Per-pair failures
+  // are logged, never fatal — a snapshot failure just leaves the body for a later cycle (the coverage gate
+  // holds it), it never loses data.
+  private async Task _reapDrivenEphemeralSnapshotAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var registry = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>();
+    if (registry is null) {
+      return;
+    }
+    var targets = await coordinator.GetEphemeralPairsNeedingSnapshotAsync(ct);
+    foreach (var target in targets) {
+      ct.ThrowIfCancellationRequested();
+      var runner = registry.GetRunner(target.PerspectiveName, sp);
+      if (runner is null) {
+        continue;
+      }
+      try {
+        await runner.BootstrapSnapshotAsync(target.StreamId, target.PerspectiveName, target.LastEventId, ct);
+        LogReapDrivenSnapshot(_logger, target.PerspectiveName, target.StreamId);
+      } catch (Exception ex) {
+        LogReapDrivenSnapshotFailed(_logger, ex, target.PerspectiveName, target.StreamId);
+      }
     }
   }
 
@@ -104,6 +136,14 @@ public sealed partial class MaintenanceWorker(
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "MaintenanceWorker tick failed; will retry on next interval")]
   static partial void LogError(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 20, Level = LogLevel.Debug,
+    Message = "Reap-driven ephemeral snapshot for perspective {Perspective} on stream {StreamId}")]
+  static partial void LogReapDrivenSnapshot(ILogger logger, string perspective, Guid streamId);
+
+  [LoggerMessage(EventId = 21, Level = LogLevel.Warning,
+    Message = "Reap-driven ephemeral snapshot failed for perspective {Perspective} on stream {StreamId} (non-fatal — body held for a later cycle)")]
+  static partial void LogReapDrivenSnapshotFailed(ILogger logger, Exception ex, string perspective, Guid streamId);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Maintenance task '{TaskName}' affected {RowsAffected} rows in {DurationMs}ms")]

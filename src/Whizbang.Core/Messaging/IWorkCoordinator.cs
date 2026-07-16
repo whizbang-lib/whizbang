@@ -551,6 +551,19 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// Finds the <c>(stream, perspective)</c> pairs the maintenance cycle must snapshot BEFORE it reaps: an
+  /// ephemeral body that is consumed and aged past its grace window, whose consuming perspective has NO
+  /// snapshot at/past the event's <c>commit_sequence</c>. Snapshotting these (via the runner's bootstrap
+  /// hook) is what makes the reaper's coverage gate safe on low-volume / idle streams that never hit an
+  /// event-count snapshot threshold. Empty on engines without the ephemeral body offload.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Distinct pairs (with the perspective cursor's last event id to snapshot at).</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyList<EphemeralSnapshotTarget>> GetEphemeralPairsNeedingSnapshotAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<EphemeralSnapshotTarget>>([]);
+
+  /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
   /// Called per-stream immediately after processing (drain mode — no buffering).
   /// </summary>
@@ -822,6 +835,14 @@ public sealed record EphemeralReclassificationResult(
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record EphemeralTypeGrace(string EventTypeName, int GraceSeconds);
+
+/// <summary>
+/// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,
+/// aged ephemeral bodies — carrying the perspective cursor's last processed event id to snapshot at (the
+/// current authoritative model through that point becomes the rewind floor).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralSnapshotTarget(Guid StreamId, string PerspectiveName, Guid LastEventId);
 
 /// <summary>
 /// A stored type-definition fingerprint row — one distinct type-definition-version keyed by its content
