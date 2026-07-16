@@ -523,6 +523,21 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// Returns the subset of <paramref name="streamIds"/> that are EPHEMERAL — streams holding at least one
+  /// event with <c>EventFlags.Ephemeral</c>. The rebuild/rewind guards use this to refuse ephemeral
+  /// streams: their events self-destruct and their bodies are reaped, so an ephemeral stream is not a
+  /// rebuildable source of truth and replaying it would corrupt the projection. Empty on engines without
+  /// the ephemeral bit.
+  /// </summary>
+  /// <param name="streamIds">Candidate stream ids to classify.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ids among <paramref name="streamIds"/> that are ephemeral.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyCollection<Guid>> GetEphemeralStreamIdsAsync(
+    IReadOnlyList<Guid> streamIds,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyCollection<Guid>>([]);
+
+  /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
   /// Called per-stream immediately after processing (drain mode — no buffering).
   /// </summary>

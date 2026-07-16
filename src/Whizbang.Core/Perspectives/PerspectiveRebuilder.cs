@@ -81,6 +81,27 @@ public sealed partial class PerspectiveRebuilder(
       // perspective (most RunAsync calls become no-ops).
       streamIds ??= await _resolveStreamIdsToReplayAsync(sp, registry, perspectiveName, ct);
 
+      // Ephemeral streams are NOT a rebuildable source of truth — their events self-destruct and their
+      // bodies are reaped, so replaying one would corrupt the projection. Refuse them up front (the runtime
+      // backstop to the compile-time analyzer). Optional dependency: an absent coordinator = no filtering,
+      // so engines without the ephemeral bit are unaffected.
+      var ephemeralGuard = sp.GetService<IWorkCoordinator>();
+      if (ephemeralGuard is not null && streamIds.Count > 0) {
+        var ephemeral = await ephemeralGuard.GetEphemeralStreamIdsAsync(streamIds, ct);
+        if (ephemeral.Count > 0) {
+          var ephemeralSet = ephemeral as ISet<Guid> ?? new HashSet<Guid>(ephemeral);
+          var kept = new List<Guid>(streamIds.Count);
+          foreach (var id in streamIds) {
+            if (ephemeralSet.Contains(id)) {
+              LogRebuildRefusedEphemeral(logger, perspectiveName, id);
+            } else {
+              kept.Add(id);
+            }
+          }
+          streamIds = kept;
+        }
+      }
+
       var totalStreams = streamIds.Count;
 
       // Track active rebuild status
@@ -256,6 +277,10 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "Rebuild {Perspective}: failed on stream {StreamId} ({Processed}/{Total})")]
   private static partial void LogStreamFailed(ILogger logger, Exception ex, string perspective, Guid streamId, int processed, int total);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Rebuild {Perspective}: refused ephemeral stream {StreamId} — ephemeral streams are not a rebuildable source of truth (events self-destruct, bodies are reaped). Skipped.")]
+  private static partial void LogRebuildRefusedEphemeral(ILogger logger, string perspective, Guid streamId);
 
   [LoggerMessage(Level = LogLevel.Debug,
       Message = "Rebuild {Perspective}: stream {StreamId} replayed to event {LastEventId} (status {Status}) in {ElapsedMs}ms ({Processed}/{Total})")]

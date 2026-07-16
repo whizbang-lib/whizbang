@@ -385,6 +385,34 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
+  /// <inheritdoc />
+  public async Task<IReadOnlyCollection<Guid>> GetEphemeralStreamIdsAsync(
+    IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    if (streamIds.Count == 0) {
+      return Array.Empty<Guid>();
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var eventStore = BuildSchemaQualifiedName(schema, "wh_event_store");
+    var ids = streamIds as Guid[] ?? [.. streamIds];
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    cmd.CommandText = $"SELECT DISTINCT stream_id FROM {eventStore} WHERE stream_id = ANY(@ids) AND (flags & 8) = 8";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = ids });
+    var result = new List<Guid>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      result.Add(reader.GetGuid(0));
+    }
+    return result;
+  }
+
   // Issues a guarded UPDATE on wh_service_instances. No-op when the
   // instance provider isn't wired (the EFCoreWorkCoordinator can be
   // constructed without one — historical contract) or when the heartbeat
