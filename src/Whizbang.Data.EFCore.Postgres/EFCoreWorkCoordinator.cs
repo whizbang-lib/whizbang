@@ -1183,6 +1183,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var eventStoreTable = BuildSchemaQualifiedName(schema, "wh_event_store");
+    var bodyTable = BuildSchemaQualifiedName(schema, "wh_event_body");
     var cursorsTable = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
     var completionsTable = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
 
@@ -1200,8 +1201,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
 #pragma warning disable S2077
       var sql = $@"
-        SELECT e.event_id, e.stream_id, e.event_data, e.metadata, e.event_type, e.scope
+        SELECT e.event_id, e.stream_id, COALESCE(e.event_data, eb.event_data) AS event_data, COALESCE(e.metadata, eb.metadata) AS metadata, e.event_type, e.scope
         FROM {eventStoreTable} e
+        LEFT JOIN {bodyTable} eb ON eb.event_id = e.event_id
         WHERE e.event_type = {{0}}
           AND e.created_at >= {{1}}
           AND NOT EXISTS (
