@@ -118,6 +118,29 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Reap_PerTypeGraceOverride_ReapsAtItsOwnWindowAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+
+    var eventA = Guid.NewGuid();
+    var eventB = Guid.NewGuid();
+    // Both consumed (no association) and recent. Type A gets a 0s per-type override; type B uses the global.
+    await _commitAsync(connection, Guid.NewGuid(), eventA, Guid.NewGuid(), "Whizbang.Tests.GraceOverrideA", flags: 8);
+    await _commitAsync(connection, Guid.NewGuid(), eventB, Guid.NewGuid(), "Whizbang.Tests.GraceOverrideB", flags: 8);
+
+    await using (var s = connection.CreateCommand()) {
+      s.CommandText = "SELECT sync_ephemeral_type_grace(ARRAY['Whizbang.Tests.GraceOverrideA']::text[], ARRAY[0]::integer[])";
+      await s.ExecuteNonQueryAsync();
+    }
+
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventA)).IsEqualTo(0L)
+      .Because("Type A's 0s per-type grace override reaps its consumed body immediately.");
+    await Assert.That(await _eventBodyCountAsync(connection, eventB)).IsEqualTo(1L)
+      .Because("Type B has no override, so the global 300s grace holds its recently-consumed body.");
+  }
+
+  [Test]
   public async Task Reap_EphemeralBody_GatedWhilePending_ReapedAfterConsumedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

@@ -538,6 +538,19 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyCollection<Guid>>([]);
 
   /// <summary>
+  /// Replaces the per-type rewind-grace overrides (from <c>[Ephemeral(RewindGraceSeconds = …)]</c>): upserts
+  /// the declared set and prunes any override no longer declared. Called once at startup by the reconciler.
+  /// The reaper resolves <c>COALESCE(type grace, global default)</c> per event. No-op on engines without the
+  /// grace table.
+  /// </summary>
+  /// <param name="graceOverrides">Types that declare a per-type grace (seconds); empty clears all overrides.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task SyncEphemeralTypeGraceAsync(
+    IReadOnlyList<EphemeralTypeGrace> graceOverrides,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
   /// Called per-stream immediately after processing (drain mode — no buffering).
   /// </summary>
@@ -802,6 +815,13 @@ public sealed record EphemeralReclassificationResult(
   /// <summary>Nothing reclassified — the default/no-op result.</summary>
   public static EphemeralReclassificationResult Empty { get; } = new(0, 0, 0);
 }
+
+/// <summary>
+/// A per-type rewind-grace override — the type's (current) CLR name and its
+/// <c>[Ephemeral(RewindGraceSeconds)]</c> value in seconds.
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralTypeGrace(string EventTypeName, int GraceSeconds);
 
 /// <summary>
 /// A stored type-definition fingerprint row — one distinct type-definition-version keyed by its content

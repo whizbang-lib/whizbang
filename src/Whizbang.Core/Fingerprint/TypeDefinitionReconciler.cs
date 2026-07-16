@@ -38,6 +38,16 @@ public sealed partial class TypeDefinitionReconciler {
       return TypeDefinitionReconcileSummary.Empty;
     }
 
+    // Sync per-type rewind-grace overrides ([Ephemeral(RewindGraceSeconds >= 0)]) so the reaper resolves
+    // COALESCE(type grace, global default) per event. Full replace — declaring set upserted, rest pruned.
+    var graceOverrides = new List<EphemeralTypeGrace>();
+    foreach (var e in _catalog.GetAll()) {
+      if (e.Ephemeral is { RewindGraceSeconds: >= 0 } eph) {
+        graceOverrides.Add(new EphemeralTypeGrace(e.ClrTypeName, eph.RewindGraceSeconds));
+      }
+    }
+    await _coordinator.SyncEphemeralTypeGraceAsync(graceOverrides, cancellationToken).ConfigureAwait(false);
+
     // Pre-register snapshot of stored definitions, so a genuinely-new registration's previous_definition_id
     // resolves to the prior hashes (to tell settings-drift from schema-drift).
     var snapshot = await _coordinator.GetTypeDefinitionsAsync(cancellationToken).ConfigureAwait(false);

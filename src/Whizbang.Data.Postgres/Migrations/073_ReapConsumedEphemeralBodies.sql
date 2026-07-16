@@ -27,6 +27,29 @@ ALTER TABLE __SCHEMA__.wh_event_body SET (
   autovacuum_analyze_scale_factor = 0.02
 );
 
+-- Per-type rewind-grace overrides ([Ephemeral(RewindGraceSeconds=..)]). Synced from the catalog at startup;
+-- the reaper LEFT JOINs it and resolves COALESCE(type grace, global default) per event. Absent row = global.
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_ephemeral_type_grace (
+  event_type    VARCHAR(500) PRIMARY KEY,
+  grace_seconds INTEGER NOT NULL
+);
+
+-- Full replace of the per-type grace overrides: upsert the declared set (normalized), then prune any row no
+-- longer declared. Called from the startup reconciler with the current [Ephemeral(RewindGraceSeconds>=0)] set.
+-- Empty input clears all overrides (every type falls back to the global default).
+CREATE OR REPLACE FUNCTION __SCHEMA__.sync_ephemeral_type_grace(p_names TEXT[], p_graces INTEGER[])
+RETURNS VOID AS $$
+BEGIN
+  INSERT INTO __SCHEMA__.wh_ephemeral_type_grace (event_type, grace_seconds)
+  SELECT __SCHEMA__.normalize_event_type(t), g
+  FROM unnest(p_names, p_graces) AS x(t, g)
+  ON CONFLICT (event_type) DO UPDATE SET grace_seconds = EXCLUDED.grace_seconds;
+
+  DELETE FROM __SCHEMA__.wh_ephemeral_type_grace
+  WHERE event_type <> ALL (SELECT __SCHEMA__.normalize_event_type(t) FROM unnest(p_names) AS t);
+END;
+$$ LANGUAGE plpgsql;
+
 -- Re-create perform_maintenance with Task 8 appended. Tasks 1-7 are reproduced verbatim from migration
 -- 032 (identical behavior); only Task 8 is new. Signature is unchanged, so CREATE OR REPLACE swaps it
 -- in place with no need to drop overloads.
@@ -237,8 +260,9 @@ BEGIN
   ELSE
     DELETE FROM __SCHEMA__.wh_event_body eb
     USING __SCHEMA__.wh_event_store es
+    LEFT JOIN __SCHEMA__.wh_ephemeral_type_grace g ON g.event_type = es.event_type
     WHERE es.event_id = eb.event_id
-      AND es.created_at < NOW() - (v_ephemeral_grace_seconds * INTERVAL '1 second')
+      AND es.created_at < NOW() - (COALESCE(g.grace_seconds, v_ephemeral_grace_seconds) * INTERVAL '1 second')
       AND NOT EXISTS (
         SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
         WHERE pe.event_id = eb.event_id

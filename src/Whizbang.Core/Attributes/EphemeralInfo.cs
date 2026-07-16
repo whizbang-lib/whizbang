@@ -8,5 +8,7 @@ namespace Whizbang.Core.Attributes;
 /// </summary>
 /// <param name="Destruction">How/when the event self-destructs.</param>
 /// <param name="Storage">Where the transient state lives.</param>
+/// <param name="RewindGraceSeconds">Per-type override (seconds) for the rewind grace window — how long a
+/// consumed body is retained for out-of-order rewind. <c>-1</c> inherits the global default.</param>
 /// <docs>fundamentals/events/ephemeral-events</docs>
-public sealed record EphemeralInfo(Destruction Destruction, TransientStorage Storage);
+public sealed record EphemeralInfo(Destruction Destruction, TransientStorage Storage, int RewindGraceSeconds = -1);

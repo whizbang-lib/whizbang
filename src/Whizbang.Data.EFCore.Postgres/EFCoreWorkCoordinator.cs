@@ -413,6 +413,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return result;
   }
 
+  /// <inheritdoc />
+  public async Task SyncEphemeralTypeGraceAsync(
+    IReadOnlyList<EphemeralTypeGrace> graceOverrides, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(graceOverrides);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "sync_ephemeral_type_grace");
+    var names = new string[graceOverrides.Count];
+    var graces = new int[graceOverrides.Count];
+    for (var i = 0; i < graceOverrides.Count; i++) {
+      names[i] = graceOverrides[i].EventTypeName;
+      graces[i] = graceOverrides[i].GraceSeconds;
+    }
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {fn}(@names, @graces)";
+    cmd.Parameters.Add(new NpgsqlParameter("names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = names });
+    cmd.Parameters.Add(new NpgsqlParameter("graces", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer) { Value = graces });
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
   // Issues a guarded UPDATE on wh_service_instances. No-op when the
   // instance provider isn't wired (the EFCoreWorkCoordinator can be
   // constructed without one — historical contract) or when the heartbeat

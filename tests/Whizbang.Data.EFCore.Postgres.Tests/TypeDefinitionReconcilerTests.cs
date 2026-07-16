@@ -137,6 +137,25 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Reconcile_SyncsPerTypeRewindGraceOverrideAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var entry = new MessageTypeCatalogEntry(typeof(object), "Whizbang.Tests.GraceSyncEvent", "event", null) {
+      Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.InMemory, RewindGraceSeconds: 42),
+      SettingsHash = new string('a', 64),
+      SchemaHash = new string('c', 64),
+    };
+    await _reconciler(coordinator, new FakeCatalog(entry), act: false).ReconcileAsync();
+
+    await using var v = connection.CreateCommand();
+    v.CommandText = "SELECT grace_seconds FROM wh_ephemeral_type_grace WHERE event_type = normalize_event_type('Whizbang.Tests.GraceSyncEvent')";
+    await Assert.That((int)(await v.ExecuteScalarAsync())!).IsEqualTo(42)
+      .Because("The startup reconciler syncs each type's [Ephemeral(RewindGraceSeconds)] override into the grace table.");
+  }
+
+  [Test]
   public async Task Reconcile_NoChange_SameDefinition_NoDriftAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

@@ -39,4 +39,11 @@ public sealed class EphemeralAttribute : Attribute {
 
   /// <summary>Where the transient state lives. Defaults to <see cref="TransientStorage.InMemory"/>.</summary>
   public TransientStorage Storage { get; init; } = TransientStorage.InMemory;
+
+  /// <summary>
+  /// Per-type override (seconds) for the rewind grace window — how long a consumed ephemeral body is
+  /// retained so an out-of-order straggler can still rewind through it. Defaults to <c>-1</c>, which
+  /// inherits the global <c>ephemeral_rewind_grace_seconds</c> setting.
+  /// </summary>
+  public int RewindGraceSeconds { get; init; } = -1;
 }

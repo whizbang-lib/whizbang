@@ -39,6 +39,32 @@ public class MessageTypeCatalogEphemeralTests {
   }
 
   [Test]
+  public async Task RewindGrace_Override_StampedOnEphemeralInfoAsync() {
+    var code = await _generateAsync("""
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      namespace MyApp;
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory, RewindGraceSeconds = 120)]
+      public record BurstyPing : IEvent;
+""");
+    await Assert.That(code).Contains("TransientStorage.InMemory, 120)")
+      .Because("The per-type RewindGraceSeconds override is stamped as the third EphemeralInfo argument.");
+  }
+
+  [Test]
+  public async Task RewindGrace_Unset_DefaultsToMinusOneAsync() {
+    var code = await _generateAsync("""
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      namespace MyApp;
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      public record UserIsTyping : IEvent;
+""");
+    await Assert.That(code).Contains("TransientStorage.InMemory, -1)")
+      .Because("With no override, RewindGraceSeconds defaults to -1 (inherit the global setting).");
+  }
+
+  [Test]
   public async Task ViaProfileInterface_ResolvesFromInterfaceAsync() {
     var code = await _generateAsync("""
       using Whizbang.Core;

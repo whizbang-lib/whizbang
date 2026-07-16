@@ -34,6 +34,16 @@ internal static class EphemeralResolver {
   }
 
   /// <summary>
+  /// The type's <c>[Ephemeral(RewindGraceSeconds = …)]</c> override in seconds, or <c>-1</c> when unset
+  /// (inherit the global default) or when the type is not ephemeral. Resolved from the same own → base →
+  /// interface walk as <see cref="Resolve"/>.
+  /// </summary>
+  public static int ResolveRewindGraceSeconds(INamedTypeSymbol type) {
+    var attr = _find(type);
+    return attr is null ? -1 : _intArgName(attr, "RewindGraceSeconds", -1);
+  }
+
+  /// <summary>
   /// True when a type's ephemeral mode is <em>ambiguously composed</em> — it has no own or base
   /// <c>[Ephemeral]</c> to settle the tie, yet implements two or more sibling profile interfaces that
   /// carry <c>[Ephemeral]</c> with <em>different</em> configs. A refined profile that extends another
@@ -89,6 +99,15 @@ internal static class EphemeralResolver {
     type.GetAttributes().FirstOrDefault(a =>
       a.AttributeClass is not null &&
       TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == EPHEMERAL_ATTR);
+
+  private static int _intArgName(AttributeData attr, string propertyName, int defaultValue) {
+    foreach (var na in attr.NamedArguments) {
+      if (na.Key == propertyName && na.Value.Value is int v) {
+        return v;
+      }
+    }
+    return defaultValue;
+  }
 
   private static string _enumArgName(AttributeData attr, string propertyName, string defaultMember) {
     foreach (var na in attr.NamedArguments) {
