@@ -46,19 +46,27 @@ public class EventFlagsTests {
       .Because("Bit position 2 — the first 'treatment' flag (as opposed to a 'category' flag). The outbox-enqueue guard reads this exact bit; moving it silently breaks no-rebroadcast suppression and any persisted wh_inbox.flags rows.");
   }
 
+  [Test]
+  public async Task EventFlags_Ephemeral_BitPositionLockedAsync() {
+    var value = _asInt(EventFlags.Ephemeral);
+    await Assert.That(value).IsEqualTo(8)
+      .Because("Bit position 3 — the persisted 'this event is ephemeral' marker the emit chain reads to offload the body to wh_event_body and the reaper reads to gate consumption-based deletion. Moving it silently breaks body-offload routing and any persisted wh_event_store.flags rows.");
+  }
+
   private static int _asInt(EventFlags f) => (int)f;
 
   [Test]
   public async Task EventFlags_Combine_DistinctBitsCoexistAsync() {
     // Category + treatment flags coexist: a fan-out child of a composite can be both. The framework
     // checks each bit independently, so OR-ing must keep them distinct.
-    var combined = EventFlags.Collective | EventFlags.Composite | EventFlags.NoRebroadcast;
+    var combined = EventFlags.Collective | EventFlags.Composite | EventFlags.NoRebroadcast | EventFlags.Ephemeral;
 
     await Assert.That(combined.HasFlag(EventFlags.Collective)).IsTrue();
     await Assert.That(combined.HasFlag(EventFlags.Composite)).IsTrue();
     await Assert.That(combined.HasFlag(EventFlags.NoRebroadcast)).IsTrue();
-    await Assert.That(_asInt(combined)).IsEqualTo(7)
-      .Because("OR-ing 1|2|4 gives 0b111 = 7. Catches accidental bit-collision between any two flags.");
+    await Assert.That(combined.HasFlag(EventFlags.Ephemeral)).IsTrue();
+    await Assert.That(_asInt(combined)).IsEqualTo(15)
+      .Because("OR-ing 1|2|4|8 gives 0b1111 = 15. Catches accidental bit-collision between any two flags.");
   }
 
   [Test]

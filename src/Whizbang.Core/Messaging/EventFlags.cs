@@ -77,5 +77,16 @@ public enum EventFlags {
   /// <docs>fundamentals/messaging/composite-events#no-rebroadcast</docs>
   NoRebroadcast = 1 << 2,
 
+  /// <summary>
+  /// Category flag: this event is <strong>ephemeral</strong> — event-driven and self-destructing,
+  /// not a durable Sourced fact. Derived at dispatch from the compile-time <c>[Ephemeral]</c> authority
+  /// (via <see cref="IEphemeralModeResolver"/> / the <c>IEphemeralEvent</c> marker) and persisted on
+  /// <c>wh_event_store.flags</c>. The emit chain reads <c>(flags &amp; 8) = 8</c> to offload the event body
+  /// to <c>wh_event_body</c> (leaving the durable store's inline body NULL), and the consumption-gated
+  /// reaper reads it to know which bodies are eligible for deletion once every perspective has consumed them.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Ephemeral = 1 << 3,
+
   // Future flags add new values here without requiring schema migrations.
 }
