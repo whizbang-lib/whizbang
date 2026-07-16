@@ -144,6 +144,9 @@ public abstract partial class Dispatcher(
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer ?? serviceProvider.GetService<IEnvelopeSerializer>();
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
   private readonly IEnvelopeRegistry? _envelopeRegistry = envelopeRegistry ?? serviceProvider.GetService<IEnvelopeRegistry>();
+  // Ephemeral-mode resolver: stamps EventFlags.Ephemeral for [Ephemeral] events so the emit chain
+  // offloads their body. Optional — null in minimal hosts, where the IEphemeralEvent marker still works.
+  private readonly IEphemeralModeResolver? _ephemeralModeResolver = serviceProvider.GetService<IEphemeralModeResolver>();
   // Outbox routing strategy for determining actual transport destinations (inbox for commands, namespace for events)
   private readonly IOutboxRoutingStrategy? _outboxRoutingStrategy = outboxRoutingStrategy ?? serviceProvider.GetService<IOutboxRoutingStrategy>();
   // Owned domains for routing decisions - resolved from RoutingOptions if available
@@ -3781,7 +3784,7 @@ public abstract partial class Dispatcher(
         ?? _extractStreamIdFromMetadata(hopMetadata)
         ?? messageId.Value;
 
-      var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId);
+      var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver);
       // Composite pre-fanout hook (Phase B): divert into the ambient collector when one is open.
       if (DispatchOutboxCollector.Current is { } collector) {
         collector.Add(newOutboxMessage);
@@ -3878,7 +3881,8 @@ public abstract partial class Dispatcher(
     string? destination,
     Type eventType,
     IMessage eventData,
-    Guid streamId) {
+    Guid streamId,
+    IEphemeralModeResolver? ephemeralModeResolver) {
     return new OutboxMessage {
       MessageId = jsonEnvelope.MessageId.Value,
       Destination = destination,
@@ -3891,7 +3895,8 @@ public abstract partial class Dispatcher(
       StreamId = streamId,
       IsEvent = eventData is IEvent,
       Flags = (eventData is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
-            | (eventData is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None),
+            | (eventData is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
+            | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
       MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
     };
@@ -5017,7 +5022,8 @@ public abstract partial class Dispatcher(
       StreamId = streamId,
       IsEvent = payload is IEvent,
       Flags = (payload is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
-            | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None),
+            | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
+            | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(payload, _ephemeralModeResolver),
       Scope = _extractScope(envelope),
       MessageType = serialized.MessageType,
       ScheduledFor = scheduledFor
