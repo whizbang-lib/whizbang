@@ -96,5 +96,44 @@ public class BackgroundStageDispatchTests {
     });
   }
 
+  [Test]
+  public async Task StartLongRunning_ContinuationsStayOnDedicatedThread_AcrossAwaitsAsync() {
+    // The pump contract — and the fix for the InboxStages 120s CI timeouts: LongRunning alone only
+    // pins the SYNCHRONOUS PREFIX of the body; the first await's continuation returns to the shared
+    // ThreadPool, where it can starve under load. The single-threaded SynchronizationContext pump
+    // keeps EVERY continuation on the dedicated thread, making detached-stage progress independent
+    // of ThreadPool availability. Reverting to the prefix-only Task.Factory.StartNew(LongRunning)
+    // implementation makes this test fail (post-await thread flips to a pool thread).
+    var threadIds = new List<int>();
+    var poolFlags = new List<bool>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+    await BackgroundStageDispatch.StartLongRunning(async () => {
+      threadIds.Add(Environment.CurrentManagedThreadId);
+      poolFlags.Add(Thread.CurrentThread.IsThreadPoolThread);
+      await Task.Yield();
+      threadIds.Add(Environment.CurrentManagedThreadId);
+      poolFlags.Add(Thread.CurrentThread.IsThreadPoolThread);
+      await Task.Delay(10, cts.Token);
+      threadIds.Add(Environment.CurrentManagedThreadId);
+      poolFlags.Add(Thread.CurrentThread.IsThreadPoolThread);
+    }, cts.Token);
+
+    await Assert.That(threadIds.Distinct().Count()).IsEqualTo(1)
+      .Because("every continuation of the detached-stage body must resume on the SAME dedicated thread — pool-immune progress is the whole point of the pump");
+    await Assert.That(poolFlags.Any(f => f)).IsFalse()
+      .Because("no segment of the body may run on a ThreadPool thread, or starvation regressions (InboxStages 120s timeouts) return");
+  }
+
+  [Test]
+  public async Task StartLongRunning_PreCancelledToken_ReturnsCanceledTaskAsync() {
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    var task = BackgroundStageDispatch.StartLongRunning(() => Task.CompletedTask, cts.Token);
+
+    await Assert.ThrowsAsync<TaskCanceledException>(async () => await task);
+  }
+
   private readonly record struct ThreadObservation(bool IsThreadPoolThread, bool IsBackground, int ManagedThreadId);
 }
