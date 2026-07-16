@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -139,10 +140,15 @@ public static class PostgresDriverExtensions {
           return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
         });
 
-        // TURNKEY: Register table statistics provider + collector for OTel metrics
+        // TURNKEY: Register table statistics provider + collector for OTel metrics.
+        // The provider schema-qualifies its queries — pass the model's default schema so
+        // multi-schema services report THEIR tables instead of probing a bare public schema.
         selector.Services.TryAddSingleton<ITableStatisticsProvider>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          return new PostgresTableStatisticsProvider(ds);
+          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
+          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
+          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          return new PostgresTableStatisticsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
         selector.Services.AddHostedService<TableStatisticsCollector>();

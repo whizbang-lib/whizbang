@@ -68,7 +68,7 @@ public sealed partial class PgInstanceLifecycleMonitor(
   public Task TickForTestsAsync(CancellationToken cancellationToken) => _tickOnceAsync(cancellationToken);
 
   private async Task _tickOnceAsync(CancellationToken ct) {
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null) {
       return;
     }

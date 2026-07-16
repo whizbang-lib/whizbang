@@ -77,7 +77,7 @@ public sealed class PgScheduleOccurrenceStore : IScheduleOccurrenceStore {
   }
 
   private async Task<NpgsqlConnection?> _openAsync(CancellationToken cancellationToken) {
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null) {
       return null;
     }

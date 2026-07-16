@@ -194,6 +194,10 @@ public static class PostgresNotificationsServiceCollectionExtensions {
         return new NotificationDataSource(dataSource: null, ownsDataSource: false);
       }
       var builder = new NpgsqlDataSourceBuilder(connectionString);
+      // Multi-schema deployments: the shared LISTEN connection also issues table/function
+      // SQL (alive-lock claim, resync probes) that lives in the SERVICE schema. Apply the
+      // resolved search path unless the connection string already carries one.
+      _applySearchPath(builder, options, sp);
       // Pool sizing for notification workers:
       //   - PgSharedNotifyConnection holds one long-lived LISTEN connection
       //   - PgCommitOrderStamperWorker holds one long-lived advisory-lock connection
@@ -310,6 +314,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       // one for the commit-order stamper's advisory-lock holder, plus headroom
       // for the leader-election retry and probe paths.
       var builder = new NpgsqlDataSourceBuilder(connectionString);
+      var explicitOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<WhizbangNotificationOptions>>()?.Value
+        ?? new WhizbangNotificationOptions();
+      _applySearchPath(builder, explicitOptions, sp);
       // Pool sizing for notification workers:
       //   - PgSharedNotifyConnection holds one long-lived LISTEN connection
       //   - PgCommitOrderStamperWorker holds one long-lived advisory-lock connection
@@ -332,6 +339,19 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     });
 
     return services;
+  }
+
+  /// <summary>
+  /// Applies the resolved search path (explicit <see cref="WhizbangNotificationOptions.SearchPath"/>,
+  /// else the registered <see cref="Whizbang.Core.Notifications.INotificationConnectionStringFallback"/>'s
+  /// schema) to the data source builder — unless the connection string already carries one.
+  /// </summary>
+  private static void _applySearchPath(NpgsqlDataSourceBuilder builder, WhizbangNotificationOptions options, IServiceProvider sp) {
+    var fallback = sp.GetService<Whizbang.Core.Notifications.INotificationConnectionStringFallback>();
+    var searchPath = !string.IsNullOrWhiteSpace(options.SearchPath) ? options.SearchPath : fallback?.GetSearchPath();
+    if (!string.IsNullOrWhiteSpace(searchPath) && string.IsNullOrWhiteSpace(builder.ConnectionStringBuilder.SearchPath)) {
+      builder.ConnectionStringBuilder.SearchPath = searchPath;
+    }
   }
 }
 
@@ -446,4 +466,6 @@ internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(ICon
       options.TcpKeepAliveInterval = kaInterval;
     }
   }
+
 }
+

@@ -90,7 +90,7 @@ public sealed partial class PgCommitOrderStamperWorker(
       return;
     }
 
-    var resolution = NotificationConnectionStringResolver.Resolve(_notificationOptions, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_notificationOptions, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     // Prefer a DI-registered NpgsqlDataSource: when the DbContext is configured
     // via UseNpgsql(NpgsqlDataSource), neither the connection string nor the
     // data source's public ConnectionString carry the password (Npgsql strips

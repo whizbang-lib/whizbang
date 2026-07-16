@@ -68,6 +68,17 @@ public sealed class WhizbangNotificationOptions {
   public string? DirectConnectionString { get; set; }
 
   /// <summary>
+  /// PostgreSQL search path (the service's Whizbang schema) for the notification layer's raw
+  /// connections. The raw components (signal transport, durable-signal tail, schedule claimer,
+  /// poll sources, …) issue unqualified SQL against tables/functions that live in the SERVICE
+  /// schema; on multi-schema deployments those queries otherwise resolve against <c>public</c>
+  /// and fail. Defaults to the EF Core model's default schema when using
+  /// <c>.WithDriver.Postgres&lt;TDbContext&gt;()</c>; set explicitly to override. A
+  /// <c>Search Path</c> already present in the resolved connection string wins over both.
+  /// </summary>
+  public string? SearchPath { get; set; }
+
+  /// <summary>
   /// Kill switch — forces polling-only mode even if a connection string can be resolved.
   /// Equivalent to setting <see cref="SignalingMode"/> to <see cref="WorkSignalingMode.Polling"/>;
   /// retained for backward compatibility.

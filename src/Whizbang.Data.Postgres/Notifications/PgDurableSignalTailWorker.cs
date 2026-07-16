@@ -49,7 +49,7 @@ public sealed partial class PgDurableSignalTailWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _wireNameToEntry = _buildWireMap();
 
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null) {
       LogNoConnectionString(_logger);
       return;
