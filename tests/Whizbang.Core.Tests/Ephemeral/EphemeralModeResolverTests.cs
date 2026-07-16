@@ -80,6 +80,47 @@ public class EphemeralModeResolverTests {
     await Assert.That(() => new EphemeralModeResolver(null!)).Throws<ArgumentNullException>();
   }
 
+  // ---- Type-keyed lookup (the runtime dispatch path: payload.GetType() -> mode) ----
+
+  private sealed class EphA;
+  private sealed class EphB;
+  private sealed class Src;
+
+  private static MessageTypeCatalogEntry _ephemeralT(Type t, string clr, Destruction d, TransientStorage s) =>
+    new(t, clr, "event", null) { Ephemeral = new EphemeralInfo(d, s) };
+
+  private static MessageTypeCatalogEntry _sourcedT(Type t, string clr) =>
+    new(t, clr, "event", null);
+
+  [Test]
+  public async Task ResolveByType_EphemeralEvent_ReturnsItsModeAsync() {
+    var resolver = _resolver(_ephemeralT(typeof(EphA), "Ns.EphA", Destruction.WhenConsumed, TransientStorage.InMemory));
+
+    var info = resolver.Resolve(typeof(EphA));
+
+    await Assert.That(info).IsNotNull();
+    await Assert.That(info!.Destruction).IsEqualTo(Destruction.WhenConsumed);
+    await Assert.That(info.Storage).IsEqualTo(TransientStorage.InMemory);
+  }
+
+  [Test]
+  public async Task IsEphemeralByType_ReflectsCatalogAsync() {
+    var resolver = _resolver(
+      _ephemeralT(typeof(EphA), "Ns.EphA", Destruction.WhenConsumed, TransientStorage.InMemory),
+      _sourcedT(typeof(Src), "Ns.Src"));
+
+    await Assert.That(resolver.IsEphemeral(typeof(EphA))).IsTrue();
+    await Assert.That(resolver.IsEphemeral(typeof(Src))).IsFalse();
+    await Assert.That(resolver.IsEphemeral(typeof(EphB))).IsFalse();  // not in the catalog at all
+  }
+
+  [Test]
+  public async Task ResolveByType_UnknownType_ReturnsNullAsync() {
+    var resolver = _resolver(_ephemeralT(typeof(EphA), "Ns.EphA", Destruction.WhenConsumed, TransientStorage.InMemory));
+
+    await Assert.That(resolver.Resolve(typeof(EphB))).IsNull();
+  }
+
   private sealed class FakeCatalog(IReadOnlyList<MessageTypeCatalogEntry> entries) : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
   }

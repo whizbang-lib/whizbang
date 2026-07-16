@@ -26,6 +26,19 @@ public interface IEphemeralModeResolver {
   /// catalog); <c>false</c> for Sourced or unknown types.
   /// </summary>
   bool IsEphemeral(string clrTypeName);
+
+  /// <summary>
+  /// The ephemeral mode of the runtime <paramref name="type"/> (the dispatch path — <c>payload.GetType()</c>),
+  /// or <c>null</c> when it is Sourced or not in the catalog. Keyed on the catalog's own <see cref="Type"/>
+  /// objects, so it is a reference-equality dictionary probe with no string formatting.
+  /// </summary>
+  EphemeralInfo? Resolve(Type type);
+
+  /// <summary>
+  /// <c>true</c> when the runtime <paramref name="type"/> is declared ephemeral; <c>false</c> for Sourced
+  /// or unknown types. Used at the dispatch flag-derivation sites to stamp <c>EventFlags.Ephemeral</c>.
+  /// </summary>
+  bool IsEphemeral(Type type);
 }
 
 /// <summary>
@@ -36,19 +49,23 @@ public interface IEphemeralModeResolver {
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed class EphemeralModeResolver : IEphemeralModeResolver {
   private readonly Dictionary<string, EphemeralInfo> _byClrTypeName;
+  private readonly Dictionary<Type, EphemeralInfo> _byType;
 
   /// <summary>
   /// Indexes every catalog entry that carries an <see cref="MessageTypeCatalogEntry.Ephemeral"/>
-  /// mode by its <see cref="MessageTypeCatalogEntry.ClrTypeName"/>. Sourced entries (null mode) are
-  /// skipped, so a miss on <see cref="Resolve"/> unambiguously means "Sourced or unknown".
+  /// mode by both its <see cref="MessageTypeCatalogEntry.ClrTypeName"/> (registry/wire lookups) and its
+  /// <see cref="MessageTypeCatalogEntry.Type"/> (the dispatch path). Sourced entries (null mode) are
+  /// skipped, so a miss unambiguously means "Sourced or unknown".
   /// </summary>
   /// <param name="catalog">The generated message-type catalog (the compile-time authority).</param>
   public EphemeralModeResolver(IMessageTypeCatalog catalog) {
     ArgumentNullException.ThrowIfNull(catalog);
     _byClrTypeName = new Dictionary<string, EphemeralInfo>(StringComparer.Ordinal);
+    _byType = [];
     foreach (var entry in catalog.GetAll()) {
       if (entry.Ephemeral is not null) {
         _byClrTypeName[entry.ClrTypeName] = entry.Ephemeral;
+        _byType[entry.Type] = entry.Ephemeral;
       }
     }
   }
@@ -59,4 +76,11 @@ public sealed class EphemeralModeResolver : IEphemeralModeResolver {
 
   /// <inheritdoc/>
   public bool IsEphemeral(string clrTypeName) => _byClrTypeName.ContainsKey(clrTypeName);
+
+  /// <inheritdoc/>
+  public EphemeralInfo? Resolve(Type type) =>
+    type is not null && _byType.TryGetValue(type, out var info) ? info : null;
+
+  /// <inheritdoc/>
+  public bool IsEphemeral(Type type) => type is not null && _byType.ContainsKey(type);
 }
