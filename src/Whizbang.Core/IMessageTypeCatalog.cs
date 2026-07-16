@@ -32,6 +32,25 @@ public sealed record MessageTypeCatalogEntry(
   /// effective mode is <em>derived</em> from the events it applies, separately).
   /// </summary>
   public EphemeralInfo? Ephemeral { get; init; }
+
+  /// <summary>
+  /// Lowercase-hex content hash of the type's behavioral <em>settings</em> (its Sourced/Ephemeral mode +
+  /// destruction/storage config), computed canonically by the generator at compile time. A change here
+  /// means the type's storage/lifecycle behavior changed — the drift signal the fingerprint reconciler
+  /// uses to trigger reclassification. Empty string when the generator predates this field.
+  /// </summary>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  public string SettingsHash { get; init; } = "";
+
+  /// <summary>
+  /// Lowercase-hex content hash of the type's payload <em>schema</em> — a canonical, ordered signature of
+  /// its serializable properties (name + declared type), computed by the generator at compile time. A
+  /// change here means the payload shape evolved — the drift signal for versioning/upcasting and the
+  /// forgotten-<c>[SchemaVersion]</c>-bump guard. One level deep (incremental-safe); deep nested-DTO
+  /// changes are the job of explicit versioning. Empty string when the generator predates this field.
+  /// </summary>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  public string SchemaHash { get; init; } = "";
 }
 
 /// <summary>
