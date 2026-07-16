@@ -141,6 +141,44 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Reap_ConsumedBody_HeldUntilSnapshotCoversAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);   // isolate the coverage gate from the grace window
+
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    const string eventType = "Whizbang.Tests.CoverageGateEvent";
+    await _seedPerspectiveAssociationAsync(connection, eventType, "CoverPerspective");
+    await _commitAsync(connection, Guid.NewGuid(), eventId, streamId, eventType, flags: 8);
+
+    // Consume + stamp commit_sequence, but NO snapshot yet.
+    await using (var c = connection.CreateCommand()) {
+      c.CommandText = "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_id = @id; " +
+        "UPDATE wh_event_store SET commit_sequence = 3 WHERE event_id = @id";
+      c.Parameters.AddWithValue("id", eventId);
+      await c.ExecuteNonQueryAsync();
+    }
+
+    // Consumed + aged (grace 0) but UNCOVERED (no snapshot floor) => held by the coverage gate.
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("The coverage gate holds a consumed body until the consuming perspective has a snapshot floor — the reap must never outrun the rewind floor.");
+
+    // Add a covering snapshot at/past the event's commit_sequence => now reapable.
+    await using (var snap = connection.CreateCommand()) {
+      snap.CommandText = "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence) " +
+        "VALUES (@sid, 'CoverPerspective', @eid, '{}'::jsonb, 1, 3)";
+      snap.Parameters.AddWithValue("sid", streamId);
+      snap.Parameters.AddWithValue("eid", eventId);
+      await snap.ExecuteNonQueryAsync();
+    }
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(0L)
+      .Because("Once the perspective has a snapshot at/past the event's commit_sequence, the body is reaped.");
+  }
+
+  [Test]
   public async Task Reap_EphemeralBody_GatedWhilePending_ReapedAfterConsumedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
@@ -176,7 +214,22 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
       await consume.ExecuteNonQueryAsync();
     }
 
-    // Phase 2: every consumer is done => maintenance reaps the body.
+    // The coverage gate also requires a snapshot FLOOR for the consuming perspective (in production the
+    // reap-driven step drives this just before the reap). Stamp commit_sequence + a covering snapshot.
+    await using (var stamp = connection.CreateCommand()) {
+      stamp.CommandText = "UPDATE wh_event_store SET commit_sequence = 7 WHERE event_id = @id";
+      stamp.Parameters.AddWithValue("id", eventId);
+      await stamp.ExecuteNonQueryAsync();
+    }
+    await using (var snap = connection.CreateCommand()) {
+      snap.CommandText = "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence) " +
+        "VALUES (@sid, 'PresencePerspective', @eid, '{}'::jsonb, 1, 7)";
+      snap.Parameters.AddWithValue("sid", streamId);
+      snap.Parameters.AddWithValue("eid", eventId);
+      await snap.ExecuteNonQueryAsync();
+    }
+
+    // Phase 2: every consumer is done AND snapshot-covered => maintenance reaps the body.
     await _runMaintenanceAsync(connection);
     await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(0L)
       .Because("Once every consuming perspective has processed the event, the ephemeral body is reaped.");

@@ -267,6 +267,22 @@ BEGIN
         SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
         WHERE pe.event_id = eb.event_id
           AND pe.processed_at IS NULL
+      )
+      -- Snapshot-coverage gate: the reap must never outrun the rewind floor. Reap only once EVERY consuming
+      -- perspective has a snapshot at/past this event's commit_sequence — i.e. there is no association whose
+      -- perspective lacks a covering snapshot for the stream. The reap-driven step (MaintenanceWorker) drives
+      -- those snapshots just before this runs, so coverage is normally satisfied; an event with no consuming
+      -- perspective is vacuously covered, and an unstamped event (commit_sequence NULL) is held until stamped.
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_message_associations ma
+        WHERE ma.normalized_message_type = es.event_type
+          AND ma.association_type = 'perspective'
+          AND NOT EXISTS (
+            SELECT 1 FROM __SCHEMA__.wh_perspective_snapshots s
+            WHERE s.stream_id = es.stream_id
+              AND s.perspective_name = ma.target_name
+              AND s.snapshot_commit_sequence >= es.commit_sequence
+          )
       );
     GET DIAGNOSTICS v_rows = ROW_COUNT;
   END IF;
