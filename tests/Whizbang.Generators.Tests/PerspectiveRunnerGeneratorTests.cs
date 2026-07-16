@@ -148,6 +148,44 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_EphemeralPerspective_GuardsRewindFallbackAgainstReapedBodiesAsync() {
+    // E1 (3): an ephemeral perspective's runner must carry _isEphemeralPerspective = true so the
+    // rewind guard fires — an out-of-grace straggler with no snapshot floor is SKIPPED instead of
+    // replayed from zero over reaped (NULL) bodies, which would corrupt the authoritative model.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+  public record UserIsTyping : IEvent {
+    public string ConversationId { get; init; } = "";
+  }
+
+  public record PresenceModel {
+    [StreamId]
+    public string ConversationId { get; init; } = "";
+  }
+
+  public class PresencePerspective : IPerspectiveFor<PresenceModel, UserIsTyping> {
+    public PresenceModel Apply(PresenceModel currentData, UserIsTyping @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("private const bool _isEphemeralPerspective = true;")
+      .Because("An ephemeral perspective marks itself ephemeral so the rewind fallback guard fires.");
+    await Assert.That(runnerSource!).Contains("_isEphemeralPerspective && !hasSnapshot")
+      .Because("The rewind fallback is guarded so an ephemeral stream never replays from zero over reaped bodies.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_SourcedPerspective_UsesStandardSnapshotSettingsAsync() {
     const string source = """
 
@@ -177,6 +215,8 @@ namespace TestNamespace {
       .Because("A Sourced perspective uses the standard snapshot cadence.");
     await Assert.That(runnerSource!).DoesNotContain("EphemeralSnapshotEveryNEvents")
       .Because("A Sourced perspective does not use the ephemeral cadence.");
+    await Assert.That(runnerSource!).Contains("private const bool _isEphemeralPerspective = false;")
+      .Because("A Sourced perspective is not ephemeral, so the rewind fallback guard stays inert and it always replays.");
   }
 
   [Test]

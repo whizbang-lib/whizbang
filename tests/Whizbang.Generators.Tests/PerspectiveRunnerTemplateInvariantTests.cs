@@ -68,6 +68,33 @@ public class PerspectiveRunnerTemplateInvariantTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task EphemeralRewind_GuardsFullReplayFallbackAgainstReapedBodiesAsync() {
+    // E1 (3) invariant lock. An ephemeral stream's consumed bodies are reaped (wh_event_body rows
+    // deleted, pointer-only). If RewindAndRunAsync finds no qualifying snapshot floor, it MUST NOT
+    // fall through to the full replay-from-zero (RunFromModelAsync with a null model / null anchor) —
+    // that would read reaped/absent bodies and silently corrupt the authoritative model. The template
+    // guards the fallback with `_isEphemeralPerspective && !hasSnapshot`; the guard must remain, and it
+    // must sit between the snapshot lookup and the RunFromModelAsync call so it can short-circuit it.
+    var template = _loadTemplate();
+
+    await Assert.That(template).Contains("_isEphemeralPerspective && !hasSnapshot")
+      .Because("the ephemeral rewind fallback guard is the anchor we're pinning");
+    await Assert.That(template).Contains("#region IS_EPHEMERAL")
+      .Because("the generator injects the per-perspective ephemeral flag into this region");
+
+    // The guard must appear inside RewindAndRunAsync and BEFORE the RunFromModelAsync call it protects.
+    var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
+    await Assert.That(rewindIdx).IsGreaterThan(0);
+    var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
+    var replayCallIdx = template.IndexOf("result = await RunFromModelAsync(", rewindIdx, StringComparison.Ordinal);
+    await Assert.That(guardIdx).IsGreaterThan(rewindIdx)
+      .Because("the guard must live inside RewindAndRunAsync");
+    await Assert.That(replayCallIdx).IsGreaterThan(guardIdx)
+      .Because("the guard must short-circuit the full replay-from-zero, so it precedes the RunFromModelAsync call");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task PartialSkipBranch_StaysAtDebugLevelAsync() {
     // The partial-skip branch was already at Debug per step 6 slice 6. Lock it so a future
     // refactor can't quietly bump it back to Information.

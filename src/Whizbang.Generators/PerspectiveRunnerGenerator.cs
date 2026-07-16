@@ -420,6 +420,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "SNAPSHOT_SETTINGS", perspective.IsEphemeral
         ? "var snapshotThreshold = _snapshotOptions.Value.EphemeralSnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream;"
         : "var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;");
+    result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
+        $"private const bool _isEphemeralPerspective = {(perspective.IsEphemeral ? "true" : "false")};");
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
