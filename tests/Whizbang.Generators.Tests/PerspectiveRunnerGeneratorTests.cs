@@ -111,6 +111,76 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_EphemeralPerspective_UsesAggressiveSnapshotSettingsAsync() {
+    // A perspective that applies an [Ephemeral] event is ephemeral-tainted → snapshots on the aggressive,
+    // single-slot ephemeral cadence so a fresh rewind floor exists within the grace window.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+  public record UserIsTyping : IEvent {
+    public string ConversationId { get; init; } = "";
+  }
+
+  public record PresenceModel {
+    [StreamId]
+    public string ConversationId { get; init; } = "";
+  }
+
+  public class PresencePerspective : IPerspectiveFor<PresenceModel, UserIsTyping> {
+    public PresenceModel Apply(PresenceModel currentData, UserIsTyping @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("EphemeralSnapshotEveryNEvents")
+      .Because("An ephemeral perspective snapshots on the aggressive ephemeral cadence.");
+    await Assert.That(runnerSource!).Contains("EphemeralMaxSnapshotsPerStream")
+      .Because("An ephemeral perspective prunes to the single-slot ephemeral retention.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_SourcedPerspective_UsesStandardSnapshotSettingsAsync() {
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = "";
+  }
+
+  public record OrderReadModel {
+    [StreamId]
+    public string OrderId { get; init; } = "";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("_snapshotOptions.Value.SnapshotEveryNEvents")
+      .Because("A Sourced perspective uses the standard snapshot cadence.");
+    await Assert.That(runnerSource!).DoesNotContain("EphemeralSnapshotEveryNEvents")
+      .Because("A Sourced perspective does not use the ephemeral cadence.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_PerspectiveWithModelNoStreamId_GeneratesNothingAsync() {
     // Arrange - Model without [StreamId] attribute should not generate runner
     const string source = """

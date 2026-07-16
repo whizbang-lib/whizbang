@@ -36,7 +36,8 @@ internal sealed record PerspectiveInfo(
     int StorageMode = 0,
     bool IsModelRecord = false,
     bool HasScopeInterface = false,
-    int InheritScopeOnCreate = 63
+    int InheritScopeOnCreate = 63,
+    bool IsEphemeral = false
 );
 
 /// <summary>

@@ -621,8 +621,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // produces no persisted row, so there's nothing to snapshot.
         if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue) {
+          // Ephemeral perspectives snapshot on their own aggressive, single-slot cadence so a fresh rewind
+          // floor exists within the grace window before consumed bodies are reaped; Sourced perspectives use
+          // the standard cadence/retention. The generator injects the mode-appropriate settings here.
+          #region SNAPSHOT_SETTINGS
+          var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;
+          var snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;
+          #endregion
           _eventsSinceLastSnapshot += eventsProcessed;
-          if (_eventsSinceLastSnapshot >= _snapshotOptions.Value.SnapshotEveryNEvents) {
+          if (_eventsSinceLastSnapshot >= snapshotThreshold) {
             // Slice 26.11: resolve commit_sequence for the snapshot anchor so subsequent
             // rewinds can locate the snapshot by commit_sequence (deterministic) rather
             // than event_id (subject to UUIDv7 generation-time race). Null is OK — the
@@ -634,7 +641,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 snapshotCommitSequence,
                 ToSnapshotJson(updatedModel), cancellationToken);
             await _snapshotStore.PruneOldSnapshotsAsync(
-                streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
+                streamId, perspectiveName, snapshotRetention, cancellationToken);
             _eventsSinceLastSnapshot = 0;
           }
         }

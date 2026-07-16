@@ -20,6 +20,21 @@ public class PerspectiveSnapshotOptions {
   public int MaxSnapshotsPerStream { get; set; } = 5;
 
   /// <summary>
+  /// Snapshot cadence for EPHEMERAL perspectives (those that apply at least one ephemeral event) — far more
+  /// aggressive than <see cref="SnapshotEveryNEvents"/>, because an ephemeral stream must keep a fresh rewind
+  /// floor within its (short) grace window before its consumed bodies are reaped. Default: 10 events.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  public int EphemeralSnapshotEveryNEvents { get; set; } = 10;
+
+  /// <summary>
+  /// Maximum snapshots kept per (stream, perspective) for EPHEMERAL perspectives. Single-slot by default (1):
+  /// you can never rewind below the reap boundary, so only the latest snapshot is useful. Default: 1.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  public int EphemeralMaxSnapshotsPerStream { get; set; } = 1;
+
+  /// <summary>
   /// Whether snapshot creation is enabled.
   /// When disabled, no snapshots are created and rewinds always replay from event zero.
   /// Default: true.

@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -112,6 +113,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // A perspective is ephemeral-tainted (viral) if it applies ANY ephemeral event. Ephemeral perspectives
+    // snapshot on their own aggressive, single-slot cadence so a fresh rewind floor exists within the grace
+    // window before consumed bodies are reaped. Resolved at compile time — zero reflection.
+    var isEphemeral = eventTypeSymbols.Any(static s => EphemeralResolver.IsEphemeral(s));
+
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
@@ -182,7 +188,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             StorageMode: storageMode,
             IsModelRecord: isModelRecord,
             HasScopeInterface: hasScopeInterface,
-            InheritScopeOnCreate: inheritScopeOnCreate
+            InheritScopeOnCreate: inheritScopeOnCreate,
+            IsEphemeral: isEphemeral
         ),
         Warning: null
     );
@@ -410,6 +417,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         "INHERIT_SCOPE_ON_CREATE",
         $"private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeOnCreate};");
 
+    result = TemplateUtilities.ReplaceRegion(result, "SNAPSHOT_SETTINGS", perspective.IsEphemeral
+        ? "var snapshotThreshold = _snapshotOptions.Value.EphemeralSnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream;"
+        : "var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;");
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
