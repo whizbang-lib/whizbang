@@ -78,14 +78,14 @@ jobs:
 
       - name: Run AzureBlob Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag AzureBlob -NoBuild
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag AzureBlob -NoBuild -ReportTrx
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
           WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '5'
 
       - name: Run AzureBlob Integration Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureBlob
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureBlob -ReportTrx
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
           WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '5'
@@ -97,6 +97,17 @@ jobs:
           dotnet-coverage shutdown "$SESSION_ID" || true
           echo "=== Coverage file contents ==="
           ls -la TestResults/ || true
+
+      - name: Upload TRX Results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trx-azureblob
+          path: |
+            tests/**/TestResults/*.trx
+            samples/**/TestResults/*.trx
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Upload Coverage (pre-built)
         if: success() && inputs.artifact-name != ''

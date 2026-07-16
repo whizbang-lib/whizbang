@@ -256,6 +256,8 @@ param(
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
 
+    [switch]$ReportTrx,  # Emit TRX result files (TestResults/*.trx) for CI test-status publishing
+
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Debug",  # Build configuration (Debug or Release)
 
@@ -756,6 +758,11 @@ try {
         $testArgs += "--no-build"
     }
 
+    # Emit TRX result files (used by CI to publish live test status to the docs site)
+    if ($ReportTrx) {
+        $testArgs += "--report-trx"
+    }
+
     # Coverage mode: Run projects in parallel with unique output paths per project
     # Each project writes coverage to its own directory to avoid collisions
     if ($Coverage) {
@@ -869,6 +876,7 @@ try {
             $testArgs = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
             if ($Filter) { $testArgs += "--treenode-filter"; $testArgs += "/*/*/*/*$Filter*" }
             if ($FailFastEnabled) { $testArgs += "--fail-fast" }
+            if ($ReportTrx) { $testArgs += "--report-trx" }
 
             $outFile = [System.IO.Path]::GetTempFileName()
             $errFile = [System.IO.Path]::GetTempFileName()
@@ -971,6 +979,7 @@ try {
                     $config = $using:Configuration
                     $testFilter = $using:TestFilter
                     $failFast = $using:FailFast
+                    $reportTrx = $using:ReportTrx
                     $resultsBag = $using:results
                     $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
 
@@ -982,6 +991,7 @@ try {
                     $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
                     if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
                     if ($failFast) { $projectArgs += "--fail-fast" }
+                    if ($reportTrx) { $projectArgs += "--report-trx" }
 
                     $output = & dotnet @projectArgs 2>&1
                     $fullOutput = ($output | Out-String)

@@ -497,3 +497,99 @@ jobs:
       PUSHOVER_USER_KEY_8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
       PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
       PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+
+  # ============================================================================
+  # Living docs: publish test status to the docs site
+  # ============================================================================
+
+  publish-test-status:
+    name: Publish Test Status to Docs
+    # Ships per-test pass/fail to whizbang-lib.github.io so doc pages render
+    # live verification badges. Runs even when suites FAIL (failures are what
+    # the badges must show) but not when cancelled. No-ops without the token
+    # or when suites were skipped (docs-only pushes produce no TRX).
+    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
+    if: >-
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DOCS_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+    steps:
+      - name: Check for docs push token
+        id: token
+        run: |
+          if [ -n "$DOCS_TOKEN" ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "DOCS_REPO_PUSH_TOKEN not set — skipping test-status publish"
+          fi
+
+      - name: Download TRX artifacts
+        if: steps.token.outputs.have == 'true'
+        uses: actions/download-artifact@v6
+        with:
+          pattern: trx-*
+          path: trx
+
+      - name: Check TRX presence
+        id: trx
+        if: steps.token.outputs.have == 'true'
+        run: |
+          if [ -n "$(find trx -name '*.trx' 2>/dev/null | head -1)" ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "No TRX artifacts (suites skipped?) — nothing to publish"
+          fi
+
+      - name: Checkout docs repo
+        if: steps.trx.outputs.have == 'true'
+        uses: actions/checkout@v6.0.2
+        with:
+          repository: whizbang-lib/whizbang-lib.github.io
+          ref: main
+          token: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          path: docs-repo
+
+      - name: Build test-status data
+        if: steps.trx.outputs.have == 'true'
+        run: |
+          node docs-repo/src/scripts/build-test-status.mjs \
+            --trx-dir trx \
+            --out docs-repo/src/assets/data/test-status \
+            --run-id "${{ github.run_id }}" \
+            --sha "${{ github.sha }}" \
+            --branch "${{ github.ref_name }}"
+
+      # The docs main ruleset requires PRs (0 approvals, no required checks),
+      # so publish = push branch + create PR + instant merge. Skips when the
+      # status is byte-identical to what is already live.
+      - name: Publish to docs main
+        if: steps.trx.outputs.have == 'true'
+        working-directory: docs-repo
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+        run: |
+          git config user.name "whizbang-ci"
+          git config user.email "ci@whizba.ng"
+          git add src/assets/data/test-status
+          if git diff --cached --quiet; then
+            echo "Test status unchanged — nothing to publish"
+            exit 0
+          fi
+          BRANCH="test-status/${{ github.run_id }}"
+          git checkout -b "$BRANCH"
+          git commit -m "chore(test-status): whizbang run ${{ github.run_id }} (${GITHUB_SHA:0:8})"
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore(test-status): run ${{ github.run_id }}" \
+            --body "Automated live test-status data from [whizbang CI run ${{ github.run_id }}](https://github.com/whizbang-lib/whizbang/actions/runs/${{ github.run_id }})."
+          for i in 1 2 3 4 5; do
+            gh pr merge "$BRANCH" --squash --delete-branch && exit 0
+            echo "merge attempt $i failed; retrying in 5s"
+            sleep 5
+          done
+          echo "Could not merge test-status PR — leaving it open for manual merge"

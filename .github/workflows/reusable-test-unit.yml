@@ -82,11 +82,11 @@ jobs:
 
       - name: Run Unit Tests (with pre-built coverage)
         if: inputs.artifact-name != ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild
+        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild -ReportTrx
 
       - name: Run Unit Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Coverage -Configuration Release
+        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Coverage -Configuration Release -ReportTrx
 
       - name: Shutdown Coverage Collection
         if: inputs.artifact-name != ''
@@ -95,6 +95,17 @@ jobs:
           dotnet-coverage shutdown "$SESSION_ID" || true
           echo "=== Coverage file contents ==="
           ls -la TestResults/ || true
+
+      - name: Upload TRX Results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trx-unit
+          path: |
+            tests/**/TestResults/*.trx
+            samples/**/TestResults/*.trx
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Upload Coverage (pre-built)
         if: success() && inputs.artifact-name != ''
