@@ -44,6 +44,7 @@ DECLARE
   v_stuck_inbox_retention_days INTEGER;
   v_debug_mode BOOLEAN;
   v_abandoned_stream_hours INTEGER;
+  v_ephemeral_grace_seconds INTEGER;
 BEGIN
   -- Read debug_mode flag once for the cycle. When true, the complete_* functions
   -- retain rows for forensics with processed_at stamped — this maintenance pass
@@ -60,6 +61,14 @@ BEGIN
     (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'abandoned_stream_hours'),
     1
   ) INTO v_abandoned_stream_hours;
+
+  -- Rewind grace window (seconds): an ephemeral body is retained this long AFTER consumption so an
+  -- out-of-order straggler can still rewind through it (events arrive out of order in a short window).
+  -- Configurable via wh_settings; default 300s. A per-type [Ephemeral(RewindGrace)] override lands later.
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'ephemeral_rewind_grace_seconds'),
+    300
+  ) INTO v_ephemeral_grace_seconds;
 
   -- ========================================
   -- Task 1: Purge completed outbox messages
@@ -220,16 +229,21 @@ BEGIN
   -- no work item and is reapable at once. The wh_event_store pointer is left in place — a
   -- pointer-present / body-NULL row is the deterministic rebuild-guard signal (#13d), not a lost event.
   -- Skipped under debug_mode so retained forensic bodies survive with the retained work items.
+  -- Grace window: a consumed body is also kept until it is OLDER than v_ephemeral_grace_seconds, so an
+  -- out-of-order straggler can still rewind through it (rewind uses the surviving bodies + a snapshot floor).
   v_start := clock_timestamp();
   IF v_debug_mode THEN
     v_rows := 0;
   ELSE
     DELETE FROM __SCHEMA__.wh_event_body eb
-    WHERE NOT EXISTS (
-      SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
-      WHERE pe.event_id = eb.event_id
-        AND pe.processed_at IS NULL
-    );
+    USING __SCHEMA__.wh_event_store es
+    WHERE es.event_id = eb.event_id
+      AND es.created_at < NOW() - (v_ephemeral_grace_seconds * INTERVAL '1 second')
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
+        WHERE pe.event_id = eb.event_id
+          AND pe.processed_at IS NULL
+      );
     GET DIAGNOSTICS v_rows = ROW_COUNT;
   END IF;
   RETURN QUERY SELECT
@@ -240,7 +254,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Rewind grace window: how long (seconds) a CONSUMED ephemeral body is retained — so an out-of-order
+-- straggler can still rewind through it — before the reaper deletes it. Default 300s (5 min).
+INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+VALUES ('ephemeral_rewind_grace_seconds', '300', 'integer', 'Seconds a consumed ephemeral event body is retained (for out-of-order rewind) before the reaper deletes it.')
+ON CONFLICT (setting_key) DO NOTHING;
+
 COMMENT ON FUNCTION __SCHEMA__.perform_maintenance IS
-'Runs maintenance tasks: purges completed messages, old deduplication entries, stuck inbox messages, abandoned active-stream ownership rows, refreshes the dead-letter summary, and reaps consumed ephemeral event bodies (wh_event_body, migration 073 Task 8 — consumption-gated on wh_perspective_events, pointer preserved).
+'Runs maintenance tasks: purges completed messages, old deduplication entries, stuck inbox messages, abandoned active-stream ownership rows, refreshes the dead-letter summary, and reaps consumed ephemeral event bodies (wh_event_body, migration 073 Task 8 — consumption-gated on wh_perspective_events AND aged past the rewind grace window, pointer preserved).
 Returns a result set with task name, rows affected, duration, and status.
-Retention periods configurable via wh_settings (dedup_retention_days, stuck_inbox_retention_days, abandoned_stream_hours). Abandoned active-streams whose owner row is gone are purged immediately; abandoned_stream_hours only governs the owner-less transient-NULL race grace window. The ephemeral-body reap and completed-message purges are skipped under debug_mode.';
+Retention periods configurable via wh_settings (dedup_retention_days, stuck_inbox_retention_days, abandoned_stream_hours, ephemeral_rewind_grace_seconds). Abandoned active-streams whose owner row is gone are purged immediately; abandoned_stream_hours only governs the owner-less transient-NULL race grace window. The ephemeral-body reap and completed-message purges are skipped under debug_mode.';

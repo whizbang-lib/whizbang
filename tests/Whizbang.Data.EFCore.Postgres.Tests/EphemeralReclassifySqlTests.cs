@@ -108,7 +108,12 @@ public class EphemeralReclassifySqlTests : EFCoreTestBase {
       await Assert.That((string?)await b.ExecuteScalarAsync()).IsEqualTo("42").Because("The offloaded body is the full event data.");
     }
 
-    // … and the existing reaper cleans it up (no consuming perspective => reapable at once).
+    // … and the existing reaper cleans it up (no consuming perspective => reapable at once). Grace window
+    // off so the just-reclassified body reaps immediately (the grace window is covered by its own test).
+    await using (var g = connection.CreateCommand()) {
+      g.CommandText = "UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'ephemeral_rewind_grace_seconds'";
+      await g.ExecuteNonQueryAsync();
+    }
     await using (var m = connection.CreateCommand()) {
       m.CommandText = "SELECT * FROM perform_maintenance()";
       await using var rd = await m.ExecuteReaderAsync();

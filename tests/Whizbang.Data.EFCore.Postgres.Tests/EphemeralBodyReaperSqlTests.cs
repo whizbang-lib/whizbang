@@ -82,10 +82,46 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
     return (long)(await v.ExecuteScalarAsync())!;
   }
 
+  // The rewind grace window defaults to 300s; these consumption-gate tests set it to 0 so a consumed body
+  // reaps immediately (the grace window itself is covered by its own test).
+  private static async Task _setGraceSecondsAsync(NpgsqlConnection connection, int seconds) {
+    await using var g = connection.CreateCommand();
+    g.CommandText = "UPDATE wh_settings SET setting_value = @v WHERE setting_key = 'ephemeral_rewind_grace_seconds'";
+    g.Parameters.AddWithValue("v", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    await g.ExecuteNonQueryAsync();
+  }
+
+  [Test]
+  public async Task Reap_ConsumedEphemeralBody_HeldByGraceWindow_ReapedOnlyWhenAgedAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+
+    var eventId = Guid.NewGuid();
+    // No association => no perspective work item => "consumed"; only the grace window gates it.
+    await _commitAsync(connection, Guid.NewGuid(), eventId, Guid.NewGuid(), "Whizbang.Tests.GraceWindowEvent", flags: 8);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L).Because("The ephemeral body is offloaded.");
+
+    // Recently consumed but within the default 300s grace window => retained for out-of-order rewind.
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("A recently-consumed ephemeral body is held by the rewind grace window so an out-of-order straggler can still rewind through it.");
+
+    // Age it past the grace window.
+    await using (var age = connection.CreateCommand()) {
+      age.CommandText = "UPDATE wh_event_store SET created_at = NOW() - INTERVAL '10 minutes' WHERE event_id = @id";
+      age.Parameters.AddWithValue("id", eventId);
+      await age.ExecuteNonQueryAsync();
+    }
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(0L)
+      .Because("Once older than the grace window, the consumed body is reaped.");
+  }
+
   [Test]
   public async Task Reap_EphemeralBody_GatedWhilePending_ReapedAfterConsumedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);   // this test covers the consumption gate, not grace
 
     var eventId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
@@ -163,6 +199,7 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
   public async Task Reap_NoConsumingPerspective_EphemeralBodyReapedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);   // this test covers the consumption gate, not grace
 
     var eventId = Guid.NewGuid();
     // No association => the emit chain creates NO perspective work item => nothing consumes the event.
