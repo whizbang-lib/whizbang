@@ -438,6 +438,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task SyncEphemeralTypeTtlAsync(
+    IReadOnlyList<EphemeralTypeTtl> ttlOverrides, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(ttlOverrides);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "sync_ephemeral_type_ttl");
+    var names = new string[ttlOverrides.Count];
+    var ttls = new int[ttlOverrides.Count];
+    for (var i = 0; i < ttlOverrides.Count; i++) {
+      names[i] = ttlOverrides[i].EventTypeName;
+      ttls[i] = ttlOverrides[i].TtlSeconds;
+    }
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {fn}(@names, @ttls)";
+    cmd.Parameters.Add(new NpgsqlParameter("names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = names });
+    cmd.Parameters.Add(new NpgsqlParameter("ttls", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer) { Value = ttls });
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<EphemeralSnapshotTarget>> GetEphemeralPairsNeedingSnapshotAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
