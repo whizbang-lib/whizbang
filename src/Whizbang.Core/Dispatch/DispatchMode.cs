@@ -34,7 +34,7 @@ namespace Whizbang.Core.Dispatch;
 /// return Route.EventStoreOnly(new AuditEvent { Action = "login" });
 /// </code>
 /// </example>
-/// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchModeTests.cs</tests>
 [Flags]
 #pragma warning disable RCS1154 // Members are intentionally grouped by semantic category rather than alphabetically.

@@ -741,7 +741,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   /// <param name="receptors">The collection of discovered receptors.</param>
   /// <returns>Unique set of fully qualified event type names.</returns>
-  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
   private static HashSet<string> _extractUniqueEventTypes(ImmutableArray<ReceptorInfo> receptors) {
     var eventTypes = new HashSet<string>(StringComparer.Ordinal);
@@ -840,7 +840,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   /// <param name="tupleType">Tuple type string like "(Type1, Type2)" or "(Type1, (Type2, Type3))"</param>
   /// <returns>List of extracted type names.</returns>
-  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithTupleResponse_ExtractsEventsForCascadeAsync</tests>
   private static List<string> _extractTupleElements(string tupleType) {
     var elements = new List<string>();

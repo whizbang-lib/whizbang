@@ -66,7 +66,7 @@ public readonly struct RoutedNone : IRouted {
 /// }
 /// </code>
 /// </example>
-/// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs</tests>
 public interface IRouted {
   /// <summary>
@@ -109,7 +109,7 @@ public interface IRouted {
 /// return new Routed&lt;MyEvent&gt;(myEvent, DispatchModes.Local);
 /// </code>
 /// </example>
-/// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs</tests>
 /// <remarks>
 /// Creates a new routed wrapper with the specified value and dispatch mode.

@@ -42,7 +42,7 @@ namespace Whizbang.Core.Dispatch;
 /// );
 /// </code>
 /// </example>
-/// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs</tests>
 public static class Route {
   /// <summary>

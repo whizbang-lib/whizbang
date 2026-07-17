@@ -286,7 +286,7 @@ public interface IDispatcher {
   /// <param name="message">The message to process</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_Generic_ReturnsBusinessResultAndReceiptAsync</tests>
-  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
       TMessage message) where TMessage : notnull;
 
@@ -300,7 +300,7 @@ public interface IDispatcher {
   /// <param name="message">The message to process</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_ReturnsBusinessResultAndReceiptAsync</tests>
-  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
       object message);
 
@@ -318,7 +318,7 @@ public interface IDispatcher {
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_PreservesCorrelationIdAsync</tests>
-  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
       TMessage message,
       IMessageContext context,
@@ -340,7 +340,7 @@ public interface IDispatcher {
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_NonGeneric_PreservesCorrelationIdAsync</tests>
-  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
       object message,
       IMessageContext context,
@@ -357,7 +357,7 @@ public interface IDispatcher {
   /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithDispatchOptions_ReturnsReceiptAsync</tests>
-  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
       object message, DispatchOptions options);
 
@@ -456,7 +456,7 @@ public interface IDispatcher {
   /// sourceEnvelope's current security context when ambient context is unavailable.
   /// </para>
   /// </remarks>
-  /// <docs>fundamentals/dispatcher/dispatcher#cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#cascade-to-outbox</docs>
   Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default);
 
   // ========================================
@@ -511,7 +511,7 @@ public interface IDispatcher {
   /// Thrown when perspectives don't complete processing within the timeout period.
   /// Note: The handler has already completed successfully; only perspective sync timed out.
   /// </exception>
-  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-and-sync</docs>
   [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken) for void receptors. For receptors returning a typed result, prefer LocalInvokeAsync<TMessage,TResult>(message) followed by an explicit LocalInvokeAndSyncAsync(message, SyncMode.AllProjections, ct) when read-after-write semantics are required. Will be removed in the next major.")]
   Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
       TMessage message,
@@ -549,7 +549,7 @@ public interface IDispatcher {
   /// </param>
   /// <param name="cancellationToken">A cancellation token.</param>
   /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
-  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-and-sync</docs>
   [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken). The TimeSpan timeout pattern is replaced by the caller's CancellationToken — perspective health is an observability concern, not a per-call timeout. Will be removed in the next major.")]
   Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
@@ -700,7 +700,7 @@ public interface IDispatcher {
   /// <returns>All delivery receipts (Delivered status)</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync</tests>
-  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
   ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull;
 
   /// <summary>
@@ -712,7 +712,7 @@ public interface IDispatcher {
   /// <returns>All delivery receipts (Delivered status)</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync</tests>
-  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
   ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages);
 
   /// <summary>

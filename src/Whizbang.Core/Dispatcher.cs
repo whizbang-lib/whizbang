@@ -2466,7 +2466,7 @@ public abstract partial class Dispatcher(
   /// </list>
   /// </para>
   /// </remarks>
-  /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
   // S3776: Core event cascade orchestration — complexity from routing modes, logging, and event tracking
@@ -2919,7 +2919,7 @@ public abstract partial class Dispatcher(
   /// known event type. This avoids reflection and maintains AOT compatibility.
   /// </para>
   /// </remarks>
-  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
   protected virtual Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
     // Base implementation is a no-op.
@@ -2949,7 +2949,7 @@ public abstract partial class Dispatcher(
   /// Events are stored to wh_event_store and perspective events are created, but transport is skipped.
   /// </para>
   /// </remarks>
-  /// <docs>fundamentals/dispatcher/dispatcher#event-store-only</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#event-store-only</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeEventStoreOnly_*</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_*</tests>
   protected virtual Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
@@ -3213,7 +3213,7 @@ public abstract partial class Dispatcher(
   /// Cascades a message with explicit routing mode.
   /// Called by IEventCascader after resolving routing from wrappers and attributes.
   /// </summary>
-  /// <docs>fundamentals/dispatcher/dispatcher#cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#cascade-to-outbox</docs>
   /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
@@ -3398,7 +3398,7 @@ public abstract partial class Dispatcher(
   /// This ensures cascaded events carry the security context from their originating command.
   /// </para>
   /// </remarks>
-  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
   protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, DateTimeOffset? scheduledFor = null) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
@@ -3742,7 +3742,7 @@ public abstract partial class Dispatcher(
   /// <param name="messageId">The message ID for tracking</param>
   /// <param name="sourceEnvelope">Optional source envelope for context propagation</param>
   /// <param name="eventStoreOnly">If true, stores event without transport delivery</param>
-  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
   protected async Task PublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
     // No-rebroadcast guard (Phase D) — see PublishToOutboxAsync.
     if (NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)) {
@@ -4815,7 +4815,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync</tests>
-  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
@@ -4844,7 +4844,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync</tests>
-  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
@@ -5129,7 +5129,7 @@ public abstract partial class Dispatcher(
   /// <item>Disposes the scope</item>
   /// </list>
   /// </remarks>
-  /// <docs>fundamentals/dispatcher/dispatcher#cascade-security-context</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#cascade-security-context</docs>
   /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
   protected abstract Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType);
 
@@ -5177,7 +5177,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <param name="messageType">The runtime type of the message</param>
   /// <returns>The default dispatch mode from the receptor's [DefaultRouting] attribute, or null</returns>
-  /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs</tests>
   protected abstract Dispatch.DispatchModes? GetReceptorDefaultRouting(Type messageType);
 
