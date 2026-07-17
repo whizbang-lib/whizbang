@@ -37,10 +37,12 @@ public class EphemeralAttributeTests {
   }
 
   [Test]
-  public async Task Ephemeral_DefaultsToWhenConsumedInMemoryAsync() {
+  public async Task Ephemeral_DefaultsToWhenConsumedPersistedRowAsync() {
+    // The default read-model store is PersistedRow (persisted, restart-safe, no expiry) — the safe general
+    // choice. InMemory (lost on rebalance) and TtlRow (expires) are explicit opt-ins for their niches.
     var attr = new EphemeralAttribute();
     await Assert.That(attr.Destruction).IsEqualTo(Destruction.WhenConsumed);
-    await Assert.That(attr.Storage).IsEqualTo(TransientStorage.InMemory);
+    await Assert.That(attr.Storage).IsEqualTo(TransientStorage.PersistedRow);
   }
 
   [Test]
@@ -60,7 +62,9 @@ public class EphemeralAttributeTests {
   }
 
   [Test]
-  public async Task TransientStorage_HasInMemoryAndTtlRowAsync() {
+  public async Task TransientStorage_HasPersistedRowInMemoryAndTtlRowAsync() {
+    // PersistedRow is first (the zero-value), so an uninitialized/default TransientStorage is the safe option.
+    await Assert.That(Enum.GetNames<TransientStorage>()).Contains("PersistedRow");
     await Assert.That(Enum.GetNames<TransientStorage>()).Contains("InMemory");
     await Assert.That(Enum.GetNames<TransientStorage>()).Contains("TtlRow");
   }

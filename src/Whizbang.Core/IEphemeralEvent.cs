@@ -4,7 +4,7 @@ namespace Whizbang.Core;
 
 /// <summary>
 /// The framework-shipped <em>default ephemeral profile</em>. Implementing this marks an event ephemeral
-/// with the defaults (<see cref="Destruction.WhenConsumed"/>, <see cref="TransientStorage.InMemory"/>) —
+/// with the defaults (<see cref="Destruction.WhenConsumed"/>, <see cref="TransientStorage.PersistedRow"/>) —
 /// equivalent to a bare <c>[Ephemeral]</c>, for the no-config case.
 /// </summary>
 /// <remarks>

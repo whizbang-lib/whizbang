@@ -16,6 +16,17 @@ namespace Whizbang.Core.Attributes;
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public enum TransientStorage {
   /// <summary>
+  /// The <strong>default</strong>: the perspective's authoritative read model is a normal, persisted
+  /// <c>wh_per_*</c> row that survives restart and rebalance, with <strong>no expiry</strong> — the row IS
+  /// the source of truth for a <see cref="Destruction.WhenConsumed"/> ephemeral stream (its events
+  /// self-destruct; the row is what remains). Lens-queryable like any perspective. This is the safe,
+  /// general choice; pick <see cref="InMemory"/> or <see cref="TtlRow"/> only for their specific niches.
+  /// NOT yet enforced at runtime — perspectives already persist a <c>wh_per_*</c> row, which is this
+  /// behavior; the explicit modes below light up when the store strategy is wired (E2).
+  /// </summary>
+  PersistedRow = 0,
+
+  /// <summary>
   /// Hold the perspective model in-process (the in-memory upsert strategy) <em>after</em> the DB has
   /// already routed the event to the stream's owning instance — plus optional realtime push. Consistent
   /// while that instance owns the stream, but <strong>silently lost on rebalance / restart</strong> (the
@@ -23,13 +34,14 @@ public enum TransientStorage {
   /// narrow presence-only optimization — right for "user is typing" / cursor, which self-heal from the
   /// next ping; unsafe for anything that must survive an instance change. NOT yet enforced at runtime.
   /// </summary>
-  InMemory = 0,
+  InMemory = 1,
 
   /// <summary>
-  /// A normal <c>wh_per_*</c> perspective row carrying an <c>expires_at</c> marker — survives restart and
-  /// is lens-queryable, the right choice for chat thread state or session layout. The expiry
-  /// <em>duration</em> comes from the TTL machinery (<see cref="Destruction.AfterTtl"/>, phase E2), so the
-  /// row-expiry half of this option lands with E2. NOT yet enforced at runtime.
+  /// A <c>wh_per_*</c> perspective row carrying an <c>expires_at</c> marker — like <see cref="PersistedRow"/>
+  /// but the row itself expires and is reaped, for a read model that should age out (chat thread state,
+  /// session layout). The expiry <em>duration</em> comes from the TTL machinery
+  /// (<see cref="Destruction.AfterTtl"/>, phase E2), so the row-expiry half of this option lands with E2.
+  /// NOT yet enforced at runtime.
   /// </summary>
-  TtlRow = 1
+  TtlRow = 2
 }

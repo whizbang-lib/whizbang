@@ -30,7 +30,7 @@ internal static class EphemeralResolver {
     var attr = _find(type);
     return attr is null
       ? null
-      : (_enumArgName(attr, "Destruction", "WhenConsumed"), _enumArgName(attr, "Storage", "InMemory"));
+      : (_enumArgName(attr, "Destruction", "WhenConsumed"), _enumArgName(attr, "Storage", "PersistedRow"));
   }
 
   /// <summary>
@@ -64,7 +64,7 @@ internal static class EphemeralResolver {
     foreach (var iface in type.AllInterfaces) {
       var a = _on(iface);
       if (a is not null) {
-        carriers.Add((iface, _enumArgName(a, "Destruction", "WhenConsumed"), _enumArgName(a, "Storage", "InMemory")));
+        carriers.Add((iface, _enumArgName(a, "Destruction", "WhenConsumed"), _enumArgName(a, "Storage", "PersistedRow")));
       }
     }
     if (carriers.Count < 2) {

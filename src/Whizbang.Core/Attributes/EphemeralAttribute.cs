@@ -24,6 +24,7 @@ namespace Whizbang.Core.Attributes;
 /// </remarks>
 /// <example>
 /// <code>
+/// // Presence: perspective state may live in RAM (lost on rebalance) — a deliberate opt-in.
 /// [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
 /// public sealed record UserIsTyping(Guid ConversationId, Guid UserId) : IEvent;
 /// </code>
@@ -37,8 +38,12 @@ public sealed class EphemeralAttribute : Attribute {
   /// <summary>How/when the event self-destructs. Defaults to <see cref="Destruction.WhenConsumed"/>.</summary>
   public Destruction Destruction { get; init; } = Destruction.WhenConsumed;
 
-  /// <summary>Where the transient state lives. Defaults to <see cref="TransientStorage.InMemory"/>.</summary>
-  public TransientStorage Storage { get; init; } = TransientStorage.InMemory;
+  /// <summary>
+  /// Where the perspective's read model lives. Defaults to <see cref="TransientStorage.PersistedRow"/>
+  /// (a persisted, restart-safe <c>wh_per_*</c> row — the source of truth for a WhenConsumed stream). The
+  /// event itself always persists and routes regardless; this only picks the read-model store strategy.
+  /// </summary>
+  public TransientStorage Storage { get; init; } = TransientStorage.PersistedRow;
 
   /// <summary>
   /// Per-type override (seconds) for the rewind grace window — how long a consumed ephemeral body is

@@ -76,7 +76,10 @@ public static class Route {
   /// <remarks>
   /// Events are dispatched to in-process receptors AND persisted to the event store.
   /// This is the recommended mode for local event handling with durability.
-  /// Use <see cref="LocalNoPersist{T}(T)"/> for ephemeral events that don't need persistence.
+  /// Use <see cref="LocalNoPersist{T}(T)"/> for fire-and-forget local signals that need no persistence at
+  /// all. Note: this is NOT the path <c>[Ephemeral]</c> events take — they still persist and route (their
+  /// delivery to a stream's owning instance is DB-mediated); ephemerality is about later reaping, not
+  /// skipping the store.
   /// </remarks>
   /// <example>
   /// <code>

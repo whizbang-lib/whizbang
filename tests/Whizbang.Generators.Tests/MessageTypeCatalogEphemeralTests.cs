@@ -106,7 +106,8 @@ public class MessageTypeCatalogEphemeralTests {
     await Assert.That(code).Contains("typeof(global::MyApp.CursorMoved)");
     await Assert.That(code).Contains("EphemeralInfo(");
     await Assert.That(code).Contains("Destruction.WhenConsumed");
-    await Assert.That(code).Contains("TransientStorage.InMemory");
+    await Assert.That(code).Contains("TransientStorage.PersistedRow")
+      .Because("A bare [Ephemeral] / IEphemeralEvent defaults the read-model store to PersistedRow (the safe, persisted, restart-safe choice) — not the presence-only InMemory.");
   }
 
   [Test]
