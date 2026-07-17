@@ -287,6 +287,74 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
       .Because("With no consuming perspective there is nothing to wait for — the body is reapable immediately.");
   }
 
+  private static async Task _syncTtlAsync(NpgsqlConnection connection, string eventType, int ttlSeconds) {
+    await using var s = connection.CreateCommand();
+    s.CommandText = "SELECT sync_ephemeral_type_ttl(ARRAY[@t]::text[], ARRAY[@s]::integer[])";
+    s.Parameters.AddWithValue("t", eventType);
+    s.Parameters.AddWithValue("s", ttlSeconds);
+    await s.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _ageAsync(NpgsqlConnection connection, Guid eventId, string interval) {
+    await using var age = connection.CreateCommand();
+    age.CommandText = $"UPDATE wh_event_store SET created_at = NOW() - INTERVAL '{interval}' WHERE event_id = @id";
+    age.Parameters.AddWithValue("id", eventId);
+    await age.ExecuteNonQueryAsync();
+  }
+
+  [Test]
+  public async Task Reap_AfterTtl_ConsumedBodyHeldUntilPastTtl_ThenReapedAsync() {
+    // E2-4c: an AfterTtl type declares a TTL that EXTENDS retention past consumption. The consumed, aged,
+    // snapshot-covered body is kept until it is ALSO older than its TTL window (e.g. chat messages kept ~90
+    // days though applied to the thread immediately).
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);   // isolate the TTL floor from the grace window
+
+    var eventId = Guid.NewGuid();
+    const string eventType = "Whizbang.Tests.ChatMessageTtl";
+    // No association => consumed + vacuously covered. A 3600s TTL is the only thing that can hold it now.
+    await _commitAsync(connection, Guid.NewGuid(), eventId, Guid.NewGuid(), eventType, flags: 8);
+    await _syncTtlAsync(connection, eventType, 3600);
+
+    // Aged past the (0s) grace window but NOT past the 3600s TTL => the TTL floor holds it.
+    await _ageAsync(connection, eventId, "10 minutes");
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("An AfterTtl body is retained until it is older than its TTL, even once consumed and aged past grace.");
+
+    // Age it past the 3600s TTL => now reapable.
+    await _ageAsync(connection, eventId, "2 hours");
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(0L)
+      .Because("Once older than its TTL window, the consumed AfterTtl body is reaped.");
+  }
+
+  [Test]
+  public async Task Reap_TtlRowIsTheDiscriminator_AfterTtlHeldWhileWhenConsumedReapsAsync() {
+    // The presence of a wh_ephemeral_type_ttl row is what marks a type age-gated (AfterTtl) rather than
+    // consumption-gated (WhenConsumed). Two sibling events, identical except for that row.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);
+
+    var afterTtl = Guid.NewGuid();
+    var whenConsumed = Guid.NewGuid();
+    await _commitAsync(connection, Guid.NewGuid(), afterTtl, Guid.NewGuid(), "Whizbang.Tests.AgeGatedEvent", flags: 8);
+    await _commitAsync(connection, Guid.NewGuid(), whenConsumed, Guid.NewGuid(), "Whizbang.Tests.ConsumeGatedEvent", flags: 8);
+    await _syncTtlAsync(connection, "Whizbang.Tests.AgeGatedEvent", 3600);   // only this one is AfterTtl
+
+    // Both consumed (no association) and aged 10 min past the 0s grace.
+    await _ageAsync(connection, afterTtl, "10 minutes");
+    await _ageAsync(connection, whenConsumed, "10 minutes");
+    await _runMaintenanceAsync(connection);
+
+    await Assert.That(await _eventBodyCountAsync(connection, whenConsumed)).IsEqualTo(0L)
+      .Because("A WhenConsumed event (no TTL row) reaps as soon as it is consumed and aged past grace.");
+    await Assert.That(await _eventBodyCountAsync(connection, afterTtl)).IsEqualTo(1L)
+      .Because("The sibling AfterTtl event (TTL row present) is held by its 3600s TTL floor under identical conditions.");
+  }
+
   [Test]
   public async Task Reap_SourcedBodyInBodyTable_IsNeverReapedAsync() {
     // #13b4 safety gate. The full split moves SOURCED bodies into wh_event_body too, breaking the
