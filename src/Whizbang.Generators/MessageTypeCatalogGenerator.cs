@@ -123,6 +123,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     // EphemeralResolver is the single source of truth shared with the analyzer.
     (string Destruction, string Storage)? ephemeral = kind == "event" ? EphemeralResolver.Resolve(typeSymbol) : null;
     var rewindGrace = kind == "event" ? EphemeralResolver.ResolveRewindGraceSeconds(typeSymbol) : -1;
+    var ttlSeconds = kind == "event" ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
 
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
@@ -132,6 +133,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         EphemeralDestruction: ephemeral?.Destruction,
         EphemeralStorage: ephemeral?.Storage,
         EphemeralRewindGraceSeconds: rewindGrace,
+        EphemeralTtlSeconds: ttlSeconds,
         SettingsHash: _computeSettingsHash(ephemeral),
         SchemaHash: _computeSchemaHash(typeSymbol)
     );
@@ -265,7 +267,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
           "Ephemeral = new global::Whizbang.Core.Attributes.EphemeralInfo(" +
           $"global::Whizbang.Core.Attributes.Destruction.{info.EphemeralDestruction}, " +
           $"global::Whizbang.Core.Attributes.TransientStorage.{info.EphemeralStorage}, " +
-          $"{info.EphemeralRewindGraceSeconds})");
+          $"{info.EphemeralRewindGraceSeconds}, " +
+          $"{info.EphemeralTtlSeconds})");
       }
       // Type-definition fingerprint (F-3): every entry carries its deterministic settings + schema hashes.
       initParts.Add($"SettingsHash = \"{info.SettingsHash}\"");
@@ -308,6 +311,7 @@ internal sealed record MessageTypeCatalogEntryInfo(
     string? EphemeralDestruction = null,
     string? EphemeralStorage = null,
     int EphemeralRewindGraceSeconds = -1,
+    int EphemeralTtlSeconds = -1,
     string SettingsHash = "",
     string SchemaHash = ""
 );

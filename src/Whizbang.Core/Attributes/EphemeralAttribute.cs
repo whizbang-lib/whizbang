@@ -51,4 +51,13 @@ public sealed class EphemeralAttribute : Attribute {
   /// inherits the global <c>ephemeral_rewind_grace_seconds</c> setting.
   /// </summary>
   public int RewindGraceSeconds { get; init; } = -1;
+
+  /// <summary>
+  /// Time-to-live in seconds for a <see cref="Destruction.AfterTtl"/> event — the event logically expires
+  /// (filtered from reads) and then physically reaps once its age exceeds this window, regardless of
+  /// consumption. Defaults to <c>-1</c>, meaning <em>no age-based expiry</em>; it is meaningful only when
+  /// <see cref="Destruction"/> is <see cref="Destruction.AfterTtl"/> (a <see cref="Destruction.WhenConsumed"/>
+  /// event has no TTL — it self-destructs on consumption instead).
+  /// </summary>
+  public int TtlSeconds { get; init; } = -1;
 }

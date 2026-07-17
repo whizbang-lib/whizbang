@@ -44,6 +44,16 @@ internal static class EphemeralResolver {
   }
 
   /// <summary>
+  /// The type's <c>[Ephemeral(TtlSeconds = …)]</c> value in seconds, or <c>-1</c> when unset (no age-based
+  /// expiry) or when the type is not ephemeral. Meaningful only for <c>Destruction.AfterTtl</c>. Resolved
+  /// from the same own → base → interface walk as <see cref="Resolve"/>.
+  /// </summary>
+  public static int ResolveTtlSeconds(INamedTypeSymbol type) {
+    var attr = _find(type);
+    return attr is null ? -1 : _intArgName(attr, "TtlSeconds", -1);
+  }
+
+  /// <summary>
   /// True when a type's ephemeral mode is <em>ambiguously composed</em> — it has no own or base
   /// <c>[Ephemeral]</c> to settle the tie, yet implements two or more sibling profile interfaces that
   /// carry <c>[Ephemeral]</c> with <em>different</em> configs. A refined profile that extends another

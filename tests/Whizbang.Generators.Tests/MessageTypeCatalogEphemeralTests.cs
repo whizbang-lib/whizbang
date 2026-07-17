@@ -47,8 +47,8 @@ public class MessageTypeCatalogEphemeralTests {
       [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory, RewindGraceSeconds = 120)]
       public record BurstyPing : IEvent;
 """);
-    await Assert.That(code).Contains("TransientStorage.InMemory, 120)")
-      .Because("The per-type RewindGraceSeconds override is stamped as the third EphemeralInfo argument.");
+    await Assert.That(code).Contains("TransientStorage.InMemory, 120, -1)")
+      .Because("The per-type RewindGraceSeconds override is stamped as the third EphemeralInfo argument (TtlSeconds defaults to the fourth, -1).");
   }
 
   [Test]
@@ -60,8 +60,35 @@ public class MessageTypeCatalogEphemeralTests {
       [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
       public record UserIsTyping : IEvent;
 """);
-    await Assert.That(code).Contains("TransientStorage.InMemory, -1)")
-      .Because("With no override, RewindGraceSeconds defaults to -1 (inherit the global setting).");
+    await Assert.That(code).Contains("TransientStorage.InMemory, -1, -1)")
+      .Because("With no override, RewindGraceSeconds and TtlSeconds both default to -1.");
+  }
+
+  [Test]
+  public async Task Ttl_Override_StampedOnEphemeralInfoAsync() {
+    var code = await _generateAsync("""
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      namespace MyApp;
+      [Ephemeral(Destruction = Destruction.AfterTtl, Storage = TransientStorage.TtlRow, TtlSeconds = 3600)]
+      public record ChatMessage : IEvent;
+""");
+    await Assert.That(code).Contains("Destruction.AfterTtl");
+    await Assert.That(code).Contains("TransientStorage.TtlRow, -1, 3600)")
+      .Because("The per-type TtlSeconds override is stamped as the fourth EphemeralInfo argument (after RewindGraceSeconds).");
+  }
+
+  [Test]
+  public async Task Ttl_Unset_DefaultsToMinusOneAsync() {
+    var code = await _generateAsync("""
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      namespace MyApp;
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.PersistedRow)]
+      public record UserIsTyping : IEvent;
+""");
+    await Assert.That(code).Contains("TransientStorage.PersistedRow, -1, -1)")
+      .Because("A WhenConsumed event carries no TTL — TtlSeconds defaults to -1 (no age-based expiry).");
   }
 
   [Test]
