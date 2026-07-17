@@ -551,20 +551,6 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
-  /// Replaces the per-type TTL overrides (from <c>[Ephemeral(Destruction = AfterTtl, TtlSeconds = …)]</c>):
-  /// upserts the declared set and prunes any override no longer declared. Called once at startup by the
-  /// reconciler. Presence of a row marks a type as age-gated (AfterTtl) rather than consumption-gated; the
-  /// reaper and logical-expiry read filter resolve an event's TTL by joining on <c>event_type</c>. No-op on
-  /// engines without the TTL table.
-  /// </summary>
-  /// <param name="ttlOverrides">Types that declare a per-type TTL (seconds); empty clears all overrides.</param>
-  /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>fundamentals/events/ephemeral-events</docs>
-  Task SyncEphemeralTypeTtlAsync(
-    IReadOnlyList<EphemeralTypeTtl> ttlOverrides,
-    CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-  /// <summary>
   /// Finds the <c>(stream, perspective)</c> pairs the maintenance cycle must snapshot BEFORE it reaps: an
   /// ephemeral body that is consumed and aged past its grace window, whose consuming perspective has NO
   /// snapshot at/past the event's <c>commit_sequence</c>. Snapshotting these (via the runner's bootstrap
@@ -892,13 +878,6 @@ public sealed record EphemeralReclassificationResult(
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record EphemeralTypeGrace(string EventTypeName, int GraceSeconds);
-
-/// <summary>
-/// A per-type TTL override — the type's (current) CLR name and its
-/// <c>[Ephemeral(Destruction = AfterTtl, TtlSeconds)]</c> age window in seconds.
-/// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
-public sealed record EphemeralTypeTtl(string EventTypeName, int TtlSeconds);
 
 /// <summary>
 /// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,

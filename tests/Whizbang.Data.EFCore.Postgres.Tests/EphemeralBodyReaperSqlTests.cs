@@ -287,12 +287,27 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
       .Because("With no consuming perspective there is nothing to wait for — the body is reapable immediately.");
   }
 
-  private static async Task _syncTtlAsync(NpgsqlConnection connection, string eventType, int ttlSeconds) {
-    await using var s = connection.CreateCommand();
-    s.CommandText = "SELECT sync_ephemeral_type_ttl(ARRAY[@t]::text[], ARRAY[@s]::integer[])";
-    s.Parameters.AddWithValue("t", eventType);
-    s.Parameters.AddWithValue("s", ttlSeconds);
-    await s.ExecuteNonQueryAsync();
+  // Commits an ephemeral event whose EnvelopeMetadata carries an absolute expiry ('eea'), exercising the
+  // full metadata-carry path: request Metadata -> wh_outbox.metadata -> emit chain lifts it into
+  // wh_event_body.metadata.ephemeral_expires_at (migration 080). Null expiry => WhenConsumed (no 'eea' key).
+  private static async Task _commitWithExpiryAsync(NpgsqlConnection connection, Guid eventId, Guid streamId, string eventType, DateTimeOffset? expiresAt) {
+    var eea = expiresAt is null
+      ? ""
+      : $"\"eea\": \"{expiresAt.Value.ToString("o", System.Globalization.CultureInfo.InvariantCulture)}\"";
+    var request = $$"""
+      {
+        "instance_id": "{{Guid.NewGuid()}}", "service_name": "test", "host_name": "h", "process_id": 1,
+        "new_outbox_messages": [{
+          "MessageId": "{{eventId}}", "Destination": "out", "MessageType": "{{eventType}}", "EnvelopeType": null,
+          "Envelope": {"Payload": {"OrderId": 42}, "MessageId": "{{eventId}}", "Hops": []},
+          "Metadata": { {{eea}} }, "Scope": null, "StreamId": "{{streamId}}", "IsEvent": true, "Flags": 8
+        }]
+      }
+      """;
+    await using var call = connection.CreateCommand();
+    call.CommandText = "SELECT commit_handler_result(@req::jsonb)";
+    call.Parameters.AddWithValue("req", request);
+    _ = await call.ExecuteScalarAsync();
   }
 
   private static async Task _ageAsync(NpgsqlConnection connection, Guid eventId, string interval) {
@@ -302,47 +317,64 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
     await age.ExecuteNonQueryAsync();
   }
 
+  private static async Task<string?> _bodyExpiryAsync(NpgsqlConnection connection, Guid eventId) {
+    await using var v = connection.CreateCommand();
+    v.CommandText = "SELECT metadata->>'ephemeral_expires_at' FROM wh_event_body WHERE event_id = @id";
+    v.Parameters.AddWithValue("id", eventId);
+    return (string?)await v.ExecuteScalarAsync();
+  }
+
+  private static async Task _setBodyExpiryAsync(NpgsqlConnection connection, Guid eventId, DateTimeOffset expiry) {
+    await using var u = connection.CreateCommand();
+    u.CommandText = "UPDATE wh_event_body SET metadata = jsonb_set(metadata, '{ephemeral_expires_at}', to_jsonb(@ts::text)) WHERE event_id = @id";
+    u.Parameters.AddWithValue("id", eventId);
+    u.Parameters.AddWithValue("ts", expiry.ToString("o", System.Globalization.CultureInfo.InvariantCulture));
+    await u.ExecuteNonQueryAsync();
+  }
+
   [Test]
-  public async Task Reap_AfterTtl_ConsumedBodyHeldUntilPastTtl_ThenReapedAsync() {
-    // E2-4c: an AfterTtl type declares a TTL that EXTENDS retention past consumption. The consumed, aged,
-    // snapshot-covered body is kept until it is ALSO older than its TTL window (e.g. chat messages kept ~90
-    // days though applied to the thread immediately).
+  public async Task Reap_AfterTtl_StampedExpiry_HeldUntilPast_ThenReapedAsync() {
+    // E2-4c: an AfterTtl event carries its own absolute expiry in its metadata (stamped at dispatch =
+    // emit-time + TtlSeconds, lifted into wh_event_body.metadata by migration 080). It EXTENDS retention past
+    // consumption: the consumed, aged, snapshot-covered body is kept until it is ALSO past that expiry.
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
     await _setGraceSecondsAsync(connection, 0);   // isolate the TTL floor from the grace window
 
     var eventId = Guid.NewGuid();
     const string eventType = "Whizbang.Tests.ChatMessageTtl";
-    // No association => consumed + vacuously covered. A 3600s TTL is the only thing that can hold it now.
-    await _commitAsync(connection, Guid.NewGuid(), eventId, Guid.NewGuid(), eventType, flags: 8);
-    await _syncTtlAsync(connection, eventType, 3600);
+    // No association => consumed + vacuously covered. A future expiry is the only thing that can hold it now.
+    await _commitWithExpiryAsync(connection, eventId, Guid.NewGuid(), eventType, DateTimeOffset.UtcNow.AddHours(1));
 
-    // Aged past the (0s) grace window but NOT past the 3600s TTL => the TTL floor holds it.
+    // Migration 080: the stamped expiry rode from the envelope metadata into the body metadata.
+    await Assert.That(await _bodyExpiryAsync(connection, eventId)).IsNotNull()
+      .Because("The emit chain lifts EnvelopeMetadata.eea into wh_event_body.metadata.ephemeral_expires_at.");
+
+    // Aged past the (0s) grace window but NOT past its expiry => the TTL floor holds it.
     await _ageAsync(connection, eventId, "10 minutes");
     await _runMaintenanceAsync(connection);
     await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L)
-      .Because("An AfterTtl body is retained until it is older than its TTL, even once consumed and aged past grace.");
+      .Because("An AfterTtl body is retained until past its stamped expiry, even once consumed and aged past grace.");
 
-    // Age it past the 3600s TTL => now reapable.
-    await _ageAsync(connection, eventId, "2 hours");
+    // Its expiry passes => now reapable.
+    await _setBodyExpiryAsync(connection, eventId, DateTimeOffset.UtcNow.AddMinutes(-1));
     await _runMaintenanceAsync(connection);
     await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(0L)
-      .Because("Once older than its TTL window, the consumed AfterTtl body is reaped.");
+      .Because("Once past its expiry, the consumed AfterTtl body is reaped.");
   }
 
   [Test]
-  public async Task Reap_TtlRowIsTheDiscriminator_AfterTtlHeldWhileWhenConsumedReapsAsync() {
-    // The presence of a wh_ephemeral_type_ttl row is what marks a type age-gated (AfterTtl) rather than
-    // consumption-gated (WhenConsumed). Two sibling events, identical except for that row.
+  public async Task Reap_ExpiryKeyIsTheDiscriminator_AfterTtlHeldWhileWhenConsumedReapsAsync() {
+    // The presence of an 'ephemeral_expires_at' key in the body metadata is what marks an event age-gated
+    // (AfterTtl) rather than consumption-gated (WhenConsumed). Two sibling events, identical except the key.
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
     await _setGraceSecondsAsync(connection, 0);
 
     var afterTtl = Guid.NewGuid();
     var whenConsumed = Guid.NewGuid();
-    await _commitAsync(connection, Guid.NewGuid(), afterTtl, Guid.NewGuid(), "Whizbang.Tests.AgeGatedEvent", flags: 8);
-    await _commitAsync(connection, Guid.NewGuid(), whenConsumed, Guid.NewGuid(), "Whizbang.Tests.ConsumeGatedEvent", flags: 8);
-    await _syncTtlAsync(connection, "Whizbang.Tests.AgeGatedEvent", 3600);   // only this one is AfterTtl
+    await _commitWithExpiryAsync(connection, afterTtl, Guid.NewGuid(), "Whizbang.Tests.AgeGatedEvent", DateTimeOffset.UtcNow.AddHours(1));
+    await _commitWithExpiryAsync(connection, whenConsumed, Guid.NewGuid(), "Whizbang.Tests.ConsumeGatedEvent", expiresAt: null);
 
     // Both consumed (no association) and aged 10 min past the 0s grace.
     await _ageAsync(connection, afterTtl, "10 minutes");
@@ -350,9 +382,9 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
     await _runMaintenanceAsync(connection);
 
     await Assert.That(await _eventBodyCountAsync(connection, whenConsumed)).IsEqualTo(0L)
-      .Because("A WhenConsumed event (no TTL row) reaps as soon as it is consumed and aged past grace.");
+      .Because("A WhenConsumed event (no ephemeral_expires_at) reaps as soon as it is consumed and aged past grace.");
     await Assert.That(await _eventBodyCountAsync(connection, afterTtl)).IsEqualTo(1L)
-      .Because("The sibling AfterTtl event (TTL row present) is held by its 3600s TTL floor under identical conditions.");
+      .Because("The sibling AfterTtl event (future stamped expiry) is held by its TTL floor under identical conditions.");
   }
 
   [Test]

@@ -156,46 +156,6 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Reconcile_SyncsPerTypeTtlOverrideAsync() {
-    await using var dbContext = CreateDbContext();
-    var connection = await _openAsync(dbContext);
-    var coordinator = _coordinator(dbContext);
-
-    var entry = new MessageTypeCatalogEntry(typeof(object), "Whizbang.Tests.TtlSyncEvent", "event", null) {
-      Ephemeral = new EphemeralInfo(Destruction.AfterTtl, TransientStorage.TtlRow, RewindGraceSeconds: -1, TtlSeconds: 7200),
-      SettingsHash = new string('a', 64),
-      SchemaHash = new string('c', 64),
-    };
-    await _reconciler(coordinator, new FakeCatalog(entry), act: false).ReconcileAsync();
-
-    await using var v = connection.CreateCommand();
-    v.CommandText = "SELECT ttl_seconds FROM wh_ephemeral_type_ttl WHERE event_type = normalize_event_type('Whizbang.Tests.TtlSyncEvent')";
-    await Assert.That((int)(await v.ExecuteScalarAsync())!).IsEqualTo(7200)
-      .Because("The startup reconciler syncs each type's [Ephemeral(TtlSeconds)] override into the TTL lookup.");
-  }
-
-  [Test]
-  public async Task Reconcile_WhenConsumedType_NotSyncedIntoTtlLookupAsync() {
-    await using var dbContext = CreateDbContext();
-    var connection = await _openAsync(dbContext);
-    var coordinator = _coordinator(dbContext);
-
-    // A WhenConsumed event carries TtlSeconds = -1 (no TTL) — it must NOT get a TTL-lookup row (absence of a
-    // row is precisely what distinguishes consumption-gated from age-gated).
-    var entry = new MessageTypeCatalogEntry(typeof(object), "Whizbang.Tests.NoTtlEvent", "event", null) {
-      Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.PersistedRow),
-      SettingsHash = new string('a', 64),
-      SchemaHash = new string('c', 64),
-    };
-    await _reconciler(coordinator, new FakeCatalog(entry), act: false).ReconcileAsync();
-
-    await using var v = connection.CreateCommand();
-    v.CommandText = "SELECT count(*) FROM wh_ephemeral_type_ttl WHERE event_type = normalize_event_type('Whizbang.Tests.NoTtlEvent')";
-    await Assert.That((long)(await v.ExecuteScalarAsync())!).IsEqualTo(0L)
-      .Because("A WhenConsumed event has no TTL, so it is never synced into the age-based TTL lookup.");
-  }
-
-  [Test]
   public async Task Reconcile_NoChange_SameDefinition_NoDriftAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

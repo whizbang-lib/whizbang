@@ -41,19 +41,12 @@ public sealed partial class TypeDefinitionReconciler {
     // Sync per-type rewind-grace overrides ([Ephemeral(RewindGraceSeconds >= 0)]) so the reaper resolves
     // COALESCE(type grace, global default) per event. Full replace — declaring set upserted, rest pruned.
     var graceOverrides = new List<EphemeralTypeGrace>();
-    var ttlOverrides = new List<EphemeralTypeTtl>();
     foreach (var e in _catalog.GetAll()) {
       if (e.Ephemeral is { RewindGraceSeconds: >= 0 } eph) {
         graceOverrides.Add(new EphemeralTypeGrace(e.ClrTypeName, eph.RewindGraceSeconds));
       }
-      // A declared TTL (>= 0) marks the type age-gated (AfterTtl); synced into the TTL lookup so the reaper
-      // and logical-expiry read filter can resolve an event's age window. Full replace, same as grace.
-      if (e.Ephemeral is { TtlSeconds: >= 0 } ttl) {
-        ttlOverrides.Add(new EphemeralTypeTtl(e.ClrTypeName, ttl.TtlSeconds));
-      }
     }
     await _coordinator.SyncEphemeralTypeGraceAsync(graceOverrides, cancellationToken).ConfigureAwait(false);
-    await _coordinator.SyncEphemeralTypeTtlAsync(ttlOverrides, cancellationToken).ConfigureAwait(false);
 
     // Pre-register snapshot of stored definitions, so a genuinely-new registration's previous_definition_id
     // resolves to the prior hashes (to tell settings-drift from schema-drift).

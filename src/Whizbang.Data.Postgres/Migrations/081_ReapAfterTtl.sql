@@ -1,17 +1,18 @@
 -- Migration: 081_ReapAfterTtl.sql
 -- Date: 2026-07-17
--- Description: E2-4c — physical-reap TTL retention floor for Destruction.AfterTtl events. A per-type TTL
---              (migration 080's wh_ephemeral_type_ttl, synced from [Ephemeral(TtlSeconds)]) EXTENDS how long
---              a consumed ephemeral body is retained: WhenConsumed reaps as soon as it is safely consumed;
---              AfterTtl keeps the consumed body until it is ALSO older than its TTL window (e.g. chat messages
---              kept ~90 days though applied to the thread immediately). This is the proposal's phase-2 reap:
---              the SAME E1 gates (consumed, aged past grace, snapshot-covered) AND the TTL has passed.
---              A WhenConsumed event has no TTL row, so the new gate is vacuously satisfied — its reap is
---              unchanged. The logical-expiry read filter (phase 1) lands separately.
--- Dependencies: 079 (perform_maintenance Task 8 + hold gate), 080 (wh_ephemeral_type_ttl)
+-- Description: E2-4c — physical-reap TTL retention floor for Destruction.AfterTtl events. The event's own
+--              expiry rides in wh_event_body.metadata as 'ephemeral_expires_at' (stamped at dispatch =
+--              emit-time + [Ephemeral(TtlSeconds)], lifted into body_meta by migration 080). It EXTENDS how
+--              long a consumed ephemeral body is retained: WhenConsumed reaps as soon as it is safely
+--              consumed; AfterTtl keeps the consumed body until it is ALSO past its stamped expiry (e.g. chat
+--              messages kept ~90 days though applied to the thread immediately). This is the proposal's
+--              phase-2 reap: the SAME E1 gates (consumed, aged past grace, snapshot-covered) AND the expiry
+--              has passed. An event with no 'ephemeral_expires_at' key (Sourced / WhenConsumed) has a
+--              vacuously-satisfied gate — its reap is unchanged.
+-- Dependencies: 079 (perform_maintenance Task 8 + hold gate), 080 (body_meta carries ephemeral_expires_at)
 --
--- Re-creates perform_maintenance verbatim from 079 except Task 8 gains the TTL LEFT JOIN + retention-floor
--- gate. Signature unchanged => CREATE OR REPLACE in place.
+-- Re-creates perform_maintenance verbatim from 079 except Task 8 gains the per-event expiry gate (read from
+-- the body metadata). Signature unchanged => CREATE OR REPLACE in place.
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.perform_maintenance()
 RETURNS TABLE(
@@ -214,9 +215,10 @@ BEGIN
   -- Skipped under debug_mode so retained forensic bodies survive with the retained work items.
   -- Grace window: a consumed body is also kept until it is OLDER than v_ephemeral_grace_seconds, so an
   -- out-of-order straggler can still rewind through it (rewind uses the surviving bodies + a snapshot floor).
-  -- TTL floor (E2-4c): a per-type TTL (wh_ephemeral_type_ttl, present only for Destruction.AfterTtl types)
-  -- EXTENDS retention — the consumed body is kept until it is ALSO older than its TTL window. A type with no
-  -- TTL row (WhenConsumed) is unaffected: the gate is vacuously true, and it reaps as soon as consumed+aged.
+  -- TTL floor (E2-4c): an AfterTtl event carries its own absolute expiry in body metadata
+  -- ('ephemeral_expires_at', stamped at dispatch). It EXTENDS retention — the consumed body is kept until it
+  -- is ALSO past that expiry. An event with no key (Sourced / WhenConsumed) is unaffected: the gate is
+  -- vacuously true, and it reaps as soon as consumed+aged.
   v_start := clock_timestamp();
   IF v_debug_mode THEN
     v_rows := 0;
@@ -224,7 +226,6 @@ BEGIN
     DELETE FROM __SCHEMA__.wh_event_body eb
     USING __SCHEMA__.wh_event_store es
     LEFT JOIN __SCHEMA__.wh_ephemeral_type_grace g ON g.event_type = es.event_type
-    LEFT JOIN __SCHEMA__.wh_ephemeral_type_ttl tt ON tt.event_type = es.event_type
     WHERE es.event_id = eb.event_id
       -- #13b4 safety gate: the reap is scoped to EPHEMERAL events explicitly. Pre-split this was
       -- guaranteed "by construction" (wh_event_body held only ephemeral bodies); once SOURCED bodies
@@ -237,9 +238,12 @@ BEGIN
         WHERE h.event_id = eb.event_id AND h.hold_until > NOW()
       )
       AND es.created_at < NOW() - (COALESCE(g.grace_seconds, v_ephemeral_grace_seconds) * INTERVAL '1 second')
-      -- E2-4c TTL retention floor: an AfterTtl type (has a wh_ephemeral_type_ttl row) is kept until it is
-      -- also older than its TTL window. A WhenConsumed type (no row) => tt.ttl_seconds IS NULL => vacuous.
-      AND (tt.ttl_seconds IS NULL OR es.created_at < NOW() - (tt.ttl_seconds * INTERVAL '1 second'))
+      -- E2-4c TTL retention floor: an AfterTtl body carries an absolute 'ephemeral_expires_at' in its
+      -- metadata; it is kept until past that instant. No key (Sourced / WhenConsumed) => vacuously true.
+      AND (
+        eb.metadata ->> 'ephemeral_expires_at' IS NULL
+        OR (eb.metadata ->> 'ephemeral_expires_at')::timestamptz < NOW()
+      )
       AND NOT EXISTS (
         SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
         WHERE pe.event_id = eb.event_id

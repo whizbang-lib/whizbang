@@ -3889,7 +3889,8 @@ public abstract partial class Dispatcher(
       Envelope = jsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = jsonEnvelope.MessageId,
-        Hops = jsonEnvelope.Hops?.ToList() ?? []
+        Hops = jsonEnvelope.Hops?.ToList() ?? [],
+        EphemeralExpiresAt = Whizbang.Core.Messaging.EphemeralExpiryDeriver.Derive(eventData, ephemeralModeResolver, DateTimeOffset.UtcNow)
       },
       EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
       StreamId = streamId,
@@ -5016,7 +5017,8 @@ public abstract partial class Dispatcher(
       Envelope = serialized.JsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? []
+        Hops = envelope.Hops?.ToList() ?? [],
+        EphemeralExpiresAt = Whizbang.Core.Messaging.EphemeralExpiryDeriver.Derive(payload, _ephemeralModeResolver, DateTimeOffset.UtcNow)
       },
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
