@@ -579,6 +579,19 @@ public interface IWorkCoordinator {
     Task.FromResult(new EphemeralPointerPruneResult(0, "unsupported"));
 
   /// <summary>
+  /// E2 destruction hooks: the ephemeral event bodies the tier-1 reaper is about to delete THIS cycle —
+  /// the exact consumption-gated + aged-past-grace + snapshot-covered set of Task 8's <c>DELETE</c>, as a
+  /// query. The maintenance worker fires a registered <c>IDestructionHook</c> for each before the reap, so
+  /// a hook can preserve / compact / archive the body first. Default: empty (engines without the offload).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The (event, stream, type) targets about to be reaped.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>([]);
+
+  /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
   /// Called per-stream immediately after processing (drain mode — no buffering).
   /// </summary>
@@ -867,6 +880,14 @@ public sealed record EphemeralSnapshotTarget(Guid StreamId, string PerspectiveNa
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status);
+
+/// <summary>
+/// An ephemeral event body the reaper is about to delete (E2), passed to a destruction hook so it can
+/// preserve the body before the reap. Carries the identity + type needed to build a
+/// <see cref="Whizbang.Core.Lifecycle.DestructionContext"/>.
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralDestructionTarget(Guid EventId, Guid StreamId, string EventType);
 
 /// <summary>
 /// A stored type-definition fingerprint row — one distinct type-definition-version keyed by its content

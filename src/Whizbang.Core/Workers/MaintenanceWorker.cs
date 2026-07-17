@@ -72,10 +72,19 @@ public sealed partial class MaintenanceWorker(
     // about to delete. This is what makes the coverage gate safe on low-volume / idle streams.
     await _reapDrivenEphemeralSnapshotAsync(coordinator, sp, ct);
 
+    // E2 PreDestruction hooks — run BEFORE the reap so a registered IDestructionHook can preserve / compact /
+    // archive each ephemeral body before Task 8 deletes it. Its preserve-work commits before the subsequent
+    // PerformMaintenanceAsync (a separate call), satisfying the "durable before delete" ordering. Returns the
+    // targets so PostDestruction can fire after the delete. Inert without a registered hook.
+    var destructionTargets = await _runPreDestructionHooksAsync(coordinator, sp, ct);
+
     var results = await coordinator.PerformMaintenanceAsync(ct);
     foreach (var r in results) {
       LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
     }
+
+    // E2 PostDestruction hooks — detached, after the reap committed.
+    await _firePostDestructionHooksAsync(sp, destructionTargets, ct);
 
     // Tier-2 deep maintenance (E1 #13b3): prune ancient ephemeral pointers. The backing SQL self-gates on
     // the opt-in flag (disabled by default) and a ~monthly interval, so this per-cycle call is a cheap
@@ -125,6 +134,67 @@ public sealed partial class MaintenanceWorker(
     }
   }
 
+  // E2 PreDestruction: fire the registered IDestructionHook for each ephemeral body about to be reaped this
+  // cycle, BEFORE the reap. Inert without a hook (returns empty → today's blunt reap). Per-target failures
+  // are logged, never fatal (the retry policy lands in a later increment). Returns the targets so the
+  // detached PostDestruction step can fire after the reap. The hook's Cancel/Defer decision is captured and
+  // logged; ENFORCEMENT (holding the body / rescheduling) lands in the next increment via a SQL hold-gate.
+  private async Task<IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget>> _runPreDestructionHooksAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var hook = sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>();
+    if (hook is null) {
+      return [];
+    }
+    var targets = await coordinator.GetEphemeralBodiesAboutToReapAsync(ct);
+    foreach (var target in targets) {
+      ct.ThrowIfCancellationRequested();
+      try {
+        var context = new Whizbang.Core.Lifecycle.DestructionContext {
+          Reason = Whizbang.Core.Lifecycle.DestructionReason.ConsumptionComplete,
+          Granularity = Whizbang.Core.Lifecycle.DestructionGranularity.Event,
+          StreamId = target.StreamId,
+          EventIds = [target.EventId],
+        };
+        var result = await hook.OnBeforeDestructionAsync(context, ct).ConfigureAwait(false);
+        LogPreDestruction(_logger, target.EventId, target.StreamId, result.Cancel, result.DeferUntil.HasValue);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogPreDestructionFailed(_logger, ex, target.EventId, target.StreamId);
+      }
+    }
+    return targets;
+  }
+
+  // E2 PostDestruction: fire the registered IDestructionHook's detached post-hook for each reaped target,
+  // after the reap committed. Per-target failures are logged, never fatal.
+  private async Task _firePostDestructionHooksAsync(
+      IServiceProvider sp, IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> targets, CancellationToken ct) {
+    if (targets.Count == 0) {
+      return;
+    }
+    var hook = sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>();
+    if (hook is null) {
+      return;
+    }
+    foreach (var target in targets) {
+      ct.ThrowIfCancellationRequested();
+      try {
+        var context = new Whizbang.Core.Lifecycle.DestructionContext {
+          Reason = Whizbang.Core.Lifecycle.DestructionReason.ConsumptionComplete,
+          Granularity = Whizbang.Core.Lifecycle.DestructionGranularity.Event,
+          StreamId = target.StreamId,
+          EventIds = [target.EventId],
+        };
+        await hook.OnAfterDestructionAsync(context, ct).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogPostDestructionFailed(_logger, ex, target.EventId, target.StreamId);
+      }
+    }
+  }
+
   private async Task _runStuckRowSentinelAsync(IWorkCoordinator coordinator, CancellationToken ct) {
     var max = _options.StuckRowSentinelMaxAttempts;
     var limit = _options.StuckRowSentinelLimit;
@@ -166,6 +236,18 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 23, Level = LogLevel.Warning,
     Message = "Tier-2 ephemeral pointer prune failed (non-fatal — retried next due interval)")]
   static partial void LogPointerPruneFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
+    Message = "PreDestruction hook ran for ephemeral event {EventId} on stream {StreamId} (cancel={Cancel}, defer={Defer}) — decision not yet enforced (E2-2)")]
+  static partial void LogPreDestruction(ILogger logger, Guid eventId, Guid streamId, bool cancel, bool defer);
+
+  [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
+    Message = "PreDestruction hook threw for ephemeral event {EventId} on stream {StreamId} (non-fatal — reap proceeds; retry policy lands in a later increment)")]
+  static partial void LogPreDestructionFailed(ILogger logger, Exception ex, Guid eventId, Guid streamId);
+
+  [LoggerMessage(EventId = 26, Level = LogLevel.Warning,
+    Message = "PostDestruction hook threw for ephemeral event {EventId} on stream {StreamId} (non-fatal)")]
+  static partial void LogPostDestructionFailed(ILogger logger, Exception ex, Guid eventId, Guid streamId);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Maintenance task '{TaskName}' affected {RowsAffected} rows in {DurationMs}ms")]

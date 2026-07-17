@@ -501,6 +501,50 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return new EphemeralPointerPruneResult(reader.GetInt64(0), reader.GetString(1));
   }
 
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var body = BuildSchemaQualifiedName(schema, "wh_event_body");
+    var store = BuildSchemaQualifiedName(schema, "wh_event_store");
+    var grace = BuildSchemaQualifiedName(schema, "wh_ephemeral_type_grace");
+    var assoc = BuildSchemaQualifiedName(schema, "wh_message_associations");
+    var snaps = BuildSchemaQualifiedName(schema, "wh_perspective_snapshots");
+    var perspEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
+    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    // The exact predicate of migration 073 Task 8's DELETE, as a SELECT: ephemeral (flags&8), consumed
+    // (no unprocessed work item), aged past its grace window, and snapshot-covered (no consuming
+    // perspective lacks a covering snapshot). These are the bodies THIS maintenance cycle will reap.
+#pragma warning disable S2077
+    cmd.CommandText =
+      $"SELECT es.event_id, es.stream_id, es.event_type " +
+      $"FROM {body} eb " +
+      $"JOIN {store} es ON es.event_id = eb.event_id " +
+      $"LEFT JOIN {grace} g ON g.event_type = es.event_type " +
+      "WHERE (es.flags & 8) = 8 " +
+      $"AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
+      $"    (SELECT setting_value::int FROM {settings} WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
+      $"  * INTERVAL '1 second') " +
+      $"AND NOT EXISTS (SELECT 1 FROM {perspEvents} pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
+      $"AND NOT EXISTS (SELECT 1 FROM {assoc} ma WHERE ma.normalized_message_type = es.event_type " +
+      "  AND ma.association_type = 'perspective' " +
+      $"  AND NOT EXISTS (SELECT 1 FROM {snaps} s WHERE s.stream_id = es.stream_id " +
+      "    AND s.perspective_name = ma.target_name AND s.snapshot_commit_sequence >= es.commit_sequence))";
+#pragma warning restore S2077
+    var list = new List<EphemeralDestructionTarget>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      list.Add(new EphemeralDestructionTarget(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2)));
+    }
+    return list;
+  }
+
   // Issues a guarded UPDATE on wh_service_instances. No-op when the
   // instance provider isn't wired (the EFCoreWorkCoordinator can be
   // constructed without one — historical contract) or when the heartbeat
