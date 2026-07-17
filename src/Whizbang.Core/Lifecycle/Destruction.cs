@@ -1,4 +1,5 @@
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Lifecycle;
 
@@ -61,16 +62,19 @@ public enum Disposition {
 }
 
 /// <summary>
-/// Everything a <c>PreDestruction</c> / <c>PostDestruction</c> receptor needs to decide what to do before
-/// an ephemeral event / stream / perspective row is destroyed. The reaper populates it and awaits the
-/// <c>Inline</c> hook (its side-effects must commit before the physical delete).
+/// Everything a <c>PreDestruction</c> / <c>PostDestruction</c> receptor needs to decide what to do before a
+/// batch of ephemeral events / a stream / a perspective row is destroyed. The reaper populates it and awaits
+/// the <c>Inline</c> hook ONCE per cycle (its side-effects must commit before the physical delete). The hook
+/// is <strong>batched</strong>: <see cref="Targets"/> carries every event the reaper is about to remove this
+/// cycle, so a hook writes one compacted summary / runs one archive pass over the whole set rather than being
+/// invoked per event.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record DestructionContext {
   /// <summary>Why this destruction is happening.</summary>
   public required DestructionReason Reason { get; init; }
 
-  /// <summary>What is being destroyed (event / stream / perspective row).</summary>
+  /// <summary>What is being destroyed (event batch / stream / perspective row).</summary>
   public required DestructionGranularity Granularity { get; init; }
 
   /// <summary>
@@ -79,17 +83,15 @@ public sealed record DestructionContext {
   /// </summary>
   public Disposition DeclaredDefault { get; init; } = Disposition.Delete;
 
-  /// <summary>The tenant / subject scope, flowing as it does everywhere.</summary>
+  /// <summary>The tenant / subject scope — set for single-subject granularities (stream / perspective row);
+  /// <c>null</c> for a cross-stream event batch, where each target carries its own stream.</summary>
   public PerspectiveScope? Scope { get; init; }
 
-  /// <summary>The stream being destroyed (all granularities carry it).</summary>
-  public Guid? StreamId { get; init; }
-
-  /// <summary>The event id(s) being reaped (for <see cref="DestructionGranularity.Event"/>).</summary>
-  public IReadOnlyList<Guid> EventIds { get; init; } = [];
-
-  /// <summary>The perspective whose row is expiring (for <see cref="DestructionGranularity.PerspectiveRow"/>).</summary>
-  public string? PerspectiveName { get; init; }
+  /// <summary>
+  /// The FULL batch of events being destroyed this invocation — the hook runs ONCE for the whole batch, not
+  /// once per event. Each target carries its own event id, stream, and event type. May span many streams.
+  /// </summary>
+  public IReadOnlyList<EphemeralDestructionTarget> Targets { get; init; } = [];
 }
 
 /// <summary>

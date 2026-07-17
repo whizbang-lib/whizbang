@@ -26,10 +26,14 @@ public class MaintenanceWorkerDestructionHookTests {
   private sealed class RecordingHook : IDestructionHook {
     private readonly List<string> _log;
     private readonly bool _throwOnBefore;
+    public int BeforeCalls { get; private set; }
+    public int LastBatchSize { get; private set; }
     public RecordingHook(List<string> log, bool throwOnBefore = false) { _log = log; _throwOnBefore = throwOnBefore; }
 
     public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
-      _log.Add($"before:{context.EventIds[0]}");
+      BeforeCalls++;
+      LastBatchSize = context.Targets.Count;
+      _log.Add($"before:{context.Targets.Count}");
       if (_throwOnBefore) {
         throw new InvalidOperationException("hook blew up");
       }
@@ -37,7 +41,7 @@ public class MaintenanceWorkerDestructionHookTests {
     }
 
     public ValueTask OnAfterDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
-      _log.Add($"after:{context.EventIds[0]}");
+      _log.Add($"after:{context.Targets.Count}");
       return ValueTask.CompletedTask;
     }
   }
@@ -88,17 +92,28 @@ public class MaintenanceWorkerDestructionHookTests {
   }
 
   [Test]
-  public async Task RunMaintenanceOnce_HookRegistered_FiresBeforeReapThenAfterAsync() {
+  public async Task RunMaintenanceOnce_HookRegistered_FiresOnceForTheBatchBeforeReapThenAfterAsync() {
     var log = new List<string>();
-    var eventId = Guid.NewGuid();
+    // Two events, on different streams — one batched hook call must see both.
     var coord = new FakeCoordinator(log) {
-      Targets = [new EphemeralDestructionTarget(eventId, Guid.NewGuid(), "T")],
+      Targets = [
+        new EphemeralDestructionTarget(Guid.NewGuid(), Guid.NewGuid(), "A"),
+        new EphemeralDestructionTarget(Guid.NewGuid(), Guid.NewGuid(), "B"),
+      ],
     };
+    var hook = new RecordingHook(log);
 
-    await _buildWorker(coord, new RecordingHook(log)).RunMaintenanceOnceAsync(CancellationToken.None);
+    await _buildWorker(coord, hook).RunMaintenanceOnceAsync(CancellationToken.None);
 
-    // The pre-hook commits before the reap; the post-hook fires after it.
-    await Assert.That(log).IsEquivalentTo(new[] { $"before:{eventId}", "reap", $"after:{eventId}" });
+    // Batched: exactly one OnBefore for the whole set, before the reap; one OnAfter, after it.
+    await Assert.That(hook.BeforeCalls).IsEqualTo(1)
+      .Because("The hook is invoked ONCE for the whole batch, not once per event.");
+    await Assert.That(hook.LastBatchSize).IsEqualTo(2)
+      .Because("The context carries every about-to-reap event this cycle.");
+    await Assert.That(log.Count).IsEqualTo(3);
+    await Assert.That(log[0]).IsEqualTo("before:2").Because("The pre-hook (batch of 2) commits before the reap.");
+    await Assert.That(log[1]).IsEqualTo("reap");
+    await Assert.That(log[2]).IsEqualTo("after:2").Because("The post-hook fires after the reap.");
   }
 
   [Test]
@@ -120,15 +135,14 @@ public class MaintenanceWorkerDestructionHookTests {
   [Test]
   public async Task RunMaintenanceOnce_HookThrowsOnBefore_IsNonFatal_ReapStillRunsAsync() {
     var log = new List<string>();
-    var eventId = Guid.NewGuid();
     var coord = new FakeCoordinator(log) {
-      Targets = [new EphemeralDestructionTarget(eventId, Guid.NewGuid(), "T")],
+      Targets = [new EphemeralDestructionTarget(Guid.NewGuid(), Guid.NewGuid(), "T")],
     };
 
     // A throwing pre-hook must not take down the cycle; the reap still runs.
     await _buildWorker(coord, new RecordingHook(log, throwOnBefore: true)).RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(log).Contains("before:" + eventId);
+    await Assert.That(log).Contains("before:1");
     await Assert.That(log).Contains("reap")
       .Because("A PreDestruction hook failure is logged and non-fatal — the maintenance cycle completes.");
   }

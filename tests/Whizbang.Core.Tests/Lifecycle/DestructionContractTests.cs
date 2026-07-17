@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lifecycle;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Lifecycle;
 
@@ -40,15 +41,31 @@ public class DestructionContractTests {
   }
 
   [Test]
-  public async Task DestructionContext_DefaultsDeclaredToDelete_AndEmptyEventIdsAsync() {
+  public async Task DestructionContext_DefaultsDeclaredToDelete_AndEmptyTargetsAsync() {
     var ctx = new DestructionContext {
       Reason = DestructionReason.ConsumptionComplete,
       Granularity = DestructionGranularity.Event,
     };
     await Assert.That(ctx.DeclaredDefault).IsEqualTo(Disposition.Delete)
       .Because("With no [Ephemeral(OnDestroy = …)], the declared default is a physical Delete.");
-    await Assert.That(ctx.EventIds.Count).IsEqualTo(0);
+    await Assert.That(ctx.Targets.Count).IsEqualTo(0);
     await Assert.That(ctx.Scope).IsNull();
+  }
+
+  [Test]
+  public async Task DestructionContext_CarriesTheWholeBatchOfTargetsAsync() {
+    // The hook is batched: the context carries every event being reaped this cycle, possibly across streams.
+    var a = new EphemeralDestructionTarget(Guid.NewGuid(), Guid.NewGuid(), "A");
+    var b = new EphemeralDestructionTarget(Guid.NewGuid(), Guid.NewGuid(), "B");
+    var ctx = new DestructionContext {
+      Reason = DestructionReason.ConsumptionComplete,
+      Granularity = DestructionGranularity.Event,
+      Targets = [a, b],
+    };
+    await Assert.That(ctx.Targets.Count).IsEqualTo(2)
+      .Because("A single hook invocation sees the whole batch, not one event at a time.");
+    await Assert.That(ctx.Targets).Contains(a);
+    await Assert.That(ctx.Targets).Contains(b);
   }
 
   [Test]

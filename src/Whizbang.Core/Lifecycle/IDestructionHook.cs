@@ -8,6 +8,11 @@ namespace Whizbang.Core.Lifecycle;
 /// </summary>
 /// <remarks>
 /// <para>
+/// <strong>Batched.</strong> The reaper invokes the hook ONCE per maintenance cycle with the whole set of
+/// events it is about to reap on <see cref="DestructionContext.Targets"/> — not once per event — so a hook
+/// writes a single compacted summary / runs one archive pass over the batch.
+/// </para>
+/// <para>
 /// <strong>Ordering.</strong> <see cref="OnBeforeDestructionAsync"/> is awaited BEFORE the physical reap, so
 /// any preserve-work it commits (a snapshot, a carry-forward summary, an archive write) is durable before
 /// the bytes go. <see cref="OnAfterDestructionAsync"/> runs detached AFTER the delete commits (notify /

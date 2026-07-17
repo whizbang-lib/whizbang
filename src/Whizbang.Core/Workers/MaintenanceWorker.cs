@@ -146,28 +146,23 @@ public sealed partial class MaintenanceWorker(
       return [];
     }
     var targets = await coordinator.GetEphemeralBodiesAboutToReapAsync(ct);
-    foreach (var target in targets) {
-      ct.ThrowIfCancellationRequested();
-      try {
-        var context = new Whizbang.Core.Lifecycle.DestructionContext {
-          Reason = Whizbang.Core.Lifecycle.DestructionReason.ConsumptionComplete,
-          Granularity = Whizbang.Core.Lifecycle.DestructionGranularity.Event,
-          StreamId = target.StreamId,
-          EventIds = [target.EventId],
-        };
-        var result = await hook.OnBeforeDestructionAsync(context, ct).ConfigureAwait(false);
-        LogPreDestruction(_logger, target.EventId, target.StreamId, result.Cancel, result.DeferUntil.HasValue);
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogPreDestructionFailed(_logger, ex, target.EventId, target.StreamId);
-      }
+    if (targets.Count == 0) {
+      return targets;
+    }
+    // Batched: fire the hook ONCE for the whole set of about-to-reap events.
+    try {
+      var result = await hook.OnBeforeDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
+      LogPreDestruction(_logger, targets.Count, result.Cancel, result.DeferUntil.HasValue);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogPreDestructionFailed(_logger, ex, targets.Count);
     }
     return targets;
   }
 
-  // E2 PostDestruction: fire the registered IDestructionHook's detached post-hook for each reaped target,
-  // after the reap committed. Per-target failures are logged, never fatal.
+  // E2 PostDestruction: fire the registered IDestructionHook's detached post-hook ONCE for the reaped batch,
+  // after the reap committed. Failure is logged, never fatal.
   private async Task _firePostDestructionHooksAsync(
       IServiceProvider sp, IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> targets, CancellationToken ct) {
     if (targets.Count == 0) {
@@ -177,23 +172,22 @@ public sealed partial class MaintenanceWorker(
     if (hook is null) {
       return;
     }
-    foreach (var target in targets) {
-      ct.ThrowIfCancellationRequested();
-      try {
-        var context = new Whizbang.Core.Lifecycle.DestructionContext {
-          Reason = Whizbang.Core.Lifecycle.DestructionReason.ConsumptionComplete,
-          Granularity = Whizbang.Core.Lifecycle.DestructionGranularity.Event,
-          StreamId = target.StreamId,
-          EventIds = [target.EventId],
-        };
-        await hook.OnAfterDestructionAsync(context, ct).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogPostDestructionFailed(_logger, ex, target.EventId, target.StreamId);
-      }
+    try {
+      await hook.OnAfterDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogPostDestructionFailed(_logger, ex, targets.Count);
     }
   }
+
+  private static Whizbang.Core.Lifecycle.DestructionContext _destructionContext(
+      IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> targets) =>
+    new() {
+      Reason = Whizbang.Core.Lifecycle.DestructionReason.ConsumptionComplete,
+      Granularity = Whizbang.Core.Lifecycle.DestructionGranularity.Event,
+      Targets = targets,
+    };
 
   private async Task _runStuckRowSentinelAsync(IWorkCoordinator coordinator, CancellationToken ct) {
     var max = _options.StuckRowSentinelMaxAttempts;
@@ -238,16 +232,16 @@ public sealed partial class MaintenanceWorker(
   static partial void LogPointerPruneFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
-    Message = "PreDestruction hook ran for ephemeral event {EventId} on stream {StreamId} (cancel={Cancel}, defer={Defer}) — decision not yet enforced (E2-2)")]
-  static partial void LogPreDestruction(ILogger logger, Guid eventId, Guid streamId, bool cancel, bool defer);
+    Message = "PreDestruction hook ran for a batch of {TargetCount} ephemeral events (cancel={Cancel}, defer={Defer}) — decision not yet enforced (E2-2)")]
+  static partial void LogPreDestruction(ILogger logger, int targetCount, bool cancel, bool defer);
 
   [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
-    Message = "PreDestruction hook threw for ephemeral event {EventId} on stream {StreamId} (non-fatal — reap proceeds; retry policy lands in a later increment)")]
-  static partial void LogPreDestructionFailed(ILogger logger, Exception ex, Guid eventId, Guid streamId);
+    Message = "PreDestruction hook threw for a batch of {TargetCount} ephemeral events (non-fatal — reap proceeds; retry policy lands in a later increment)")]
+  static partial void LogPreDestructionFailed(ILogger logger, Exception ex, int targetCount);
 
   [LoggerMessage(EventId = 26, Level = LogLevel.Warning,
-    Message = "PostDestruction hook threw for ephemeral event {EventId} on stream {StreamId} (non-fatal)")]
-  static partial void LogPostDestructionFailed(ILogger logger, Exception ex, Guid eventId, Guid streamId);
+    Message = "PostDestruction hook threw for a batch of {TargetCount} ephemeral events (non-fatal)")]
+  static partial void LogPostDestructionFailed(ILogger logger, Exception ex, int targetCount);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Maintenance task '{TaskName}' affected {RowsAffected} rows in {DurationMs}ms")]
