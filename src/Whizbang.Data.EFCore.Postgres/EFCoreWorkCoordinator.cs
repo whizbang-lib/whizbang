@@ -514,6 +514,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var snaps = BuildSchemaQualifiedName(schema, "wh_perspective_snapshots");
     var perspEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
     var settings = BuildSchemaQualifiedName(schema, "wh_settings");
+    var hold = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -528,6 +529,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       $"JOIN {store} es ON es.event_id = eb.event_id " +
       $"LEFT JOIN {grace} g ON g.event_type = es.event_type " +
       "WHERE (es.flags & 8) = 8 " +
+      // E2-3: skip bodies a hook already held (Cancel/Defer) — don't re-offer them until the hold lapses.
+      $"AND NOT EXISTS (SELECT 1 FROM {hold} h WHERE h.event_id = eb.event_id AND h.hold_until > NOW()) " +
       $"AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
       $"    (SELECT setting_value::int FROM {settings} WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
       $"  * INTERVAL '1 second') " +
@@ -543,6 +546,33 @@ public class EFCoreWorkCoordinator<TDbContext>(
       list.Add(new EphemeralDestructionTarget(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2)));
     }
     return list;
+  }
+
+  /// <inheritdoc />
+  public async Task HoldEphemeralDestructionAsync(
+    IReadOnlyList<Guid> eventIds, DateTimeOffset holdUntil, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    if (eventIds.Count == 0) {
+      return;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var holdTable = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
+    var ids = eventIds as Guid[] ?? [.. eventIds];
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    // Upsert a hold for every event id to the same instant; a later decision (re-defer) overwrites it.
+#pragma warning disable S2077 // Schema-qualified table name from validated schema constant; values are parameters
+    cmd.CommandText =
+      $"INSERT INTO {holdTable} (event_id, hold_until) " +
+      "SELECT unnest(@ids), @until ON CONFLICT (event_id) DO UPDATE SET hold_until = EXCLUDED.hold_until";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = ids });
+    cmd.Parameters.Add(new NpgsqlParameter("until", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = holdUntil.UtcDateTime });
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
   // Issues a guarded UPDATE on wh_service_instances. No-op when the

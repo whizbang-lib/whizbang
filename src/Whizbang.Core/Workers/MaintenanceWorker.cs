@@ -149,16 +149,30 @@ public sealed partial class MaintenanceWorker(
     if (targets.Count == 0) {
       return targets;
     }
-    // Batched: fire the hook ONCE for the whole set of about-to-reap events.
+    // Batched: fire the hook ONCE for the whole set of about-to-reap events, then HONOR its decision.
     try {
       var result = await hook.OnBeforeDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
       LogPreDestruction(_logger, targets.Count, result.Cancel, result.DeferUntil.HasValue);
+      if (result.Cancel || result.DeferUntil.HasValue) {
+        // E2-3: hold the whole batch — Cancel keeps it far-future, Defer holds it to that instant. Task 8
+        // skips held bodies, so nothing is reaped this cycle and PostDestruction does NOT fire (return []).
+        var eventIds = new List<Guid>(targets.Count);
+        foreach (var t in targets) {
+          eventIds.Add(t.EventId);
+        }
+        var until = result.DeferUntil ?? DateTimeOffset.MaxValue;
+        await coordinator.HoldEphemeralDestructionAsync(eventIds, until, ct).ConfigureAwait(false);
+        return [];
+      }
+      // Proceed: no hold — the reap deletes the batch, and PostDestruction fires for it.
+      return targets;
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
+      // Fail-open for now (reap proceeds, no PostDestruction); the retry/hold-on-failure policy lands in E2-5.
       LogPreDestructionFailed(_logger, ex, targets.Count);
+      return [];
     }
-    return targets;
   }
 
   // E2 PostDestruction: fire the registered IDestructionHook's detached post-hook ONCE for the reaped batch,

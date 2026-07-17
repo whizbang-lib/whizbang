@@ -592,6 +592,21 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>([]);
 
   /// <summary>
+  /// E2-3: hold the given ephemeral bodies from the reaper until <paramref name="holdUntil"/>, honoring a
+  /// PreDestruction hook's decision — <c>Cancel</c> passes a far-future instant (keep the data; the
+  /// developer's leak-risk call), <c>Defer(until)</c> passes that instant (after which the body is offered
+  /// to the hook again). Task 8's reap skips any body with an active hold. Idempotent (upsert). Default
+  /// no-op (engines without the ephemeral body offload).
+  /// </summary>
+  /// <param name="eventIds">The event bodies to hold.</param>
+  /// <param name="holdUntil">The instant the hold lapses (e.g. <see cref="DateTimeOffset.MaxValue"/> for Cancel).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task HoldEphemeralDestructionAsync(
+    IReadOnlyList<Guid> eventIds, DateTimeOffset holdUntil, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
   /// Called per-stream immediately after processing (drain mode — no buffering).
   /// </summary>
