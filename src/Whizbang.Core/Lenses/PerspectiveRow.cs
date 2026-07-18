@@ -105,4 +105,14 @@ public class PerspectiveRow<TModel> where TModel : class {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_MultipleEvents_IncrementsVersionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PerspectiveTable_ShouldHaveCorrectSchemaAsync</tests>
   public required int Version { get; set; }
+
+  /// <summary>
+  /// When this row logically expires and becomes eligible for reaping — stamped as <c>emit-time + TTL</c> on
+  /// upsert for a <c>TransientStorage.TtlRow</c> ephemeral perspective (its duration comes from the applied
+  /// <c>Destruction.AfterTtl</c> event). <c>null</c> means the row never expires — the <c>PersistedRow</c> /
+  /// <c>InMemory</c> default. Lens queries hide rows past this instant (logical expiry); a maintenance task
+  /// deletes them (physical). Nullable + <c>set</c> so upserts can refresh it (a sliding last-activity window).
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  public DateTime? ExpiresAt { get; set; }
 }
