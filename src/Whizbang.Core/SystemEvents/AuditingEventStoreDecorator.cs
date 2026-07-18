@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Audit;
@@ -40,7 +41,8 @@ namespace Whizbang.Core.SystemEvents;
 public sealed class AuditingEventStoreDecorator(
     IEventStore inner,
     IDeferredOutboxChannel outboxChannel,
-    IOptions<SystemEventOptions> options) : IEventStore {
+    IOptions<SystemEventOptions> options,
+    ILogger<AuditingEventStoreDecorator>? logger = null) : IEventStore {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -52,6 +54,7 @@ public sealed class AuditingEventStoreDecorator(
   private readonly IDeferredOutboxChannel _outboxChannel = outboxChannel ?? throw new ArgumentNullException(nameof(outboxChannel));
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+  private readonly ILogger<AuditingEventStoreDecorator>? _logger = logger;
 
   /// <inheritdoc />
   public async Task AppendAsync<TMessage>(
@@ -198,7 +201,7 @@ public sealed class AuditingEventStoreDecorator(
         .FirstOrDefault() as AuditEventAttribute;
 
     // Serialize payload to JsonElement (AOT-compatible)
-    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions);
+    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger);
 
     return new EventAudited {
       Id = TrackedGuid.NewMedo(),
@@ -233,7 +236,7 @@ public sealed class AuditingEventStoreDecorator(
     };
 
     // Serialize the envelope to JsonElement form for the outbox
-    var serializedPayload = AuditJsonSerializer.SerializeToJsonElement(auditEvent, _jsonOptions);
+    var serializedPayload = AuditJsonSerializer.SerializeToJsonElement(auditEvent, _jsonOptions, _logger);
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = envelope.MessageId,
       Payload = serializedPayload,

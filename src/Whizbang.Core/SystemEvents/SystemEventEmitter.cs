@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Dispatch;
@@ -31,11 +32,13 @@ namespace Whizbang.Core.SystemEvents;
 /// <param name="systemEventStore">Event store for persisting system events.</param>
 public sealed class SystemEventEmitter(
     IOptions<SystemEventOptions> options,
-    IEventStore systemEventStore) : ISystemEventEmitter {
+    IEventStore systemEventStore,
+    ILogger<SystemEventEmitter>? logger = null) : ISystemEventEmitter {
   private const string SCOPE_TENANT_ID = "TenantId";
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IEventStore _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+  private readonly ILogger<SystemEventEmitter>? _logger = logger;
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(
@@ -82,7 +85,7 @@ public sealed class SystemEventEmitter(
     }
 
     // Serialize payload to JsonElement in AOT-compatible way
-    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions);
+    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger);
 
     // Create the audit event with generic scope
     var auditEvent = new EventAudited {
@@ -134,7 +137,7 @@ public sealed class SystemEventEmitter(
     }
 
     // Serialize command to JsonElement in AOT-compatible way
-    var commandJson = AuditJsonSerializer.SerializeToJsonElement(command, _jsonOptions);
+    var commandJson = AuditJsonSerializer.SerializeToJsonElement(command, _jsonOptions, _logger);
 
     // Create the audit event with generic scope
     var auditEvent = new CommandAudited {
