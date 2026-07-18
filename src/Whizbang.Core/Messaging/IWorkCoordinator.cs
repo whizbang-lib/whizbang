@@ -587,6 +587,11 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="streamId">The stream to close.</param>
   /// <param name="throughVersion">The inclusive per-stream version below which detail is truncated.</param>
+  /// <param name="archive">
+  /// When <see langword="true"/>, the detail is copied to the cold-storage archive (<c>wh_event_archive</c>,
+  /// retrievable via <see cref="GetArchivedEventsAsync"/>) BEFORE the truncate, atomically. When
+  /// <see langword="false"/> (default), the detail is discarded.
+  /// </param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>
   /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>debug_skipped</c> |
@@ -594,8 +599,22 @@ public interface IWorkCoordinator {
   /// </returns>
   /// <docs>fundamentals/events/ephemeral-events</docs>
   Task<StreamCloseResult> CloseStreamAsync(
-    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+    Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
     Task.FromResult(new StreamCloseResult("unsupported", 0));
+
+  /// <summary>
+  /// A1 — read the archived detail of a closed stream from cold storage (<c>wh_event_archive</c>), ordered by
+  /// version. This is the retrieval side of an archiving close (<see cref="CloseStreamAsync"/> with
+  /// <c>archive: true</c>): the period's raw events, preserved out of the hot store for audit / full replay.
+  /// Default: empty (engines without the archive store).
+  /// </summary>
+  /// <param name="streamId">The stream whose archived detail to read.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The archived events for the stream, ordered by version.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyList<ArchivedEvent>> GetArchivedEventsAsync(
+    Guid streamId, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<ArchivedEvent>>([]);
 
   /// <summary>
   /// E2 destruction hooks: the ephemeral event bodies the tier-1 reaper is about to delete THIS cycle —
@@ -941,6 +960,15 @@ public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status)
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record StreamCloseResult(string Status, long EventsTruncated);
+
+/// <summary>
+/// An event read back from the A1 cold-storage archive (<c>wh_event_archive</c>) via
+/// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/> — the preserved detail of a closed stream. Carries
+/// identity + type + the raw body/metadata JSON (typed-envelope rehydration into a rebuild is a later phase).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record ArchivedEvent(
+  Guid EventId, Guid StreamId, long Version, string EventType, string? EventDataJson, string? MetadataJson);
 
 /// <summary>
 /// An ephemeral event body the reaper is about to delete (E2), passed to a destruction hook so it can

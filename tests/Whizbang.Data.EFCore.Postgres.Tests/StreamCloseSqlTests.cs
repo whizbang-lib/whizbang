@@ -171,6 +171,92 @@ public class StreamCloseSqlTests : EFCoreTestBase {
       .Because("A debug-skipped close truncates nothing.");
   }
 
+  private static async Task<long> _archiveCountAsync(NpgsqlConnection connection, Guid streamId) {
+    await using var v = connection.CreateCommand();
+    v.CommandText = "SELECT count(*) FROM wh_event_archive WHERE stream_id = @sid";
+    v.Parameters.AddWithValue("sid", streamId);
+    return (long)(await v.ExecuteScalarAsync())!;
+  }
+
+  [Test]
+  public async Task CloseStream_Archive_MovesDetailToColdStorage_RetrievableAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    var detail1 = Guid.NewGuid();
+    var detail2 = Guid.NewGuid();
+    // No association => consumed vacuously; two detail events (v1-2) + a closing event (v3).
+    await _commitAsync(connection, detail1, streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, detail2, streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");
+
+    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 2, archive: true);
+    await Assert.That(closed.Status).IsEqualTo("closed");
+    await Assert.That(closed.EventsTruncated).IsEqualTo(2L);
+
+    // Detail is gone from the HOT store …
+    await Assert.That(await _eventCountAtOrBelowAsync(connection, streamId, 2)).IsEqualTo(0L)
+      .Because("An archiving close still truncates the hot store.");
+    await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(1L);
+
+    // … but preserved in COLD storage, retrievable in version order with its body intact.
+    await Assert.That(await _archiveCountAsync(connection, streamId)).IsEqualTo(2L);
+    var archived = await coordinator.GetArchivedEventsAsync(streamId);
+    await Assert.That(archived.Count).IsEqualTo(2)
+      .Because("Both truncated detail events are retrievable from the archive.");
+    await Assert.That(archived[0].Version).IsEqualTo(1L);
+    await Assert.That(archived[1].Version).IsEqualTo(2L)
+      .Because("Archived events are returned ordered by version.");
+    await Assert.That(archived[0].EventId).IsEqualTo(detail1);
+    await Assert.That(archived[0].EventDataJson).IsNotNull()
+      .Because("The event body travels into cold storage — full audit / replay stays possible.");
+    await Assert.That(archived[0].EventDataJson!.Contains("OrderId", StringComparison.Ordinal)).IsTrue()
+      .Because("The archived body is the real payload, not a placeholder.");
+  }
+
+  [Test]
+  public async Task CloseStream_Discard_LeavesArchiveEmptyAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");
+
+    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 2, archive: false);
+    await Assert.That(closed.Status).IsEqualTo("closed");
+    await Assert.That(await _archiveCountAsync(connection, streamId)).IsEqualTo(0L)
+      .Because("A discard close (archive: false) truncates the detail without preserving it — leanest, audit lost.");
+    await Assert.That((await coordinator.GetArchivedEventsAsync(streamId)).Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CloseStream_Archive_NoEventLostAcrossBoundaryAsync() {
+    // The archive INSERT and the truncate run in one transaction (the function body). Whatever the outcome,
+    // no event is lost: archived-detail ∪ surviving-hot must equal the original full set.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    for (var i = 0; i < 4; i++) {
+      await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");   // v1-4
+    }
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");       // v5 (origin)
+
+    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 4, archive: true);
+    await Assert.That(closed.Status).IsEqualTo("closed");
+
+    var archived = await _archiveCountAsync(connection, streamId);     // 4 detail
+    var hot = await _streamEventCountAsync(connection, streamId);       // 1 origin
+    await Assert.That(archived + hot).IsEqualTo(5L)
+      .Because("Every event survives the archive+truncate boundary — 4 in cold, 1 in hot, none lost.");
+  }
+
   [Test]
   public async Task CloseStream_TruncatesDetailBodies_KeepsClosingEventBodyAsync() {
     await using var dbContext = CreateDbContext();

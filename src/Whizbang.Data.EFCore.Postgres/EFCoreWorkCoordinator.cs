@@ -503,7 +503,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <inheritdoc />
   public async Task<StreamCloseResult> CloseStreamAsync(
-    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) {
+    Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
@@ -513,7 +513,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand();
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT close_status, events_truncated FROM {fn}(@sid, @through)";
+    cmd.CommandText = $"SELECT close_status, events_truncated FROM {fn}(@sid, @through, @archive)";
 #pragma warning restore S2077
     var pStream = cmd.CreateParameter();
     pStream.ParameterName = "sid";
@@ -523,9 +523,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
     pThrough.ParameterName = "through";
     pThrough.Value = throughVersion;
     cmd.Parameters.Add(pThrough);
+    var pArchive = cmd.CreateParameter();
+    pArchive.ParameterName = "archive";
+    pArchive.Value = archive;
+    cmd.Parameters.Add(pArchive);
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
     return new StreamCloseResult(reader.GetString(0), reader.GetInt64(1));
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<ArchivedEvent>> GetArchivedEventsAsync(
+    Guid streamId, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var archive = BuildSchemaQualifiedName(schema, "wh_event_archive");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
+    cmd.CommandText =
+      $"SELECT event_id, stream_id, version, event_type, event_data::text, metadata::text " +
+      $"FROM {archive} WHERE stream_id = @sid ORDER BY version";
+#pragma warning restore S2077
+    var pStream = cmd.CreateParameter();
+    pStream.ParameterName = "sid";
+    pStream.Value = streamId;
+    cmd.Parameters.Add(pStream);
+    var list = new List<ArchivedEvent>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      list.Add(new ArchivedEvent(
+        reader.GetGuid(0), reader.GetGuid(1), reader.GetInt32(2), reader.GetString(3),
+        reader.IsDBNull(4) ? null : reader.GetString(4),
+        reader.IsDBNull(5) ? null : reader.GetString(5)));
+    }
+    return list;
   }
 
   /// <inheritdoc />
