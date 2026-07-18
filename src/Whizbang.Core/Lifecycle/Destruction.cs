@@ -95,6 +95,13 @@ public sealed record DestructionContext {
   public PerspectiveScope? Scope { get; init; }
 
   /// <summary>
+  /// The single stream being destroyed, for stream-granularity destructions — notably an A1
+  /// <see cref="DestructionReason.PeriodClose"/> close, where the hook needs it to compute the carry-forward
+  /// / archive. <c>null</c> for a cross-stream event batch (see <see cref="Targets"/>).
+  /// </summary>
+  public Guid? StreamId { get; init; }
+
+  /// <summary>
   /// The FULL batch of events being destroyed this invocation — the hook runs ONCE for the whole batch, not
   /// once per event. Each target carries its own event id, stream, and event type. May span many streams.
   /// </summary>

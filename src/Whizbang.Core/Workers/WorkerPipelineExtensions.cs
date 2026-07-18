@@ -60,6 +60,12 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Fingerprint.TypeDefinitionReconciler>>(),
       sp.GetService<Whizbang.Core.IMessageTypeCatalog>()));
     services.TryAddSingleton<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>();
+    // A1 "close the books" (StreamCloser): fires the E2 destruction hook around a Sourced-stream close.
+    // Factory-resolved so the IDestructionHook is optional (null = a thin pass-through to the gated truncate).
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamCloser>(sp => new Whizbang.Core.Lifecycle.StreamCloser(
+      sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamCloser>>(),
+      sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>()));
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
     services.TryAddSingleton<IDeadLetterRecoveryPolicy, DefaultDeadLetterRecoveryPolicy>();
     services.TryAddSingleton<Whizbang.Core.Observability.DeadLetterMetrics>();
