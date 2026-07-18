@@ -577,7 +577,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <inheritdoc />
   public async Task<int> RecordDestructionFailureAsync(
-    IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries, CancellationToken cancellationToken = default) {
+    IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries,
+    Whizbang.Core.Lifecycle.OnDestroyFailure onFailure = Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenForcedDelete,
+    CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventIds);
     if (eventIds.Count == 0) {
       return 0;
@@ -599,10 +601,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // @until backoff. Past the cap → hold_until '-infinity' so Task 8's `hold_until > NOW()` gate FORCE-deletes.
     // Return the batch's highest attempt count so the worker can log retry-vs-forced.
 #pragma warning disable S2077 // Schema-qualified table names from validated schema constant; values are parameters
+    // @pol (OnDestroyFailure): 2=ForceDeleteImmediately ('-infinity' now), 1=RetryThenKeep (past cap => keep,
+    // 'infinity'), 0=RetryThenForcedDelete (past cap => force, '-infinity'). Under the cap all policies use the
+    // TTL-halving/fallback retry_until.
     cmd.CommandText =
       $"WITH src AS ( " +
       $"  SELECT id AS event_id, " +
-      $"    CASE WHEN eb.metadata ->> 'ephemeral_expires_at' IS NOT NULL " +
+      $"    CASE WHEN @pol = 2 THEN '-infinity'::timestamptz " +
+      $"         WHEN eb.metadata ->> 'ephemeral_expires_at' IS NOT NULL " +
       $"         THEN NOW() + ((eb.metadata ->> 'ephemeral_expires_at')::timestamptz - NOW()) / 2 " +
       $"         ELSE @until END AS retry_until " +
       $"  FROM unnest(@ids) AS id " +
@@ -612,13 +618,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
       $"  SELECT event_id, retry_until, 1 FROM src " +
       $"  ON CONFLICT (event_id) DO UPDATE SET " +
       $"    failure_count = {holdTable}.failure_count + 1, " +
-      $"    hold_until = CASE WHEN {holdTable}.failure_count + 1 > @max THEN '-infinity'::timestamptz ELSE EXCLUDED.hold_until END " +
+      $"    hold_until = CASE " +
+      $"      WHEN @pol = 2 THEN '-infinity'::timestamptz " +
+      $"      WHEN {holdTable}.failure_count + 1 > @max " +
+      $"        THEN (CASE WHEN @pol = 1 THEN 'infinity'::timestamptz ELSE '-infinity'::timestamptz END) " +
+      $"      ELSE EXCLUDED.hold_until END " +
       $"  RETURNING failure_count) " +
       "SELECT COALESCE(MAX(failure_count), 0) FROM upserted";
 #pragma warning restore S2077
     cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = ids });
     cmd.Parameters.Add(new NpgsqlParameter("until", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = retryHoldUntil.UtcDateTime });
     cmd.Parameters.Add(new NpgsqlParameter("max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxRetries });
+    cmd.Parameters.Add(new NpgsqlParameter("pol", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (int)onFailure });
     return (int)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
   }
 

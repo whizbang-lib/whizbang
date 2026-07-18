@@ -6,6 +6,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Lifecycle;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -165,6 +166,48 @@ public class EphemeralDestructionHoldSqlTests : EFCoreTestBase {
       .Because("TTL-halving schedules the retry at the midpoint to the event's expiry, not the fixed fallback.");
     await Assert.That(holdUntil).IsLessThan(DateTime.UtcNow.AddDays(60))
       .Because("The midpoint to a ~100-day expiry is ~50 days — well short of the full TTL window.");
+  }
+
+  [Test]
+  public async Task RecordDestructionFailure_ForceDeleteImmediately_ReapsOnFirstFailureAsync() {
+    // OnDestroyFailure.ForceDeleteImmediately: no retry — hold_until '-infinity' on the first failure, so the
+    // reaper deletes the batch this cycle (the pre-E2-5 fail-open behaviour, now an explicit opt-in).
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var eventId = Guid.NewGuid();
+    await _commitEphemeralAsync(connection, eventId, Guid.NewGuid(), "Whizbang.Tests.ForceEvent");
+    await _agePastGraceAsync(connection, eventId);
+
+    await coordinator.RecordDestructionFailureAsync(
+      [eventId], DateTimeOffset.UtcNow.AddHours(1), maxRetries: 5, OnDestroyFailure.ForceDeleteImmediately);
+    await _runMaintenanceAsync(connection);
+
+    await Assert.That(await _bodyCountAsync(connection, eventId)).IsEqualTo(0L)
+      .Because("ForceDeleteImmediately reaps on the first failure — no retry.");
+  }
+
+  [Test]
+  public async Task RecordDestructionFailure_RetryThenKeep_KeepsPastCapAsync() {
+    // OnDestroyFailure.RetryThenKeep: past the retry cap, hold_until 'infinity' — the body is KEPT, never
+    // force-deleted (the developer's explicit leak-risk choice).
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var eventId = Guid.NewGuid();
+    await _commitEphemeralAsync(connection, eventId, Guid.NewGuid(), "Whizbang.Tests.KeepEvent");
+    await _agePastGraceAsync(connection, eventId);
+    var future = DateTimeOffset.UtcNow.AddHours(1);
+
+    // cap 1: attempt 1 holds; attempt 2 (> cap) => 'infinity' (keep, NOT force).
+    await coordinator.RecordDestructionFailureAsync([eventId], future, maxRetries: 1, OnDestroyFailure.RetryThenKeep);
+    await coordinator.RecordDestructionFailureAsync([eventId], future, maxRetries: 1, OnDestroyFailure.RetryThenKeep);
+    await _runMaintenanceAsync(connection);
+
+    await Assert.That(await _bodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("RetryThenKeep never force-deletes — past the cap the body is kept (held far-future).");
   }
 
   [Test]

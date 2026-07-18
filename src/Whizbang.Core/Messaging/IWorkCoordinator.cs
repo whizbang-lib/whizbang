@@ -621,6 +621,7 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/events/ephemeral-events</docs>
   Task<int> RecordDestructionFailureAsync(
     IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries,
+    Lifecycle.OnDestroyFailure onFailure = Lifecycle.OnDestroyFailure.RetryThenForcedDelete,
     CancellationToken cancellationToken = default) => Task.FromResult(int.MaxValue);
 
   /// <summary>

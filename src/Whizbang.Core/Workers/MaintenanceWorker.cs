@@ -179,10 +179,17 @@ public sealed partial class MaintenanceWorker(
         eventIds.Add(t.EventId);
       }
       var retryUntil = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
+      var policy = _options.OnDestroyFailure;
       var attempt = await coordinator.RecordDestructionFailureAsync(
-        eventIds, retryUntil, _options.MaxDestructionRetries, ct).ConfigureAwait(false);
-      LogPreDestructionFailed(_logger, ex, targets.Count, attempt, _options.MaxDestructionRetries,
-        attempt > _options.MaxDestructionRetries ? "FORCED DELETE (retries exhausted)" : "held for retry");
+        eventIds, retryUntil, _options.MaxDestructionRetries, policy, ct).ConfigureAwait(false);
+      var exhausted = attempt > _options.MaxDestructionRetries;
+      var outcome = policy switch {
+        Lifecycle.OnDestroyFailure.ForceDeleteImmediately => "FORCED DELETE (policy=ForceDeleteImmediately)",
+        Lifecycle.OnDestroyFailure.RetryThenKeep when exhausted => "KEPT (retries exhausted, policy=RetryThenKeep)",
+        _ when exhausted => "FORCED DELETE (retries exhausted)",
+        _ => "held for retry",
+      };
+      LogPreDestructionFailed(_logger, ex, targets.Count, attempt, _options.MaxDestructionRetries, outcome);
       return [];
     }
   }
@@ -347,4 +354,12 @@ public sealed class MaintenanceWorkerOptions {
   /// </summary>
   /// <docs>fundamentals/events/ephemeral-events</docs>
   public int MaxDestructionRetries { get; set; } = 5;
+
+  /// <summary>
+  /// The failure policy applied when a <c>PreDestruction</c> hook keeps failing: retry-then-forced-delete
+  /// (default), retry-then-keep (never lose the data), or force-delete-immediately. The global default; a
+  /// per-type <c>[Ephemeral(OnDestroyFailure)]</c> override is a later refinement.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  public Lifecycle.OnDestroyFailure OnDestroyFailure { get; set; } = Lifecycle.OnDestroyFailure.RetryThenForcedDelete;
 }

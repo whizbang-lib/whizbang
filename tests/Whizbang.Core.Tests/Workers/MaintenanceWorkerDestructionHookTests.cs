@@ -67,11 +67,11 @@ public class MaintenanceWorkerDestructionHookTests {
       return Task.CompletedTask;
     }
 
-    public List<(IReadOnlyList<Guid> Ids, DateTimeOffset Until, int Max)> Failures { get; } = [];
+    public List<(IReadOnlyList<Guid> Ids, DateTimeOffset Until, int Max, Whizbang.Core.Lifecycle.OnDestroyFailure Policy)> Failures { get; } = [];
     public int FailureAttemptToReturn { get; set; } = 1;
 
-    public Task<int> RecordDestructionFailureAsync(IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries, CancellationToken cancellationToken = default) {
-      Failures.Add((eventIds, retryHoldUntil, maxRetries));
+    public Task<int> RecordDestructionFailureAsync(IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries, Whizbang.Core.Lifecycle.OnDestroyFailure onFailure = Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenForcedDelete, CancellationToken cancellationToken = default) {
+      Failures.Add((eventIds, retryHoldUntil, maxRetries, onFailure));
       return Task.FromResult(FailureAttemptToReturn);
     }
 
