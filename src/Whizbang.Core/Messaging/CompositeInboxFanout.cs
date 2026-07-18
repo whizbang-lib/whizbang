@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
@@ -32,8 +33,7 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#dispatch-fanout</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Fan-out diagnostic logging fires only on a rare dropped-child failure path; LoggerMessage overhead isn't justified.")]
-public static class CompositeInboxFanout {
+public static partial class CompositeInboxFanout {
   private const string LOG_CATEGORY = "Whizbang.Core.Messaging.CompositeInboxFanout";
 
   /// <summary>The disposition of a fan-out attempt.</summary>
@@ -85,7 +85,9 @@ public static class CompositeInboxFanout {
     var serializer = scope.GetService<IEnvelopeSerializer>()
       ?? throw new InvalidOperationException("IEnvelopeSerializer is required for composite fan-out but is not registered.");
     var eventTypeProvider = scope.GetService<IEventTypeProvider>();
-    var logger = scope.GetService<ILoggerFactory>()?.CreateLogger(LOG_CATEGORY);
+    // Null-object default so a dropped inner event is ALWAYS logged (NullLogger no-ops only when the
+    // host has no logging configured).
+    var logger = scope.GetService<ILoggerFactory>()?.CreateLogger(LOG_CATEGORY) ?? NullLogger.Instance;
 
     // A pre-fanout directive may replace the composite's own inner events (filter / transform / re-key).
     var inners = replacementInner ?? composite.InnerEvents;
@@ -121,9 +123,7 @@ public static class CompositeInboxFanout {
         // in full and summarize the rest, so a partially-lost fan-out is diagnosable rather than
         // reported as a clean Expanded.
         if (droppedCount == 0) {
-          logger?.LogWarning(
-            "Composite '{Composite}' dropped a null inner event at position {Position} under independent atomicity (first drop this fan-out).",
-            compositeTypeName, count - 1);
+          LogNullInnerDropped(logger, compositeTypeName, count - 1);
         }
         droppedCount++;
         continue;
@@ -139,18 +139,14 @@ public static class CompositeInboxFanout {
         }
         // Independent: one bad child doesn't sink the batch — drop it and continue, but log it.
         if (droppedCount == 0) {
-          logger?.LogWarning(ex,
-            "Composite '{Composite}' dropped an inner event that failed to serialize under independent atomicity (first drop this fan-out).",
-            compositeTypeName);
+          LogInnerSerializeDropped(logger, ex, compositeTypeName);
         }
         droppedCount++;
       }
     }
 
     if (droppedCount > 0) {
-      logger?.LogWarning(
-        "Composite '{Composite}' dropped {DroppedCount} inner event(s) under independent atomicity; see the first-drop detail logged above.",
-        compositeTypeName, droppedCount);
+      LogDroppedSummary(logger, compositeTypeName, droppedCount);
     }
 
     return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName);
@@ -269,4 +265,22 @@ public static class CompositeInboxFanout {
     }
     return envelope.MessageId.Value;
   }
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Composite '{Composite}' dropped a null inner event at position {Position} under independent atomicity (first drop this fan-out)."
+  )]
+  private static partial void LogNullInnerDropped(ILogger logger, string composite, int position);
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Composite '{Composite}' dropped an inner event that failed to serialize under independent atomicity (first drop this fan-out)."
+  )]
+  private static partial void LogInnerSerializeDropped(ILogger logger, Exception ex, string composite);
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Composite '{Composite}' dropped {DroppedCount} inner event(s) under independent atomicity; see the first-drop detail logged above."
+  )]
+  private static partial void LogDroppedSummary(ILogger logger, string composite, int droppedCount);
 }

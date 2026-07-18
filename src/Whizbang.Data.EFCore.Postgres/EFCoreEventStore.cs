@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
@@ -24,7 +25,6 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs</tests>
 #pragma warning disable S2743 // Static diagnostic flag is intentionally per-generic-type (reads same env var)
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Event store diagnostic logging fires only on a rare deserialize-skip failure path; LoggerMessage overhead isn't justified.")]
 public sealed class EFCoreEventStore<TDbContext>(
   TDbContext context,
   JsonSerializerOptions? jsonOptions = null,
@@ -33,7 +33,9 @@ public sealed class EFCoreEventStore<TDbContext>(
 
   private readonly TDbContext _context = context ?? throw new ArgumentNullException(nameof(context));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
-  private readonly ILogger<EFCoreEventStore<TDbContext>>? _logger = logger;
+  // Null-object default so a drain deserialize failure is ALWAYS logged: DI supplies a real logger in
+  // production; the NullLogger fallback only applies to manual construction / a log-free host.
+  private readonly ILogger<EFCoreEventStore<TDbContext>> _logger = logger ?? NullLogger<EFCoreEventStore<TDbContext>>.Instance;
 
   /// <summary>
   /// Appends an event to the specified stream.
@@ -503,9 +505,7 @@ public sealed class EFCoreEventStore<TDbContext>(
         // "0 typed events" with no diagnostic, stalling perspective completion for days. Log the
         // first failure per batch in full (with the exception), then summarize the count.
         if (deserializeFailures == 0) {
-          _logger?.LogWarning(ex,
-            "Failed to deserialize stream event {EventId} of type {EventType} during drain; skipping this event (first failure this batch).",
-            raw.EventId, raw.EventType);
+          EFCoreEventStoreLog.DrainDeserializeFailure(_logger, ex, raw.EventId, raw.EventType);
         }
         deserializeFailures++;
         continue;
@@ -517,9 +517,7 @@ public sealed class EFCoreEventStore<TDbContext>(
     }
 
     if (deserializeFailures > 0) {
-      _logger?.LogWarning(
-        "Drain deserialization skipped {SkippedCount} of {TotalCount} stream event(s) this batch; see the first-failure detail logged above.",
-        deserializeFailures, streamEvents.Count);
+      EFCoreEventStoreLog.DrainDeserializeSkipped(_logger, deserializeFailures, streamEvents.Count);
     }
 
     return results;
@@ -581,4 +579,21 @@ public sealed class EFCoreEventStore<TDbContext>(
     var scopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
     return (PerspectiveScope?)JsonSerializer.Deserialize(raw, scopeTypeInfo);
   }
+}
+
+/// <summary>
+/// Source-generated log messages for <see cref="EFCoreEventStore{TDbContext}"/>. Kept as a separate
+/// non-generic class because the <c>[LoggerMessage]</c> source generator does not emit into generic
+/// containing types.
+/// </summary>
+internal static partial class EFCoreEventStoreLog {
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Failed to deserialize stream event {EventId} of type {EventType} during drain; skipping this event (first failure this batch).")]
+  public static partial void DrainDeserializeFailure(ILogger logger, Exception ex, Guid eventId, string eventType);
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Drain deserialization skipped {SkippedCount} of {TotalCount} stream event(s) this batch; see the first-failure detail logged above.")]
+  public static partial void DrainDeserializeSkipped(ILogger logger, int skippedCount, int totalCount);
 }

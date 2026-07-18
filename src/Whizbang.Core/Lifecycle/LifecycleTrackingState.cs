@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -20,17 +22,19 @@ namespace Whizbang.Core.Lifecycle;
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#tracking-state</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
-internal sealed class LifecycleTrackingState(
+internal sealed partial class LifecycleTrackingState(
   Guid eventId,
   IMessageEnvelope envelope,
   LifecycleStage entryStage,
   MessageSource source,
   Guid? streamId,
-  Type? perspectiveType) : ILifecycleTracking {
+  Type? perspectiveType,
+  ILogger? logger = null) : ILifecycleTracking {
   private readonly IMessageEnvelope _envelope = envelope;
   private readonly MessageSource _source = source;
   private readonly Guid? _streamId = streamId;
   private readonly Type? _perspectiveType = perspectiveType;
+  private readonly ILogger _logger = logger ?? NullLogger.Instance;
   private readonly DebugAwareStopwatch _totalStopwatch = DebugAwareStopwatch.StartNew();
   private readonly List<StageRecord> _stageHistory = [];
   private readonly HashSet<LifecycleStage> _firedStages = [];
@@ -157,10 +161,11 @@ internal sealed class LifecycleTrackingState(
             context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
         } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
           // Graceful shutdown
-#pragma warning disable RCS1075 // No logger available in tracking state; errors surface via receptor telemetry
-        } catch (Exception) {
-#pragma warning restore RCS1075
-          // Errors surface via receptor telemetry — no logger available in tracking state
+        } catch (Exception ex) {
+          // Errors normally surface via receptor telemetry, but a throw BEFORE telemetry (DI scope /
+          // security-context failure) would fail the detached stage invisibly — always log it via the
+          // injected logger (NullLogger no-ops only for manual construction / a log-free host).
+          LogDetachedStageError(_logger, ex, stage, _envelope.MessageId.Value);
         }
       }, ct);
       lock (_lock) {
@@ -192,4 +197,10 @@ internal sealed class LifecycleTrackingState(
       _stageHistory.Add(new StageRecord(stage, stageStopwatch.Elapsed, startedAt));
     }
   }
+
+  [LoggerMessage(
+    Level = LogLevel.Error,
+    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
+  )]
+  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid messageId);
 }

@@ -736,13 +736,23 @@ public partial class TransportConsumerWorker : BackgroundService {
           ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, default);
       } catch (OperationCanceledException) {
         // Graceful shutdown
-#pragma warning disable RCS1075 // No logger in static context; errors surface via receptor telemetry
-      } catch (Exception) {
-#pragma warning restore RCS1075
-        // Static context — errors surface via receptor telemetry
+      } catch (Exception ex) {
+        // Errors normally surface via receptor telemetry, but a throw BEFORE telemetry (DI scope /
+        // security-context failure) would fail the detached stage invisibly. Resolve a logger from a
+        // fresh scope (the work scope is already disposed) and record it via LoggerMessage.
+        using var logScope = scopeFactory.CreateScope();
+        ILogger detachedLogger = logScope.ServiceProvider.GetService<ILogger<TransportConsumerWorker>>()
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<TransportConsumerWorker>.Instance;
+        LogDetachedStageError(detachedLogger, ex, stage, envelope.MessageId.Value);
       }
     });
   }
+
+  [LoggerMessage(
+    Level = LogLevel.Error,
+    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
+  )]
+  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid messageId);
 
   /// <summary>
   /// Creates InboxMessage for work coordinator pattern.

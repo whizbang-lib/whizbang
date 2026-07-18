@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Dispatch;
@@ -38,7 +39,7 @@ public sealed class SystemEventEmitter(
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IEventStore _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-  private readonly ILogger<SystemEventEmitter>? _logger = logger;
+  private readonly ILogger<SystemEventEmitter> _logger = logger ?? NullLogger<SystemEventEmitter>.Instance;
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(
