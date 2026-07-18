@@ -387,6 +387,52 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Reap_AfterTtl_PastExpiry_StillHeldUntilSnapshotCoversAsync() {
+    // E2-6 (snapshot-on-purge): the snapshot-coverage floor is enforced at the TTL purge boundary, not just
+    // the consumption boundary. An AfterTtl body that is consumed, aged past grace, AND past its stamped
+    // expiry — everything the TTL floor needs to reap — is STILL held while its consuming perspective lacks a
+    // covering snapshot, because reaping it would leave that ephemeral perspective with neither events nor an
+    // authoritative snapshot. The two floors COMPOSE: reap only when consumed AND aged AND past-TTL AND covered.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);   // isolate the TTL + coverage floors from the grace window
+
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    const string eventType = "Whizbang.Tests.TtlCoverageEvent";
+    await _seedPerspectiveAssociationAsync(connection, eventType, "TtlCoverPerspective");
+    await _commitWithTtlAsync(connection, eventId, streamId, eventType, 3600);
+
+    // Consume + stamp commit_sequence, age past grace, and push the stamped expiry into the PAST — so the TTL
+    // floor alone would reap it. No snapshot yet.
+    await using (var c = connection.CreateCommand()) {
+      c.CommandText = "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_id = @id; " +
+        "UPDATE wh_event_store SET commit_sequence = 9 WHERE event_id = @id";
+      c.Parameters.AddWithValue("id", eventId);
+      await c.ExecuteNonQueryAsync();
+    }
+    await _ageAsync(connection, eventId, "10 minutes");
+    await _setBodyExpiryAsync(connection, eventId, DateTimeOffset.UtcNow.AddMinutes(-1));
+
+    // Past-TTL + consumed + aged, but UNCOVERED => held by the coverage gate at the TTL boundary.
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("Snapshot-on-purge: even past its TTL, an ephemeral body is held until its perspective has a snapshot floor — the TTL purge must never outrun the rewind floor.");
+
+    // Cover it at/past the event's commit_sequence => now every floor is satisfied.
+    await using (var snap = connection.CreateCommand()) {
+      snap.CommandText = "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence) " +
+        "VALUES (@sid, 'TtlCoverPerspective', @eid, '{}'::jsonb, 1, 9)";
+      snap.Parameters.AddWithValue("sid", streamId);
+      snap.Parameters.AddWithValue("eid", eventId);
+      await snap.ExecuteNonQueryAsync();
+    }
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(0L)
+      .Because("Past-TTL AND snapshot-covered AND consumed AND aged — all floors satisfied, so the body is reaped.");
+  }
+
+  [Test]
   public async Task Reap_SourcedBodyInBodyTable_IsNeverReapedAsync() {
     // #13b4 safety gate. The full split moves SOURCED bodies into wh_event_body too, breaking the
     // "wh_event_body holds ONLY ephemeral bodies by construction" invariant the reaper leaned on. The reap
