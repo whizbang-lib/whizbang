@@ -385,6 +385,10 @@ public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(
 
     // Configure PerspectiveRow<SoftDeletableModel> as entity (for soft delete tests)
     ConfigurePerspectiveRow<SoftDeletableModel>(modelBuilder);
+
+    // Configure PerspectiveRow<TtlRowStoreModel> (E2-4d TtlRow upsert-stamp tests). Dedicated model so a
+    // process-wide PerspectiveTtlRegistry registration can't leak an expires_at onto other tests' rows.
+    ConfigurePerspectiveRow<TtlRowStoreModel>(modelBuilder);
   }
 
   private static void ConfigurePerspectiveRow<TModel>(ModelBuilder modelBuilder)
@@ -409,6 +413,10 @@ public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(
           .HasConversion(
               v => JsonSerializer.Serialize(v, JsonSerializerOptions.Default),
               v => JsonSerializer.Deserialize<PerspectiveScope>(v, JsonSerializerOptions.Default)!);
+
+      // E2-4d: the expires_at shadow property (mirrors the production config) so the TtlRow upsert-stamp +
+      // lens-filter tests can set/read it. Harmless for non-TtlRow models (stays null).
+      entity.Property<DateTime?>("expires_at");
     });
   }
 }

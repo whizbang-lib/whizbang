@@ -186,6 +186,77 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_TtlRowPerspective_RegistersRowTtlAsync() {
+    // E2-4d: a perspective whose [Ephemeral] events chose TransientStorage.TtlRow emits a [ModuleInitializer]
+    // registering its row TTL (max across its TtlRow events) so the upsert stamps expires_at.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.AfterTtl, Storage = TransientStorage.TtlRow, TtlSeconds = 7776000)]
+  public record ChatMessage : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record ThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  public class ThreadPerspective : IPerspectiveFor<ThreadModel, ChatMessage> {
+    public ThreadModel Apply(ThreadModel currentData, ChatMessage @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]")
+      .Because("A TtlRow perspective registers its row TTL via a module initializer.");
+    await Assert.That(runnerSource!).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.ThreadModel), 7776000)")
+      .Because("The registration carries the perspective's model type and its resolved row TTL in seconds.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_NonTtlRowPerspective_DoesNotRegisterRowTtlAsync() {
+    // A WhenConsumed/InMemory ephemeral perspective is NOT TtlRow — its rows never expire, so no registration.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+  public record UserIsTyping : IEvent {
+    public string ConversationId { get; init; } = "";
+  }
+
+  public record PresenceModel {
+    [StreamId]
+    public string ConversationId { get; init; } = "";
+  }
+
+  public class PresencePerspective : IPerspectiveFor<PresenceModel, UserIsTyping> {
+    public PresenceModel Apply(PresenceModel currentData, UserIsTyping @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).DoesNotContain("PerspectiveTtlRegistry.Register")
+      .Because("A non-TtlRow perspective's rows never expire, so no TTL is registered.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_SourcedPerspective_UsesStandardSnapshotSettingsAsync() {
     const string source = """
 

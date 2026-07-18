@@ -37,7 +37,8 @@ internal sealed record PerspectiveInfo(
     bool IsModelRecord = false,
     bool HasScopeInterface = false,
     int InheritScopeOnCreate = 63,
-    bool IsEphemeral = false
+    bool IsEphemeral = false,
+    int TtlRowSeconds = -1
 );
 
 /// <summary>

@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -554,6 +556,45 @@ public class EFCorePostgresPerspectiveStoreTests {
     await Assert.That(row.Scope.UserId).IsNull();
   }
 
+  // === E2-4d: TtlRow upsert-stamp (expires_at) ===
+
+  [Test]
+  public async Task UpsertAsync_TtlRowModel_StampsExpiresAtSlidingWindowAsync() {
+    // A perspective whose model is registered in PerspectiveTtlRegistry (its [Ephemeral] events chose
+    // TransientStorage.TtlRow) stamps expires_at = now + ttl on upsert. Dedicated model so the process-wide
+    // registration never leaks onto other tests' rows.
+    var context = CreateInMemoryDbContext();
+    var store = new EFCorePostgresPerspectiveStore<TtlRowStoreModel>(context, "ttl_row_perspective", new InMemoryUpsertStrategy());
+    PerspectiveTtlRegistry.Register(typeof(TtlRowStoreModel), 3600);
+    var testId = _idProvider.NewGuid();
+
+    await store.UpsertAsync(testId, new TtlRowStoreModel { Name = "chat" });
+
+    var row = await context.Set<PerspectiveRow<TtlRowStoreModel>>().FirstOrDefaultAsync(r => r.Id == testId);
+    await Assert.That(row).IsNotNull();
+    var expiresAt = (DateTime?)context.Entry(row!).Property("expires_at").CurrentValue;
+    await Assert.That(expiresAt).IsNotNull()
+      .Because("A TtlRow perspective stamps the expires_at shadow property on upsert.");
+    var expected = DateTime.UtcNow.AddSeconds(3600);
+    await Assert.That(Math.Abs((expiresAt!.Value - expected).TotalSeconds)).IsLessThanOrEqualTo(60)
+      .Because("expires_at = now + the registered TTL (a sliding last-activity window).");
+  }
+
+  [Test]
+  public async Task UpsertAsync_NonTtlRowModel_LeavesExpiresAtNullAsync() {
+    // StoreTestModel is never registered — its rows never expire (the PersistedRow default).
+    var context = CreateInMemoryDbContext();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", new InMemoryUpsertStrategy());
+    var testId = _idProvider.NewGuid();
+
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "persisted", Value = 1 });
+
+    var row = await context.Set<PerspectiveRow<StoreTestModel>>().FirstOrDefaultAsync(r => r.Id == testId);
+    var expiresAt = (DateTime?)context.Entry(row!).Property("expires_at").CurrentValue;
+    await Assert.That(expiresAt).IsNull()
+      .Because("A model with no TtlRow registration never expires — expires_at stays NULL.");
+  }
+
   [Test]
   public async Task GetMetadataByStreamIdAsync_WhenRowDoesNotExist_ReturnsNullAsync() {
     var context = CreateInMemoryDbContext();
@@ -707,4 +748,12 @@ public class SoftDeletableModel {
   public required string Name { get; init; }
   public required int Value { get; init; }
   public DateTimeOffset? DeletedAt { get; init; }
+}
+
+/// <summary>
+/// Dedicated model for the E2-4d TtlRow upsert-stamp tests. Kept separate so registering it in the
+/// process-wide <see cref="PerspectiveTtlRegistry"/> cannot leak an <c>expires_at</c> onto other tests' rows.
+/// </summary>
+public class TtlRowStoreModel {
+  public required string Name { get; init; }
 }

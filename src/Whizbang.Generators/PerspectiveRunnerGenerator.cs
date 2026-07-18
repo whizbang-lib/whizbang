@@ -118,6 +118,20 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // window before consumed bodies are reaped. Resolved at compile time — zero reflection.
     var isEphemeral = eventTypeSymbols.Any(static s => EphemeralResolver.IsEphemeral(s));
 
+    // TtlRow perspective-row expiry (E2-4d): resolved virally like isEphemeral. If ANY applied [Ephemeral]
+    // event chose TransientStorage.TtlRow, the perspective's rows expire; the TTL is the LONGEST of its
+    // TtlRow events' TtlSeconds (keep the row until its longest-lived contributing data expires). -1 = the
+    // rows never expire (no TtlRow event). The generator emits a [ModuleInitializer] to register this TTL.
+    var ttlRowSeconds = -1;
+    foreach (var s in eventTypeSymbols) {
+      if (s is INamedTypeSymbol named && EphemeralResolver.Resolve(named) is { Storage: "TtlRow" }) {
+        var ttl = EphemeralResolver.ResolveTtlSeconds(named);
+        if (ttl > ttlRowSeconds) {
+          ttlRowSeconds = ttl;
+        }
+      }
+    }
+
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
@@ -189,7 +203,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             IsModelRecord: isModelRecord,
             HasScopeInterface: hasScopeInterface,
             InheritScopeOnCreate: inheritScopeOnCreate,
-            IsEphemeral: isEphemeral
+            IsEphemeral: isEphemeral,
+            TtlRowSeconds: ttlRowSeconds
         ),
         Warning: null
     );
@@ -422,6 +437,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         : "var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;");
     result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
         $"private const bool _isEphemeralPerspective = {(perspective.IsEphemeral ? "true" : "false")};");
+    // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
+    // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
+    result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
+        ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerRowTtl() =>\n      global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.Register(typeof({modelTypeName}), {perspective.TtlRowSeconds});"
+        : "");
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);

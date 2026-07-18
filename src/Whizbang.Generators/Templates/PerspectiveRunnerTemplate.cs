@@ -60,6 +60,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private const bool _isEphemeralPerspective = false;
   #endregion
 
+  #region TTL_REGISTRATION
+  // Generated: for a TransientStorage.TtlRow perspective, a [ModuleInitializer] registers the row TTL so the
+  // EF Core upsert stamps expires_at = now + ttl. Empty for non-TtlRow perspectives (their rows never expire).
+  #endregion
+
   private readonly IServiceProvider _serviceProvider;
   private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
   private readonly IEventStore _eventStore;
