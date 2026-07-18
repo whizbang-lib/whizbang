@@ -169,8 +169,20 @@ public sealed partial class MaintenanceWorker(
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
-      // Fail-open for now (reap proceeds, no PostDestruction); the retry/hold-on-failure policy lands in E2-5.
-      LogPreDestructionFailed(_logger, ex, targets.Count);
+      // E2-5: a throwing PreDestruction hook no longer fails open. The batch is HELD for a backoff (re-offered
+      // to the hook next cycle) up to MaxDestructionRetries; past that a FORCED delete lets the reap proceed,
+      // so a permanently-broken hook can never leak storage. RecordDestructionFailureAsync increments the
+      // batch's attempt count and returns its highest; on engines without the hold infra it returns int.MaxValue
+      // (⇒ forced delete ⇒ the prior fail-open behaviour). No PostDestruction fires on failure.
+      var eventIds = new List<Guid>(targets.Count);
+      foreach (var t in targets) {
+        eventIds.Add(t.EventId);
+      }
+      var retryUntil = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
+      var attempt = await coordinator.RecordDestructionFailureAsync(
+        eventIds, retryUntil, _options.MaxDestructionRetries, ct).ConfigureAwait(false);
+      LogPreDestructionFailed(_logger, ex, targets.Count, attempt, _options.MaxDestructionRetries,
+        attempt > _options.MaxDestructionRetries ? "FORCED DELETE (retries exhausted)" : "held for retry");
       return [];
     }
   }
@@ -250,8 +262,8 @@ public sealed partial class MaintenanceWorker(
   static partial void LogPreDestruction(ILogger logger, int targetCount, bool cancel, bool defer);
 
   [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
-    Message = "PreDestruction hook threw for a batch of {TargetCount} ephemeral events (non-fatal — reap proceeds; retry policy lands in a later increment)")]
-  static partial void LogPreDestructionFailed(ILogger logger, Exception ex, int targetCount);
+    Message = "PreDestruction hook threw for a batch of {TargetCount} ephemeral events — attempt {Attempt}/{MaxRetries}; {Outcome}")]
+  static partial void LogPreDestructionFailed(ILogger logger, Exception ex, int targetCount, int attempt, int maxRetries, string outcome);
 
   [LoggerMessage(EventId = 26, Level = LogLevel.Warning,
     Message = "PostDestruction hook threw for a batch of {TargetCount} ephemeral events (non-fatal)")]
@@ -321,4 +333,18 @@ public sealed class MaintenanceWorkerOptions {
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
   public int StuckRowSentinelLimit { get; set; } = 50;
+
+  /// <summary>
+  /// Backoff (seconds) before a FAILED destruction batch (a throwing <c>PreDestruction</c> hook) is retried.
+  /// The batch is held for this long, so the next maintenance cycle re-offers it to the hook. Default 300 (5m).
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  public int DestructionRetryBackoffSeconds { get; set; } = 300;
+
+  /// <summary>
+  /// Max retries of a failing destruction batch before a FORCED delete (the reaper deletes the batch despite
+  /// the failing hook, so a permanently-broken hook can never leak storage). Default 5.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  public int MaxDestructionRetries { get; set; } = 5;
 }

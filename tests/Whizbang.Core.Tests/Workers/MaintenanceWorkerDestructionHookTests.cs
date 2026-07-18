@@ -67,6 +67,14 @@ public class MaintenanceWorkerDestructionHookTests {
       return Task.CompletedTask;
     }
 
+    public List<(IReadOnlyList<Guid> Ids, DateTimeOffset Until, int Max)> Failures { get; } = [];
+    public int FailureAttemptToReturn { get; set; } = 1;
+
+    public Task<int> RecordDestructionFailureAsync(IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries, CancellationToken cancellationToken = default) {
+      Failures.Add((eventIds, retryHoldUntil, maxRetries));
+      return Task.FromResult(FailureAttemptToReturn);
+    }
+
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) {
       _log.Add("reap");
       return Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
@@ -182,17 +190,29 @@ public class MaintenanceWorkerDestructionHookTests {
   }
 
   [Test]
-  public async Task RunMaintenanceOnce_HookThrowsOnBefore_IsNonFatal_ReapStillRunsAsync() {
+  public async Task RunMaintenanceOnce_HookThrows_RecordsFailureForRetry_NoPostDestructionAsync() {
     var log = new List<string>();
+    var e1 = Guid.NewGuid();
     var coord = new FakeCoordinator(log) {
-      Targets = [new EphemeralDestructionTarget(Guid.NewGuid(), Guid.NewGuid(), "T")],
+      Targets = [new EphemeralDestructionTarget(e1, Guid.NewGuid(), "T")],
+      FailureAttemptToReturn = 1,   // first attempt — under the cap
     };
 
-    // A throwing pre-hook must not take down the cycle; the reap still runs.
+    // A throwing pre-hook must not take down the cycle (the reap still runs), and E2-5 records the failure so
+    // the batch is retried instead of failing open.
     await _buildWorker(coord, new RecordingHook(log, throwOnBefore: true)).RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(log).Contains("before:1");
     await Assert.That(log).Contains("reap")
-      .Because("A PreDestruction hook failure is logged and non-fatal — the maintenance cycle completes.");
+      .Because("A PreDestruction hook failure is non-fatal — the maintenance cycle completes.");
+    await Assert.That(coord.Failures.Count).IsEqualTo(1)
+      .Because("A throwing hook records a destruction failure (retryable) instead of failing open.");
+    await Assert.That(coord.Failures[0].Ids).IsEquivalentTo(new[] { e1 });
+    await Assert.That(coord.Failures[0].Max).IsEqualTo(5)
+      .Because("The default MaxDestructionRetries (5) is passed so the coordinator can force-delete past the cap.");
+    await Assert.That(coord.Failures[0].Until).IsGreaterThan(DateTimeOffset.UtcNow)
+      .Because("The batch is held for a backoff (now + DestructionRetryBackoffSeconds) so it retries next cycle.");
+    await Assert.That(log).DoesNotContain("after:1")
+      .Because("PostDestruction does not fire when the pre-hook failed.");
   }
 }

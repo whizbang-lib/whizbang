@@ -575,6 +575,42 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
+  /// <inheritdoc />
+  public async Task<int> RecordDestructionFailureAsync(
+    IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    if (eventIds.Count == 0) {
+      return 0;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var holdTable = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
+    var ids = eventIds as Guid[] ?? [.. eventIds];
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    // Upsert +1 attempt per event. Under the cap → hold for the backoff (retry next cycle). Past the cap →
+    // hold_until '-infinity' so Task 8's `hold_until > NOW()` gate lets the reap FORCE-delete the batch.
+    // Return the batch's highest attempt count so the worker can log retry-vs-forced.
+#pragma warning disable S2077 // Schema-qualified table name from validated schema constant; values are parameters
+    cmd.CommandText =
+      $"WITH upserted AS ( " +
+      $"  INSERT INTO {holdTable} (event_id, hold_until, failure_count) " +
+      $"  SELECT unnest(@ids), @until, 1 " +
+      $"  ON CONFLICT (event_id) DO UPDATE SET " +
+      $"    failure_count = {holdTable}.failure_count + 1, " +
+      $"    hold_until = CASE WHEN {holdTable}.failure_count + 1 > @max THEN '-infinity'::timestamptz ELSE @until END " +
+      $"  RETURNING failure_count) " +
+      "SELECT COALESCE(MAX(failure_count), 0) FROM upserted";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = ids });
+    cmd.Parameters.Add(new NpgsqlParameter("until", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = retryHoldUntil.UtcDateTime });
+    cmd.Parameters.Add(new NpgsqlParameter("max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxRetries });
+    return (int)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+  }
+
   // Issues a guarded UPDATE on wh_service_instances. No-op when the
   // instance provider isn't wired (the EFCoreWorkCoordinator can be
   // constructed without one — historical contract) or when the heartbeat

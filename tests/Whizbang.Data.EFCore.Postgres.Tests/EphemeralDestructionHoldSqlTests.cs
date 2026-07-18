@@ -99,6 +99,41 @@ public class EphemeralDestructionHoldSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task RecordDestructionFailure_HoldsForRetry_ThenForcedDeletePastCapAsync() {
+    // E2-5: a throwing PreDestruction hook records a failure — the batch is held for a backoff (retried next
+    // cycle) up to the cap, then force-deleted (the reaper deletes it despite the failing hook).
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var eventId = Guid.NewGuid();
+    // No association => consumed + vacuously snapshot-covered; only the destruction hold gates it.
+    await _commitEphemeralAsync(connection, eventId, Guid.NewGuid(), "Whizbang.Tests.FailingEvent");
+    await _agePastGraceAsync(connection, eventId);
+    var future = DateTimeOffset.UtcNow.AddHours(1);
+
+    // Attempt 1 (cap 2): held for retry — a future hold_until, so the reap skips it.
+    var a1 = await coordinator.RecordDestructionFailureAsync([eventId], future, maxRetries: 2);
+    await Assert.That(a1).IsEqualTo(1).Because("The first failure is attempt 1.");
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _bodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("A failed batch under the retry cap is held, so the reaper skips it (it retries next cycle).");
+
+    // Attempt 2: still under the cap — still held.
+    var a2 = await coordinator.RecordDestructionFailureAsync([eventId], future, maxRetries: 2);
+    await Assert.That(a2).IsEqualTo(2).Because("The attempt count increments per failure.");
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _bodyCountAsync(connection, eventId)).IsEqualTo(1L);
+
+    // Attempt 3 (> cap 2): the hold is set to '-infinity', so the reaper FORCE-deletes the batch.
+    var a3 = await coordinator.RecordDestructionFailureAsync([eventId], future, maxRetries: 2);
+    await Assert.That(a3).IsEqualTo(3);
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _bodyCountAsync(connection, eventId)).IsEqualTo(0L)
+      .Because("Past the retry cap the hold lapses (hold_until '-infinity'), so the reaper force-deletes the batch — a broken hook can never leak storage.");
+  }
+
+  [Test]
   public async Task GetEphemeralBodiesAboutToReap_ExcludesHeld_IncludesAfterHoldRemovedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

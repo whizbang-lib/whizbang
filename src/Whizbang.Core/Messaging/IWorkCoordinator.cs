@@ -607,6 +607,23 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// E2-5: records a destruction FAILURE for a batch (a throwing <c>PreDestruction</c> hook). Increments each
+  /// event's attempt count and holds the batch until <paramref name="retryHoldUntil"/> so the next cycle
+  /// re-offers it to the hook — UNLESS the attempt would exceed <paramref name="maxRetries"/>, in which case
+  /// the hold is set in the past so the reaper FORCE-deletes the batch (a permanently-broken hook can never
+  /// leak storage). Returns the highest attempt count in the batch. Default returns <see cref="int.MaxValue"/>
+  /// (engines without the hold infra ⇒ forced delete ⇒ the prior fail-open behaviour).
+  /// </summary>
+  /// <param name="eventIds">The failed batch's event bodies.</param>
+  /// <param name="retryHoldUntil">When the retry hold lapses (now + the configured backoff).</param>
+  /// <param name="maxRetries">Attempts allowed before a forced delete.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<int> RecordDestructionFailureAsync(
+    IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries,
+    CancellationToken cancellationToken = default) => Task.FromResult(int.MaxValue);
+
+  /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
   /// Called per-stream immediately after processing (drain mode — no buffering).
   /// </summary>
