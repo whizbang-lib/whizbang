@@ -586,22 +586,33 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
     var holdTable = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
+    var bodyTable = BuildSchemaQualifiedName(schema, "wh_event_body");
     var ids = eventIds as Guid[] ?? [.. eventIds];
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand();
-    // Upsert +1 attempt per event. Under the cap → hold for the backoff (retry next cycle). Past the cap →
-    // hold_until '-infinity' so Task 8's `hold_until > NOW()` gate lets the reap FORCE-delete the batch.
+    // Upsert +1 attempt per event. TTL-HALVING backoff (E2-5 inc 2): for an event that carries a TTL expiry
+    // (ephemeral_expires_at), the retry is scheduled at the MIDPOINT to that expiry — NOW() + (expiry-NOW())/2 —
+    // so retries decay across the remaining TTL window (60d → +30d → +15d → …), giving a failing compaction/
+    // archive hook the whole window to recover. An event with no TTL (WhenConsumed) falls back to the fixed
+    // @until backoff. Past the cap → hold_until '-infinity' so Task 8's `hold_until > NOW()` gate FORCE-deletes.
     // Return the batch's highest attempt count so the worker can log retry-vs-forced.
-#pragma warning disable S2077 // Schema-qualified table name from validated schema constant; values are parameters
+#pragma warning disable S2077 // Schema-qualified table names from validated schema constant; values are parameters
     cmd.CommandText =
-      $"WITH upserted AS ( " +
+      $"WITH src AS ( " +
+      $"  SELECT id AS event_id, " +
+      $"    CASE WHEN eb.metadata ->> 'ephemeral_expires_at' IS NOT NULL " +
+      $"         THEN NOW() + ((eb.metadata ->> 'ephemeral_expires_at')::timestamptz - NOW()) / 2 " +
+      $"         ELSE @until END AS retry_until " +
+      $"  FROM unnest(@ids) AS id " +
+      $"  LEFT JOIN {bodyTable} eb ON eb.event_id = id), " +
+      $"upserted AS ( " +
       $"  INSERT INTO {holdTable} (event_id, hold_until, failure_count) " +
-      $"  SELECT unnest(@ids), @until, 1 " +
+      $"  SELECT event_id, retry_until, 1 FROM src " +
       $"  ON CONFLICT (event_id) DO UPDATE SET " +
       $"    failure_count = {holdTable}.failure_count + 1, " +
-      $"    hold_until = CASE WHEN {holdTable}.failure_count + 1 > @max THEN '-infinity'::timestamptz ELSE @until END " +
+      $"    hold_until = CASE WHEN {holdTable}.failure_count + 1 > @max THEN '-infinity'::timestamptz ELSE EXCLUDED.hold_until END " +
       $"  RETURNING failure_count) " +
       "SELECT COALESCE(MAX(failure_count), 0) FROM upserted";
 #pragma warning restore S2077

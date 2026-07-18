@@ -133,6 +133,40 @@ public class EphemeralDestructionHoldSqlTests : EFCoreTestBase {
       .Because("Past the retry cap the hold lapses (hold_until '-infinity'), so the reaper force-deletes the batch — a broken hook can never leak storage.");
   }
 
+  private static async Task<DateTime> _holdUntilAsync(NpgsqlConnection connection, Guid eventId) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT hold_until FROM wh_event_destruction_hold WHERE event_id = @id";
+    cmd.Parameters.AddWithValue("id", eventId);
+    return (DateTime)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  [Test]
+  public async Task RecordDestructionFailure_TtlHalving_HoldsAtMidpointToExpiryAsync() {
+    // E2-5 inc 2: for an event that carries a TTL expiry, the retry is scheduled at the MIDPOINT to that
+    // expiry (decaying across the remaining TTL window), NOT the fixed fallback backoff.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var eventId = Guid.NewGuid();
+    await _commitEphemeralAsync(connection, eventId, Guid.NewGuid(), "Whizbang.Tests.TtlHalvingEvent");
+    // Give the body a far-future TTL expiry (~100 days out).
+    var expiry = DateTimeOffset.UtcNow.AddDays(100);
+    await _execAsync(connection,
+      "UPDATE wh_event_body SET metadata = jsonb_set(metadata, '{ephemeral_expires_at}', to_jsonb(@ts::text)) WHERE event_id = @id",
+      ("ts", expiry.ToString("o", System.Globalization.CultureInfo.InvariantCulture)), ("id", eventId));
+
+    // Fail with a SHORT fixed fallback (1h). Because the event has a TTL, the hold must be the midpoint to the
+    // expiry (~50 days), NOT the 1h fallback.
+    await coordinator.RecordDestructionFailureAsync([eventId], DateTimeOffset.UtcNow.AddHours(1), maxRetries: 5);
+
+    var holdUntil = await _holdUntilAsync(connection, eventId);
+    await Assert.That(holdUntil).IsGreaterThan(DateTime.UtcNow.AddDays(40))
+      .Because("TTL-halving schedules the retry at the midpoint to the event's expiry, not the fixed fallback.");
+    await Assert.That(holdUntil).IsLessThan(DateTime.UtcNow.AddDays(60))
+      .Because("The midpoint to a ~100-day expiry is ~50 days — well short of the full TTL window.");
+  }
+
   [Test]
   public async Task GetEphemeralBodiesAboutToReap_ExcludesHeld_IncludesAfterHoldRemovedAsync() {
     await using var dbContext = CreateDbContext();
