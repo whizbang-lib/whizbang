@@ -20,7 +20,14 @@ public enum DestructionReason {
   StreamPurge = 2,
 
   /// <summary>A subject-scoped erasure (GDPR crypto-shred, phase G1).</summary>
-  Erasure = 3
+  Erasure = 3,
+
+  /// <summary>
+  /// A durable Sourced stream is being closed at a period boundary ("closing the books", phase A1): the
+  /// domain's carry-forward event survives as the new origin and the detail below the close point is
+  /// truncated / archived. Unlike the others this destroys <em>Sourced</em> detail, gated on consumption.
+  /// </summary>
+  PeriodClose = 4
 }
 
 /// <summary>

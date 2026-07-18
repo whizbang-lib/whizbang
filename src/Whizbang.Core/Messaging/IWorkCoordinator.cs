@@ -579,6 +579,25 @@ public interface IWorkCoordinator {
     Task.FromResult(new EphemeralPointerPruneResult(0, "unsupported"));
 
   /// <summary>
+  /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
+  /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
+  /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing
+  /// event / new origin). Discard-only in increment 1 (cold-storage archive is a later increment). The domain
+  /// appends its closing event BEFORE calling this. Default: unsupported no-op (engines without the primitive).
+  /// </summary>
+  /// <param name="streamId">The stream to close.</param>
+  /// <param name="throughVersion">The inclusive per-stream version below which detail is truncated.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>debug_skipped</c> |
+  /// <c>unsupported</c>) plus the number of events truncated.
+  /// </returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<StreamCloseResult> CloseStreamAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+    Task.FromResult(new StreamCloseResult("unsupported", 0));
+
+  /// <summary>
   /// E2 destruction hooks: the ephemeral event bodies the tier-1 reaper is about to delete THIS cycle —
   /// the exact consumption-gated + aged-past-grace + snapshot-covered set of Task 8's <c>DELETE</c>, as a
   /// query. The maintenance worker fires a registered <c>IDestructionHook</c> for each before the reap, so
@@ -913,6 +932,15 @@ public sealed record EphemeralSnapshotTarget(Guid StreamId, string PerspectiveNa
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status);
+
+/// <summary>
+/// Result of an A1 "close the books" gated truncate (<see cref="IWorkCoordinator.CloseStreamAsync"/>): the
+/// <see cref="Status"/> (<c>closed</c> = detail truncated | <c>blocked</c> = a perspective has not consumed
+/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>debug_skipped</c>
+/// | <c>unsupported</c>) and how many events were truncated (0 unless <c>closed</c>).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record StreamCloseResult(string Status, long EventsTruncated);
 
 /// <summary>
 /// An ephemeral event body the reaper is about to delete (E2), passed to a destruction hook so it can

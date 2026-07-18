@@ -502,6 +502,33 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<StreamCloseResult> CloseStreamAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "close_stream");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT close_status, events_truncated FROM {fn}(@sid, @through)";
+#pragma warning restore S2077
+    var pStream = cmd.CreateParameter();
+    pStream.ParameterName = "sid";
+    pStream.Value = streamId;
+    cmd.Parameters.Add(pStream);
+    var pThrough = cmd.CreateParameter();
+    pThrough.ParameterName = "through";
+    pThrough.Value = throughVersion;
+    cmd.Parameters.Add(pThrough);
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+    return new StreamCloseResult(reader.GetString(0), reader.GetInt64(1));
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
