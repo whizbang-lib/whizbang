@@ -257,6 +257,73 @@ public class StreamCloseSqlTests : EFCoreTestBase {
       .Because("Every event survives the archive+truncate boundary — 4 in cold, 1 in hot, none lost.");
   }
 
+  private static async Task<long> _eventExistsAsync(NpgsqlConnection connection, Guid eventId) {
+    await using var v = connection.CreateCommand();
+    v.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";
+    v.Parameters.AddWithValue("id", eventId);
+    return (long)(await v.ExecuteScalarAsync())!;
+  }
+
+  [Test]
+  public async Task CloseStream_SuccessiveCloses_CoalesceToOneOriginAsync() {
+    // "Closing the books" must never accumulate stale origins: a later close truncates through a point that
+    // includes a PRIOR closing event, so a stream holds at most one closing/origin event at its head. This
+    // coalescing falls out of the increment-1 truncate mechanics; lock it so a refactor can't regress it.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    var janClose = Guid.NewGuid();
+    var febClose = Guid.NewGuid();
+
+    // Month 1: 3 detail (v1-3) + Jan close (v4). Close through 3 => Jan close is the lone origin.
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, janClose, streamId, "Whizbang.Tests.MonthClosed");
+    await Assert.That((await coordinator.CloseStreamAsync(streamId, throughVersion: 3)).Status).IsEqualTo("closed");
+    await Assert.That(await _eventExistsAsync(connection, janClose)).IsEqualTo(1L);
+
+    // Month 2: 2 more detail (v5-6) + Feb close (v7). Close through 6 => truncates the Jan close (v4) too.
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, febClose, streamId, "Whizbang.Tests.MonthClosed");
+
+    var second = await coordinator.CloseStreamAsync(streamId, throughVersion: 6);
+    await Assert.That(second.Status).IsEqualTo("closed");
+    await Assert.That(await _eventExistsAsync(connection, janClose)).IsEqualTo(0L)
+      .Because("The prior (Jan) closing event is truncated by the later close — origins coalesce, they don't accumulate.");
+    await Assert.That(await _eventExistsAsync(connection, febClose)).IsEqualTo(1L);
+    await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(1L)
+      .Because("A twice-closed stream holds exactly one origin at its head.");
+  }
+
+  [Test]
+  public async Task CloseStream_IdempotentReClose_IsSafeNoOpAsync() {
+    // Re-closing through the same point after the detail is already gone must be a safe no-op (closed, 0),
+    // not an error and not a spurious no_carry_forward — closing the books twice is harmless.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");
+
+    var first = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
+    await Assert.That(first.Status).IsEqualTo("closed");
+    await Assert.That(first.EventsTruncated).IsEqualTo(2L);
+
+    var again = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
+    await Assert.That(again.Status).IsEqualTo("closed")
+      .Because("Re-closing through an already-truncated point is idempotent — the carry-forward still survives.");
+    await Assert.That(again.EventsTruncated).IsEqualTo(0L)
+      .Because("Nothing remains at/below the point, so a re-close truncates nothing.");
+    await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(1L);
+  }
+
   [Test]
   public async Task CloseStream_TruncatesDetailBodies_KeepsClosingEventBodyAsync() {
     await using var dbContext = CreateDbContext();
