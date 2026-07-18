@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -171,6 +172,23 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
+  public async Task TryExpand_NullInner_Independent_LogsTheDroppedChildAsync() {
+    // Independent mode drops a bad child, but the drop must be LOGGED — a partial fan-out that
+    // silently reports Expanded is invisible message loss (the swallow-audit finding).
+    var captured = new _capturingLogger();
+    var composite = new _mixedNullComposite();
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _providerWithLogger(captured);
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(1);
+    await Assert.That(captured.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
+      .Because("a dropped inner event must be logged, not silently swallowed");
+  }
+
+  [Test]
   public async Task TryExpand_ReplacementInner_FansOutTheReplacementSetAsync() {
     // A pre-fanout ReplaceWith directive supplies the children to fan out instead of InnerEvents.
     var composite = new _testComposite(new _innerEvent("original"));
@@ -193,6 +211,29 @@ public class CompositeInboxFanoutTests {
     new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new _fakeSerializer())
       .BuildServiceProvider();
+
+  private static ServiceProvider _providerWithLogger(_capturingLogger captured) =>
+    new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new _fakeSerializer())
+      .AddLogging(b => b.AddProvider(new _capturingLoggerProvider(captured)))
+      .BuildServiceProvider();
+
+  /// <summary>Captures log entries emitted during fan-out for assertions.</summary>
+  private sealed class _capturingLogger {
+    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+  }
+
+  private sealed class _capturingLoggerProvider(_capturingLogger captured) : ILoggerProvider {
+    public ILogger CreateLogger(string categoryName) => new _sink(captured);
+    public void Dispose() { }
+
+    private sealed class _sink(_capturingLogger captured) : ILogger {
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => true;
+      public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        => captured.Entries.Add((logLevel, formatter(state, exception), exception));
+    }
+  }
 
   /// <summary>
   /// A source inbox envelope whose first hop carries the composite's StreamId as AggregateId — the

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
@@ -31,7 +32,10 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#dispatch-fanout</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Fan-out diagnostic logging fires only on a rare dropped-child failure path; LoggerMessage overhead isn't justified.")]
 public static class CompositeInboxFanout {
+  private const string LOG_CATEGORY = "Whizbang.Core.Messaging.CompositeInboxFanout";
+
   /// <summary>The disposition of a fan-out attempt.</summary>
   public enum FanoutOutcome {
     /// <summary>The envelope payload is not an <see cref="ICompositeEvent"/> — caller proceeds normally.</summary>
@@ -61,7 +65,10 @@ public static class CompositeInboxFanout {
   /// scope-resolved <see cref="IEnvelopeSerializer"/>. Never throws for composite-shaped failures —
   /// cap/expansion problems are returned as <see cref="FanoutOutcome.CapExceeded"/> /
   /// <see cref="FanoutOutcome.Failed"/> so the caller can dead-letter the composite row.
+  /// Under <see cref="FanoutAtomicity.Independent"/>, a dropped inner event is logged (first-drop
+  /// detail + count summary) so a partially-lost fan-out is diagnosable rather than silent.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_LogsTheDroppedChildAsync</tests>
   public static FanoutResult TryExpand(
       ICompositeEvent? composite,
       IMessageEnvelope source,
@@ -78,6 +85,7 @@ public static class CompositeInboxFanout {
     var serializer = scope.GetService<IEnvelopeSerializer>()
       ?? throw new InvalidOperationException("IEnvelopeSerializer is required for composite fan-out but is not registered.");
     var eventTypeProvider = scope.GetService<IEventTypeProvider>();
+    var logger = scope.GetService<ILoggerFactory>()?.CreateLogger(LOG_CATEGORY);
 
     // A pre-fanout directive may replace the composite's own inner events (filter / transform / re-key).
     var inners = replacementInner ?? composite.InnerEvents;
@@ -90,6 +98,7 @@ public static class CompositeInboxFanout {
     var childHops = _buildLineageHops(composite, source);
     var children = new List<InboxMessage>();
     var count = 0;
+    var droppedCount = 0;
 
     foreach (var inner in inners) {
       count++;
@@ -108,7 +117,16 @@ public static class CompositeInboxFanout {
             $"Composite '{compositeTypeName}' yielded a null inner event at position {count - 1}.",
             compositeTypeName);
         }
-        continue; // Independent: drop the bad child, keep the batch.
+        // Independent: drop the bad child, keep the batch — but never silently. Log the first drop
+        // in full and summarize the rest, so a partially-lost fan-out is diagnosable rather than
+        // reported as a clean Expanded.
+        if (droppedCount == 0) {
+          logger?.LogWarning(
+            "Composite '{Composite}' dropped a null inner event at position {Position} under independent atomicity (first drop this fan-out).",
+            compositeTypeName, count - 1);
+        }
+        droppedCount++;
+        continue;
       }
       try {
         children.Add(_buildChildInbox(inner, source, childHops, serializer, eventTypeProvider));
@@ -119,8 +137,20 @@ public static class CompositeInboxFanout {
             $"Composite '{compositeTypeName}' child serialization failed: {ex.Message}",
             compositeTypeName);
         }
-        // Independent: one bad child doesn't sink the batch — drop it and continue.
+        // Independent: one bad child doesn't sink the batch — drop it and continue, but log it.
+        if (droppedCount == 0) {
+          logger?.LogWarning(ex,
+            "Composite '{Composite}' dropped an inner event that failed to serialize under independent atomicity (first drop this fan-out).",
+            compositeTypeName);
+        }
+        droppedCount++;
       }
+    }
+
+    if (droppedCount > 0) {
+      logger?.LogWarning(
+        "Composite '{Composite}' dropped {DroppedCount} inner event(s) under independent atomicity; see the first-drop detail logged above.",
+        compositeTypeName, droppedCount);
     }
 
     return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName);
