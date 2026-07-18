@@ -855,6 +855,22 @@ public static class DiagnosticDescriptors {
       customTags: WellKnownDiagnosticTags.CompilationEnd
   );
 
+  /// <summary>
+  /// WHIZ122: Warning — the pinned-type ledger file exists but could not be parsed (malformed JSON).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz122</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedTypeRenameAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PinnedTypeLedgerMalformed = new(
+      id: "WHIZ122",
+      title: "Pinned-Type Ledger Could Not Be Parsed",
+      messageFormat: "The pinned-type ledger '{0}' exists but is not valid JSON, so rename governance (WHIZ120/WHIZ121) is silently disabled for this project. Fix or restore the ledger.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A malformed pinned-type ledger is treated as 'no baseline', which silently disables rename governance — an un-acknowledged rename could then slip through and break deserialization of stored events. The build is not failed (a broken ledger shouldn't block compilation), but the corruption is surfaced so it can be fixed rather than drifting undetected.",
+      customTags: WellKnownDiagnosticTags.CompilationEnd
+  );
+
   // ==========================================================================
   // WHIZ200: Perspective sync in receptor safety
   // ==========================================================================

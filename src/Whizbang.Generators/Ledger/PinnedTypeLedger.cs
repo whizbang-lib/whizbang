@@ -59,7 +59,17 @@ internal sealed class PinnedTypeLedger {
   /// or unparseable ledger as "no baseline" (the governance analyzer stays inert rather than failing the build on a
   /// broken ledger). Entries with a blank PinnedId or ClrTypeName are dropped.
   /// </summary>
-  public static PinnedTypeLedger? TryParse(string? json) {
+  public static PinnedTypeLedger? TryParse(string? json) => TryParse(json, out _);
+
+  /// <summary>
+  /// Parses ledger JSON, additionally reporting whether the input was <paramref name="malformed"/> — i.e.
+  /// present but unparseable — so callers can distinguish "no ledger" (inert, fine) from "broken ledger"
+  /// (worth surfacing). <paramref name="malformed"/> is <c>false</c> for null/blank input (an absent ledger)
+  /// and <c>true</c> only when non-blank input fails to parse as JSON. Return value semantics are identical
+  /// to <see cref="TryParse(string?)"/>: null on absent or malformed, the ledger otherwise.
+  /// </summary>
+  public static PinnedTypeLedger? TryParse(string? json, out bool malformed) {
+    malformed = false;
     if (string.IsNullOrWhiteSpace(json)) {
       return null;
     }
@@ -76,6 +86,7 @@ internal sealed class PinnedTypeLedger {
       }
       return ledger;
     } catch (JsonException) {
+      malformed = true;
       return null;
     }
   }
