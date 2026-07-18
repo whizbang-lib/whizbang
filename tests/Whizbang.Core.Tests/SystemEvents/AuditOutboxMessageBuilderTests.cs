@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Dispatch;
@@ -17,6 +18,28 @@ namespace Whizbang.Core.Tests.SystemEvents;
 /// </summary>
 [Category("SystemEvents")]
 public class AuditOutboxMessageBuilderTests {
+  [Test]
+  public async Task TryBuildAuditMessage_UnresolvableEventType_LogsWarningAsync() {
+    // An event type name that Type.GetType can't resolve makes the audit include/exclude decision
+    // fall back to the default — that must be logged, not silent (swallow-audit finding).
+    var captured = new _capturingLogger();
+    var message = _createOutboxMessage(isEvent: true, messageType: "Nonexistent.EventType, Nonexistent.Assembly");
+    var options = _createOptions(auditEnabled: true);
+
+    AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options, captured);
+
+    await Assert.That(captured.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
+      .Because("an unresolvable audit type name must be logged, not silently defaulted");
+  }
+
+  private sealed class _capturingLogger : ILogger {
+    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add((logLevel, formatter(state, exception), exception));
+  }
+
   #region TryBuildAuditMessage - Early Return Paths
 
   [Test]

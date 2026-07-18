@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 
@@ -12,7 +14,8 @@ namespace Whizbang.Core.Messaging;
 /// This is a composition helper -- each strategy owns an instance and delegates queue
 /// operations to it while keeping its own FlushAsync, logging, and lifecycle logic.
 /// </summary>
-internal sealed class WorkCoordinatorQueues {
+internal sealed class WorkCoordinatorQueues(ILogger? logger = null) {
+  private readonly ILogger _logger = logger ?? NullLogger.Instance;
   internal readonly List<OutboxMessage> OutboxMessages = [];
   internal readonly List<OutboxMessage> PendingAuditMessages = [];
   internal readonly List<InboxMessage> InboxMessages = [];
@@ -32,7 +35,7 @@ internal sealed class WorkCoordinatorQueues {
     // Audit messages are collected separately and merged AFTER lifecycle stages
     // to avoid SecurityContextRequiredException during lifecycle processing.
     if (message.IsEvent && systemEventOptions?.EventAuditEnabled == true) {
-      var auditMessage = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, systemEventOptions);
+      var auditMessage = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, systemEventOptions, _logger);
       if (auditMessage != null) {
         PendingAuditMessages.Add(auditMessage);
       }
