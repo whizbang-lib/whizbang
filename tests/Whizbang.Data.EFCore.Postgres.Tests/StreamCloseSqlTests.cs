@@ -257,6 +257,34 @@ public class StreamCloseSqlTests : EFCoreTestBase {
       .Because("Every event survives the archive+truncate boundary — 4 in cold, 1 in hot, none lost.");
   }
 
+  [Test]
+  public async Task GetConsumingPerspectiveNames_ReturnsDistinctAssociatedPerspectivesInRangeAsync() {
+    // A1-6b: the close guard asks which perspectives consume the truncated range. The query joins the stream's
+    // event types (≤ through) to their perspective associations and returns DISTINCT target_names.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    const string detailType = "Whizbang.Tests.LedgerEntry";
+    await _seedPerspectiveAssociationAsync(connection, detailType, "TestNamespace.LedgerListPerspective");
+    // Two detail events (v1-2) of the associated type + a closing event (v3) with no perspective.
+    await _commitAsync(connection, Guid.NewGuid(), streamId, detailType);
+    await _commitAsync(connection, Guid.NewGuid(), streamId, detailType);
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");
+
+    var names = await coordinator.GetConsumingPerspectiveNamesAsync(streamId, throughVersion: 2);
+    await Assert.That(names.Count).IsEqualTo(1)
+      .Because("Two events of the same associated type collapse to one DISTINCT consuming perspective name.");
+    await Assert.That(names[0]).IsEqualTo("TestNamespace.LedgerListPerspective");
+
+    // A stream with no associated perspective in range yields nothing.
+    var other = Guid.NewGuid();
+    await _commitAsync(connection, Guid.NewGuid(), other, "Whizbang.Tests.Unassociated");
+    await Assert.That((await coordinator.GetConsumingPerspectiveNamesAsync(other, 10)).Count).IsEqualTo(0)
+      .Because("No perspective association for the stream's event types => no consumers.");
+  }
+
   private static async Task<long> _eventExistsAsync(NpgsqlConnection connection, Guid eventId) {
     await using var v = connection.CreateCommand();
     v.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";

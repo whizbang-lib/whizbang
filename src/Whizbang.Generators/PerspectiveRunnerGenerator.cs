@@ -132,6 +132,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
+    // A1-6b: a perspective marked [FullHistory] needs every event and cannot resume from a carry-forward /
+    // closing event — the A1 close guard refuses a discard-close of any stream it consumes. Resolved at compile
+    // time; the generator registers the perspective's name so the runtime guard can key off it.
+    var isFullHistory = classSymbol.GetAttributes().Any(
+        static a => a.AttributeClass?.Name is "FullHistoryAttribute" or "FullHistory");
+
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
@@ -204,7 +210,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             HasScopeInterface: hasScopeInterface,
             InheritScopeOnCreate: inheritScopeOnCreate,
             IsEphemeral: isEphemeral,
-            TtlRowSeconds: ttlRowSeconds
+            TtlRowSeconds: ttlRowSeconds,
+            IsFullHistory: isFullHistory
         ),
         Warning: null
     );
@@ -441,6 +448,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
     result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
         ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerRowTtl() =>\n      global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.Register(typeof({modelTypeName}), {perspective.TtlRowSeconds});"
+        : "");
+    // A1-6b: register a [FullHistory] perspective's name (matching its association target_name = its ClrTypeName)
+    // so the close guard can refuse a discard-close of any stream it consumes. Empty for resumable perspectives.
+    result = TemplateUtilities.ReplaceRegion(result, "FULL_HISTORY_REGISTRATION", perspective.IsFullHistory
+        ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerFullHistory() =>\n      global::Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.Register(\"{perspective.ClrTypeName}\");"
         : "");
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);

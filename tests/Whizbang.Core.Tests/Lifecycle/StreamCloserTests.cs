@@ -60,6 +60,8 @@ public class StreamCloserTests {
     public int CloseCalls { get; private set; }
     public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }
 
+    public IReadOnlyList<string> ConsumingNames { get; init; } = [];
+
     public FakeCloseCoordinator(List<string> log, StreamCloseResult? result = null) {
       _log = log; _result = result ?? new StreamCloseResult("closed", 3);
     }
@@ -70,6 +72,9 @@ public class StreamCloserTests {
       _log.Add("close");
       return Task.FromResult(_result);
     }
+
+    public Task<IReadOnlyList<string>> GetConsumingPerspectiveNamesAsync(Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+      Task.FromResult(ConsumingNames);
 
     // Unused IWorkCoordinator surface.
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -159,6 +164,52 @@ public class StreamCloserTests {
       .Throws<InvalidOperationException>()
       .Because("A throwing pre-hook aborts the close — durable Sourced detail must NEVER be truncated when the preserve-work failed (no fail-open).");
     await Assert.That(coord.CloseCalls).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task Close_DiscardWithFullHistoryConsumer_IsRefusedAsync() {
+    // A [FullHistory] projection consumes the stream and a discard-close would truncate detail it can never
+    // rebuild from — refuse it (require an archiving close instead).
+    var fullHistoryName = "FullHistoryPerspective_" + Guid.NewGuid().ToString("N");
+    Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.Register(fullHistoryName);
+    var log = new List<string>();
+    var coord = new FakeCloseCoordinator(log) { ConsumingNames = [fullHistoryName] };
+
+    var result = await _closer(coord, hook: null).CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: false);
+
+    await Assert.That(result.Status).IsEqualTo("full_history_blocked");
+    await Assert.That(coord.CloseCalls).IsEqualTo(0)
+      .Because("A discard-close that would strand a full-history projection must be refused, not truncated.");
+  }
+
+  [Test]
+  public async Task Close_ArchiveWithFullHistoryConsumer_IsAllowedAsync() {
+    // The same full-history projection, but an ARCHIVING close — always safe (the detail is retrievable), so
+    // the guard is skipped and the close proceeds.
+    var fullHistoryName = "FullHistoryPerspective_" + Guid.NewGuid().ToString("N");
+    Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.Register(fullHistoryName);
+    var log = new List<string>();
+    var coord = new FakeCloseCoordinator(log) { ConsumingNames = [fullHistoryName] };
+
+    var result = await _closer(coord, hook: null).CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
+
+    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(coord.CloseCalls).IsEqualTo(1)
+      .Because("An archiving close preserves the detail, so a full-history projection can still rehydrate — allowed.");
+  }
+
+  [Test]
+  public async Task Close_DiscardWithResumableConsumerOnly_ProceedsAsync() {
+    // The only consumer is a resumable (unmarked) projection — a discard-close is safe (it resumes from the
+    // closing event forward).
+    var log = new List<string>();
+    var coord = new FakeCloseCoordinator(log) { ConsumingNames = ["BalancePerspective_" + Guid.NewGuid().ToString("N")] };
+
+    var result = await _closer(coord, hook: null).CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: false);
+
+    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(coord.CloseCalls).IsEqualTo(1)
+      .Because("An unmarked projection resumes from the carry-forward, so discard-closing its stream is safe.");
   }
 
   [Test]

@@ -564,6 +564,40 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<string>> GetConsumingPerspectiveNamesAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var store = BuildSchemaQualifiedName(schema, "wh_event_store");
+    var assoc = BuildSchemaQualifiedName(schema, "wh_message_associations");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified table names built from validated schema constant
+    cmd.CommandText =
+      $"SELECT DISTINCT ma.target_name FROM {store} es " +
+      $"JOIN {assoc} ma ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective' " +
+      $"WHERE es.stream_id = @sid AND es.version <= @through";
+#pragma warning restore S2077
+    var pStream = cmd.CreateParameter();
+    pStream.ParameterName = "sid";
+    pStream.Value = streamId;
+    cmd.Parameters.Add(pStream);
+    var pThrough = cmd.CreateParameter();
+    pThrough.ParameterName = "through";
+    pThrough.Value = throughVersion;
+    cmd.Parameters.Add(pThrough);
+    var list = new List<string>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      list.Add(reader.GetString(0));
+    }
+    return list;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

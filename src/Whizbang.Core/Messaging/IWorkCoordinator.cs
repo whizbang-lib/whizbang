@@ -617,6 +617,21 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<ArchivedEvent>>([]);
 
   /// <summary>
+  /// A1 — the distinct perspective names that consume any event in <paramref name="streamId"/> at or below
+  /// <paramref name="throughVersion"/> (via the message associations of those events' types). Used by
+  /// <see cref="Whizbang.Core.Lifecycle.IStreamCloser"/> to decide whether a discard-close would strand a
+  /// <see cref="Whizbang.Core.Attributes.FullHistoryAttribute"/> projection. Default: empty.
+  /// </summary>
+  /// <param name="streamId">The stream being closed.</param>
+  /// <param name="throughVersion">The inclusive per-stream version below which detail would be truncated.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The distinct consuming perspective names.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyList<string>> GetConsumingPerspectiveNamesAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<string>>([]);
+
+  /// <summary>
   /// E2 destruction hooks: the ephemeral event bodies the tier-1 reaper is about to delete THIS cycle —
   /// the exact consumption-gated + aged-past-grace + snapshot-covered set of Task 8's <c>DELETE</c>, as a
   /// query. The maintenance worker fires a registered <c>IDestructionHook</c> for each before the reap, so

@@ -65,6 +65,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // EF Core upsert stamps expires_at = now + ttl. Empty for non-TtlRow perspectives (their rows never expire).
   #endregion
 
+  #region FULL_HISTORY_REGISTRATION
+  // Generated: a [FullHistory] perspective registers its name via a [ModuleInitializer] so the A1 close guard
+  // refuses a discard-close of any stream it consumes. Empty for resumable (unmarked) perspectives.
+  #endregion
+
   private readonly IServiceProvider _serviceProvider;
   private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
   private readonly IEventStore _eventStore;

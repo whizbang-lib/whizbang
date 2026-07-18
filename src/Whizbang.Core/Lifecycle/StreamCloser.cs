@@ -43,6 +43,18 @@ public sealed partial class StreamCloser : IStreamCloser {
   /// <inheritdoc />
   public async Task<StreamCloseResult> CloseAsync(
       Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+    // A1-6b full-history guard: a DISCARD close (archive:false) that would strand a [FullHistory] projection —
+    // one that consumes an event in the truncated range and cannot resume from the closing event — is refused
+    // (it could never rebuild). An archiving close is always safe (detail retrievable), so it skips the check.
+    if (!archive) {
+      var consumers = await _coordinator.GetConsumingPerspectiveNamesAsync(streamId, throughVersion, cancellationToken)
+        .ConfigureAwait(false);
+      if (Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.AnyFullHistory(consumers)) {
+        LogFullHistoryBlocked(_logger, streamId);
+        return new StreamCloseResult("full_history_blocked", 0);
+      }
+    }
+
     var context = new DestructionContext {
       Reason = DestructionReason.PeriodClose,
       Granularity = DestructionGranularity.Stream,
@@ -93,6 +105,10 @@ public sealed partial class StreamCloser : IStreamCloser {
   [LoggerMessage(EventId = 40, Level = LogLevel.Error,
     Message = "PreDestruction close hook threw for stream {StreamId}; close aborted (detail not truncated)")]
   static partial void LogPreCloseFailed(ILogger logger, Exception ex, Guid streamId);
+
+  [LoggerMessage(EventId = 43, Level = LogLevel.Warning,
+    Message = "Discard-close of stream {StreamId} refused: a [FullHistory] projection consumes it — archive instead (archive: true)")]
+  static partial void LogFullHistoryBlocked(ILogger logger, Guid streamId);
 
   [LoggerMessage(EventId = 41, Level = LogLevel.Information,
     Message = "Close of stream {StreamId} was {Outcome} by the PreDestruction hook")]

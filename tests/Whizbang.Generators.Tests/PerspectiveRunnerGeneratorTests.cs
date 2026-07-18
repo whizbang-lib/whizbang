@@ -257,6 +257,76 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_FullHistoryPerspective_RegistersNameAsync() {
+    // A1-6b: a [FullHistory] perspective emits a [ModuleInitializer] registering its name so the close guard
+    // refuses a discard-close of any stream it consumes.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record LedgerEntry : IEvent {
+    public string AccountId { get; init; } = "";
+  }
+
+  public record LedgerListModel {
+    [StreamId]
+    public string AccountId { get; init; } = "";
+  }
+
+  [FullHistory]
+  public class LedgerListPerspective : IPerspectiveFor<LedgerListModel, LedgerEntry> {
+    public LedgerListModel Apply(LedgerListModel currentData, LedgerEntry @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "LedgerListPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("FullHistoryPerspectiveRegistry.Register(")
+      .Because("A [FullHistory] perspective registers its name via a module initializer for the A1 close guard.");
+    await Assert.That(runnerSource!).Contains("LedgerListPerspective")
+      .Because("The registration carries the perspective's name (its association target_name).");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_ResumablePerspective_DoesNotRegisterFullHistoryAsync() {
+    // An unmarked perspective is resumable (rebuilds from the closing event forward) — no registration.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record BalanceChanged : IEvent {
+    public string AccountId { get; init; } = "";
+  }
+
+  public record BalanceModel {
+    [StreamId]
+    public string AccountId { get; init; } = "";
+  }
+
+  public class BalancePerspective : IPerspectiveFor<BalanceModel, BalanceChanged> {
+    public BalanceModel Apply(BalanceModel currentData, BalanceChanged @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "BalancePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).DoesNotContain("FullHistoryPerspectiveRegistry.Register")
+      .Because("A resumable (unmarked) perspective needs no full-history guard registration.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_SourcedPerspective_UsesStandardSnapshotSettingsAsync() {
     const string source = """
 
