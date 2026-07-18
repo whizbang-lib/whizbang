@@ -508,7 +508,7 @@ jobs:
     # live verification badges. Runs even when suites FAIL (failures are what
     # the badges must show) but not when cancelled. No-ops without the token
     # or when suites were skipped (docs-only pushes produce no TRX).
-    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
+    needs: [version, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
       !contains(needs.*.result, 'cancelled')
@@ -562,7 +562,8 @@ jobs:
             --out docs-repo/src/assets/data/test-status \
             --run-id "${{ github.run_id }}" \
             --sha "${{ github.sha }}" \
-            --branch "${{ github.ref_name }}"
+            --branch "${{ github.ref_name }}" \
+            --library-version "${{ needs.version.outputs.semver }}"
 
       # The docs main ruleset requires PRs (0 approvals, no required checks),
       # so publish = push branch + create PR + instant merge. Skips when the
