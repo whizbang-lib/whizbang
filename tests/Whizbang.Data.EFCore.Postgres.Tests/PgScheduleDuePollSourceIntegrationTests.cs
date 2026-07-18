@@ -2,7 +2,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
-using NpgsqlTypes;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -52,15 +51,20 @@ public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task _insertScheduleAsync(Guid streamId, DateTimeOffset nextFireAt, short status) {
+  // next_fire_at is computed relative to the DB clock (NOW() + the given interval), NOT the C# host clock —
+  // the poll source's due check is `next_fire_at <= NOW()` on the DB clock, so seeding from the host clock
+  // makes the "due" tests hostage to host↔container clock skew (a Docker VM clock can drift minutes behind the
+  // host under load, so a "-1 minute (host)" seed reads as future to the DB and the schedule is spuriously
+  // not-due). Seeding on the engine's own clock is drift-proof.
+  private async Task _insertScheduleAsync(Guid streamId, string fireOffset, short status) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(@"
       INSERT INTO wh_schedules
         (schedule_id, stream_id, partition_number, recurrence_kind, next_fire_at, status, event_type)
-      VALUES (gen_random_uuid(), @stream, 0, 0, @next, @status, 'TestOccurrence');", conn);
+      VALUES (gen_random_uuid(), @stream, 0, 0, NOW() + @off::interval, @status, 'TestOccurrence');", conn);
     cmd.Parameters.AddWithValue("stream", streamId);
-    cmd.Parameters.Add(new NpgsqlParameter("next", NpgsqlDbType.TimestampTz) { Value = nextFireAt });
+    cmd.Parameters.AddWithValue("off", fireOffset);
     cmd.Parameters.AddWithValue("status", status);
     await cmd.ExecuteNonQueryAsync();
   }
@@ -70,7 +74,7 @@ public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
     var (source, instance) = _createSource();
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
-    await _insertScheduleAsync(streamId, DateTimeOffset.UtcNow.AddMinutes(-1), status: 0);
+    await _insertScheduleAsync(streamId, "-1 minute", status: 0);
 
     var sink = new CountingSink();
     await source.StartAsync(sink);
@@ -95,7 +99,7 @@ public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
     var (source, instance) = _createSource();
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
-    await _insertScheduleAsync(streamId, DateTimeOffset.UtcNow.AddHours(1), status: 0);
+    await _insertScheduleAsync(streamId, "1 hour", status: 0);
 
     var sink = new CountingSink();
     await source.StartAsync(sink);
@@ -110,7 +114,7 @@ public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
     var (source, _) = _createSource();
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, Guid.NewGuid());   // owned by a DIFFERENT instance
-    await _insertScheduleAsync(streamId, DateTimeOffset.UtcNow.AddMinutes(-1), status: 0);
+    await _insertScheduleAsync(streamId, "-1 minute", status: 0);
 
     var sink = new CountingSink();
     await source.StartAsync(sink);
@@ -125,7 +129,7 @@ public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
     var (source, instance) = _createSource();
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
-    await _insertScheduleAsync(streamId, DateTimeOffset.UtcNow.AddMinutes(-1), status: 1);   // Paused
+    await _insertScheduleAsync(streamId, "-1 minute", status: 1);   // Paused
 
     var sink = new CountingSink();
     await source.StartAsync(sink);

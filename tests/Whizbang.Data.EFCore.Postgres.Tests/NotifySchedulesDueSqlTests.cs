@@ -32,7 +32,7 @@ public class NotifySchedulesDueSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
     await _insertScheduleAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId,
-      nextFireAt: DateTimeOffset.UtcNow.AddMinutes(-1), status: 0);
+      fireOffset: "-1 minute", status: 0);
 
     var received = await _captureNotificationsAsync(conn, [owner], async () =>
       await _callNotifySchedulesDueAsync(conn));
@@ -52,7 +52,7 @@ public class NotifySchedulesDueSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
     await _insertScheduleAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId,
-      nextFireAt: DateTimeOffset.UtcNow.AddHours(1), status: 0);
+      fireOffset: "1 hour", status: 0);
 
     var received = await _captureNotificationsAsync(conn, [owner], async () =>
       await _callNotifySchedulesDueAsync(conn));
@@ -71,7 +71,7 @@ public class NotifySchedulesDueSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
     await _insertScheduleAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId,
-      nextFireAt: DateTimeOffset.UtcNow.AddMinutes(-1), status: 1);   // Paused
+      fireOffset: "-1 minute", status: 1);   // Paused
 
     var received = await _captureNotificationsAsync(conn, [owner], async () =>
       await _callNotifySchedulesDueAsync(conn));
@@ -124,16 +124,21 @@ public class NotifySchedulesDueSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
+  // next_fire_at is computed relative to the DB clock (NOW() + the given interval), NOT the C# host clock:
+  // notify_schedules_due() compares `next_fire_at <= NOW()` on the DB clock, so seeding from the host clock
+  // makes the "due" test hostage to host↔container clock skew (a Docker VM clock can drift minutes behind the
+  // host under load, turning a "-1 minute (host)" seed into a future time (DB) and the schedule spuriously
+  // not-due). Seeding on the engine's own clock is drift-proof.
   private static async Task _insertScheduleAsync(
-      NpgsqlConnection conn, Guid scheduleId, Guid streamId, DateTimeOffset nextFireAt, short status) {
+      NpgsqlConnection conn, Guid scheduleId, Guid streamId, string fireOffset, short status) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       INSERT INTO wh_schedules
         (schedule_id, stream_id, partition_number, recurrence_kind, next_fire_at, status, event_type)
-      VALUES (@sid, @stream, 0, 0, @next, @status, 'TestOccurrence')";
+      VALUES (@sid, @stream, 0, 0, NOW() + @off::interval, @status, 'TestOccurrence')";
     cmd.Parameters.AddWithValue("sid", scheduleId);
     cmd.Parameters.AddWithValue("stream", streamId);
-    cmd.Parameters.Add(new NpgsqlParameter("next", NpgsqlDbType.TimestampTz) { Value = nextFireAt });
+    cmd.Parameters.AddWithValue("off", fireOffset);
     cmd.Parameters.AddWithValue("status", status);
     await cmd.ExecuteNonQueryAsync();
   }

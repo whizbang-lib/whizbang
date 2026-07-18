@@ -3,7 +3,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
-using NpgsqlTypes;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -46,16 +45,21 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task _insertScheduleAsync(Guid streamId, DateTimeOffset nextFireAt, string eventType) {
+  // next_fire_at is computed relative to the DB clock (NOW() + the given interval), NOT the C# host clock.
+  // The due decision in wh_claim_due_schedules is `next_fire_at <= NOW()` on the DB clock, so seeding from the
+  // host clock would make the test hostage to host↔container clock skew — under sustained load a Docker VM
+  // clock can drift minutes behind the host, turning a "1 minute ago (host)" seed into a future time (DB) and
+  // the schedule spuriously not-due. Seeding on the same clock the engine compares against is drift-proof.
+  private async Task _insertScheduleAsync(Guid streamId, string fireOffset, string eventType) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(@"
       INSERT INTO wh_schedules
         (schedule_id, stream_id, partition_number, recurrence_kind, interval_ms, timezone,
          next_fire_at, occurrence_count, status, event_type, event_data)
-      VALUES (gen_random_uuid(), @stream, 0, 1, 60000, 'UTC', @next, 0, 0, @etype, '{}'::jsonb);", conn);
+      VALUES (gen_random_uuid(), @stream, 0, 1, 60000, 'UTC', NOW() + @off::interval, 0, 0, @etype, '{}'::jsonb);", conn);
     cmd.Parameters.AddWithValue("stream", streamId);
-    cmd.Parameters.Add(new NpgsqlParameter("next", NpgsqlDbType.TimestampTz) { Value = nextFireAt });
+    cmd.Parameters.AddWithValue("off", fireOffset);
     cmd.Parameters.AddWithValue("etype", eventType);
     await cmd.ExecuteNonQueryAsync();
   }
@@ -73,7 +77,7 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
     var (claimer, instance) = _create();
     var stream = Guid.NewGuid();
     await _pinStreamAsync(stream, instance.InstanceId);
-    await _insertScheduleAsync(stream, DateTimeOffset.UtcNow.AddMinutes(-1), "ClaimerOccA");
+    await _insertScheduleAsync(stream, "-1 minute", "ClaimerOccA");
 
     var fired = await claimer.ClaimDueSchedulesAsync(100);
 
@@ -86,7 +90,7 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
     var (claimer, instance) = _create();
     var stream = Guid.NewGuid();
     await _pinStreamAsync(stream, instance.InstanceId);
-    await _insertScheduleAsync(stream, DateTimeOffset.UtcNow.AddHours(1), "ClaimerOccFuture");
+    await _insertScheduleAsync(stream, "1 hour", "ClaimerOccFuture");
 
     var fired = await claimer.ClaimDueSchedulesAsync(100);
 
