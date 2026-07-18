@@ -30,6 +30,7 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [
     DiagnosticDescriptors.PinnedTypeRenamedWithoutAcknowledgment,
     DiagnosticDescriptors.LedgerEntryHasNoLivingType,
+    DiagnosticDescriptors.PinnedTypeLedgerMalformed,
   ];
 
   /// <inheritdoc/>
@@ -40,9 +41,24 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
   }
 
   private static void _onCompilationStart(CompilationStartAnalysisContext context) {
-    var ledger = _readLedger(context.Options.AdditionalFiles, context.CancellationToken);
-    if (ledger is null) {
+    var ledgerFile = context.Options.AdditionalFiles.FirstOrDefault(f => PinnedTypeLedger.IsLedgerPath(f.Path));
+    if (ledgerFile is null) {
       return; // no committed ledger for this project — analyzer is inert (opt-in).
+    }
+
+    var ledgerText = ledgerFile.GetText(context.CancellationToken)?.ToString();
+    var ledger = PinnedTypeLedger.TryParse(ledgerText, out var malformed);
+    if (ledger is null) {
+      if (malformed) {
+        // Ledger file is present but unparseable → governance would silently go inert, letting an
+        // un-acknowledged rename slip through. Surface WHIZ122 (warning, not error — a broken ledger
+        // shouldn't fail the build) at compilation end so it composes with the other end-reported rules.
+        var ledgerPath = ledgerFile.Path;
+        context.RegisterCompilationEndAction(endContext =>
+          endContext.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.PinnedTypeLedgerMalformed, Location.None, ledgerPath)));
+      }
+      return; // no usable baseline — governance inert (absent or malformed ledger).
     }
 
     // pinned id -> (current clr name, location) for every living [PinnedId] message/perspective type.
@@ -76,15 +92,6 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
         }
       }
     });
-  }
-
-  private static PinnedTypeLedger? _readLedger(ImmutableArray<AdditionalText> additionalFiles, CancellationToken ct) {
-    var ledgerFile = additionalFiles.FirstOrDefault(f => PinnedTypeLedger.IsLedgerPath(f.Path));
-    if (ledgerFile is null) {
-      return null;
-    }
-    SourceText? text = ledgerFile.GetText(ct);
-    return PinnedTypeLedger.TryParse(text?.ToString());
   }
 
   private static bool _tryGetPinned(ISymbol symbol, out string pinnedId, out string clrName, out Location location) {

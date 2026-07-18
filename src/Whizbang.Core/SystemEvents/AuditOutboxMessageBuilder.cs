@@ -1,5 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
@@ -13,21 +15,22 @@ namespace Whizbang.Core.SystemEvents;
 /// Used by the work coordinator strategy to generate audit trail entries when events are queued.
 /// </summary>
 /// <docs>fundamentals/events/system-events#audit-builder</docs>
-public static class AuditOutboxMessageBuilder {
+public static partial class AuditOutboxMessageBuilder {
   /// <summary>
   /// Attempts to build an audit <see cref="OutboxMessage"/> from a domain event outbox message.
   /// Returns null if the event should not be audited (excluded, not eligible, etc.).
   /// </summary>
   /// <param name="eventMessage">The domain event outbox message.</param>
   /// <param name="options">System event options controlling audit behavior.</param>
+  /// <param name="logger">Optional logger; a resolution failure is logged rather than silently defaulting.</param>
   /// <returns>An audit outbox message, or null if the event should not be audited.</returns>
-  public static OutboxMessage? TryBuildAuditMessage(OutboxMessage eventMessage, SystemEventOptions options) {
+  public static OutboxMessage? TryBuildAuditMessage(OutboxMessage eventMessage, SystemEventOptions options, ILogger? logger = null) {
     if (!eventMessage.IsEvent || !options.EventAuditEnabled) {
       return null;
     }
 
     // Check if this event type should be audited based on AuditMode
-    var eventType = _resolveEventType(eventMessage.MessageType);
+    var eventType = _resolveEventType(eventMessage.MessageType, logger ?? NullLogger.Instance);
     if (eventType != null && !_shouldAudit(eventType, options)) {
       return null;
     }
@@ -127,15 +130,32 @@ public static class AuditOutboxMessageBuilder {
       : attr?.Exclude == false;         // audit only if marked
   }
 
-  private static Type? _resolveEventType(string assemblyQualifiedName) {
+  private static Type? _resolveEventType(string assemblyQualifiedName, ILogger logger) {
     try {
 #pragma warning disable IL2057 // Type.GetType with dynamic string — needed to resolve event type for audit attribute check
-      return Type.GetType(assemblyQualifiedName);
+      var resolved = Type.GetType(assemblyQualifiedName);
 #pragma warning restore IL2057
-    } catch {
+      if (resolved is null) {
+        LogAuditTypeUnresolved(logger, assemblyQualifiedName);
+      }
+      return resolved;
+    } catch (Exception ex) {
+      // A resolution failure silently falls back to the default audit decision — log it so a
+      // renamed/removed event type showing up here is diagnosable rather than invisible.
+      LogAuditTypeResolveFailed(logger, ex, assemblyQualifiedName);
       return null;
     }
   }
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Audit type name '{TypeName}' could not be resolved (Type.GetType returned null); the audit include/exclude decision falls back to the default.")]
+  private static partial void LogAuditTypeUnresolved(ILogger logger, string typeName);
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Audit type name '{TypeName}' threw during resolution; the audit include/exclude decision falls back to the default.")]
+  private static partial void LogAuditTypeResolveFailed(ILogger logger, Exception ex, string typeName);
 
   private static string _extractFullTypeName(string messageType) =>
     TypeNameFormatter.GetFullName(messageType);

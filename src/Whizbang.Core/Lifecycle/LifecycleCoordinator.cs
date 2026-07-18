@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
@@ -24,12 +25,15 @@ namespace Whizbang.Core.Lifecycle;
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
-public sealed partial class LifecycleCoordinator(LifecycleCoordinatorMetrics? metrics = null) : ILifecycleCoordinator {
+public sealed partial class LifecycleCoordinator(
+    LifecycleCoordinatorMetrics? metrics = null,
+    ILogger<LifecycleCoordinator>? logger = null) : ILifecycleCoordinator {
   private readonly ConcurrentDictionary<Guid, LifecycleTrackingState> _tracked = new();
   private readonly ConcurrentDictionary<Guid, WhenAllState> _whenAllStates = new();
   private readonly ConcurrentDictionary<Guid, PerspectiveWhenAllState> _perspectiveStates = new();
   private readonly ConcurrentBag<Task> _abandonedDetachedTasks = [];
   private readonly LifecycleCoordinatorMetrics? _metrics = metrics;
+  private readonly ILogger<LifecycleCoordinator> _logger = logger ?? NullLogger<LifecycleCoordinator>.Instance;
 
   /// <inheritdoc/>
   public ILifecycleTracking BeginTracking(
@@ -42,7 +46,7 @@ public sealed partial class LifecycleCoordinator(LifecycleCoordinatorMetrics? me
     var tracking = _tracked.GetOrAdd(eventId,
       id => {
         _metrics?.ActiveTrackedEvents.Add(1);
-        return new LifecycleTrackingState(id, envelope, entryStage, source, streamId, perspectiveType);
+        return new LifecycleTrackingState(id, envelope, entryStage, source, streamId, perspectiveType, _logger);
       });
     return tracking;
   }

@@ -3367,10 +3367,15 @@ public partial class PerspectiveWorker(
           ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, default);
       } catch (OperationCanceledException) {
         // Graceful shutdown
-#pragma warning disable RCS1075 // No logger in static context
-      } catch (Exception) {
-#pragma warning restore RCS1075
-        // Errors surface via receptor telemetry
+      } catch (Exception ex) {
+        // Errors normally surface via receptor telemetry, but a throw BEFORE telemetry (DI scope /
+        // security-context failure) would fail the detached stage invisibly. Resolve a logger from a
+        // fresh scope (the work scope is already disposed here) and record it via the source-generated
+        // LoggerMessage so a failed detached stage is always diagnosable.
+        using var logScope = scopeFactory.CreateScope();
+        ILogger detachedLogger = logScope.ServiceProvider.GetService<ILogger<PerspectiveWorker>>()
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
+        LogDetachedStageError(detachedLogger, ex, stage, envelope.MessageId.Value);
       }
     });
   }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
@@ -148,10 +149,65 @@ public class DeserializeStreamEventsTests {
       .Because("Assembly name should be present in the formatted type name");
   }
 
+  [Test]
+  public async Task DeserializeStreamEvents_WhenEventDataIsCorrupt_LogsWarningAndKeepsGoodEventsAsync() {
+    // Arrange — a corrupt row (malformed JSON) followed by a good row, sharing a resolvable event
+    // type. The corrupt row forces a JsonException inside the deserialize; the good row must survive.
+    var jsonOptions = _createJsonOptions();
+    var logger = new _capturingLogger<EFCoreEventStore<MinimalTestDbContext>>();
+    var options = new DbContextOptionsBuilder<MinimalTestDbContext>()
+      .UseInMemoryDatabase($"deser-log-{Guid.NewGuid():N}")
+      .Options;
+    var context = new MinimalTestDbContext(options);
+    var eventStore = new EFCoreEventStore<MinimalTestDbContext>(context, jsonOptions, logger);
+
+    var eventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent));
+    var goodStreamId = Guid.NewGuid();
+    var corrupt = new StreamEventData {
+      StreamId = Guid.NewGuid(),
+      EventId = Guid.NewGuid(),
+      EventType = eventType,
+      EventData = "{ this is not valid json",
+      EventWorkId = Guid.NewGuid()
+    };
+    var good = new StreamEventData {
+      StreamId = goodStreamId,
+      EventId = Guid.NewGuid(),
+      EventType = eventType,
+      EventData = JsonSerializer.Serialize(new OrderCreatedEvent { OrderId = goodStreamId, CustomerName = "Acme" }, jsonOptions),
+      EventWorkId = Guid.NewGuid()
+    };
+
+    // Act — corrupt FIRST so the good event must still be returned.
+    var results = eventStore.DeserializeStreamEvents([corrupt, good], [typeof(OrderCreatedEvent)]);
+
+    // Assert — good kept, corrupt skipped, and the failure was LOGGED (never silently swallowed).
+    await Assert.That(results.Count).IsEqualTo(1);
+    await Assert.That(results[0].Payload).IsTypeOf<OrderCreatedEvent>();
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
+      .Because("a deserialize failure must be logged, not silently swallowed");
+    await Assert.That(logger.Entries.Any(e => e.Exception is not null)).IsTrue()
+      .Because("the first per-batch failure must carry the underlying exception");
+  }
+
   #region Helpers
 
   private static JsonSerializerOptions _createJsonOptions() {
     return JsonContextRegistry.CreateCombinedOptions();
+  }
+
+  /// <summary>Minimal capturing logger — records level/message/exception for assertions.</summary>
+  private sealed class _capturingLogger<T> : ILogger<T> {
+    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => _nullScope.Instance;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add((logLevel, formatter(state, exception), exception));
+
+    private sealed class _nullScope : IDisposable {
+      public static readonly _nullScope Instance = new();
+      public void Dispose() { }
+    }
   }
 
   private static EFCoreEventStore<MinimalTestDbContext> _createEventStore() {

@@ -130,7 +130,14 @@ public static class JsonContextRegistry {
   /// <c>JsonTypeInfo</c> for any type is deterministic and independent of assembly-load order. The
   /// <see cref="SerializationProfile.Persistence"/> profile excludes Default-scoped providers (e.g. the
   /// scalar WhizbangId converters), letting object-mode persistence resolvers win.
+  ///
+  /// <para>The returned options set <see cref="JsonSerializerOptions.AllowOutOfOrderMetadataProperties"/>
+  /// so polymorphic payloads survive a PostgreSQL <c>jsonb</c> round-trip, which reorders object keys and
+  /// would otherwise push the <c>$type</c> discriminator out of the first position STJ requires.</para>
   /// </summary>
+  /// <tests>Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
+  /// <tests>Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
+  /// <tests>Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
   public static JsonSerializerOptions CreateCombinedOptions(SerializationProfile profile) {
     if (_resolvers.IsEmpty) {
       throw new InvalidOperationException(
@@ -155,7 +162,17 @@ public static class JsonContextRegistry {
       [new _polymorphicBaseTypeInfoResolver(), .. orderedResolvers]);
     var options = new JsonSerializerOptions {
       TypeInfoResolver = combinedResolver,
-      DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+      DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+      // Postgres jsonb normalizes object key order (by length, then bytewise), so a stored value
+      // written with the STJ polymorphic discriminator ("$type") first comes back with "$type" NOT
+      // first whenever a nested polymorphic member has a direct sibling key shorter than "$type"
+      // (≤4 chars). STJ's polymorphic reader rejects an out-of-position discriminator unless this is
+      // set — without it, every read path that eagerly deserializes such a payload from a jsonb
+      // column throws NotSupportedException (silently swallowed on the drain path → 0 typed events →
+      // perspective completion stalls). This is the single choke point every consumer's options flow
+      // through, so enabling it here fixes the event store, perspective persistence, and every Dapper/
+      // EF Core read path at once.
+      AllowOutOfOrderMetadataProperties = true
     };
 
     // Register WhizbangId converters as runtime converters in addition to resolvers.

@@ -42,6 +42,34 @@ public class PinnedTypeRenameAnalyzerTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task MalformedLedger_ReportsWhiz122AndDisablesGovernanceAsync() {
+    // The ledger file exists but is not valid JSON. Governance (WHIZ120/121) goes inert — but the
+    // corruption must be surfaced (WHIZ122, warning) rather than silently dropping the baseline.
+    const string brokenLedger = "{ this is not valid json";
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PinnedTypeRenameAnalyzer>(
+      RENAMED_SOURCE, [(LEDGER_PATH, brokenLedger)]);
+
+    var matches = diagnostics.Where(d => d.Id == "WHIZ122").ToList();
+    await Assert.That(matches).Count().IsEqualTo(1);
+    await Assert.That(matches[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
+    await Assert.That(matches[0].GetMessage(CultureInfo.InvariantCulture)).Contains(LEDGER_PATH);
+    // Governance is inert while the ledger can't be parsed — no rename/removed diagnostics.
+    await Assert.That(diagnostics.Where(d => d.Id is "WHIZ120" or "WHIZ121")).IsEmpty();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task NoLedger_DoesNotReportWhiz122Async() {
+    // No ledger AdditionalFile at all → analyzer inert; an ABSENT ledger is not "malformed".
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PinnedTypeRenameAnalyzer>(
+      RENAMED_SOURCE, []);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ122")).IsEmpty();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task Rename_AcknowledgedAsFormerName_NoDiagnosticAsync() {
     // Post-code-fix state: ledger current == the compiled name; the old name is recorded as former.
     var ledger = _ledger(PINNED_ID, currentName: "TestApp.OrderPlacedEvent", formerNames: "TestApp.OrderCreatedEvent");

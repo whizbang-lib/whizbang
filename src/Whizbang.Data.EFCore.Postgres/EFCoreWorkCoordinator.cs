@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
@@ -1336,8 +1337,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId })
         }];
       }
-    } catch {
-      // Scope parsing is best-effort for reconciliation
+    } catch (Exception ex) {
+      // Scope parsing is best-effort for reconciliation, but a parse failure silently drops the
+      // tenant/user security context so the replayed lifecycle event runs unscoped — always log it.
+      EFCoreWorkCoordinatorLog.ReconcileScopeParseFailed(_logger ?? NullLogger<EFCoreWorkCoordinator<TDbContext>>.Instance, ex);
     }
 
     return [];
@@ -1983,4 +1986,16 @@ internal class OrphanedEventRow {
 
   [Column("scope")]
   public string? Scope { get; set; }
+}
+
+/// <summary>
+/// Source-generated log messages for <see cref="EFCoreWorkCoordinator{TDbContext}"/>. Kept in a
+/// non-generic class because the <c>[LoggerMessage]</c> source generator does not emit into generic
+/// containing types.
+/// </summary>
+internal static partial class EFCoreWorkCoordinatorLog {
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without tenant/user scope.")]
+  public static partial void ReconcileScopeParseFailed(ILogger logger, Exception ex);
 }

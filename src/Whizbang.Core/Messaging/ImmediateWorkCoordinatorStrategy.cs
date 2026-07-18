@@ -51,7 +51,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly SystemEventOptions? _systemEventOptions = systemEventOptions?.Value;
-  private readonly WorkCoordinatorQueues _queues = new();
+  private readonly WorkCoordinatorQueues _queues = new(logger);
 
   /// <summary>
   /// Queues an outbox message for immediate flush.

@@ -146,7 +146,8 @@ __PHYSICAL_FIELD_CONFIGS__
       var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
       return new global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
         context,
-        jsonOptions
+        jsonOptions,
+        sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>>>()
       );
     });
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();

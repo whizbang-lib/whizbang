@@ -4,6 +4,8 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
@@ -25,11 +27,15 @@ namespace Whizbang.Data.EFCore.Postgres;
 #pragma warning disable S2743 // Static diagnostic flag is intentionally per-generic-type (reads same env var)
 public sealed class EFCoreEventStore<TDbContext>(
   TDbContext context,
-  JsonSerializerOptions? jsonOptions = null) : IEventStore
+  JsonSerializerOptions? jsonOptions = null,
+  ILogger<EFCoreEventStore<TDbContext>>? logger = null) : IEventStore
   where TDbContext : DbContext {
 
   private readonly TDbContext _context = context ?? throw new ArgumentNullException(nameof(context));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
+  // Null-object default so a drain deserialize failure is ALWAYS logged: DI supplies a real logger in
+  // production; the NullLogger fallback only applies to manual construction / a log-free host.
+  private readonly ILogger<EFCoreEventStore<TDbContext>> _logger = logger ?? NullLogger<EFCoreEventStore<TDbContext>>.Instance;
 
   /// <summary>
   /// Appends an event to the specified stream.
@@ -474,6 +480,7 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DeserializeStreamEventsTests.cs:DeserializeStreamEvents_WhenEventDataIsCorrupt_LogsWarningAndKeepsGoodEventsAsync</tests>
   public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
       IReadOnlyList<StreamEventData> streamEvents,
       IReadOnlyList<Type> eventTypes) {
@@ -485,59 +492,76 @@ public sealed class EFCoreEventStore<TDbContext>(
     var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
 
     var results = new List<MessageEnvelope<IEvent>>(streamEvents.Count);
+    var deserializeFailures = 0;
     foreach (var raw in streamEvents) {
-      var envelope = _tryBuildEnvelopeFromStreamEvent(raw, typeMap);
+      MessageEnvelope<IEvent>? envelope;
+      try {
+        envelope = _tryBuildEnvelopeFromStreamEvent(raw, typeMap);
+      } catch (Exception ex) {
+        // A stored event failed to deserialize — corrupt data, a schema/type mismatch, or a
+        // polymorphic payload whose "$type" was reordered out of first position by jsonb (see
+        // JsonContextRegistry.CreateCombinedOptions). Don't let one bad event block the batch, but
+        // NEVER swallow it silently: a silent skip here previously turned a TOTAL read failure into
+        // "0 typed events" with no diagnostic, stalling perspective completion for days. Log the
+        // first failure per batch in full (with the exception), then summarize the count.
+        if (deserializeFailures == 0) {
+          EFCoreEventStoreLog.DrainDeserializeFailure(_logger, ex, raw.EventId, raw.EventType);
+        }
+        deserializeFailures++;
+        continue;
+      }
+
       if (envelope is not null) {
         results.Add(envelope);
       }
+    }
+
+    if (deserializeFailures > 0) {
+      EFCoreEventStoreLog.DrainDeserializeSkipped(_logger, deserializeFailures, streamEvents.Count);
     }
 
     return results;
   }
 
   /// <summary>
-  /// Deserializes a single StreamEventData row into a MessageEnvelope. Returns null to signal
-  /// "skip this row" — unknown event type, null deserialisation result, or any exception
-  /// during deserialisation. Don't let one bad event block the batch.
+  /// Deserializes a single StreamEventData row into a MessageEnvelope. Returns null for an EXPECTED
+  /// skip — an unknown/unresolvable event type or a null deserialization result. THROWS on a genuine
+  /// deserialization failure (corrupt data, schema mismatch, reordered polymorphic discriminator);
+  /// the caller (<see cref="DeserializeStreamEvents"/>) catches, logs, and continues so one bad event
+  /// doesn't block the batch — but the failure is never silently swallowed.
   /// </summary>
   private MessageEnvelope<IEvent>? _tryBuildEnvelopeFromStreamEvent(
       StreamEventData raw,
       Dictionary<string, Type> typeMap) {
-    try {
-      if (!EventTypeMatchingHelper.TryResolveType(typeMap, raw.EventType, out var concreteType)) {
-        return null;
-      }
-
-      var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
-      var eventData = JsonSerializer.Deserialize(raw.EventData, typeInfo);
-      if (eventData is null) {
-        return null;
-      }
-
-      var metadata = _deserializeMetadataIfPresent(raw.Metadata);
-      var scope = _deserializeScopeIfPresent(raw.Scope);
-
-      var hops = metadata?.Hops?.ToList() ?? [];
-      // Restore scope into first hop (same pattern as _restoreScopeInHops)
-      if (scope is not null && hops.Count > 0 && hops[0].Scope is null) {
-        hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
-      }
-
-      return new MessageEnvelope<IEvent> {
-        MessageId = metadata?.MessageId ?? new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
-        Payload = (IEvent)eventData,
-        Hops = hops,
-        DispatchContext = metadata?.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
-        // Drain-mode parity with ReadPolymorphicAsync — carry the local commit_sequence stamp
-        // through to the perspective runner so the idempotency filter can compare commit_sequence
-        // when both sides have it (production G5).
-        LocalCommitSequence = raw.CommitSequence
-      };
-    } catch (Exception) {
-      // Skip events that fail deserialization (type not in JSON context,
-      // corrupted data, schema mismatch). Don't let one bad event block the batch.
+    if (!EventTypeMatchingHelper.TryResolveType(typeMap, raw.EventType, out var concreteType)) {
       return null;
     }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
+    var eventData = JsonSerializer.Deserialize(raw.EventData, typeInfo);
+    if (eventData is null) {
+      return null;
+    }
+
+    var metadata = _deserializeMetadataIfPresent(raw.Metadata);
+    var scope = _deserializeScopeIfPresent(raw.Scope);
+
+    var hops = metadata?.Hops?.ToList() ?? [];
+    // Restore scope into first hop (same pattern as _restoreScopeInHops)
+    if (scope is not null && hops.Count > 0 && hops[0].Scope is null) {
+      hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
+    }
+
+    return new MessageEnvelope<IEvent> {
+      MessageId = metadata?.MessageId ?? new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
+      Payload = (IEvent)eventData,
+      Hops = hops,
+      DispatchContext = metadata?.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      // Drain-mode parity with ReadPolymorphicAsync — carry the local commit_sequence stamp
+      // through to the perspective runner so the idempotency filter can compare commit_sequence
+      // when both sides have it (production G5).
+      LocalCommitSequence = raw.CommitSequence
+    };
   }
 
   private EnvelopeMetadata? _deserializeMetadataIfPresent(string? raw) {
@@ -555,4 +579,21 @@ public sealed class EFCoreEventStore<TDbContext>(
     var scopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
     return (PerspectiveScope?)JsonSerializer.Deserialize(raw, scopeTypeInfo);
   }
+}
+
+/// <summary>
+/// Source-generated log messages for <see cref="EFCoreEventStore{TDbContext}"/>. Kept as a separate
+/// non-generic class because the <c>[LoggerMessage]</c> source generator does not emit into generic
+/// containing types.
+/// </summary>
+internal static partial class EFCoreEventStoreLog {
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Failed to deserialize stream event {EventId} of type {EventType} during drain; skipping this event (first failure this batch).")]
+  public static partial void DrainDeserializeFailure(ILogger logger, Exception ex, Guid eventId, string eventType);
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Drain deserialization skipped {SkippedCount} of {TotalCount} stream event(s) this batch; see the first-failure detail logged above.")]
+  public static partial void DrainDeserializeSkipped(ILogger logger, int skippedCount, int totalCount);
 }
