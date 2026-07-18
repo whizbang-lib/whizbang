@@ -1336,8 +1336,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId })
         }];
       }
-    } catch {
-      // Scope parsing is best-effort for reconciliation
+    } catch (Exception ex) {
+      // Scope parsing is best-effort for reconciliation, but a parse failure silently drops the
+      // tenant/user security context so the replayed lifecycle event runs unscoped — log it.
+      _logger?.LogWarning(ex, "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without tenant/user scope.");
     }
 
     return [];

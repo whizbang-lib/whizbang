@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Testing.Async;
@@ -68,6 +69,34 @@ public class PerspectiveSyncSignalerTests {
     await Assert.That(receivedSignal!.Value.PerspectiveType).IsEqualTo(perspectiveType);
     await Assert.That(receivedSignal!.Value.StreamId).IsEqualTo(streamId);
     await Assert.That(receivedSignal!.Value.LastEventId).IsEqualTo(eventId);
+  }
+
+  [Test]
+  public async Task LocalSyncSignaler_HandlerThrows_LogsWarningAndStillNotifiesOthersAsync() {
+    // A throwing handler must not block the others — but the drop must be logged, not silent
+    // (a dropped signal can leave a sync waiter blocked until its poll/timeout).
+    var captured = new _capturingLogger<LocalSyncSignaler>();
+    using var signaler = new LocalSyncSignaler(captured);
+    var perspectiveType = typeof(TestPerspective);
+    var goodRan = false;
+
+    using var badSub = signaler.Subscribe(perspectiveType, _ => throw new InvalidOperationException("boom"));
+    using var goodSub = signaler.Subscribe(perspectiveType, _ => { goodRan = true; });
+
+    signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());
+
+    await Assert.That(goodRan).IsTrue()
+      .Because("one throwing handler must not block the others");
+    await Assert.That(captured.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
+      .Because("a dropped handler exception must be logged, not silently swallowed");
+  }
+
+  private sealed class _capturingLogger<T> : ILogger<T> {
+    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add((logLevel, formatter(state, exception), exception));
   }
 
   [Test]

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
 namespace Whizbang.Core.Perspectives.Sync;
 
@@ -13,8 +14,10 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs</tests>
-public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
+[global::System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Diagnostic logging fires only when a subscriber handler throws — a rare failure path where LoggerMessage overhead isn't justified.")]
+public sealed class LocalSyncSignaler(ILogger<LocalSyncSignaler>? logger = null) : IPerspectiveSyncSignaler {
   private readonly ConcurrentDictionary<Type, ConcurrentBag<Action<PerspectiveCursorSignal>>> _subscribers = new();
+  private readonly ILogger<LocalSyncSignaler>? _logger = logger;
   private bool _disposed;
 
   /// <inheritdoc />
@@ -33,7 +36,7 @@ public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
 
     // Notify specific perspective subscribers
     if (_subscribers.TryGetValue(perspectiveType, out var handlers)) {
-      _notifyHandlers(handlers, signal);
+      _notifyHandlers(handlers, signal, _logger);
     }
   }
 
@@ -60,13 +63,17 @@ public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
 
   private static void _notifyHandlers(
       ConcurrentBag<Action<PerspectiveCursorSignal>> handlers,
-      PerspectiveCursorSignal signal) {
+      PerspectiveCursorSignal signal,
+      ILogger<LocalSyncSignaler>? logger) {
     foreach (var handler in handlers) {
       try {
         handler(signal);
-      } catch {
-        // Swallow handler exceptions to prevent one failing handler from
-        // blocking others. In production, this should be logged.
+      } catch (Exception ex) {
+        // One failing handler must not block the others — but never silently. A dropped signal can
+        // leave a sync waiter blocked until its poll/timeout, so log it.
+        logger?.LogWarning(ex,
+          "A perspective sync handler threw for {PerspectiveType}; continuing with the remaining handlers.",
+          signal.PerspectiveType.Name);
       }
     }
   }
