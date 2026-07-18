@@ -156,9 +156,9 @@ internal sealed class UnfilteredScopedAccess<TModel>(DbContext context) : IScope
     get {
       if (_isSplitMode) {
         SplitModeChangeTrackerHydrator.EnsureHooked(context);
-        return context.Set<PerspectiveRow<TModel>>().AsQueryable();
+        return LensExpiryFilter.Apply(context.Set<PerspectiveRow<TModel>>().AsQueryable());
       }
-      return context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+      return LensExpiryFilter.Apply(context.Set<PerspectiveRow<TModel>>().AsNoTracking());
     }
   }
 
@@ -180,9 +180,9 @@ internal sealed class FilteredScopedAccess<TModel>(DbContext context, ScopeFilte
       IQueryable<PerspectiveRow<TModel>> baseQuery;
       if (_isSplitMode) {
         SplitModeChangeTrackerHydrator.EnsureHooked(context);
-        baseQuery = context.Set<PerspectiveRow<TModel>>().AsQueryable();
+        baseQuery = LensExpiryFilter.Apply(context.Set<PerspectiveRow<TModel>>().AsQueryable());
       } else {
-        baseQuery = context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+        baseQuery = LensExpiryFilter.Apply(context.Set<PerspectiveRow<TModel>>().AsNoTracking());
       }
       return ScopedAccessHelper.ApplyFilterInfo(baseQuery, filterInfo);
     }

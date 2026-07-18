@@ -18,9 +18,9 @@ internal static class MultiModelScopeHelper {
     IQueryable<PerspectiveRow<T>> query;
     if (SplitModeChangeTrackerHydrator.HasHydrator(typeof(PerspectiveRow<T>))) {
       SplitModeChangeTrackerHydrator.EnsureHooked(context);
-      query = context.Set<PerspectiveRow<T>>().AsQueryable();
+      query = LensExpiryFilter.Apply(context.Set<PerspectiveRow<T>>().AsQueryable());
     } else {
-      query = context.Set<PerspectiveRow<T>>().AsNoTracking();
+      query = LensExpiryFilter.Apply(context.Set<PerspectiveRow<T>>().AsNoTracking());
     }
     if (filterInfo.HasValue && !filterInfo.Value.IsEmpty) {
       query = ScopedAccessHelper.ApplyFilterInfo(query, filterInfo.Value);

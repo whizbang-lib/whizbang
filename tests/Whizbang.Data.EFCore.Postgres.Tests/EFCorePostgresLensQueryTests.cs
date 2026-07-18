@@ -2,9 +2,11 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -67,6 +69,42 @@ public class EFCorePostgresLensQueryTests {
 
     context.Set<PerspectiveRow<TestModel>>().Add(row);
     await context.SaveChangesAsync();
+  }
+
+  // E2-4d d-3: logical-expiry lens filter. A TtlRow perspective hides rows whose expires_at has passed.
+  private async Task SeedTtlRowAsync(TestDbContext context, Guid id, DateTime? expiresAt) {
+    var row = new PerspectiveRow<TtlRowStoreModel> {
+      Id = id,
+      Data = new TtlRowStoreModel { Name = "chat" },
+      Metadata = new PerspectiveMetadata { EventType = "e", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow },
+      Scope = new PerspectiveScope(),
+      CreatedAt = DateTime.UtcNow,
+      UpdatedAt = DateTime.UtcNow,
+      Version = 1
+    };
+    context.Set<PerspectiveRow<TtlRowStoreModel>>().Add(row);
+    context.Entry(row).Property("expires_at").CurrentValue = expiresAt;
+    await context.SaveChangesAsync();
+  }
+
+  [Test]
+  public async Task Query_TtlRowPerspective_HidesExpiredRows_KeepsUnexpiredAndNullAsync() {
+    var context = CreateInMemoryDbContext();
+    PerspectiveTtlRegistry.Register(typeof(TtlRowStoreModel), 3600);
+
+    var expiredId = _idProvider.NewGuid();
+    var futureId = _idProvider.NewGuid();
+    var nullId = _idProvider.NewGuid();
+    await SeedTtlRowAsync(context, expiredId, DateTime.UtcNow.AddMinutes(-5));   // logically expired → hidden
+    await SeedTtlRowAsync(context, futureId, DateTime.UtcNow.AddHours(1));       // not yet expired → visible
+    await SeedTtlRowAsync(context, nullId, null);                               // never expires → visible
+
+    var lens = new EFCorePostgresLensQuery<TtlRowStoreModel>(context, "ttl_row_perspective");
+    var ids = await lens.Query.Select(r => r.Id).ToListAsync();
+
+    await Assert.That(ids).Contains(futureId).Because("A row whose expiry is still in the future is visible to lens reads.");
+    await Assert.That(ids).Contains(nullId).Because("A row with no expiry (never expires) is always visible.");
+    await Assert.That(ids).DoesNotContain(expiredId).Because("A logically-expired TtlRow row is hidden from lens reads (physical reap is separate).");
   }
 
   [Test]
