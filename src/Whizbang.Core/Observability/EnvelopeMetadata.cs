@@ -36,12 +36,13 @@ public sealed class EnvelopeMetadata {
   public List<ReceptorInvocationRecord>? ReceptorInvocations { get; set; }
 
   /// <summary>
-  /// Absolute expiry instant for a <see cref="Attributes.Destruction.AfterTtl"/> ephemeral event —
-  /// <c>emit time + [Ephemeral(TtlSeconds)]</c>, stamped at dispatch (the same seam that derives the
-  /// ephemeral flag). Rides the event into <c>wh_event_body.metadata</c> (the emit chain lifts it from here),
-  /// where the reaper reads it as the age-based reap floor. Null for Sourced and WhenConsumed events (no TTL).
+  /// TTL in seconds for a <see cref="Attributes.Destruction.AfterTtl"/> ephemeral event, stamped at dispatch
+  /// (the same seam that derives the ephemeral flag). Rides the event into <c>wh_event_body.metadata</c>,
+  /// where the emit chain materialises the absolute expiry as <c>created_at + ttl</c> (anchored to the event's
+  /// authoritative DB creation timestamp + DB clock, NOT the C# dispatch moment) and the reaper reads that as
+  /// the age-based reap floor. Null for Sourced and WhenConsumed events (no TTL).
   /// </summary>
   /// <docs>fundamentals/events/ephemeral-events</docs>
-  [System.Text.Json.Serialization.JsonPropertyName("eea")]
-  public System.DateTimeOffset? EphemeralExpiresAt { get; init; }
+  [System.Text.Json.Serialization.JsonPropertyName("ett")]
+  public int? EphemeralTtlSeconds { get; init; }
 }

@@ -826,7 +826,7 @@ public partial class TransportConsumerWorker : BackgroundService {
         MessageId = envelope.MessageId,
         Hops = envelope.Hops?.ToList() ?? [],
         DispatchContext = envelope.DispatchContext,
-        EphemeralExpiresAt = Whizbang.Core.Messaging.EphemeralExpiryDeriver.Derive(payload, _ephemeralModeResolver, DateTimeOffset.UtcNow)
+        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, _ephemeralModeResolver)
       },
       MessageType = messageTypeName,
       // Slice 26.6: propagate source identity from envelope → wh_inbox columns.

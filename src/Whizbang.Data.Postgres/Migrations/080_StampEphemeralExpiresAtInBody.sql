@@ -1,15 +1,16 @@
 -- Migration: 080_StampEphemeralExpiresAtInBody.sql
 -- Date: 2026-07-17
--- Description: E2-4 (metadata-carry) — lift an ephemeral AfterTtl event's expiry from the envelope metadata
---              into wh_event_body.metadata so the reaper can read it. The dispatcher stamps
---              EnvelopeMetadata.EphemeralExpiresAt ("eea") = emit-time + [Ephemeral(TtlSeconds)] at the same
---              seam that derives the ephemeral flag; that lands in wh_outbox/wh_inbox.metadata. This
---              re-creates the two emit-chain functions VERBATIM from migration 078, changing ONLY the
---              body_meta build: it now appends 'ephemeral_expires_at' (from <alias>.metadata->>'eea') when
---              present. A non-AfterTtl event has no "eea" key, so body_meta is byte-identical to 078.
+-- Description: E2-4 (metadata-carry) — materialise an ephemeral AfterTtl event's expiry into
+--              wh_event_body.metadata so the reaper can read it. The dispatcher stamps the raw TTL
+--              EnvelopeMetadata.EphemeralTtlSeconds ("ett") = [Ephemeral(TtlSeconds)] at the same seam that
+--              derives the ephemeral flag; that lands in wh_outbox/wh_inbox.metadata. This re-creates the two
+--              emit-chain functions VERBATIM from migration 078, changing ONLY the body_meta build: when the
+--              "ett" number is present it appends 'ephemeral_expires_at' = p_now + ett — i.e. the expiry is
+--              anchored to the event's AUTHORITATIVE created_at (p_now, the DB emit clock), NOT the C#
+--              dispatch moment. A non-AfterTtl event has no "ett" key, so body_meta is byte-identical to 078.
 --              Replaces the per-type wh_ephemeral_type_ttl lookup approach (never shipped past this branch):
---              the expiry rides WITH the event (self-describing, per-event, fixed-at-birth, updatable via a
---              metadata UPDATE) instead of a startup-synced side table.
+--              the TTL rides WITH the event (self-describing, per-event, cross-service) while the expiry
+--              instant is DB-clock-authoritative from creation.
 -- Dependencies: 078 (the emit-chain functions this reproduces)
 
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
@@ -94,9 +95,9 @@ BEGIN
         c_field_hops, COALESCE(oe.event_data::jsonb -> 'h', oe.event_data::jsonb -> c_field_hops, oe.event_data::jsonb -> 'hops', '[]'::jsonb)
       ) || CASE
         WHEN oe.metadata IS NOT NULL
-             AND (oe.metadata::jsonb -> 'eea') IS NOT NULL
-             AND jsonb_typeof(oe.metadata::jsonb -> 'eea') <> 'null'
-        THEN jsonb_build_object('ephemeral_expires_at', oe.metadata::jsonb ->> 'eea')
+             AND jsonb_typeof(oe.metadata::jsonb -> 'ett') = 'number'
+        THEN jsonb_build_object('ephemeral_expires_at',
+               p_now + ((oe.metadata::jsonb ->> 'ett')::int * INTERVAL '1 second'))
         ELSE '{}'::jsonb
       END AS body_meta,
       oe.scope,
@@ -341,9 +342,9 @@ BEGIN
         c_field_hops, COALESCE(ie.event_data::jsonb -> 'h', ie.event_data::jsonb -> c_field_hops, ie.event_data::jsonb -> 'hops', '[]'::jsonb)
       ) || CASE
         WHEN ie.metadata IS NOT NULL
-             AND (ie.metadata::jsonb -> 'eea') IS NOT NULL
-             AND jsonb_typeof(ie.metadata::jsonb -> 'eea') <> 'null'
-        THEN jsonb_build_object('ephemeral_expires_at', ie.metadata::jsonb ->> 'eea')
+             AND jsonb_typeof(ie.metadata::jsonb -> 'ett') = 'number'
+        THEN jsonb_build_object('ephemeral_expires_at',
+               p_now + ((ie.metadata::jsonb ->> 'ett')::int * INTERVAL '1 second'))
         ELSE '{}'::jsonb
       END AS body_meta,
       ie.scope,

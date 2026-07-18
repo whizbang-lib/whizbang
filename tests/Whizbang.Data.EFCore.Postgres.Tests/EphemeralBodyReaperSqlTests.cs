@@ -287,20 +287,19 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
       .Because("With no consuming perspective there is nothing to wait for — the body is reapable immediately.");
   }
 
-  // Commits an ephemeral event whose EnvelopeMetadata carries an absolute expiry ('eea'), exercising the
-  // full metadata-carry path: request Metadata -> wh_outbox.metadata -> emit chain lifts it into
-  // wh_event_body.metadata.ephemeral_expires_at (migration 080). Null expiry => WhenConsumed (no 'eea' key).
-  private static async Task _commitWithExpiryAsync(NpgsqlConnection connection, Guid eventId, Guid streamId, string eventType, DateTimeOffset? expiresAt) {
-    var eea = expiresAt is null
-      ? ""
-      : $"\"eea\": \"{expiresAt.Value.ToString("o", System.Globalization.CultureInfo.InvariantCulture)}\"";
+  // Commits an ephemeral event whose EnvelopeMetadata carries the raw TTL ('ett'), exercising the full
+  // metadata-carry path: request Metadata -> wh_outbox.metadata -> emit chain materialises
+  // wh_event_body.metadata.ephemeral_expires_at = created_at + ttl (migration 080). Null ttl => WhenConsumed
+  // (no 'ett' key, so no expiry key).
+  private static async Task _commitWithTtlAsync(NpgsqlConnection connection, Guid eventId, Guid streamId, string eventType, int? ttlSeconds) {
+    var ett = ttlSeconds is null ? "" : $"\"ett\": {ttlSeconds.Value}";
     var request = $$"""
       {
         "instance_id": "{{Guid.NewGuid()}}", "service_name": "test", "host_name": "h", "process_id": 1,
         "new_outbox_messages": [{
           "MessageId": "{{eventId}}", "Destination": "out", "MessageType": "{{eventType}}", "EnvelopeType": null,
           "Envelope": {"Payload": {"OrderId": 42}, "MessageId": "{{eventId}}", "Hops": []},
-          "Metadata": { {{eea}} }, "Scope": null, "StreamId": "{{streamId}}", "IsEvent": true, "Flags": 8
+          "Metadata": { {{ett}} }, "Scope": null, "StreamId": "{{streamId}}", "IsEvent": true, "Flags": 8
         }]
       }
       """;
@@ -343,12 +342,12 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
 
     var eventId = Guid.NewGuid();
     const string eventType = "Whizbang.Tests.ChatMessageTtl";
-    // No association => consumed + vacuously covered. A future expiry is the only thing that can hold it now.
-    await _commitWithExpiryAsync(connection, eventId, Guid.NewGuid(), eventType, DateTimeOffset.UtcNow.AddHours(1));
+    // No association => consumed + vacuously covered. A 1-hour TTL => expires_at = created_at + 1h (future).
+    await _commitWithTtlAsync(connection, eventId, Guid.NewGuid(), eventType, 3600);
 
-    // Migration 080: the stamped expiry rode from the envelope metadata into the body metadata.
+    // Migration 080: the emit chain materialised created_at + ttl into the body metadata.
     await Assert.That(await _bodyExpiryAsync(connection, eventId)).IsNotNull()
-      .Because("The emit chain lifts EnvelopeMetadata.eea into wh_event_body.metadata.ephemeral_expires_at.");
+      .Because("The emit chain materialises created_at + ett into wh_event_body.metadata.ephemeral_expires_at.");
 
     // Aged past the (0s) grace window but NOT past its expiry => the TTL floor holds it.
     await _ageAsync(connection, eventId, "10 minutes");
@@ -373,8 +372,8 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
 
     var afterTtl = Guid.NewGuid();
     var whenConsumed = Guid.NewGuid();
-    await _commitWithExpiryAsync(connection, afterTtl, Guid.NewGuid(), "Whizbang.Tests.AgeGatedEvent", DateTimeOffset.UtcNow.AddHours(1));
-    await _commitWithExpiryAsync(connection, whenConsumed, Guid.NewGuid(), "Whizbang.Tests.ConsumeGatedEvent", expiresAt: null);
+    await _commitWithTtlAsync(connection, afterTtl, Guid.NewGuid(), "Whizbang.Tests.AgeGatedEvent", 3600);
+    await _commitWithTtlAsync(connection, whenConsumed, Guid.NewGuid(), "Whizbang.Tests.ConsumeGatedEvent", ttlSeconds: null);
 
     // Both consumed (no association) and aged 10 min past the 0s grace.
     await _ageAsync(connection, afterTtl, "10 minutes");
