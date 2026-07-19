@@ -21,6 +21,7 @@ public class EphemeralFlagDeriverTests {
   private sealed record MarkerEvent : IEphemeralEvent;
   private sealed record ComposedEphemeralEvent;   // ephemeral only via the resolver (e.g. [Ephemeral] on a base)
   private sealed record SourcedEvent;
+  private sealed record CompactedMarkerEvent : ICompactedEvent;
 
   private sealed class StubResolver(params Type[] ephemeralTypes) : IEphemeralModeResolver {
     private readonly HashSet<Type> _ephemeral = [.. ephemeralTypes];
@@ -62,5 +63,27 @@ public class EphemeralFlagDeriverTests {
   public async Task Derive_NullPayload_IsNoneAsync() {
     var flag = EphemeralFlagDeriver.Derive(null, resolver: null);
     await Assert.That(flag).IsEqualTo(EventFlags.None);
+  }
+
+  [Test]
+  public async Task Derive_CompactedMarker_IsCompactedNotEphemeralAsync() {
+    // E3: a compacted carry-forward is StateBased + PERMANENT. It must flag Compacted (16), never Ephemeral
+    // (8) — otherwise the reaper (self-destruct = flags&8) would delete the authoritative origin.
+    var flag = EphemeralFlagDeriver.Derive(new CompactedMarkerEvent(), resolver: null);
+    await Assert.That(flag).IsEqualTo(EventFlags.Compacted)
+      .Because("A compacted origin is permanent StateBased — flagged Compacted, so the reaper never touches it.");
+  }
+
+  [Test]
+  public async Task Derive_RealCompactedEvent_IsCompactedAsync() {
+    var compacted = new Whizbang.Core.Perspectives.Compacted {
+      StreamId = Guid.NewGuid(),
+      PerspectiveName = "P",
+      Model = default,
+      SchemaVersion = 1,
+      ThroughVersion = 5,
+    };
+    var flag = EphemeralFlagDeriver.Derive(compacted, resolver: null);
+    await Assert.That(flag).IsEqualTo(EventFlags.Compacted);
   }
 }

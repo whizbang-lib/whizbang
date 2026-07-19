@@ -4,12 +4,13 @@ using Whizbang.Core.Attributes;
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
-/// E3 (Carry-forward / Tier-2) — the authoritative <em>ephemeral</em> carry-forward event a compaction writes
-/// at an ephemeral stream's head: the designated perspective's model folded into a single origin, à la Marten's
+/// E3 (Carry-forward / Tier-2) — the authoritative <em>permanent</em> carry-forward event a compaction writes
+/// at a state-based stream's head: the designated perspective's model folded into a single origin, à la Marten's
 /// <c>Compacted&lt;T&gt;</c>. The folded detail below it is then truncated; the compacted stream replays only
-/// back to this event. It stays <see cref="EphemeralAttribute">ephemeral</see> (the E1 no-laundering invariant —
-/// a compaction never promotes to a durable Sourced event), and is protected from the tier-1 reaper (held at
-/// <c>infinity</c>) because it is the authority, not disposable detail.
+/// back to this event. It is <strong>StateBased but not ephemeral</strong> (<see cref="ICompactedEvent"/>): not
+/// replayed (the rebuild/rewind guards refuse it, honouring the E1 no-laundering invariant — a compaction never
+/// promotes to a durable Sourced event), yet <strong>never reaped</strong> — permanent by mode, so it needs no
+/// "hold it forever" protection; the reaper (keyed on the ephemeral/self-destruct flag) simply never targets it.
 /// </summary>
 /// <remarks>
 /// The model rides as raw JSON (<see cref="Model"/>) with a <see cref="SchemaVersion"/> stamp so a compacted
@@ -18,10 +19,9 @@ namespace Whizbang.Core.Perspectives;
 /// type is a string, the model is JSON).
 /// </remarks>
 /// <docs>fundamentals/events/ephemeral-events</docs>
-[Ephemeral]
 [PinnedId("d4e8c1a6-9b03-4f27-8a5e-1c7b2d9e6f04")]
-public sealed record Compacted : IEvent {
-  /// <summary>The ephemeral stream being compacted (its new origin lives here).</summary>
+public sealed record Compacted : ICompactedEvent {
+  /// <summary>The state-based stream being compacted (its new origin lives here).</summary>
   [StreamId]
   public required Guid StreamId { get; init; }
 

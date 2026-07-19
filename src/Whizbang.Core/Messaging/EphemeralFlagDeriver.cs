@@ -22,6 +22,12 @@ internal static class EphemeralFlagDeriver {
     if (payload is null) {
       return EventFlags.None;
     }
+    // Compacted = permanent StateBased (E3): the carry-forward origin. Checked first so a compaction summary
+    // is flagged Compacted (never reaped), not Ephemeral (self-destruct). It shares StateBased with ephemeral
+    // for the replay guards, but the reaper keys on Ephemeral alone, so a Compacted origin is protected by mode.
+    if (payload is ICompactedEvent) {
+      return EventFlags.Compacted;
+    }
     if (payload is IEphemeralEvent) {
       return EventFlags.Ephemeral;
     }
