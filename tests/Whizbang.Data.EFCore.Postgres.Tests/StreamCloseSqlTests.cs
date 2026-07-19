@@ -61,6 +61,53 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     _ = await call.ExecuteScalarAsync();
   }
 
+  // Commits an event with explicit flags (16 = EventFlags.Compacted — a permanent StateBased origin).
+  private static async Task _commitFlaggedAsync(NpgsqlConnection connection, Guid eventId, Guid streamId, string eventType, int flags) {
+    var request = $$"""
+      {
+        "instance_id": "{{Guid.NewGuid()}}", "service_name": "test", "host_name": "h", "process_id": 1,
+        "new_outbox_messages": [{
+          "MessageId": "{{eventId}}", "Destination": "out", "MessageType": "{{eventType}}", "EnvelopeType": null,
+          "Envelope": {"Payload": {"OrderId": 42}, "MessageId": "{{eventId}}", "Hops": []},
+          "Metadata": {}, "Scope": null, "StreamId": "{{streamId}}", "IsEvent": true, "Flags": {{flags}}
+        }]
+      }
+      """;
+    await using var call = connection.CreateCommand();
+    call.CommandText = "SELECT commit_handler_result(@req::jsonb)";
+    call.Parameters.AddWithValue("req", request);
+    _ = await call.ExecuteScalarAsync();
+  }
+
+  [Test]
+  public async Task CloseStream_Coalesces_PriorCompactedOrigin_IsTruncatedByLaterCloseAsync() {
+    // E3-4 coalescing: the fold appends a new Compacted origin then closes through the prior fold point — which
+    // includes the PRIOR Compacted (flags 16). close_stream truncates it (superseded), leaving one origin at
+    // head. Truncating a permanent Compacted origin here is correct: this is the EXPLICIT re-compaction path,
+    // not the automatic reaper (which never touches flags&16).
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    var priorOrigin = Guid.NewGuid();
+    var newOrigin = Guid.NewGuid();
+    // v1 = prior Compacted origin, v2 = later ephemeral detail, v3 = new Compacted origin.
+    await _commitFlaggedAsync(connection, priorOrigin, streamId, "Whizbang.Core.Perspectives.Compacted", flags: 16);
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.PresencePing");
+    await _commitFlaggedAsync(connection, newOrigin, streamId, "Whizbang.Core.Perspectives.Compacted", flags: 16);
+
+    var result = await coordinator.CloseStreamAsync(streamId, throughVersion: 2, archive: false);
+    await Assert.That(result.Status).IsEqualTo("closed");
+
+    await Assert.That(await _eventExistsAsync(connection, priorOrigin)).IsEqualTo(0L)
+      .Because("The prior Compacted origin (v1) is superseded and truncated by the re-compaction — origins coalesce.");
+    await Assert.That(await _eventExistsAsync(connection, newOrigin)).IsEqualTo(1L)
+      .Because("The new Compacted origin (v3) survives as the lone head.");
+    await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(1L)
+      .Because("A re-compacted stream holds exactly one origin at its head.");
+  }
+
   private static async Task _processWorkItemsAsync(NpgsqlConnection connection, Guid streamId) {
     await using var c = connection.CreateCommand();
     c.CommandText = "UPDATE wh_perspective_events SET processed_at = NOW() WHERE stream_id = @sid";
