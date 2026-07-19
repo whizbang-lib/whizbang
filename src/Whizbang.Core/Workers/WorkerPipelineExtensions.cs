@@ -66,6 +66,14 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamCloser>>(),
       sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>()));
+    // E3 Tier-2 compaction (StreamCompactor): folds a state-based stream to a permanent Compacted origin,
+    // reusing the snapshot store + event store + the A1 closer. On-demand, like IStreamCloser.
+    services.TryAddSingleton<Whizbang.Core.Perspectives.IStreamCompactor>(sp => new Whizbang.Core.Perspectives.StreamCompactor(
+      sp.GetRequiredService<Whizbang.Core.Perspectives.IPerspectiveSnapshotStore>(),
+      sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
+      sp.GetRequiredService<Whizbang.Core.Messaging.IEventStore>(),
+      sp.GetRequiredService<Whizbang.Core.Lifecycle.IStreamCloser>(),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Perspectives.StreamCompactor>>()));
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
     services.TryAddSingleton<IDeadLetterRecoveryPolicy, DefaultDeadLetterRecoveryPolicy>();
     services.TryAddSingleton<Whizbang.Core.Observability.DeadLetterMetrics>();
