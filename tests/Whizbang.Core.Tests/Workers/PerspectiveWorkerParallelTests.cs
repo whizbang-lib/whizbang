@@ -67,18 +67,18 @@ public sealed class PerspectiveWorkerParallelTests {
   [Test]
   [Category("Performance")]
   public async Task ProcessWorkBatch_WithMaxConcurrency2_ThrottlesTo2Async() {
-    // Arrange — 5 perspective groups but MaxConcurrentPerspectives = 2
+    // 5 perspective groups, MaxConcurrentPerspectives = 2. The worker throttles the batch via
+    // Parallel.ForEachAsync(MaxDegreeOfParallelism = 2), and each runner holds its throttle slot for the
+    // whole RunAsync call. This proves the bound DETERMINISTICALLY — no peak-concurrency counter, no
+    // timing/Task.Delay: runners BLOCK inside RunAsync until the test frees a slot, so
+    // (EnteredCount - CompletedCount) is exactly the live slot-holders the throttle permits, and freeing
+    // one slot admits EXACTLY one more entrant. A broken throttle (admits 3+ at once, or bursts on a
+    // release) is caught by an equality assertion, not a flaky peak read.
     const int perspectiveCount = 5;
     const int maxConcurrency = 2;
     var streamId = Guid.CreateVersion7();
 
-    // CountdownEvent for first wave; gate releases runners immediately (auto-open)
-    // so we can observe peak concurrency without blocking runners
-    var firstWaveEntered = new CountdownEvent(maxConcurrency);
-    var allCompleted = new CountdownEvent(perspectiveCount);
-    var gate = new SemaphoreSlim(perspectiveCount, perspectiveCount); // pre-opened — runners don't block
-    var runner = new GatedPerspectiveRunner(firstWaveEntered, gate, allCompleted);
-
+    using var runner = new ThrottleProbeRunner();
     var perspectiveNames = Enumerable.Range(0, perspectiveCount)
       .Select(i => $"Test.Perspective{i}")
       .ToList();
@@ -88,9 +88,11 @@ public sealed class PerspectiveWorkerParallelTests {
 
     var (worker, harness) = _createWorker(coordinator, registry, maxConcurrentPerspectives: maxConcurrency);
 
-    // Act
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    var workerTask = worker.StartAsync(cts.Token);
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+    // Pre-enqueue ALL work BEFORE starting the worker so its first drain pulls all 5 into ONE batch
+    // (MaxStreamsPerBatch = 300 default). Deterministic batch composition — no "did they land together"
+    // race, which is exactly what let the old pre-opened-gate version misread peak concurrency.
     foreach (var name in perspectiveNames) {
       await harness.EnqueueWorkAsync(new PerspectiveWork {
         WorkId = Guid.CreateVersion7(),
@@ -98,20 +100,33 @@ public sealed class PerspectiveWorkerParallelTests {
         PerspectiveName = name
       }, cts.Token);
     }
+    var workerTask = worker.StartAsync(cts.Token);
 
-    // Wait for all 5 runners to complete
-    var allFinished = allCompleted.Wait(TimeSpan.FromSeconds(5));
+    // 1. The throttle admits EXACTLY maxConcurrency before any runner completes — and no more, because
+    //    every admitted runner is blocked (holding its slot), so no slot is free for a 3rd to enter.
+    await runner.WaitForEnteredAsync(maxConcurrency, cts.Token);
+    await Assert.That(runner.EnteredCount).IsEqualTo(maxConcurrency)
+      .Because("With all admitted runners blocked, the throttle holds exactly MaxConcurrentPerspectives — no 3rd can enter until a slot frees.");
+
+    // 2. Free one slot at a time; each release admits EXACTLY one more entrant (never a burst), so live
+    //    concurrency (entered - completed) never exceeds the throttle.
+    for (var expected = maxConcurrency + 1; expected <= perspectiveCount; expected++) {
+      runner.ReleaseOne();
+      await runner.WaitForEnteredAsync(expected, cts.Token);
+      await Assert.That(runner.EnteredCount).IsEqualTo(expected)
+        .Because("Freeing one slot admits exactly one more runner — a burst would mean the throttle let live concurrency exceed the limit.");
+      await Assert.That(runner.LiveCount).IsLessThanOrEqualTo(maxConcurrency)
+        .Because($"Live concurrency (entered - completed) must never exceed MaxConcurrentPerspectives={maxConcurrency}.");
+    }
+
+    // 3. Release the rest so every runner completes.
+    runner.ReleaseAll(perspectiveCount);
+    await runner.WaitForCompletedAsync(perspectiveCount, cts.Token);
+    await Assert.That(runner.TotalRunCount).IsEqualTo(perspectiveCount)
+      .Because("All 5 perspectives eventually complete.");
 
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
-
-    // Assert — peak concurrency should never exceed 2 even though gate is open
-    await Assert.That(allFinished).IsTrue()
-      .Because("All 5 perspectives should complete within timeout");
-    await Assert.That(runner.PeakConcurrency).IsLessThanOrEqualTo(maxConcurrency)
-      .Because($"Peak concurrency should never exceed MaxConcurrentPerspectives={maxConcurrency}");
-    await Assert.That(runner.TotalRunCount).IsEqualTo(perspectiveCount)
-      .Because("All 5 perspectives should eventually complete");
   }
 
   [Test]
@@ -183,6 +198,13 @@ public sealed class PerspectiveWorkerParallelTests {
       Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
         MaxConcurrentPerspectives = maxConcurrentPerspectives,
+        // Pin to ONE consumer loop so MaxConcurrentPerspectives is the sole concurrency ceiling.
+        // The worker spawns MaxConcurrentDrainConsumers loops (default 4), EACH running its own
+        // Parallel.ForEachAsync(MaxDegreeOfParallelism = MaxConcurrentPerspectives) batch — so the
+        // real steady-state ceiling is outer×inner (e.g. 4×2=8), NOT MaxConcurrentPerspectives alone.
+        // These tests assert the inner per-perspective throttle in isolation, so the outer must be 1.
+        // (This is exactly the conflation that made the old peak-concurrency assertion misfire.)
+        MaxConcurrentDrainConsumers = 1,
         IdleThresholdPolls = 2
       }),
       tracingOptions: null,
@@ -268,6 +290,102 @@ public sealed class PerspectiveWorkerParallelTests {
   }
 
   /// <summary>
+  /// Deterministic throttle probe. Each RunAsync increments EnteredCount, then BLOCKS on a gate the
+  /// test opens one permit at a time; on release it increments CompletedCount. A runner is inside
+  /// RunAsync (having incremented EnteredCount) ONLY while it holds a Parallel.ForEachAsync throttle
+  /// slot, so LiveCount = EnteredCount - CompletedCount is exactly the live slot-holders the worker's
+  /// MaxDegreeOfParallelism permits — no peak counter, no timing. Milestone awaits let the test
+  /// synchronise on exact counts via completion signals (TaskCompletionSource), never Task.Delay.
+  /// </summary>
+  private sealed class ThrottleProbeRunner : IPerspectiveRunner, IDisposable {
+    private readonly SemaphoreSlim _gate = new(0);
+    private readonly System.Threading.Lock _sync = new();
+    private readonly List<(int Target, TaskCompletionSource Tcs)> _enterWaiters = [];
+    private readonly List<(int Target, TaskCompletionSource Tcs)> _completeWaiters = [];
+    private int _entered;
+    private int _completed;
+
+    public int EnteredCount => Volatile.Read(ref _entered);
+    public int CompletedCount => Volatile.Read(ref _completed);
+    public int LiveCount => EnteredCount - CompletedCount;
+    public int TotalRunCount => CompletedCount;
+    public Type PerspectiveType => typeof(object);
+
+    /// <summary>Completes once EnteredCount has reached <paramref name="target"/> — signal-based.</summary>
+    public Task WaitForEnteredAsync(int target, CancellationToken ct) =>
+      _awaitMilestone(_enterWaiters, () => EnteredCount, target, ct);
+
+    /// <summary>Completes once CompletedCount has reached <paramref name="target"/> — signal-based.</summary>
+    public Task WaitForCompletedAsync(int target, CancellationToken ct) =>
+      _awaitMilestone(_completeWaiters, () => CompletedCount, target, ct);
+
+    /// <summary>Free one throttle slot — admits exactly one more entrant.</summary>
+    public void ReleaseOne() => _gate.Release();
+
+    /// <summary>Free <paramref name="count"/> slots so remaining blocked runners complete.</summary>
+    public void ReleaseAll(int count) => _gate.Release(count);
+
+    public async Task<PerspectiveCursorCompletion> RunAsync(
+        Guid streamId,
+        string perspectiveName,
+        Guid? lastProcessedEventId,
+        CancellationToken cancellationToken) {
+      _signal(_enterWaiters, Interlocked.Increment(ref _entered));
+      try {
+        await _gate.WaitAsync(cancellationToken);
+      } finally {
+        _signal(_completeWaiters, Interlocked.Increment(ref _completed));
+      }
+
+      return new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = Guid.CreateVersion7(),
+        Status = PerspectiveProcessingStatus.Completed
+      };
+    }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
+        Guid streamId, string perspectiveName, Guid triggeringEventId,
+        CancellationToken cancellationToken = default) =>
+      RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(
+        Guid streamId, string perspectiveName, Guid lastProcessedEventId,
+        CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    // Registers (or immediately completes) a waiter for `read() >= target`. The count is read INSIDE
+    // the lock that _signal also takes, so there is no lost-wakeup window between the read and the
+    // registration. Cancellation (test timeout) faults the waiter instead of hanging.
+    private Task _awaitMilestone(
+        List<(int Target, TaskCompletionSource Tcs)> waiters, Func<int> read, int target, CancellationToken ct) {
+      lock (_sync) {
+        if (read() >= target) {
+          return Task.CompletedTask;
+        }
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = ct.Register(() => tcs.TrySetCanceled(ct));
+        waiters.Add((target, tcs));
+        return tcs.Task;
+      }
+    }
+
+    private void _signal(List<(int Target, TaskCompletionSource Tcs)> waiters, int count) {
+      lock (_sync) {
+        for (var i = waiters.Count - 1; i >= 0; i--) {
+          if (waiters[i].Target <= count) {
+            waiters[i].Tcs.TrySetResult();
+            waiters.RemoveAt(i);
+          }
+        }
+      }
+    }
+
+    public void Dispose() => _gate.Dispose();
+  }
+
+  /// <summary>
   /// Runner that always throws — used to test exception handling in parallel execution.
   /// </summary>
   private sealed class AlwaysThrowingPerspectiveRunner : IPerspectiveRunner {
@@ -293,7 +411,7 @@ public sealed class PerspectiveWorkerParallelTests {
   /// Registry returning a shared GatedPerspectiveRunner for all perspective names.
   /// </summary>
   private sealed class GatedPerspectiveRunnerRegistry(
-      GatedPerspectiveRunner runner,
+      IPerspectiveRunner runner,
       List<string> perspectiveNames) : IPerspectiveRunnerRegistry {
 
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
