@@ -151,7 +151,7 @@ public class EphemeralPointerPruneSqlTests : EFCoreTestBase {
     flagCmd.CommandText = "SELECT count(*) FROM wh_event_store WHERE stream_id = @sid AND (flags & 8) = 8";
     flagCmd.Parameters.AddWithValue("sid", streamId);
     await Assert.That((long)(await flagCmd.ExecuteScalarAsync())!).IsEqualTo(1L)
-      .Because("The kept tombstone keeps flags&8 present so GetEphemeralStreamIdsAsync still refuses a rebuild.");
+      .Because("The kept tombstone keeps flags&8 present so GetStateBasedStreamIdsAsync still refuses a rebuild.");
   }
 
   [Test]

@@ -78,15 +78,45 @@ public enum EventFlags {
   NoRebroadcast = 1 << 2,
 
   /// <summary>
-  /// Category flag: this event is <strong>ephemeral</strong> — event-driven and self-destructing,
-  /// not a durable Sourced fact. Derived at dispatch from the compile-time <c>[Ephemeral]</c> authority
-  /// (via <see cref="IEphemeralModeResolver"/> / the <c>IEphemeralEvent</c> marker) and persisted on
-  /// <c>wh_event_store.flags</c>. The emit chain reads <c>(flags &amp; 8) = 8</c> to offload the event body
-  /// to <c>wh_event_body</c> (leaving the durable store's inline body NULL), and the consumption-gated
-  /// reaper reads it to know which bodies are eligible for deletion once every perspective has consumed them.
+  /// Lifecycle flag: this event is <strong>ephemeral</strong> — a <em>self-destructing</em> StateBased event
+  /// (event-driven, not a durable Sourced fact). Derived at dispatch from the compile-time <c>[Ephemeral]</c>
+  /// authority (via <see cref="IEphemeralModeResolver"/> / the <c>IEphemeralEvent</c> marker) and persisted on
+  /// <c>wh_event_store.flags</c>. The emit chain reads <c>(flags &amp; 8) = 8</c> to offload the event body to
+  /// <c>wh_event_body</c>, and the consumption-gated reaper reads it to know which bodies are eligible for
+  /// deletion. This is the <strong>self-destruct</strong> signal (the reaper), distinct from the
+  /// <strong>StateBased</strong> "not replayed" signal that the rebuild/rewind guards use — see
+  /// <see cref="Compacted"/> and <see cref="IsStateBased"/>.
   /// </summary>
   /// <docs>fundamentals/events/ephemeral-events</docs>
   Ephemeral = 1 << 3,
 
+  /// <summary>
+  /// Lifecycle flag: this event is <strong>compacted</strong> — a <em>permanent</em> StateBased event (E3
+  /// Tier-2). It is the authoritative carry-forward origin at a state-based stream's head: not replayed from
+  /// the log (like ephemeral), but <strong>never reaped</strong> (unlike ephemeral) — it is the source of
+  /// truth. The reaper (keyed on <see cref="Ephemeral"/>) never touches it; the rebuild/rewind guards (keyed
+  /// on StateBased = <c>Ephemeral | Compacted</c>) refuse to replay it. See <see cref="IsStateBased"/>.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Compacted = 1 << 4,
+
   // Future flags add new values here without requiring schema migrations.
+}
+
+/// <summary>
+/// Helpers over <see cref="EventFlags"/> for the <strong>StateBased</strong> factoring: the "not replayed,
+/// current state is the source of truth" base that both <see cref="EventFlags.Ephemeral"/> (self-destructing)
+/// and <see cref="EventFlags.Compacted"/> (permanent) share. The rebuild/rewind guards and homogeneity key off
+/// <see cref="IsStateBased"/>; the reaper keys off <see cref="EventFlags.Ephemeral"/> alone.
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public static class EventFlagsExtensions {
+  /// <summary>The bitmask matching any StateBased event (<c>Ephemeral | Compacted</c>) — the replay-guard signal.</summary>
+  private const int STATE_BASED_MASK = (1 << 3) | (1 << 4);
+
+  /// <summary>
+  /// True when the flags mark a StateBased event (ephemeral OR compacted) — i.e. one whose current state,
+  /// not the event log, is the source of truth, so it must never be rebuilt/rewound from events.
+  /// </summary>
+  public static bool IsStateBased(this EventFlags flags) => ((int)flags & STATE_BASED_MASK) != 0;
 }

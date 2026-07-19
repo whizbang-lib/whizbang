@@ -19,6 +19,26 @@ namespace Whizbang.Core.Tests.Messaging;
 public class EventFlagsTests {
 
   [Test]
+  public async Task EventFlags_Compacted_BitPositionLockedAsync() {
+    await Assert.That(_asInt(EventFlags.Compacted)).IsEqualTo(16)
+      .Because("Bit position 4 — the permanent StateBased lifecycle (E3). Distinct from Ephemeral (8, self-destruct) so the reaper (flags&8) never touches a compacted origin.");
+  }
+
+  [Test]
+  public async Task IsStateBased_TrueForEphemeralAndCompacted_FalseOtherwiseAsync() {
+    await Assert.That(EventFlags.Ephemeral.IsStateBased()).IsTrue()
+      .Because("Ephemeral is StateBased (no-replay) — self-destructing.");
+    await Assert.That(EventFlags.Compacted.IsStateBased()).IsTrue()
+      .Because("Compacted is StateBased (no-replay) — permanent.");
+    await Assert.That((EventFlags.Ephemeral | EventFlags.Composite).IsStateBased()).IsTrue()
+      .Because("StateBased is a bit test — other flags coexisting don't clear it.");
+    await Assert.That(EventFlags.None.IsStateBased()).IsFalse()
+      .Because("A Sourced event (no flags) is replayable, not StateBased.");
+    await Assert.That(EventFlags.Composite.IsStateBased()).IsFalse()
+      .Because("Composite is orthogonal — not a StateBased lifecycle flag.");
+  }
+
+  [Test]
   public async Task EventFlags_None_IsZeroAsync() {
     var value = _asInt(EventFlags.None);
     await Assert.That(value).IsEqualTo(0)

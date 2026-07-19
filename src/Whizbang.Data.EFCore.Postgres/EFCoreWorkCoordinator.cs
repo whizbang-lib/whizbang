@@ -386,7 +386,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyCollection<Guid>> GetEphemeralStreamIdsAsync(
+  public async Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
     IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
@@ -401,8 +401,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand();
+    // StateBased = Ephemeral (8) OR Compacted (16). The rebuild/rewind guards refuse both — a compacted stream
+    // replays only to its Compacted origin, an ephemeral stream's bodies are reaped — so neither is
+    // rebuildable-from-events. The reaper stays on flags&8 (self-destruct); a compacted event is never reaped.
 #pragma warning disable S2077
-    cmd.CommandText = $"SELECT DISTINCT stream_id FROM {eventStore} WHERE stream_id = ANY(@ids) AND (flags & 8) = 8";
+    cmd.CommandText = $"SELECT DISTINCT stream_id FROM {eventStore} WHERE stream_id = ANY(@ids) AND (flags & 24) <> 0";
 #pragma warning restore S2077
     cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = ids });
     var result = new List<Guid>();

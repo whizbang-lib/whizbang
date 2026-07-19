@@ -81,18 +81,19 @@ public sealed partial class PerspectiveRebuilder(
       // perspective (most RunAsync calls become no-ops).
       streamIds ??= await _resolveStreamIdsToReplayAsync(sp, registry, perspectiveName, ct);
 
-      // Ephemeral streams are NOT a rebuildable source of truth — their events self-destruct and their
-      // bodies are reaped, so replaying one would corrupt the projection. Refuse them up front (the runtime
+      // StateBased streams (ephemeral OR compacted) are NOT a rebuildable source of truth — an ephemeral
+      // stream's events self-destruct + bodies are reaped, a compacted stream replays only to its Compacted
+      // origin — so replaying one from events would corrupt the projection. Refuse them up front (the runtime
       // backstop to the compile-time analyzer). Optional dependency: an absent coordinator = no filtering,
-      // so engines without the ephemeral bit are unaffected.
-      var ephemeralGuard = sp.GetService<IWorkCoordinator>();
-      if (ephemeralGuard is not null && streamIds.Count > 0) {
-        var ephemeral = await ephemeralGuard.GetEphemeralStreamIdsAsync(streamIds, ct);
-        if (ephemeral.Count > 0) {
-          var ephemeralSet = ephemeral as ISet<Guid> ?? new HashSet<Guid>(ephemeral);
+      // so engines without the flags are unaffected.
+      var stateBasedGuard = sp.GetService<IWorkCoordinator>();
+      if (stateBasedGuard is not null && streamIds.Count > 0) {
+        var stateBased = await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ct);
+        if (stateBased.Count > 0) {
+          var stateBasedSet = stateBased as ISet<Guid> ?? new HashSet<Guid>(stateBased);
           var kept = new List<Guid>(streamIds.Count);
           foreach (var id in streamIds) {
-            if (ephemeralSet.Contains(id)) {
+            if (stateBasedSet.Contains(id)) {
               LogRebuildRefusedEphemeral(logger, perspectiveName, id);
             } else {
               kept.Add(id);
