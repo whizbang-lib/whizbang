@@ -632,6 +632,18 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<string>>([]);
 
   /// <summary>
+  /// E3 — the per-stream version of the event with id <paramref name="eventId"/>, or <c>null</c> if unknown.
+  /// A Tier-2 compaction closes an ephemeral stream through the version of the snapshot's anchor event, so this
+  /// maps that anchor event id to the close point. Default: <c>null</c>.
+  /// </summary>
+  /// <param name="eventId">The event id to look up.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The event's per-stream version, or <c>null</c>.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<long?> GetEventVersionAsync(Guid eventId, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
   /// E2 destruction hooks: the ephemeral event bodies the tier-1 reaper is about to delete THIS cycle —
   /// the exact consumption-gated + aged-past-grace + snapshot-covered set of Task 8's <c>DELETE</c>, as a
   /// query. The maintenance worker fires a registered <c>IDestructionHook</c> for each before the reap, so

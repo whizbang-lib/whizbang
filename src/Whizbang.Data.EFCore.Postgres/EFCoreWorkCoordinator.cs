@@ -598,6 +598,27 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<long?> GetEventVersionAsync(Guid eventId, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var store = BuildSchemaQualifiedName(schema, "wh_event_store");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
+    cmd.CommandText = $"SELECT version FROM {store} WHERE event_id = @id";
+#pragma warning restore S2077
+    var pId = cmd.CreateParameter();
+    pId.ParameterName = "id";
+    pId.Value = eventId;
+    cmd.Parameters.Add(pId);
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return result is null || result is DBNull ? null : Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

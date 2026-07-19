@@ -285,6 +285,27 @@ public class StreamCloseSqlTests : EFCoreTestBase {
       .Because("No perspective association for the stream's event types => no consumers.");
   }
 
+  [Test]
+  public async Task GetEventVersion_ReturnsPerStreamVersion_NullForUnknownAsync() {
+    // E3: a Tier-2 compaction closes through the version of the snapshot's anchor event — this maps the anchor
+    // event id to its per-stream version.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    var first = Guid.NewGuid();
+    var second = Guid.NewGuid();
+    await _commitAsync(connection, first, streamId, "Whizbang.Tests.LedgerEntry");   // v1
+    await _commitAsync(connection, second, streamId, "Whizbang.Tests.LedgerEntry");  // v2
+
+    await Assert.That(await coordinator.GetEventVersionAsync(first)).IsEqualTo(1L);
+    await Assert.That(await coordinator.GetEventVersionAsync(second)).IsEqualTo(2L)
+      .Because("Per-stream versions increment in commit order.");
+    await Assert.That(await coordinator.GetEventVersionAsync(Guid.NewGuid())).IsNull()
+      .Because("An unknown event id has no version.");
+  }
+
   private static async Task<long> _eventExistsAsync(NpgsqlConnection connection, Guid eventId) {
     await using var v = connection.CreateCommand();
     v.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";

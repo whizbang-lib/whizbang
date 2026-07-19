@@ -122,6 +122,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "d4e8c1a6-9b03-4f27-8a5e-1c7b2d9e6f04",
+      "clrTypeName": "Whizbang.Core.Perspectives.Compacted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
       "pinnedId": "9d574533-0ca6-4e83-a2ed-6519eab10257",
       "clrTypeName": "Whizbang.Core.SystemEvents.CommandAudited",
       "kind": "event",
