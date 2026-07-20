@@ -195,7 +195,7 @@ BEGIN
   -- Cluster-count metric is the rows_affected for this task (post-aggregation).
   v_start := clock_timestamp();
   PERFORM __SCHEMA__.aggregate_dead_letters();
-  SELECT COUNT(*) FROM __SCHEMA__.wh_dead_letter_summary INTO v_rows;
+  SELECT COUNT(*) FROM wh_dead_letter_summary INTO v_rows;
   RETURN QUERY SELECT
     'aggregate_dead_letters'::TEXT,
     v_rows,
