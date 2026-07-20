@@ -18,6 +18,15 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   private readonly ILogger<EFCoreDeadLetterRecoveryService<TDbContext>> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly WorkCoordinatorGate? _gate = gate;
 
+  // The DLQ functions are created in the service schema (__SCHEMA__.<fn>, migration 051). Callers
+  // must schema-qualify them the same way EFCoreWorkCoordinator qualifies its SQL — a bare call only
+  // resolves when the connection's search_path happens to include the service schema, which is not
+  // guaranteed (e.g. the ECommerce per-service schemas: 42883 "function ... does not exist").
+  private string _fn(string name) {
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
+    return string.IsNullOrWhiteSpace(schema) || schema == "public" ? name : $"\"{schema}\".{name}";
+  }
+
   /// <inheritdoc />
   public async Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
@@ -26,7 +35,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
       await conn.OpenAsync(ct).ConfigureAwait(false);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT dead_letter_id, source_table, source_id, stream_id, message_type, failure_reason, attempts_when_dlq, dead_lettered_at, recovery_status, recovery_attempts, generation FROM fetch_dead_letters_due(NOW(), @max)";
+    cmd.CommandText = $"SELECT dead_letter_id, source_table, source_id, stream_id, message_type, failure_reason, attempts_when_dlq, dead_lettered_at, recovery_status, recovery_attempts, generation FROM {_fn("fetch_dead_letters_due")}(NOW(), @max)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxCount });
     var results = new List<DeadLetterEntry>();
     await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -55,7 +64,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
       await conn.OpenAsync(ct).ConfigureAwait(false);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT recover_dead_letter(@id)";
+    cmd.CommandText = $"SELECT {_fn("recover_dead_letter")}(@id)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
     var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
     return result is bool b && b;
@@ -63,11 +72,11 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
 
   /// <inheritdoc />
   public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default)
-    => _execAsync("SELECT mark_dead_letter_holding(@id)", deadLetterId, ct);
+    => _execAsync($"SELECT {_fn("mark_dead_letter_holding")}(@id)", deadLetterId, ct);
 
   /// <inheritdoc />
   public Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default)
-    => _execAsync("SELECT mark_dead_letter_permanently_failed(@id)", deadLetterId, ct);
+    => _execAsync($"SELECT {_fn("mark_dead_letter_permanently_failed")}(@id)", deadLetterId, ct);
 
   /// <inheritdoc />
   public async Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) {
@@ -77,7 +86,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
       await conn.OpenAsync(ct).ConfigureAwait(false);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT schedule_next_dead_letter_attempt(@id, @at)";
+    cmd.CommandText = $"SELECT {_fn("schedule_next_dead_letter_attempt")}(@id, @at)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("at", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = nextAt });
     await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -92,7 +101,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
       await conn.OpenAsync(ct).ConfigureAwait(false);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT reset_dead_letters_for_generation(@gen)";
+    cmd.CommandText = $"SELECT {_fn("reset_dead_letters_for_generation")}(@gen)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = currentGeneration });
     var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
     return result is int n ? n : 0;
