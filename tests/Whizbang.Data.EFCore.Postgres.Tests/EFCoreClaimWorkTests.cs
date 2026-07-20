@@ -78,8 +78,8 @@ public class EFCoreClaimWorkTests : EFCoreTestBase {
       ins.CommandText = @"
         INSERT INTO wh_event_store
           (event_id, stream_id, aggregate_id, aggregate_type, event_type,
-           event_data, metadata, scope, version, created_at)
-        VALUES (@eid, @stream, @stream, 'Test', 'Test', '{}'::jsonb, '{}'::jsonb, NULL, 1, NOW())";
+           scope, version, created_at)
+        VALUES (@eid, @stream, @stream, 'Test', 'Test', NULL, 1, NOW())";
       ins.Parameters.AddWithValue("eid", (Guid)eventId);
       ins.Parameters.AddWithValue("stream", (Guid)streamId);
       await ins.ExecuteNonQueryAsync();

@@ -269,7 +269,39 @@ public enum LifecycleStage {
   /// exactly once per event. For Route.Both() events, PostLifecycle fires only after
   /// all processing paths complete (WhenAll pattern).
   /// </remarks>
-  PostLifecycleInline
+  PostLifecycleInline,
+
+  /// <summary>
+  /// E2 destruction hooks. Fires just before an ephemeral event / stream / perspective row is destroyed
+  /// (consumption-complete, TTL expiry, stream purge, or erasure).
+  /// Detached: fire-and-forget, runs in its own scope. Does not block the reaper.
+  /// Best for: destruction notifications / metrics that need not gate the delete.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  PreDestructionDetached,
+
+  /// <summary>
+  /// E2 destruction hooks. Fires just before destruction, AWAITED on the reaper's critical path — its
+  /// side-effects must durably commit BEFORE the physical delete. This is where compact / snapshot /
+  /// archive / crypto-shred runs, and where a hook may return Cancel / Defer / a chosen disposition.
+  /// Inline: blocks the reaper for this unit of destruction until completion.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  PreDestructionInline,
+
+  /// <summary>
+  /// E2 destruction hooks. Fires after the physical delete has committed.
+  /// Detached: fire-and-forget, runs in its own scope. Best for: notify / metrics / cascade.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  PostDestructionDetached,
+
+  /// <summary>
+  /// E2 destruction hooks. Fires after the physical delete, blocking the reaper for this unit until
+  /// completion. Inline: rare — most post-destruction work is Detached.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  PostDestructionInline
 }
 
 /// <summary>
@@ -293,7 +325,9 @@ public static class LifecycleStageExtensions {
     LifecycleStage.PrePerspectiveDetached or
     LifecycleStage.PostPerspectiveDetached or
     LifecycleStage.PostAllPerspectivesDetached or
-    LifecycleStage.PostLifecycleDetached;
+    LifecycleStage.PostLifecycleDetached or
+    LifecycleStage.PreDestructionDetached or
+    LifecycleStage.PostDestructionDetached;
 
   /// <summary>
   /// Returns true if this is an Inline (pipeline-blocking) lifecycle stage.
@@ -310,5 +344,7 @@ public static class LifecycleStageExtensions {
     LifecycleStage.PrePerspectiveInline or
     LifecycleStage.PostPerspectiveInline or
     LifecycleStage.PostAllPerspectivesInline or
-    LifecycleStage.PostLifecycleInline;
+    LifecycleStage.PostLifecycleInline or
+    LifecycleStage.PreDestructionInline or
+    LifecycleStage.PostDestructionInline;
 }

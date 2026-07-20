@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Notifications.AppSignals;
+using Whizbang.Core.Signals;
 
 namespace Whizbang.Data.Postgres.Notifications;
 
@@ -102,6 +103,68 @@ public static class PostgresNotificationsServiceCollectionExtensions {
 
     // App-signal channel (publishes pg_notify on wh_app_<topic>).
     services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
+
+    // System Signal Bus — ensure the bus itself is registered before we add the Postgres transport
+    // and the hosted services that DEPEND on it (PgDurableSignalTailWorker needs ISignalSink;
+    // PgInstanceLifecycleMonitor and ScheduleWorker need ISignalBus). AddWhizbang wires the bus for
+    // full hosts, but this extension is also used standalone — without this call those hosted
+    // services can't be constructed and GetServices<IHostedService>() throws. AddWhizbangSignalBus
+    // is fully idempotent (TryAdd throughout), so calling it here is safe when the bus is already
+    // registered.
+    services.AddWhizbangSignalBus();
+
+    // The Postgres NOTIFY push transport, registered alongside the in-memory transport that
+    // AddWhizbangSignalBus registers by default. Both transports fan out from the same SignalBus so
+    // callers get NOTIFY-backed cross-process delivery plus in-process loopback for tests.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalTransport, PostgresSignalTransport>());
+
+    // Signal-bus pull sources — periodic reconciliation backstops for the three work-available
+    // signal types. They run alongside NOTIFY: when the push transport is healthy the poll adds
+    // latency-relaxed correctness checks; when NOTIFY is unavailable they carry the wake load.
+    // TimeProvider is resolved from DI so tests can inject a FakeTimeProvider.
+    services.TryAddSingleton<TimeProvider>(sp => TimeProvider.System);
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalSource, PgOutboxWorkAvailablePollSource>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalSource, PgInboxWorkAvailablePollSource>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalSource, PgPerspectiveWorkAvailablePollSource>());
+    // Temporal engine (F2): backstop pull source for due schedules.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Signals.ISignalSource, PgScheduleDuePollSource>());
+    // Temporal engine (F2): the authoritative claimer (wh_claim_due_schedules) + the firing worker.
+    // ScheduleWorker wakes on the ScheduleDueSignal doorbell (poll source / arm-on-mutation NOTIFY)
+    // and reconciles on its backstop interval, draining due schedules through the claimer.
+    services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleClaimer, PgScheduleClaimer>();
+    services.AddHostedService<Whizbang.Core.Temporal.ScheduleWorker>();
+    // Temporal engine (F2): the schedule management API (create / pause / resume / cancel / trigger / update).
+    services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleManager, PgScheduleManager>();
+    // Saga deadlines ride the same engine — a deadline is a keyed one-shot schedule.
+    services.TryAddSingleton<Whizbang.Core.Temporal.ISagaDeadlineScheduler, Whizbang.Core.Temporal.SagaDeadlineScheduler>();
+    // Pre-fire gate (F2 increment 6b): runs the developer's IScheduleFireHook right before a scheduled
+    // occurrence executes. Inert unless the developer registers an IScheduleFireHook — with none, the gate
+    // proceeds for everything and publishing is byte-for-byte unchanged.
+    services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleOccurrenceStore, PgScheduleOccurrenceStore>();
+    services.TryAddSingleton<Whizbang.Core.Workers.IOccurrencePublishGate,
+      Whizbang.Core.Temporal.ScheduleOccurrencePublishGate>();
+
+    // Durable-signal tail worker — delivers Delivery=Durable signals persisted to wh_signals
+    // on a per-instance cursor. Must-not-miss signals (e.g. InstanceDied → orphan takeover)
+    // ride this tail as insurance against NOTIFY drops.
+    services.TryAddSingleton<PgDurableSignalTailWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalTailWorker>());
+
+    // Instance lifecycle monitor — scans wh_service_instances for stale heartbeats and
+    // publishes the durable InstanceDiedSignal so live pods drive orphan takeover.
+    services.TryAddSingleton<PgInstanceLifecycleMonitor>();
+    services.AddHostedService(sp => sp.GetRequiredService<PgInstanceLifecycleMonitor>());
+
+    // Retention sweep for wh_signals — deletes rows older than the retention window that every
+    // pod's tail has already consumed. Runs hourly; a stalled tail keeps its rows alive because
+    // the delete is gated by MIN(last_delivered_signal_id) across all cursors.
+    services.TryAddSingleton<PgDurableSignalRetentionWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalRetentionWorker>());
 
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call

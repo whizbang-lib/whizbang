@@ -674,13 +674,13 @@ public class PerspectiveWorkerRewindTests {
 
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
     public List<PerspectiveWork> PerspectiveWorkToReturn { get; set; } = [];
-    public int ProcessWorkBatchCallCount { get; private set; }
+    public int ClaimWorkCallCount { get; private set; }
     public bool CaptureRequests { get; set; }
-    public List<ProcessWorkBatchRequest> CapturedRequests { get; } = [];
+    public List<ClaimWorkRequest> CapturedRequests { get; } = [];
     public Dictionary<(string PerspectiveName, Guid StreamId), PerspectiveCursorInfo> CursorOverrides { get; } = [];
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
-      ProcessWorkBatchCallCount++;
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
+      ClaimWorkCallCount++;
       if (CaptureRequests) {
         CapturedRequests.Add(request);
       }

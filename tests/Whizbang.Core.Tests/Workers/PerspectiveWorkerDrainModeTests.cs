@@ -135,7 +135,7 @@ public class PerspectiveWorkerDrainModeTests {
       }
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var streamIds = new List<Guid>(StreamIdsToReturn);
       StreamIdsToReturn.Clear();
 

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whizbang.Core.Configuration;
 
 namespace Whizbang.Core;
@@ -104,6 +105,11 @@ public static class ServiceRegistrationCallbacks {
       RawReceptors?.Invoke(services);
       PinnedIdRegistry?.Invoke(services);
       MessageTypeCatalog?.Invoke(services);
+      if (MessageTypeCatalog is not null) {
+        // The ephemeral-mode resolver derives its ClrTypeName -> EphemeralInfo lookup from the
+        // catalog just registered above, so it is only wired when a catalog exists to feed it.
+        services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
+      }
       // Path 1 atomic-upsert wiring fires last — it depends on JsonSerializerContext
       // statics that are populated by their own [ModuleInitializer] runs on consumer
       // assembly load, and on BaseUpsertStrategy's static hook which is process-wide.

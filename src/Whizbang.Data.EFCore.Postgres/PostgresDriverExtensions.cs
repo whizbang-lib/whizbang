@@ -104,6 +104,10 @@ public static class PostgresDriverExtensions {
         // so a built-in receptor shipped from this assembly needs runtime registration.
         selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
 
+        // TURNKEY: A1 scheduled close — runtime-register ScheduledStreamCloseReceptor so a fired
+        // "close the books" schedule occurrence drives IStreamCloser.CloseAsync. Same rationale as above.
+        selector.Services.AddHostedService<ScheduledStreamCloseReceptorRegistrar>();
+
         // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
         // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
         // initializer's registration order in the IHostedService chain doesn't matter — even

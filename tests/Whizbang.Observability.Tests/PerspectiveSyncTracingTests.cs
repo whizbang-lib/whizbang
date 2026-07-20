@@ -91,13 +91,13 @@ public class PerspectiveSyncTracingTests {
     tracker.TrackEmittedEvent(streamId, typeof(string), eventId);
 
     // Mock coordinator that returns fully synced immediately
-    var coordinator = new MockWorkCoordinator((request, _) => Task.FromResult(new WorkBatch {
+    var coordinator = new MockWorkCoordinator((inquiries, _) => Task.FromResult(new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = [],
       SyncInquiryResults = [
         new SyncInquiryResult {
-          InquiryId = request.PerspectiveSyncInquiries?.FirstOrDefault()?.InquiryId ?? Guid.NewGuid(),
+          InquiryId = (inquiries.Count > 0 ? inquiries[0].InquiryId : Guid.NewGuid()),
           StreamId = streamId,
           PendingCount = 0,
           ProcessedCount = 1,
@@ -131,13 +131,13 @@ public class PerspectiveSyncTracingTests {
     tracker.TrackEmittedEvent(streamId, typeof(string), Guid.NewGuid());
 
     // Mock coordinator that returns fully synced
-    var coordinator = new MockWorkCoordinator((request, _) => Task.FromResult(new WorkBatch {
+    var coordinator = new MockWorkCoordinator((inquiries, _) => Task.FromResult(new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = [],
       SyncInquiryResults = [
         new SyncInquiryResult {
-          InquiryId = request.PerspectiveSyncInquiries?.FirstOrDefault()?.InquiryId ?? Guid.NewGuid(),
+          InquiryId = (inquiries.Count > 0 ? inquiries[0].InquiryId : Guid.NewGuid()),
           StreamId = streamId,
           PendingCount = 0,
           ProcessedCount = 3
@@ -296,13 +296,13 @@ public class PerspectiveSyncTracingTests {
 
   private static PerspectiveSyncAwaiter _createAwaiterWithSyncTracker() {
     var syncTracker = new SyncEventTracker();
-    var coordinator = new MockWorkCoordinator((request, _) => Task.FromResult(new WorkBatch {
+    var coordinator = new MockWorkCoordinator((inquiries, _) => Task.FromResult(new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = [],
       SyncInquiryResults = [
         new SyncInquiryResult {
-          InquiryId = request.PerspectiveSyncInquiries?.FirstOrDefault()?.InquiryId ?? Guid.NewGuid(),
+          InquiryId = (inquiries.Count > 0 ? inquiries[0].InquiryId : Guid.NewGuid()),
           PendingCount = 0,
           ProcessedCount = 0
         }
@@ -314,24 +314,24 @@ public class PerspectiveSyncTracingTests {
 
   // Mock work coordinator for testing
   private sealed class MockWorkCoordinator : IWorkCoordinator {
-    private readonly Func<ProcessWorkBatchRequest, CancellationToken, Task<WorkBatch>>? _processHandler;
+    private readonly Func<IReadOnlyList<SyncInquiry>, CancellationToken, Task<WorkBatch>>? _processHandler;
 
     public MockWorkCoordinator() { }
 
-    public MockWorkCoordinator(Func<ProcessWorkBatchRequest, CancellationToken, Task<WorkBatch>> processHandler) {
+    public MockWorkCoordinator(Func<IReadOnlyList<SyncInquiry>, CancellationToken, Task<WorkBatch>> processHandler) {
       _processHandler = processHandler;
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
-      if (_processHandler is not null) {
-        return _processHandler(request, ct);
+    public async Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+      IReadOnlyList<SyncInquiry> inquiries,
+      CancellationToken cancellationToken = default) {
+      // PerspectiveSyncAwaiter's only coordinator call for sync. Route the live inquiries
+      // through the test handler so it can echo back inquiry ids in its results.
+      if (_processHandler is null) {
+        return [];
       }
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        SyncInquiryResults = []
-      });
+      var probe = await _processHandler(inquiries, cancellationToken).ConfigureAwait(false);
+      return probe.SyncInquiryResults ?? [];
     }
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {

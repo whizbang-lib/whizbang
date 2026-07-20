@@ -55,9 +55,9 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
     await using var cmd = new NpgsqlCommand(@"
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-         event_data, metadata, scope, created_at)
+         scope, created_at)
       VALUES (@id, @stream, @stream, 'TestAgg', @version, 'Test.Checkpointed, Test',
-              '{""amount"": 1}'::jsonb, '{}'::jsonb, '{}'::jsonb, NOW())", conn);
+              '{}'::jsonb, NOW())", conn);
     cmd.Parameters.AddWithValue("id", eventId);
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("version", version);

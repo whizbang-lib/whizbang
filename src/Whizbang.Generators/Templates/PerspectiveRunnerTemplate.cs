@@ -53,6 +53,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)63;
   #endregion
 
+  #region IS_EPHEMERAL
+  // Generated: true when this perspective applies at least one [Ephemeral] event (its streams
+  // are ephemeral). Gates the rewind fallback — an ephemeral stream's consumed bodies are reaped,
+  // so a full replay-from-zero would read reaped/absent bodies and silently corrupt the model.
+  private const bool _isEphemeralPerspective = false;
+  #endregion
+
+  #region TTL_REGISTRATION
+  // Generated: for a TransientStorage.TtlRow perspective, a [ModuleInitializer] registers the row TTL so the
+  // EF Core upsert stamps expires_at = now + ttl. Empty for non-TtlRow perspectives (their rows never expire).
+  #endregion
+
+  #region FULL_HISTORY_REGISTRATION
+  // Generated: a [FullHistory] perspective registers its name via a [ModuleInitializer] so the A1 close guard
+  // refuses a discard-close of any stream it consumes. Empty for resumable (unmarked) perspectives.
+  #endregion
+
   private readonly IServiceProvider _serviceProvider;
   private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
   private readonly IEventStore _eventStore;
@@ -621,8 +638,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // produces no persisted row, so there's nothing to snapshot.
         if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue) {
+          // Ephemeral perspectives snapshot on their own aggressive, single-slot cadence so a fresh rewind
+          // floor exists within the grace window before consumed bodies are reaped; Sourced perspectives use
+          // the standard cadence/retention. The generator injects the mode-appropriate settings here.
+          #region SNAPSHOT_SETTINGS
+          var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;
+          var snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;
+          #endregion
           _eventsSinceLastSnapshot += eventsProcessed;
-          if (_eventsSinceLastSnapshot >= _snapshotOptions.Value.SnapshotEveryNEvents) {
+          if (_eventsSinceLastSnapshot >= snapshotThreshold) {
             // Slice 26.11: resolve commit_sequence for the snapshot anchor so subsequent
             // rewinds can locate the snapshot by commit_sequence (deterministic) rather
             // than event_id (subject to UUIDv7 generation-time race). Null is OK — the
@@ -634,7 +658,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 snapshotCommitSequence,
                 ToSnapshotJson(updatedModel), cancellationToken);
             await _snapshotStore.PruneOldSnapshotsAsync(
-                streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
+                streamId, perspectiveName, snapshotRetention, cancellationToken);
             _eventsSinceLastSnapshot = 0;
           }
         }
@@ -973,8 +997,32 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // In-memory replay: apply all events without intermediate DB writes
     // Lenses see pre-replay data until the single atomic write at the end
-    var result = await RunFromModelAsync(
-        streamId, perspectiveName, snapshotModel, replayFromEventId, cancellationToken);
+    PerspectiveCursorCompletion result;
+    if (_isEphemeralPerspective && !hasSnapshot) {
+      // Ephemeral out-of-grace straggler. No snapshot floor survives before this late event, and
+      // this stream's consumed bodies have been reaped (wh_event_body rows deleted, pointer-only).
+      // RunFromModelAsync(null model, null anchor) would replay from event zero over reaped/absent
+      // bodies and silently corrupt the authoritative model. The reorder window (grace + snapshot
+      // floor) was exceeded, so the accepted loss is that this straggler does not rewind: keep the
+      // current out-of-order-but-present model and do NOT move the cursor. LastEventId = Guid.Empty
+      // is the "nothing replayed" completion — ReportPerspectiveCompletionAsync skips the checkpoint
+      // write on it, so the cursor stays where it is (never rewound backward to the straggler).
+      // <docs>fundamentals/events/ephemeral-events</docs>
+      _logger.LogWarning(
+          "Skipping ephemeral rewind for {PerspectiveName} stream {StreamId}: late event {TriggeringEventId} has no surviving snapshot floor and this stream's ephemeral bodies are reaped; a full replay would corrupt the authoritative model. Straggler dropped — out-of-order rewind window exceeded.",
+          perspectiveName, streamId, triggeringEventId);
+      result = new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+        LastEventId = Guid.Empty,
+        Status = PerspectiveProcessingStatus.None,
+        EventsProcessed = 0
+      };
+    } else {
+      result = await RunFromModelAsync(
+          streamId, perspectiveName, snapshotModel, replayFromEventId, cancellationToken);
+    }
 
     // Fire PerspectiveRewindCompleted system event
     if (dispatcher is not null) {

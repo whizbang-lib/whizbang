@@ -239,16 +239,6 @@ public class PerspectiveCompletionStrategyTests {
     public PerspectiveCursorCompletion? LastCompletion { get; private set; }
     public PerspectiveCursorFailure? LastFailure { get; private set; }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {

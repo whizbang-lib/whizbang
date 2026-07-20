@@ -157,8 +157,10 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
     await using var ins = connection.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_event_store
-        (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, created_at)
-      VALUES (@evt, @stream, @stream, 'agg', @type, @data::jsonb, @meta::jsonb, @scope::jsonb, @ver, NOW())";
+        (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at)
+      VALUES (@evt, @stream, @stream, 'agg', @type, @scope::jsonb, @ver, NOW());
+      INSERT INTO wh_event_body (event_id, event_data, metadata)
+      VALUES (@evt, @data::jsonb, @meta::jsonb)";
     ins.Parameters.AddWithValue("evt", eventId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("type", eventType);

@@ -259,7 +259,7 @@ public sealed class InboxHandlerWorkerTests {
       IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<HandlerBatchResult>>([]);
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default)
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default)
       => Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [], SyncInquiryResults = null });
 
     public Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(

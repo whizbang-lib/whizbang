@@ -1123,7 +1123,7 @@ public class MessageTagProcessorTests {
 
   #endregion
 
-  #region Stage Context Tests — Parameterized (All 20 Lifecycle Stages)
+  #region Stage Context Tests — Parameterized (All Lifecycle Stages)
 
   public static LifecycleStage[] AllLifecycleStages()
     => Enum.GetValues<LifecycleStage>();

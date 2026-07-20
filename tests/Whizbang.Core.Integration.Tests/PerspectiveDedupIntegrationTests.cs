@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
@@ -24,7 +25,7 @@ namespace Whizbang.Core.Integration.Tests;
 /// </summary>
 /// <remarks>
 /// Uses synchronized work coordinators with realistic latency to simulate the real pipeline:
-/// SQL → ProcessWorkBatchAsync → dedup filter → runner → completion → next cycle.
+/// SQL → ClaimWorkAsync → dedup filter → runner → completion → next cycle.
 /// Tests are deterministic via TaskCompletionSource signals — no arbitrary delays.
 /// </remarks>
 [Category("Integration")]
@@ -190,8 +191,10 @@ public class PerspectiveDedupIntegrationTests {
     // Advance time past retention (5 min + buffer)
     fakeTime.Advance(TimeSpan.FromMinutes(6));
 
-    // Wait for more cycles where the expired entry should allow reprocessing
-    await coordinator.WaitForCyclesAsync(5, TimeSpan.FromSeconds(10));
+    // Wait for the reprocess itself, not for a cycle count: eviction happens on a sweep after the clock
+    // advances, so "5 cycles have elapsed" does not imply "the entry was evicted and reapplied". Under
+    // full-suite load that gap made this racy — wait on the exact condition we assert.
+    await runner.WaitForCallCountAsync(2, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -229,9 +232,15 @@ public class PerspectiveDedupIntegrationTests {
     // Wait for retention to be activated (InFlight → Retained) before advancing time
     await observer.WaitForRetentionActivatedAsync(TimeSpan.FromSeconds(5));
 
-    // Phase 2: Advance past retention → eviction
+    // Phase 1b: while the entry is still RETAINED, a redelivery must be filtered. This has to happen
+    // BEFORE the clock moves — advancing first lets the entry expire, so the redelivery gets reprocessed
+    // instead of deduped and OnEventsDeduped never fires.
+    await observer.WaitForDedupAsync(TimeSpan.FromSeconds(10));
+
+    // Phase 2: Advance past retention → eviction. Wait on the eviction signal, not a cycle count:
+    // eviction fires on a sweep, not a cycle boundary, so "N cycles elapsed" doesn't imply "evicted".
     fakeTime.Advance(TimeSpan.FromMinutes(6));
-    await coordinator.WaitForCyclesAsync(5, TimeSpan.FromSeconds(10));
+    await observer.WaitForEvictionAsync(TimeSpan.FromSeconds(10));
 
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -590,7 +599,10 @@ public class PerspectiveDedupIntegrationTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
+      perspectiveDrainChannel: harness.DrainChannel,
+      // Match production (WorkerPipelineExtensions always wires this). Without it the drain refetch
+      // loop has no cooldown dedup and re-dispatches re-served events; see PerspectiveApplyExactlyOnceTests.
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider())
     );
     return (worker, harness);
   }
@@ -659,6 +671,8 @@ public class PerspectiveDedupIntegrationTests {
     private int _retentionActivatedCount;
     private int _evictionCount;
     private readonly TaskCompletionSource _retentionSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _evictionSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _dedupSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public int DedupCount => _dedupCount;
     public int InFlightCount => _inFlightCount;
@@ -672,16 +686,36 @@ public class PerspectiveDedupIntegrationTests {
     public Task WaitForRetentionActivatedAsync(TimeSpan timeout) =>
       _retentionSignal.Task.WaitAsync(timeout);
 
-    public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) =>
+    /// <summary>
+    /// Waits for at least one OnEvicted callback. Eviction happens on a sweep AFTER the clock is advanced
+    /// past retention, so waiting on a cycle count instead of this signal is racy: under load the sweep may
+    /// not have run by cycle N, and the test would cancel the worker before eviction ever fired.
+    /// </summary>
+    public Task WaitForEvictionAsync(TimeSpan timeout) =>
+      _evictionSignal.Task.WaitAsync(timeout);
+
+    /// <summary>
+    /// Waits for at least one OnEventsDeduped callback. A redelivery is only deduped while the entry is
+    /// still RETAINED, so this must be awaited BEFORE the clock is advanced past retention — otherwise the
+    /// entry expires first and the redelivery is reprocessed instead of filtered.
+    /// </summary>
+    public Task WaitForDedupAsync(TimeSpan timeout) =>
+      _dedupSignal.Task.WaitAsync(timeout);
+
+    public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) {
       Interlocked.Increment(ref _dedupCount);
+      _dedupSignal.TrySetResult();
+    }
     public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) =>
       Interlocked.Increment(ref _inFlightCount);
     public void OnRetentionActivated(int count) {
       Interlocked.Increment(ref _retentionActivatedCount);
       _retentionSignal.TrySetResult();
     }
-    public void OnEvicted(int count) =>
+    public void OnEvicted(int count) {
       Interlocked.Increment(ref _evictionCount);
+      _evictionSignal.TrySetResult();
+    }
     public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }
   }
 
@@ -700,7 +734,7 @@ public class PerspectiveDedupIntegrationTests {
       await waiter.Task.WaitAsync(timeout);
     }
 
-    public async Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       if (SimulatedLatencyMs > 0) {
         await Task.Delay(SimulatedLatencyMs, cancellationToken);
       }
@@ -746,7 +780,7 @@ public class PerspectiveDedupIntegrationTests {
       await waiter.Task.WaitAsync(timeout);
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
       foreach (var kvp in _cycleWaiters) {
         if (current >= kvp.Key) {
@@ -783,7 +817,7 @@ public class PerspectiveDedupIntegrationTests {
 
     public List<List<PerspectiveWork>> WorkPerCycle { get; } = [];
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
       var idx = current - 1;
       var work = idx < WorkPerCycle.Count ? [.. WorkPerCycle[idx]] : new List<PerspectiveWork>();

@@ -2,9 +2,11 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -67,6 +69,42 @@ public class EFCorePostgresLensQueryTests {
 
     context.Set<PerspectiveRow<TestModel>>().Add(row);
     await context.SaveChangesAsync();
+  }
+
+  // E2-4d d-3: logical-expiry lens filter. A TtlRow perspective hides rows whose expires_at has passed.
+  private async Task SeedTtlRowAsync(TestDbContext context, Guid id, DateTime? expiresAt) {
+    var row = new PerspectiveRow<TtlRowStoreModel> {
+      Id = id,
+      Data = new TtlRowStoreModel { Name = "chat" },
+      Metadata = new PerspectiveMetadata { EventType = "e", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow },
+      Scope = new PerspectiveScope(),
+      CreatedAt = DateTime.UtcNow,
+      UpdatedAt = DateTime.UtcNow,
+      Version = 1
+    };
+    context.Set<PerspectiveRow<TtlRowStoreModel>>().Add(row);
+    context.Entry(row).Property("expires_at").CurrentValue = expiresAt;
+    await context.SaveChangesAsync();
+  }
+
+  [Test]
+  public async Task Query_TtlRowPerspective_HidesExpiredRows_KeepsUnexpiredAndNullAsync() {
+    var context = CreateInMemoryDbContext();
+    PerspectiveTtlRegistry.Register(typeof(TtlRowStoreModel), 3600);
+
+    var expiredId = _idProvider.NewGuid();
+    var futureId = _idProvider.NewGuid();
+    var nullId = _idProvider.NewGuid();
+    await SeedTtlRowAsync(context, expiredId, DateTime.UtcNow.AddMinutes(-5));   // logically expired → hidden
+    await SeedTtlRowAsync(context, futureId, DateTime.UtcNow.AddHours(1));       // not yet expired → visible
+    await SeedTtlRowAsync(context, nullId, null);                               // never expires → visible
+
+    var lens = new EFCorePostgresLensQuery<TtlRowStoreModel>(context, "ttl_row_perspective");
+    var ids = await lens.Query.Select(r => r.Id).ToListAsync();
+
+    await Assert.That(ids).Contains(futureId).Because("A row whose expiry is still in the future is visible to lens reads.");
+    await Assert.That(ids).Contains(nullId).Because("A row with no expiry (never expires) is always visible.");
+    await Assert.That(ids).DoesNotContain(expiredId).Because("A logically-expired TtlRow row is hidden from lens reads (physical reap is separate).");
   }
 
   [Test]
@@ -385,6 +423,10 @@ public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(
 
     // Configure PerspectiveRow<SoftDeletableModel> as entity (for soft delete tests)
     ConfigurePerspectiveRow<SoftDeletableModel>(modelBuilder);
+
+    // Configure PerspectiveRow<TtlRowStoreModel> (E2-4d TtlRow upsert-stamp tests). Dedicated model so a
+    // process-wide PerspectiveTtlRegistry registration can't leak an expires_at onto other tests' rows.
+    ConfigurePerspectiveRow<TtlRowStoreModel>(modelBuilder);
   }
 
   private static void ConfigurePerspectiveRow<TModel>(ModelBuilder modelBuilder)
@@ -409,6 +451,10 @@ public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(
           .HasConversion(
               v => JsonSerializer.Serialize(v, JsonSerializerOptions.Default),
               v => JsonSerializer.Deserialize<PerspectiveScope>(v, JsonSerializerOptions.Default)!);
+
+      // E2-4d: the expires_at shadow property (mirrors the production config) so the TtlRow upsert-stamp +
+      // lens-filter tests can set/read it. Harmless for non-TtlRow models (stays null).
+      entity.Property<DateTime?>("expires_at");
     });
   }
 }

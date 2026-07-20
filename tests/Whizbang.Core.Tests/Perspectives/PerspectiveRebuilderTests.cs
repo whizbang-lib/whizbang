@@ -65,6 +65,46 @@ public class PerspectiveRebuilderTests {
   }
 
   [Test]
+  public async Task RebuildStreamsAsync_SkipsEphemeralStreams_DoesNotReplayThemAsync() {
+    // Arrange — an ephemeral stream must never be replayed on rebuild: its events self-destruct and its
+    // bodies are reaped, so replaying it would corrupt the projection. The guard resolves IWorkCoordinator
+    // (optional) and refuses ephemeral streams up front.
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var sourced1 = Guid.NewGuid();
+    var ephemeral = Guid.NewGuid();
+    var sourced2 = Guid.NewGuid();
+    var eventStoreQuery = new FakeEventStoreQuery([]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    services.AddSingleton<IWorkCoordinator>(new FakeEphemeralCoordinator(ephemeral));
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", new[] { sourced1, ephemeral, sourced2 });
+
+    // Assert — the two Sourced streams rebuild; the ephemeral one is refused and never replayed.
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2).Because("Only the two Sourced streams are rebuilt.");
+    await Assert.That(runner.RunCount).IsEqualTo(2).Because("The ephemeral stream is never replayed — no corruption from reaped bodies.");
+  }
+
+  private sealed class FakeEphemeralCoordinator(Guid ephemeralStream) : IWorkCoordinator {
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyCollection<Guid>>([.. streamIds.Where(s => s == ephemeralStream)]);
+  }
+
+  [Test]
   public async Task RebuildInPlaceAsync_WithUnknownPerspective_ReturnsFailureAsync() {
     // Arrange
     var registry = new FakePerspectiveRunnerRegistry(runner: null);

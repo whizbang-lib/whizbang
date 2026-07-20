@@ -34,6 +34,8 @@ public class LifecycleStageExtensionsTests {
     LifecycleStage.PostPerspectiveDetached,
     LifecycleStage.PostAllPerspectivesDetached,
     LifecycleStage.PostLifecycleDetached,
+    LifecycleStage.PreDestructionDetached,
+    LifecycleStage.PostDestructionDetached,
   ];
 
   private static readonly LifecycleStage[] _inline = [
@@ -48,6 +50,8 @@ public class LifecycleStageExtensionsTests {
     LifecycleStage.PostPerspectiveInline,
     LifecycleStage.PostAllPerspectivesInline,
     LifecycleStage.PostLifecycleInline,
+    LifecycleStage.PreDestructionInline,
+    LifecycleStage.PostDestructionInline,
   ];
 
   /// <summary>

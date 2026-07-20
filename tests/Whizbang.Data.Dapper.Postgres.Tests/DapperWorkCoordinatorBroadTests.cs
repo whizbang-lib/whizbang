@@ -165,9 +165,9 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
       ins.CommandText = @"
         INSERT INTO wh_event_store
           (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-           event_data, metadata, created_at, commit_sequence)
+           created_at, commit_sequence)
         VALUES (@id, @stream, @stream, 'TestAgg', 1, 'TestEvt',
-                '{}'::jsonb, '{}'::jsonb, NOW(), @cs)";
+                NOW(), @cs)";
       ins.Parameters.AddWithValue("id", eventId);
       ins.Parameters.AddWithValue("stream", streamId);
       ins.Parameters.AddWithValue("cs", stampedCommitSequence);

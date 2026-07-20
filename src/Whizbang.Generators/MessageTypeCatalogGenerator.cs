@@ -118,12 +118,90 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       pinnedId = pinnedIdValue;
     }
 
+    // Ephemeral mode is an EVENT property. Commands are never ephemeral, and a perspective's effective
+    // mode is DERIVED from the events it applies (a separate step), not read from an attribute here.
+    // EphemeralResolver is the single source of truth shared with the analyzer.
+    (string Destruction, string Storage)? ephemeral = kind == "event" ? EphemeralResolver.Resolve(typeSymbol) : null;
+    var rewindGrace = kind == "event" ? EphemeralResolver.ResolveRewindGraceSeconds(typeSymbol) : -1;
+    var ttlSeconds = kind == "event" ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
+
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
         ClrTypeName: clrTypeName,
         Kind: kind,
-        PinnedId: pinnedId
+        PinnedId: pinnedId,
+        EphemeralDestruction: ephemeral?.Destruction,
+        EphemeralStorage: ephemeral?.Storage,
+        EphemeralRewindGraceSeconds: rewindGrace,
+        EphemeralTtlSeconds: ttlSeconds,
+        SettingsHash: _computeSettingsHash(ephemeral),
+        SchemaHash: _computeSchemaHash(typeSymbol)
     );
+  }
+
+  // ── Type-definition fingerprint (F-3) ────────────────────────────────────────────────────────────
+  // Deterministic per-type content hashes stamped onto the catalog entry so the startup reconciler can
+  // diff the code's current definition against wh_type_definitions and detect drift. Determinism is
+  // load-bearing: identical definitions MUST hash identically across builds/machines, so every input is
+  // canonically ordered and fully-qualified.
+
+  /// <summary>Hash of the type's behavioral settings — its Sourced/Ephemeral mode + destruction/storage.</summary>
+  private static string _computeSettingsHash((string Destruction, string Storage)? ephemeral) {
+    var canonical = ephemeral is { } e
+      ? $"ephemeral;destruction={e.Destruction};storage={e.Storage}"
+      : "sourced";
+    return _sha256Hex(canonical);
+  }
+
+  /// <summary>
+  /// Hash of the payload schema: a canonical, ORDERED signature of the type's serializable properties
+  /// (name + fully-qualified declared type), ONE level deep. One level keeps it incremental-safe — the
+  /// hash depends only on the type's own declaration, so a sibling type's internal change can't leave it
+  /// stale — while still catching the common changes (property added / removed / renamed / retyped). Deep
+  /// nested-DTO evolution is the job of explicit <c>[SchemaVersion]</c>.
+  /// </summary>
+  private static string _computeSchemaHash(INamedTypeSymbol type) {
+    var props = _serializableProperties(type)
+      .Select(p => p.Name + ":" + p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+      .OrderBy(s => s, System.StringComparer.Ordinal);
+    return _sha256Hex("{" + string.Join(",", props) + "}");
+  }
+
+  /// <summary>
+  /// Public instance properties with a public getter, across the type and its base types, deduped by name
+  /// (derived wins). Excludes indexers and the compiler-generated record <c>EqualityContract</c>.
+  /// </summary>
+  private static IEnumerable<IPropertySymbol> _serializableProperties(INamedTypeSymbol type) {
+    var seen = new HashSet<string>(System.StringComparer.Ordinal);
+    for (INamedTypeSymbol? t = type; t is not null && t.SpecialType != SpecialType.System_Object; t = t.BaseType) {
+      foreach (var member in t.GetMembers().OfType<IPropertySymbol>()) {
+        if (member.IsStatic || member.IsIndexer) {
+          continue;
+        }
+        if (member.DeclaredAccessibility != Accessibility.Public) {
+          continue;
+        }
+        if (member.GetMethod is null || member.GetMethod.DeclaredAccessibility != Accessibility.Public) {
+          continue;
+        }
+        if (member.Name == "EqualityContract") {
+          continue;
+        }
+        if (seen.Add(member.Name)) {
+          yield return member;
+        }
+      }
+    }
+  }
+
+  private static string _sha256Hex(string input) {
+    using var sha = System.Security.Cryptography.SHA256.Create();
+    var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
+    var sb = new StringBuilder(bytes.Length * 2);
+    foreach (var b in bytes) {
+      sb.Append(b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
+    }
+    return sb.ToString();
   }
 
   private static void _generateCatalog(
@@ -177,14 +255,26 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     source.AppendLine("  private static readonly IReadOnlyList<MessageTypeCatalogEntry> _all = new MessageTypeCatalogEntry[] {");
     foreach (var info in ordered) {
       var pinnedIdLiteral = info.PinnedId is null ? "null" : $"\"{info.PinnedId}\"";
-      var formerInit = "";
+      var initParts = new List<string>();
       if (info.PinnedId is not null &&
           formerByPinnedId.TryGetValue(info.PinnedId, out var formers) &&
           formers.Count > 0) {
         var arr = string.Join(", ", formers.Select(f => $"\"{f}\""));
-        formerInit = $" {{ FormerNames = new string[] {{ {arr} }} }}";
+        initParts.Add($"FormerNames = new string[] {{ {arr} }}");
       }
-      source.AppendLine($"    new(typeof({info.TypeName}), \"{info.ClrTypeName}\", \"{info.Kind}\", {pinnedIdLiteral}){formerInit},");
+      if (info.EphemeralDestruction is not null) {
+        initParts.Add(
+          "Ephemeral = new global::Whizbang.Core.Attributes.EphemeralInfo(" +
+          $"global::Whizbang.Core.Attributes.Destruction.{info.EphemeralDestruction}, " +
+          $"global::Whizbang.Core.Attributes.TransientStorage.{info.EphemeralStorage}, " +
+          $"{info.EphemeralRewindGraceSeconds}, " +
+          $"{info.EphemeralTtlSeconds})");
+      }
+      // Type-definition fingerprint (F-3): every entry carries its deterministic settings + schema hashes.
+      initParts.Add($"SettingsHash = \"{info.SettingsHash}\"");
+      initParts.Add($"SchemaHash = \"{info.SchemaHash}\"");
+      var initializer = initParts.Count > 0 ? $" {{ {string.Join(", ", initParts)} }}" : "";
+      source.AppendLine($"    new(typeof({info.TypeName}), \"{info.ClrTypeName}\", \"{info.Kind}\", {pinnedIdLiteral}){initializer},");
     }
     source.AppendLine("  };");
     source.AppendLine();
@@ -217,5 +307,11 @@ internal sealed record MessageTypeCatalogEntryInfo(
     string TypeName,
     string ClrTypeName,
     string Kind,
-    string? PinnedId
+    string? PinnedId,
+    string? EphemeralDestruction = null,
+    string? EphemeralStorage = null,
+    int EphemeralRewindGraceSeconds = -1,
+    int EphemeralTtlSeconds = -1,
+    string SettingsHash = "",
+    string SchemaHash = ""
 );

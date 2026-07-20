@@ -173,84 +173,8 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
   // Test Fakes
   // ========================================
 
-  /// <summary>Returns outbox work (no inbox work) from ProcessWorkBatchAsync.</summary>
+  /// <summary>Coordinator used to exercise the singleton flush signalling path.</summary>
   private sealed class ChannelTestWorkCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      var messageId = Guid.CreateVersion7();
-      var envelope = new MessageEnvelope<JsonElement> {
-        MessageId = MessageId.From(messageId),
-        Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = [],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-      };
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [
-          new OutboxWork {
-            MessageId = messageId,
-            Destination = "test-topic",
-            Envelope = envelope,
-            EnvelopeType = "TestEnvelope",
-            MessageType = "TestMessage",
-            Attempts = 0
-          }
-        ],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
-    public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCursorCompletion completion,
-      CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task ReportPerspectiveFailureAsync(
-      PerspectiveCursorFailure failure,
-      CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-      Guid streamId,
-      string perspectiveName,
-      CancellationToken cancellationToken = default) =>
-      Task.FromResult<PerspectiveCursorInfo?>(null);
-  }
-
-  /// <summary>Returns inbox work from ProcessWorkBatchAsync (for inbox channel routing tests).</summary>
-  private sealed class InboxReturningWorkCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      var messageId = Guid.CreateVersion7();
-      var envelope = new MessageEnvelope<JsonElement> {
-        MessageId = MessageId.From(messageId),
-        Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = [],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-      };
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [
-          new InboxWork {
-            MessageId = messageId,
-            Envelope = envelope,
-            MessageType = "TestMessage",
-            StreamId = Guid.CreateVersion7(),
-            Status = MessageProcessingStatus.None
-          }
-        ],
-        PerspectiveWork = []
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) => Task.CompletedTask;

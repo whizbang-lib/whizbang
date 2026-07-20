@@ -319,9 +319,9 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await conn.ExecuteAsync(@"
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-         event_data, metadata, created_at, commit_sequence)
+         created_at, commit_sequence)
       VALUES (@id, @stream, @stream, 'TestAgg', 1, 'Test.OrderCreated, Test',
-              '{}'::jsonb, '{}'::jsonb, NOW(), 1)",
+              NOW(), 1)",
       new { id = eventId, stream = pendingStream });
     await conn.ExecuteAsync(@"
       INSERT INTO wh_perspective_events

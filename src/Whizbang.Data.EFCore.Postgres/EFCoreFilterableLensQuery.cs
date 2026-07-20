@@ -76,9 +76,9 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
       IQueryable<PerspectiveRow<TModel>> baseQuery;
       if (SplitModeChangeTrackerHydrator.HasHydrator(typeof(PerspectiveRow<TModel>))) {
         SplitModeChangeTrackerHydrator.EnsureHooked(_context);
-        baseQuery = _context.Set<PerspectiveRow<TModel>>().AsQueryable();
+        baseQuery = LensExpiryFilter.Apply(_context.Set<PerspectiveRow<TModel>>().AsQueryable());
       } else {
-        baseQuery = _context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+        baseQuery = LensExpiryFilter.Apply(_context.Set<PerspectiveRow<TModel>>().AsNoTracking());
       }
       return _applyFilterInfo(baseQuery, _filterInfo);
     }
@@ -168,9 +168,9 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
       get {
         if (_isSplitMode) {
           SplitModeChangeTrackerHydrator.EnsureHooked(context);
-          return context.Set<PerspectiveRow<TModel>>().AsQueryable();
+          return LensExpiryFilter.Apply(context.Set<PerspectiveRow<TModel>>().AsQueryable());
         }
-        return context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+        return LensExpiryFilter.Apply(context.Set<PerspectiveRow<TModel>>().AsNoTracking());
       }
     }
 
@@ -192,9 +192,9 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
         IQueryable<PerspectiveRow<TModel>> baseQuery;
         if (_isSplitMode) {
           SplitModeChangeTrackerHydrator.EnsureHooked(context);
-          baseQuery = context.Set<PerspectiveRow<TModel>>().AsQueryable();
+          baseQuery = LensExpiryFilter.Apply(context.Set<PerspectiveRow<TModel>>().AsQueryable());
         } else {
-          baseQuery = context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+          baseQuery = LensExpiryFilter.Apply(context.Set<PerspectiveRow<TModel>>().AsNoTracking());
         }
         return _applyFilterInfo(baseQuery, filterInfo);
       }

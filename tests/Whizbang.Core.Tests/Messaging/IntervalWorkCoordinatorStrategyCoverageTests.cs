@@ -460,7 +460,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
     var sut = new IntervalWorkCoordinatorStrategy(
       throwingCoordinator, instanceProvider, options, logger);
 
-    // Queue something so the timer flush attempt actually calls ProcessWorkBatchAsync
+    // Queue something so the timer flush attempt actually calls the work coordinator
     var messageId = Guid.CreateVersion7();
     sut.QueueOutboxMessage(_createOutboxMessage(messageId));
 
@@ -535,16 +535,6 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
   }
 
   private sealed class SimpleWorkCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -568,13 +558,6 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
 
   private sealed class SlowWorkCoordinator(int delayMs) : IWorkCoordinator {
     private readonly int _delayMs = delayMs;
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
 
     public async Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
@@ -607,13 +590,6 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
   }
 
   private sealed class ThrowingWorkCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,

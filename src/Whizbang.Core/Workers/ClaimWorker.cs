@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 
 #pragma warning disable IDE0290  // Allow explicit constructor for optional channel writers
 
@@ -33,6 +34,10 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly ClaimWorkerOptions _options;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
+  private readonly ISignalBus? _signalBus;
+  private ISignalSubscription? _outboxSignalSub;
+  private ISignalSubscription? _inboxSignalSub;
+  private ISignalSubscription? _perspectiveSignalSub;
   private readonly SemaphoreSlim _wake = new(0, 1);
   private int _consecutiveEmptyPolls;
 
@@ -52,7 +57,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     IOutboxDrainChannel? outboxDrainChannel = null,
     IInboxDrainChannel? inboxDrainChannel = null,
     INotifySignalingGate? signalingGate = null,
-    IPinnedConnectionPool? pinnedPool = null) {
+    IPinnedConnectionPool? pinnedPool = null,
+    ISignalBus? signalBus = null) {
 #pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -68,8 +74,21 @@ public sealed partial class ClaimWorker : BackgroundService {
     _outboxDrainChannel = outboxDrainChannel;
     _inboxDrainChannel = inboxDrainChannel;
     _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
+    _signalBus = signalBus;
 
-    // Subscribe to outbox/inbox signals only — perspective signals route to PerspectiveProcessWorker.
+    // F1 unify-now: bus signals for outbox/inbox/perspective work-available replace the raw
+    // WorkSignalCategory subscription for those categories. Push transport (NOTIFY) and pull
+    // source (5s DB backstop) both raise the typed signal, so ClaimWorker wakes uniformly on
+    // either path. The IWorkNotificationListener.OnSignal subscription is preserved for the
+    // orphan + deadletter categories that don't have typed signals yet.
+    if (_signalBus is not null) {
+      _outboxSignalSub = _signalBus.Subscribe<WorkOutboxAvailableSignal>(_wakeOnSignal);
+      _inboxSignalSub = _signalBus.Subscribe<WorkInboxAvailableSignal>(_wakeOnSignal);
+      _perspectiveSignalSub = _signalBus.Subscribe<WorkPerspectiveAvailableSignal>(_wakeOnSignal);
+    }
+
+    // Subscribe to the listener for orphan+deadletter wake categories (still legacy path);
+    // outbox/inbox/perspective now come via the bus above.
     _notificationListener.OnSignal += _onSignal;
 
     // Slice 33.6 — pick up the gate's availability transitions so a polling-to-NOTIFY-available
@@ -92,9 +111,23 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   private void _onSignal(WorkSignalCategory category) {
-    if (category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox or WorkSignalCategory.OrphanRedistribute) {
+    // OrphanRedistribute has no typed signal yet, so it always wakes via this legacy path.
+    // Outbox/Inbox: post-unify-now they wake via the bus (see ctor _signalBus.Subscribe calls).
+    // When the bus isn't wired (legacy DI / tests), fall through to the legacy wake so the
+    // pre-unify-now NOTIFY→ClaimWorker regression tests stay green.
+    if (category is WorkSignalCategory.OrphanRedistribute) {
+      RequestImmediatePoll();
+      return;
+    }
+    if (_signalBus is null && category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox) {
       RequestImmediatePoll();
     }
+  }
+
+  private ValueTask _wakeOnSignal<TSignal>(TSignal signal) where TSignal : ISignal {
+    _ = signal;
+    RequestImmediatePoll();
+    return ValueTask.CompletedTask;
   }
 
   private void _onGateAvailabilityChanged(bool nowAvailable) {
@@ -256,9 +289,17 @@ public sealed partial class ClaimWorker : BackgroundService {
         Interlocked.Increment(ref _consecutiveEmptyPolls);  // back off after errors too
       }
 
-      var waitMs = _computeAdaptivePollWaitMs();
+      // F1 unify-now: when the signal bus is wired, bus pull sources (5s DB backstop) + NOTIFY
+      // push transport drive wake-ups via RequestImmediatePoll → the semaphore is the only
+      // trigger, no adaptive timer needed. When the bus isn't wired (legacy DI, tests), fall
+      // back to the adaptive backoff so the pre-unify-now behavior — and the regression tests
+      // locking it — stay green.
       try {
-        _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(waitMs), stoppingToken);
+        if (_signalBus is not null) {
+          await _wake.WaitAsync(stoppingToken);
+        } else {
+          _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(_computeAdaptivePollWaitMs()), stoppingToken);
+        }
       } catch (OperationCanceledException) {
         break;
       }
@@ -343,37 +384,19 @@ public sealed partial class ClaimWorker : BackgroundService {
       ProcessId: _instanceProvider.ProcessId), ct);
   }
 
+
   private int _computeAdaptivePollWaitMs() {
     var baseMs = _options.PollingIntervalMilliseconds;
     // Slice 33.6 — when the gate has flipped NOTIFY availability to false, the listener
     // won't wake us when work arrives, so we MUST keep polling at the tight base cadence
     // (do not let the adaptive backoff stretch out to PollingMaxIntervalMilliseconds —
     // that would silently increase latency to up to 10 s while NOTIFY is broken).
-    // When the gate isn't wired (null), preserve the pre-slice-33 behavior.
     if (_signalingGate?.IsAvailable == false) {
       return baseMs;
     }
-    // v0.502 slice B.5 — pure NOTIFY-only mode. When the operator has explicitly disabled
-    // the safety-net poll AND the gate reports NOTIFY healthy, the loop only wakes on
-    // actual NOTIFY signals (Outbox/Inbox/Perspective/OrphanRedistribute via _onSignal,
-    // gate transitions via _onGateAvailabilityChanged, drain-channel handoff via
-    // OnNewInbox/OnNewOutboxWorkAvailable). No periodic poll at all. Safety net only kicks
-    // back in the moment the gate flips false. int.MaxValue is ~24.8 days — effectively
-    // infinite for our use; the wake semaphore short-circuits any sooner wake.
     if (!_options.EnableSafetyNetPoll && _signalingGate?.IsAvailable == true) {
       return int.MaxValue;
     }
-    // 2026-06-02 (PR #227) — when LISTEN/NOTIFY is healthy AND an operator has opted into
-    // a relaxed steady-state cadence, use NotifyHealthyPollingIntervalMilliseconds as the
-    // baseline instead of the tight PollingIntervalMilliseconds. Rationale: under load,
-    // every pod polling at 250 ms each generates N×4 claim_work calls per second
-    // hammering wh_active_streams' unique index and producing 40P01 deadlocks on the
-    // index leaf page. With NOTIFY healthy, the listener wakes the worker the moment new
-    // work arrives — tight 250 ms polling becomes wasted contention. Default null means
-    // no behavior change; operators on Azure / multi-pod deployments opt in by setting
-    // a value like 1000 (1 s) or 2000 (2 s). The wh_active_streams deadlock root cause
-    // is mitigated structurally by migrations 024/025/027 split-UPSERT; this knob is the
-    // throughput-reducer that complements it.
     var notifyHealthyBase = _options.NotifyHealthyPollingIntervalMilliseconds;
     if (_signalingGate?.IsAvailable == true && notifyHealthyBase.HasValue && notifyHealthyBase.Value > baseMs) {
       baseMs = notifyHealthyBase.Value;
@@ -386,6 +409,17 @@ public sealed partial class ClaimWorker : BackgroundService {
     var shift = Math.Min(empty - 1, 10);
     var doubled = (long)baseMs << shift;
     return (int)Math.Min(doubled, maxMs);
+  }
+
+  /// <inheritdoc />
+  public override void Dispose() {
+    _outboxSignalSub?.Dispose();
+    _inboxSignalSub?.Dispose();
+    _perspectiveSignalSub?.Dispose();
+    _outboxSignalSub = null;
+    _inboxSignalSub = null;
+    _perspectiveSignalSub = null;
+    base.Dispose();
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,

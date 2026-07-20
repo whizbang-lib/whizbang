@@ -4,16 +4,16 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Testing.Workers;
 
 /// <summary>
-/// Bridges a legacy IWorkCoordinator fake (returns work via ProcessWorkBatchAsync) to a
-/// channel-mode <see cref="PerspectiveWorkerTestHarness"/>. Tests that have an existing fake
-/// coordinator returning PerspectiveWork on each call can run this pump alongside their
-/// PerspectiveWorker — the worker reads from the harness channel as if ClaimWorker had
-/// claimed the work in production.
+/// Bridges an <see cref="IWorkCoordinator"/> fake (returns work via <see cref="IWorkCoordinator.ClaimWorkAsync"/>)
+/// to a channel-mode <see cref="PerspectiveWorkerTestHarness"/>. Tests that have an existing fake
+/// coordinator returning PerspectiveWork / PerspectiveStreamIds on each claim can run this pump alongside
+/// their PerspectiveWorker — the worker reads from the harness channel exactly as if the production
+/// <c>ClaimWorker</c> had claimed the work and routed it.
 /// </summary>
 /// <remarks>
-/// Loops every <c>cycleDelayMs</c> milliseconds (20 by default) until cancelled.
-/// Each cycle: invoke ProcessWorkBatchAsync on the coordinator with a stub request, write
-/// every PerspectiveWork item into the harness channel.
+/// Loops every <c>cycleDelayMs</c> milliseconds (20 by default) until cancelled. Each cycle: invoke
+/// <see cref="IWorkCoordinator.ClaimWorkAsync"/> with a stub request (the same call the production
+/// ClaimWorker makes), then write every PerspectiveWork item and drain stream-id into the harness channels.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 public static class WorkCoordinatorPumpAdapter {
@@ -29,35 +29,17 @@ public static class WorkCoordinatorPumpAdapter {
     ArgumentNullException.ThrowIfNull(coordinator);
     ArgumentNullException.ThrowIfNull(harness);
 
-    var instanceId = Guid.NewGuid();
-    var stubRequest = new ProcessWorkBatchRequest {
-      InstanceId = instanceId,
-      ServiceName = "test-pump",
-      HostName = "test-host",
-      ProcessId = 0,
-      Metadata = null,
-      OutboxCompletions = [],
-      OutboxFailures = [],
-      InboxCompletions = [],
-      InboxFailures = [],
-      ReceptorCompletions = [],
-      ReceptorFailures = [],
-      PerspectiveCompletions = [],
-      PerspectiveEventCompletions = [],
-      PerspectiveFailures = [],
-      NewOutboxMessages = [],
-      NewInboxMessages = [],
-      RenewOutboxLeaseIds = [],
-      RenewInboxLeaseIds = [],
-      LeaseSeconds = 300,
-      PartitionCount = 100
-    };
+    var stubRequest = new ClaimWorkRequest(
+      InstanceId: Guid.NewGuid(),
+      ServiceName: "test-pump",
+      HostName: "test-host",
+      ProcessId: 0);
 
     try {
       while (!cancellationToken.IsCancellationRequested) {
         WorkBatch batch;
         try {
-          batch = await coordinator.ProcessWorkBatchAsync(stubRequest, cancellationToken).ConfigureAwait(false);
+          batch = await coordinator.ClaimWorkAsync(stubRequest, cancellationToken).ConfigureAwait(false);
         } catch (OperationCanceledException) {
           break;
         }

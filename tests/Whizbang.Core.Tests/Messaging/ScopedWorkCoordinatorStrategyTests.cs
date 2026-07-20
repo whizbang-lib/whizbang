@@ -434,7 +434,7 @@ public class ScopedWorkCoordinatorStrategyTests {
   // ========================================
 
   /// <summary>
-  /// Verifies that DisposeAsync persists data (calls ProcessWorkBatchAsync) but does NOT
+  /// Verifies that DisposeAsync persists data (via store calls) but does NOT
   /// invoke lifecycle stages, preventing ObjectDisposedException when ambient resources
   /// like HttpContext are already disposed during scope teardown.
   /// </summary>
@@ -463,7 +463,7 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // Assert — data was persisted
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
-      .Because("DisposeAsync should still persist data via ProcessWorkBatchAsync");
+      .Because("DisposeAsync should still persist data via store calls");
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
 
     // Assert — no lifecycle scopes were created (lifecycle was skipped)
@@ -472,7 +472,7 @@ public class ScopedWorkCoordinatorStrategyTests {
   }
 
   /// <summary>
-  /// Verifies that DisposeAsync with queued messages calls ProcessWorkBatchAsync
+  /// Verifies that DisposeAsync with queued messages persists via store calls
   /// without creating lifecycle scopes, while explicit FlushAsync with no unflushed
   /// data in DisposeAsync correctly avoids double-flush.
   /// </summary>
@@ -923,17 +923,6 @@ public class ScopedWorkCoordinatorStrategyTests {
     public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
@@ -1048,17 +1037,6 @@ public class ScopedWorkCoordinatorStrategyTests {
     private bool _disposed;
 
     public void SimulateDisposal() => _disposed = true;
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
@@ -1256,7 +1234,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
     await Assert.That(result.InboxWork).Count().IsEqualTo(0);
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
-      .Because("empty queue should skip ProcessWorkBatchAsync");
+      .Because("empty queue should skip store calls");
 
     // Cleanup
     await sut.DisposeAsync();
@@ -1560,17 +1538,10 @@ public class ScopedWorkCoordinatorStrategyTests {
   // ========================================
 
   /// <summary>
-  /// Coordinator that always throws on ProcessWorkBatchAsync.
+  /// Coordinator that always throws on store operations.
   /// Used to test DisposeAsync catch block (lines 238-241).
   /// </summary>
   private sealed class FakeThrowingWorkCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
@@ -1590,126 +1561,5 @@ public class ScopedWorkCoordinatorStrategyTests {
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-  }
-
-  /// <summary>
-  /// Coordinator that returns outbox work items — used to exercise lines 176-179.
-  /// </summary>
-  private sealed class FakeWorkCoordinatorWithOutboxWork : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      var outboxWork = request.NewOutboxMessages.Select(m => new OutboxWork {
-        MessageId = m.MessageId,
-        Destination = m.Destination,
-        Envelope = m.Envelope,
-        EnvelopeType = m.EnvelopeType,
-        MessageType = m.MessageType,
-        Attempts = 0,
-        Flags = WorkBatchOptions.NewlyStored
-      }).ToList();
-
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = outboxWork,
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
-
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
-      => Task.FromResult<PerspectiveCursorInfo?>(null);
-  }
-
-  /// <summary>
-  /// Coordinator that returns 4 outbox work items to test Take(3) logging loop.
-  /// </summary>
-  private sealed class FakeWorkCoordinatorWithMultipleOutboxWork : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      var outboxWork = new List<OutboxWork>();
-      var envelope = request.NewOutboxMessages.Length > 0 ? request.NewOutboxMessages[0].Envelope : default!;
-      // Return 4 items — only 3 should be logged
-      for (int i = 0; i < 4; i++) {
-        outboxWork.Add(new OutboxWork {
-          MessageId = Guid.NewGuid(),
-          Destination = $"topic-{i}",
-          Envelope = envelope,
-          EnvelopeType = "TestEnvelope, TestAssembly",
-          MessageType = "TestMessage, TestAssembly",
-          Attempts = 0,
-          Flags = i % 2 == 0 ? WorkBatchOptions.NewlyStored : WorkBatchOptions.None
-        });
-      }
-
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = outboxWork,
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
-
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
-      => Task.FromResult<PerspectiveCursorInfo?>(null);
-  }
-
-  private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
-    public WorkBatchOptions LastFlags { get; private set; }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      LastFlags = request.Flags;
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
-    public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCursorCompletion completion,
-      CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
-    }
-
-    public Task ReportPerspectiveFailureAsync(
-      PerspectiveCursorFailure failure,
-      CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
-    }
-
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-      Guid streamId,
-      string perspectiveName,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCursorInfo?>(null);
-    }
   }
 }

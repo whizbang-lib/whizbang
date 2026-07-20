@@ -5,6 +5,7 @@
     <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Data.Postgres\Whizbang.Data.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Testing\Whizbang.Testing.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Offloads.InMemory\Whizbang.Offloads.InMemory.csproj" />
     <!-- Reference the generator to discover perspectives in this project -->
     <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <!-- Reference the generator assembly directly for testing analyzer classes -->

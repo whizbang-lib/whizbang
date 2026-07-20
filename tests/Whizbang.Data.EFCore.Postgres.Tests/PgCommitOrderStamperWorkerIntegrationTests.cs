@@ -201,10 +201,10 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     ins.CommandText = @"
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-         event_data, metadata, scope, created_at)
+         scope, created_at)
       VALUES
         (@eid, @sid, @sid, 'TestAggregate', @ver, 'TestEvent',
-         '{}'::jsonb, '{}'::jsonb, NULL, NOW())";
+         NULL, NOW())";
     ins.Parameters.AddWithValue("eid", eventId);
     ins.Parameters.AddWithValue("sid", streamId);
     ins.Parameters.AddWithValue("ver", version);
