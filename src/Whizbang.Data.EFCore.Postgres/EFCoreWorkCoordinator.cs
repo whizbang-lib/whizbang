@@ -454,7 +454,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var cursors = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
     var snaps = BuildSchemaQualifiedName(schema, "wh_perspective_snapshots");
     var perspEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
-    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
+    var settings = "wh_settings"; // public (created bare, mig 028) — NOT the service schema; see a6ca8dd4
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -634,7 +634,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var assoc = BuildSchemaQualifiedName(schema, "wh_message_associations");
     var snaps = BuildSchemaQualifiedName(schema, "wh_perspective_snapshots");
     var perspEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
-    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
+    var settings = "wh_settings"; // public (created bare, mig 028) — NOT the service schema; see a6ca8dd4
     var hold = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
