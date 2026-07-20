@@ -48,7 +48,7 @@ public sealed partial class PgScheduleClaimer : IScheduleClaimer {
 
   /// <inheritdoc />
   public async Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default) {
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null) {
       return 0;   // no DB connection yet — the doorbell / backstop drives us when it returns
     }
@@ -73,7 +73,7 @@ public sealed partial class PgScheduleClaimer : IScheduleClaimer {
 
   /// <inheritdoc />
   public async Task<DateTimeOffset?> GetNextFireTimeAsync(CancellationToken cancellationToken = default) {
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null) {
       return null;
     }

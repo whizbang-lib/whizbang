@@ -82,7 +82,7 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
 
   /// <inheritdoc />
   protected sealed override async ValueTask<bool> DetectAsync(CancellationToken cancellationToken) {
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null) {
       return false;   // no connection available — nothing to detect; NOTIFY path will drive us when the DB comes back
     }

@@ -141,7 +141,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IMessageDiscardPolicy>(sp => new MessageDiscardPolicy(
       sp.GetRequiredService<IReceptorRegistryQuery>(),
       sp.GetRequiredService<ILogger<MessageDiscardPolicy>>(),
-      new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME)));
+      new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME),
+      sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()));
 #pragma warning restore CA2000
 
     // Hosted services — delegate to the singleton instance so DI hands the same one

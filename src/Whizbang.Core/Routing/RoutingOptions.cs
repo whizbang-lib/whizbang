@@ -19,6 +19,7 @@ namespace Whizbang.Core.Routing;
 public sealed class RoutingOptions {
   private readonly HashSet<string> _ownedDomains = new(StringComparer.OrdinalIgnoreCase);
   private readonly HashSet<string> _subscribedNamespaces = new(StringComparer.OrdinalIgnoreCase);
+  private readonly HashSet<string> _absorbedNamespaces = new(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>
   /// Gets the command namespaces owned by this service.
@@ -35,6 +36,13 @@ public sealed class RoutingOptions {
   /// These are combined with auto-discovered subscriptions from perspectives/receptors.
   /// </summary>
   public IReadOnlySet<string> SubscribedNamespaces => _subscribedNamespaces;
+
+  /// <summary>
+  /// Gets the event namespaces this service <b>absorbs</b>: every event on these topics is persisted to the
+  /// local event store even when no receptor or perspective currently consumes it, so a later-added
+  /// perspective/feature can rebuild from data that was already captured. See <see cref="AbsorbNamespaces"/>.
+  /// </summary>
+  public IReadOnlySet<string> AbsorbedNamespaces => _absorbedNamespaces;
 
   /// <summary>
   /// Gets or sets the inbox routing strategy.
@@ -173,6 +181,27 @@ public sealed class RoutingOptions {
     var ns = typeof(T).Namespace
       ?? throw new InvalidOperationException($"Type {typeof(T).Name} has no namespace");
     return SubscribeTo(ns);
+  }
+
+  /// <summary>
+  /// <b>Absorbs</b> every event on the given topic/namespace into this service's local event store, even when
+  /// no receptor or perspective consumes the type. Normally an inbound event with no local consumer is dropped
+  /// at the transport receive edge (never stored), so a perspective/feature added later cannot rebuild from it.
+  /// Marking a namespace absorbed keeps those events: the subscription binding is created and the receive
+  /// discard gates no longer drop unconsumed types on this namespace, so each lands in the inbox and is
+  /// persisted (perspective materialization is still gated on there being a perspective — absorbed-only events
+  /// simply sit in the store until something rebuilds from them). Namespace-scoped, additive to auto-discovery.
+  /// </summary>
+  /// <param name="namespaces">Event namespaces to absorb (e.g. <c>"a consumer.contracts.job"</c>). Case-insensitive.</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when <paramref name="namespaces"/> is null.</exception>
+  public RoutingOptions AbsorbNamespaces(params string[] namespaces) {
+    ArgumentNullException.ThrowIfNull(namespaces);
+
+    _absorbedNamespaces.UnionWith(
+        namespaces.Where(ns => !string.IsNullOrWhiteSpace(ns)).Select(ns => ns.ToLowerInvariant()));
+
+    return this;
   }
 
   /// <summary>

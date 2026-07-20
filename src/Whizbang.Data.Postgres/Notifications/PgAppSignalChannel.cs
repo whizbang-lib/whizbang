@@ -34,7 +34,7 @@ public sealed partial class PgAppSignalChannel(
   /// <inheritdoc />
   public async Task PublishAsync(string topic, string payload, CancellationToken cancellationToken = default) {
     var channel = AppSignalTopicValidator.ToChannelName(topic);
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null) {
       LogPublishSkippedNoConnection(_logger, channel);
       return;

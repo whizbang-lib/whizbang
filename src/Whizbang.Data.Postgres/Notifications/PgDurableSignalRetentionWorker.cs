@@ -70,7 +70,7 @@ public sealed partial class PgDurableSignalRetentionWorker(
 
   /// <summary>Test hook: run one sweep synchronously. Returns the number of rows deleted.</summary>
   public async Task<int> SweepOnceAsync(CancellationToken cancellationToken) {
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null) {
       return 0;
     }

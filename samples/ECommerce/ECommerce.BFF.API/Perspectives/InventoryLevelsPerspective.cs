@@ -1,7 +1,7 @@
 using ECommerce.Contracts.Events;
 using ECommerce.Contracts.Lenses;
-using Whizbang.Core.Perspectives;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Perspectives;
 

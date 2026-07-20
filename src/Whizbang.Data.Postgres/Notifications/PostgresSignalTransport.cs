@@ -85,7 +85,7 @@ public sealed partial class PostgresSignalTransport(
       return;
     }
 
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null) {
       LogPublishSkippedNoConnection(_logger, wireName);
       return;

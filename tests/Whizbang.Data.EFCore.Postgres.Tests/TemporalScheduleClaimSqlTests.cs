@@ -125,7 +125,12 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     // Due, but only slightly overdue (well within one interval) — so this exercises the NORMAL advance
     // path, not the misfire path. A schedule a full interval overdue is a misfire and coalesces instead
     // (see Misfire_Coalesce_FiresOnceThenFastForwardsAsync).
-    var next = DateTimeOffset.UtcNow.AddSeconds(-5);
+    //
+    // Truncated to MICROSECONDS: Postgres timestamptz stores µs while .NET ticks are 100 ns, so a
+    // raw UtcNow round-trips inexactly and the nextFire equality below fails — but only on hosts
+    // whose clock yields sub-µs ticks (Linux CI; macOS clocks are µs-aligned, masking it locally).
+    var rawNext = DateTimeOffset.UtcNow.AddSeconds(-5);
+    var next = rawNext.AddTicks(-(rawNext.Ticks % TimeSpan.TicksPerMicrosecond));
     await _pinStreamAsync(conn, stream, instance);
     await _insertScheduleAsync(conn, schedule, stream, next, kind: 1, intervalMs: 60_000, eventType: "OccA");
 

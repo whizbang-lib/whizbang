@@ -33,6 +33,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly Whizbang.Core.Messaging.IRawReceptorRegistry? _rawReceptorRegistry;
   private readonly Whizbang.Core.Messaging.IMessageTypeBinder _typeBinder;
   private readonly IMessageDiscardPolicy? _discardPolicy;
+  private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly bool _isEmulator;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -58,7 +59,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? perspectiveRegistry = null,
     Whizbang.Core.Messaging.IRawReceptorRegistry? rawReceptorRegistry = null,
     Whizbang.Core.Messaging.IMessageTypeBinder? typeBinder = null,
-    IMessageDiscardPolicy? discardPolicy = null
+    IMessageDiscardPolicy? discardPolicy = null,
+    IReadOnlySet<string>? absorbedNamespaces = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -83,6 +85,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // fallback works without explicit DI configuration. Tests can inject a fake.
     _typeBinder = typeBinder ?? new Whizbang.Core.Messaging.MultiPassMessageTypeBinder();
     _discardPolicy = discardPolicy;
+    _absorbedNamespaces = absorbedNamespaces
+      ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     // Log admin client availability
     if (_adminClient != null) {
@@ -1058,7 +1062,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _jsonOptions,
       _buildIsHandledLocally(),
       _rawReceptorRegistry,
-      _typeBinder);
+      _typeBinder,
+      absorbedNamespaces: _absorbedNamespaces);
 
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
@@ -1138,7 +1143,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _jsonOptions,
       _buildIsHandledLocally(),
       _rawReceptorRegistry,
-      _typeBinder);
+      _typeBinder,
+      absorbedNamespaces: _absorbedNamespaces);
 
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 

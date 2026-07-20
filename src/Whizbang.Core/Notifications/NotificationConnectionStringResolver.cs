@@ -14,7 +14,14 @@ public static class NotificationConnectionStringResolver {
   /// </summary>
   /// <param name="ConnectionString">The connection string to use, or <c>null</c> if none could be resolved.</param>
   /// <param name="Source">Where the resolved string came from — for diagnostics + logging.</param>
-  public sealed record Resolution(string? ConnectionString, ResolutionSource Source);
+  /// <param name="SearchPath">
+  /// PostgreSQL search path (the service's Whizbang schema) the connection should use, or
+  /// <c>null</c> for the server default. <see cref="WhizbangNotificationOptions.SearchPath"/>
+  /// wins over <see cref="INotificationConnectionStringFallback.GetSearchPath"/>; an explicit
+  /// <c>Search Path</c> already inside the connection string wins over both (applied by the
+  /// Postgres-side helper, not here — this layer is provider-agnostic).
+  /// </param>
+  public sealed record Resolution(string? ConnectionString, ResolutionSource Source, string? SearchPath = null);
 
   /// <summary>Provenance of a resolved connection string.</summary>
   public enum ResolutionSource {
@@ -58,27 +65,34 @@ public static class NotificationConnectionStringResolver {
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(config);
 
+    // Search path is orthogonal to WHERE the connection string came from: a config-supplied
+    // string still needs the service schema, so the fallback is consulted for it regardless
+    // of which source wins below. Explicit options always beat the fallback.
+    var searchPath = !string.IsNullOrWhiteSpace(options.SearchPath)
+      ? options.SearchPath
+      : fallback?.GetSearchPath();
+
     if (!string.IsNullOrWhiteSpace(options.DirectConnectionString)) {
-      return new Resolution(options.DirectConnectionString, ResolutionSource.ExplicitOption);
+      return new Resolution(options.DirectConnectionString, ResolutionSource.ExplicitOption, searchPath);
     }
 
     if (!string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
       var direct = config.GetConnectionString($"{options.ConnectionStringKey}-direct");
       if (!string.IsNullOrWhiteSpace(direct)) {
-        return new Resolution(direct, ResolutionSource.DirectKey);
+        return new Resolution(direct, ResolutionSource.DirectKey, searchPath);
       }
 
       var pooled = config.GetConnectionString(options.ConnectionStringKey);
       if (!string.IsNullOrWhiteSpace(pooled)) {
-        return new Resolution(pooled, ResolutionSource.PooledKeyFallback);
+        return new Resolution(pooled, ResolutionSource.PooledKeyFallback, searchPath);
       }
     }
 
     var fallbackValue = fallback?.GetConnectionString();
     if (!string.IsNullOrWhiteSpace(fallbackValue)) {
-      return new Resolution(fallbackValue, ResolutionSource.DbContextFallback);
+      return new Resolution(fallbackValue, ResolutionSource.DbContextFallback, searchPath);
     }
 
-    return new Resolution(null, ResolutionSource.None);
+    return new Resolution(null, ResolutionSource.None, searchPath);
   }
 }

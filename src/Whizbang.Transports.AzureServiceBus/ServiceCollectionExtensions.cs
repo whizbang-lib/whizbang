@@ -100,13 +100,19 @@ public static class ServiceCollectionExtensions {
       // logging + the whizbang.message.skipped OTel counter (instead of WARN spam).
       var discardPolicy = sp.GetService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
 
+      // Absorbed namespaces — an unconsumed event on one of these is KEPT (persisted) at the
+      // ASB receive gate instead of dropped, mirroring the core MessageDiscardPolicy behavior.
+      var absorbedNamespaces = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()
+        ?.Value.AbsorbedNamespaces;
+
       var transport = new AzureServiceBusTransport(
         client, jsonOptions, options, logger, adminClient,
         receptorRegistry: receptorRegistry,
         perspectiveRegistry: perspectiveRegistry,
         rawReceptorRegistry: rawReceptorRegistry,
         typeBinder: typeBinder,
-        discardPolicy: discardPolicy);
+        discardPolicy: discardPolicy,
+        absorbedNamespaces: absorbedNamespaces);
 
       // IMPORTANT: Initialize transport during registration to verify connectivity
       // This ensures the application won't start if Service Bus is unreachable
