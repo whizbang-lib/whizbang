@@ -55,7 +55,7 @@ public static class WorkerPipelineExtensions {
     // catalog (GetService returns null) or without the fingerprint tables (coordinator defaults no-op).
     services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>();
     services.TryAddSingleton(sp => new Whizbang.Core.Fingerprint.TypeDefinitionReconciler(
-      sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
+      sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
       sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.EphemeralOptions>>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Fingerprint.TypeDefinitionReconciler>>(),
       sp.GetService<Whizbang.Core.IMessageTypeCatalog>()));

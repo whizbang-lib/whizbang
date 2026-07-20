@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
@@ -15,18 +16,25 @@ namespace Whizbang.Core.Fingerprint;
 /// </summary>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
 public sealed partial class TypeDefinitionReconciler {
-  private readonly IWorkCoordinator _coordinator;
+  private readonly IServiceScopeFactory _scopeFactory;
   private readonly EphemeralOptions _options;
   private readonly ILogger<TypeDefinitionReconciler> _logger;
   private readonly IMessageTypeCatalog? _catalog;
 
   /// <summary>Creates the reconciler. <paramref name="catalog"/> is optional — absent means no-op.</summary>
+  /// <remarks>
+  /// <see cref="IWorkCoordinator"/> is a SCOPED service (one per DbContext scope), so this singleton
+  /// reconciler resolves it from a freshly-created scope per pass rather than capturing it in the
+  /// constructor — capturing a scoped service on a singleton is a captive-dependency bug that throws
+  /// under scope validation ("Cannot resolve scoped service … from root provider") and yields a broken
+  /// root-scoped instance without it. Mirrors <c>MaintenanceWorker</c>.
+  /// </remarks>
   public TypeDefinitionReconciler(
-      IWorkCoordinator coordinator,
+      IServiceScopeFactory scopeFactory,
       IOptions<EphemeralOptions> options,
       ILogger<TypeDefinitionReconciler> logger,
       IMessageTypeCatalog? catalog = null) {
-    _coordinator = coordinator;
+    _scopeFactory = scopeFactory;
     _options = options.Value;
     _logger = logger;
     _catalog = catalog;
@@ -38,6 +46,10 @@ public sealed partial class TypeDefinitionReconciler {
       return TypeDefinitionReconcileSummary.Empty;
     }
 
+    // IWorkCoordinator is scoped — resolve it from a fresh scope for this pass (see the ctor remarks).
+    using var scope = _scopeFactory.CreateScope();
+    var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+
     // Sync per-type rewind-grace overrides ([Ephemeral(RewindGraceSeconds >= 0)]) so the reaper resolves
     // COALESCE(type grace, global default) per event. Full replace — declaring set upserted, rest pruned.
     var graceOverrides = new List<EphemeralTypeGrace>();
@@ -46,11 +58,11 @@ public sealed partial class TypeDefinitionReconciler {
         graceOverrides.Add(new EphemeralTypeGrace(e.ClrTypeName, eph.RewindGraceSeconds));
       }
     }
-    await _coordinator.SyncEphemeralTypeGraceAsync(graceOverrides, cancellationToken).ConfigureAwait(false);
+    await coordinator.SyncEphemeralTypeGraceAsync(graceOverrides, cancellationToken).ConfigureAwait(false);
 
     // Pre-register snapshot of stored definitions, so a genuinely-new registration's previous_definition_id
     // resolves to the prior hashes (to tell settings-drift from schema-drift).
-    var snapshot = await _coordinator.GetTypeDefinitionsAsync(cancellationToken).ConfigureAwait(false);
+    var snapshot = await coordinator.GetTypeDefinitionsAsync(cancellationToken).ConfigureAwait(false);
     var byId = new Dictionary<int, TypeDefinitionInfo>(snapshot.Count);
     foreach (var d in snapshot) {
       byId[d.DefinitionId] = d;
@@ -68,7 +80,7 @@ public sealed partial class TypeDefinitionReconciler {
       }
 
       // schema_version stays 0 until [SchemaVersion] exists (event-versioning phase).
-      var reg = await _coordinator.RegisterTypeDefinitionAsync(
+      var reg = await coordinator.RegisterTypeDefinitionAsync(
         entry.ClrTypeName, entry.SettingsHash, entry.SchemaHash, schemaVersion: 0, cancellationToken).ConfigureAwait(false);
 
       // Not new (already the current definition) — or new but first-ever (no prior to drift from).
@@ -84,7 +96,7 @@ public sealed partial class TypeDefinitionReconciler {
       var relationship = schemaChanged
         ? DefinitionRelationship.SchemaUpgradedTo
         : (isEphemeral ? DefinitionRelationship.ReclassifiedTo : DefinitionRelationship.MetadataChangedTo);
-      await _coordinator.RecordDefinitionLineageAsync(
+      await coordinator.RecordDefinitionLineageAsync(
         prevId, reg.DefinitionId, relationship, relationship.ToString(), cancellationToken).ConfigureAwait(false);
       LogDrift(_logger, entry.ClrTypeName, settingsChanged, schemaChanged, relationship.ToString());
 
@@ -93,7 +105,7 @@ public sealed partial class TypeDefinitionReconciler {
         if (_options.ReconcileHistoricalOnStartup) {
           var names = new List<string>(1 + entry.FormerNames.Count) { entry.ClrTypeName };
           names.AddRange(entry.FormerNames);
-          var result = await _coordinator.ReclassifyEventsEphemeralAsync(names, cancellationToken).ConfigureAwait(false);
+          var result = await coordinator.ReclassifyEventsEphemeralAsync(names, cancellationToken).ConfigureAwait(false);
           if (result.EventsReclassified > 0) {
             typesReclassified++;
           }
