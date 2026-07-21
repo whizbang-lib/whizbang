@@ -40,6 +40,8 @@ new file for a fix.
 10. **Connection `search_path`** is defense-in-depth, not the contract — never rely on it alone
     (pgbouncer/Aspire/pooled EF connections strip it). Rule 3 is what makes the SQL correct.
 
-Known debt (2026-07): ~196 unqualified refs inside function bodies (rule 3), function-naming drift
-(rule 4), duplicate prefixes `040/042/044` (rule 8). A CI lint for rule 3 (bare `wh_` inside a
-`CREATE FUNCTION` body) is the missing guardrail.
+**Rule 3 is enforced** by `scripts/Lint-MigrationSql.ps1` (CI step in the `format` job) — it fails on
+any *new* bare `wh_` ref inside a function body. Existing debt (89 refs across 37 files) is baselined
+in `scripts/migration-sql-lint-baseline.txt`; fix one, then rerun with `-UpdateBaseline` to ratchet
+the baseline down. Other known debt: function-naming drift (rule 4), duplicate prefixes `040/042/044`
+(rule 8).
