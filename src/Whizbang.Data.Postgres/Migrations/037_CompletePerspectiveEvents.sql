@@ -20,7 +20,7 @@ BEGIN
   IF p_debug_mode THEN
     -- Debug mode: retain the row for forensics; stamp processed_at so eligible_*
     -- filters skip it on subsequent claims.
-    UPDATE wh_perspective_events
+    UPDATE __SCHEMA__.wh_perspective_events
     SET processed_at = NOW(),
         instance_id = NULL,
         lease_expiry = NULL
@@ -28,7 +28,7 @@ BEGIN
       AND processed_at IS NULL;
   ELSE
     -- Production: row exits the table on completion — claim_work can never re-issue it.
-    DELETE FROM wh_perspective_events
+    DELETE FROM __SCHEMA__.wh_perspective_events
     WHERE event_work_id = ANY(p_event_work_ids);
   END IF;
 

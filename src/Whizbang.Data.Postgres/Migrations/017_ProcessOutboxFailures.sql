@@ -30,7 +30,7 @@ BEGIN
     -- Plain messages have no scheduleId => v_schedule_id is NULL and they take the unchanged path below.
     SELECT o.metadata->>'scheduleId', COALESCE((o.metadata->>'deliveryGuarantee')::INTEGER, 0)
     INTO v_schedule_id, v_delivery
-    FROM wh_outbox o
+    FROM __SCHEMA__.wh_outbox o
     WHERE o.message_id = v_failure.msg_id;
 
     IF v_schedule_id IS NOT NULL THEN
@@ -45,7 +45,7 @@ BEGIN
       -- non-idempotent ops. Park the message terminally: the claim requires
       -- (scheduled_for IS NULL OR scheduled_for <= NOW()), so 'infinity' is never claimable again.
       -- The failure is durably recorded in wh_schedule_runs above, which is what makes this safe.
-      UPDATE wh_outbox o
+      UPDATE __SCHEMA__.wh_outbox o
       SET status = o.status | v_failure.status_flags | 32768,  -- Set Failed bit (32768)
           error = v_failure.error_message,
           failure_reason = COALESCE(v_failure.failure_reason, 0),
@@ -57,7 +57,7 @@ BEGIN
       -- Default (at-least-once, and every non-schedule message): unchanged retry behaviour.
       -- Phase H step 8 slice D: claim_orphaned_outbox is the SOLE source of attempt counting.
       -- See mig 018 for the rationale — symmetric across all three work tables.
-      UPDATE wh_outbox o
+      UPDATE __SCHEMA__.wh_outbox o
       SET status = o.status | v_failure.status_flags | 32768,  -- Set Failed bit (32768)
           error = v_failure.error_message,
           failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)

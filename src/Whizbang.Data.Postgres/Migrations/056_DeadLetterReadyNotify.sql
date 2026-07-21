@@ -15,7 +15,7 @@
 CREATE OR REPLACE FUNCTION __SCHEMA__._notify_dead_letter_ready() RETURNS TRIGGER AS $$
 BEGIN
   PERFORM pg_notify('wh_work_i_' || instance_id::text, 'deadletter')
-  FROM wh_service_instances
+  FROM __SCHEMA__.wh_service_instances
   WHERE last_heartbeat_at > NOW() - INTERVAL '5 minutes';
   RETURN NEW;
 END;

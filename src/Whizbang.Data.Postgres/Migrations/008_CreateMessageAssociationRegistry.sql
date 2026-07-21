@@ -81,7 +81,7 @@ BEGIN
   -- Insert new associations or update updated_at on conflict
   -- First count how many associations already exist (will be updated)
   SELECT COUNT(*) INTO v_updated_count
-  FROM wh_message_associations wma
+  FROM __SCHEMA__.wh_message_associations wma
   INNER JOIN temp_associations ta
     ON wma.message_type = ta.message_type
     AND wma.association_type = ta.association_type
@@ -89,7 +89,7 @@ BEGIN
     AND wma.service_name = ta.service_name;
 
   -- Now perform the upsert (including pre-computed normalized_message_type for index-friendly JOINs)
-  INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
+  INSERT INTO __SCHEMA__.wh_message_associations (message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
   SELECT
     message_type,
     association_type,
@@ -121,7 +121,7 @@ BEGIN
   ) ON COMMIT DROP;
 
   WITH delete_result AS (
-    DELETE FROM wh_message_associations wma
+    DELETE FROM __SCHEMA__.wh_message_associations wma
     WHERE wma.service_name = p_service_name
       AND NOT EXISTS (
         SELECT 1
@@ -142,7 +142,7 @@ BEGIN
   -- is no longer associated. status != 0 rows (in-progress, completed, failed) are preserved so
   -- audit/debug state is not disturbed. Joins through wh_event_store.event_type which is already
   -- stored in normalized form (see process_work_batch Phase 4.5).
-  DELETE FROM wh_perspective_events pe
+  DELETE FROM __SCHEMA__.wh_perspective_events pe
   USING wh_event_store es, temp_deleted_associations tda
   WHERE pe.event_id = es.event_id
     AND pe.status = 0
@@ -159,6 +159,6 @@ $$ LANGUAGE plpgsql;
 GRANT EXECUTE ON FUNCTION register_message_associations(JSONB, VARCHAR) TO PUBLIC;
 
 -- Backfill normalized_message_type for existing rows (idempotent — safe to re-run)
-UPDATE wh_message_associations
+UPDATE __SCHEMA__.wh_message_associations
 SET normalized_message_type = __SCHEMA__.normalize_event_type(message_type)
 WHERE normalized_message_type IS NULL;

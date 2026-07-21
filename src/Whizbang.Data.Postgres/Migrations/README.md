@@ -41,7 +41,8 @@ new file for a fix.
     (pgbouncer/Aspire/pooled EF connections strip it). Rule 3 is what makes the SQL correct.
 
 **Rule 3 is enforced** by `scripts/Lint-MigrationSql.ps1` (CI step in the `format` job) — it fails on
-any *new* bare `wh_` ref inside a function body. Existing debt (89 refs across 37 files) is baselined
-in `scripts/migration-sql-lint-baseline.txt`; fix one, then rerun with `-UpdateBaseline` to ratchet
-the baseline down. Other known debt: function-naming drift (rule 4), duplicate prefixes `040/042/044`
-(rule 8).
+any bare `wh_` ref inside a function body. The historical debt has been **burned down to zero**
+(baseline empty); the lint now holds it at zero. `-Fix` auto-qualifies flagged refs; `-UpdateBaseline`
+re-baselines after a reviewed change. Remaining known debt: bare **function calls** inside bodies
+(e.g. `PERFORM wh_create_schedule(...)` — same class, not yet linted), top-level DDL in `009`/`031`,
+function-naming drift (rule 4), duplicate prefixes `040/042/044` (rule 8).

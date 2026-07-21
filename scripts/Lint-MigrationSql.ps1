@@ -37,7 +37,8 @@
 param(
   [string]$MigrationsPath = (Join-Path $PSScriptRoot '..' 'src' 'Whizbang.Data.Postgres' 'Migrations'),
   [string]$BaselinePath   = (Join-Path $PSScriptRoot 'migration-sql-lint-baseline.txt'),
-  [switch]$UpdateBaseline
+  [switch]$UpdateBaseline,
+  [switch]$Fix
 )
 
 $ErrorActionPreference = 'Stop'
@@ -116,12 +117,15 @@ function Get-Violations {
     foreach ($m in $RefRegex.Matches($masked)) {
       $ref = $m.Groups[1].Value
       if ($PublicAllowList -contains $ref) { continue }
-      $line = ($masked.Substring(0, $m.Groups[1].Index) -split "`n").Count
+      $idx = $m.Groups[1].Index   # index of the ref in masked == same index in the original text
+      $line = ($masked.Substring(0, $idx) -split "`n").Count
       $results.Add([pscustomobject]@{
-          File = $f.Name
-          Line = $line
-          Ref  = $ref
-          Key  = "$($f.Name)::$ref"
+          File     = $f.Name
+          FullName = $f.FullName
+          Line     = $line
+          Ref      = $ref
+          Index    = $idx
+          Key      = "$($f.Name)::$ref"
         })
     }
   }
@@ -130,6 +134,26 @@ function Get-Violations {
 
 # ---------------------------------------------------------------------------------------------
 $violations = Get-Violations
+
+if ($Fix) {
+  # Rewrite each flagged bare ref to __SCHEMA__.<ref> in place. Process each file's matches
+  # right-to-left so earlier indices stay valid as we insert. The masked-index equals the index in
+  # the original text (masking is 1:1, length-preserving), so inserting "__SCHEMA__." at Index is exact.
+  $fixedCount = 0
+  foreach ($grp in ($violations | Group-Object FullName)) {
+    $text = Get-Content -Path $grp.Name -Raw
+    foreach ($v in ($grp.Group | Sort-Object Index -Descending)) {
+      $text = $text.Insert($v.Index, '__SCHEMA__.')
+      $fixedCount++
+    }
+    Set-Content -Path $grp.Name -Value $text -Encoding utf8 -NoNewline
+  }
+  Write-Host "Qualified $fixedCount bare ref(s) across $((($violations | Group-Object FullName).Count)) file(s)."
+  Write-Host "Next: rebuild (clean .whizbang/cache to defeat the incremental-generator flake), then"
+  Write-Host "      pwsh scripts/Lint-MigrationSql.ps1 -UpdateBaseline   (baseline should drop to 0)."
+  exit 0
+}
+
 $currentKeys = $violations | Select-Object -ExpandProperty Key -Unique | Sort-Object
 
 if ($UpdateBaseline) {

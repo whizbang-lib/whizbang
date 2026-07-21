@@ -25,7 +25,7 @@ DECLARE
 BEGIN
   -- Only a still-pending (unpublished) occurrence can be deferred. Releasing the lease lets any instance
   -- pick it up once p_until arrives; the claim requires (scheduled_for IS NULL OR scheduled_for <= NOW()).
-  UPDATE wh_outbox
+  UPDATE __SCHEMA__.wh_outbox
   SET scheduled_for = p_until,
       instance_id = NULL,
       lease_expiry = NULL

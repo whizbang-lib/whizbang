@@ -69,7 +69,7 @@ BEGIN
   -- lease here; LeaseRenewalWorker handles in-flight renewals separately.
   WITH eligible AS (
     SELECT pe.event_work_id, pe.instance_id, pe.attempts
-    FROM wh_perspective_events pe
+    FROM __SCHEMA__.wh_perspective_events pe
     WHERE pe.stream_id = ANY(p_stream_ids)
       AND pe.processed_at IS NULL
       AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
@@ -80,7 +80,7 @@ BEGIN
     ORDER BY pe.event_work_id
     FOR UPDATE OF pe SKIP LOCKED
   )
-  UPDATE wh_perspective_events pe
+  UPDATE __SCHEMA__.wh_perspective_events pe
   SET instance_id = p_instance_id,
       lease_expiry = v_lease_expiry,
       attempts = pe.attempts + 1
@@ -108,8 +108,8 @@ BEGIN
     pe.perspective_name,
     es.commit_sequence,
     pe.attempts
-  FROM wh_perspective_events pe
-  INNER JOIN wh_event_store es
+  FROM __SCHEMA__.wh_perspective_events pe
+  INNER JOIN __SCHEMA__.wh_event_store es
     ON pe.stream_id = es.stream_id
     AND pe.event_id = es.event_id
   WHERE pe.instance_id = p_instance_id

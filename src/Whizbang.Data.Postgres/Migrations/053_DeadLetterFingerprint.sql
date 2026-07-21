@@ -223,7 +223,7 @@ BEGIN
   -- algorithm. Rows at the current version are deliberately left alone — they're
   -- already fingerprinted under the current algorithm. Without this skip, every
   -- maintenance tick burns IO re-hashing every row.
-  UPDATE wh_dead_letters
+  UPDATE __SCHEMA__.wh_dead_letters
   SET error_fingerprint = __SCHEMA__.compute_dead_letter_fingerprint(error_text),
       error_fingerprint_version = __SCHEMA__.current_dead_letter_fingerprint_version()
   WHERE error_text IS NOT NULL
@@ -245,7 +245,7 @@ BEGIN
     MIN(dead_lettered_at),
     MAX(dead_lettered_at),
     (array_agg(error_text ORDER BY dead_lettered_at DESC))[1]
-  FROM wh_dead_letters
+  FROM __SCHEMA__.wh_dead_letters
   WHERE error_fingerprint IS NOT NULL
     AND error_text IS NOT NULL
   GROUP BY error_fingerprint, source_table, message_type

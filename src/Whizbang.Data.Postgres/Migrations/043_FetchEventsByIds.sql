@@ -28,7 +28,7 @@ BEGIN
     es.event_data::TEXT,
     es.metadata::TEXT,
     es.scope::TEXT
-  FROM wh_event_store es
+  FROM __SCHEMA__.wh_event_store es
   WHERE es.event_id = ANY(p_event_ids)
   ORDER BY es.event_id ASC;
 END;

@@ -37,7 +37,7 @@ BEGIN
 
     -- Insert perspective event with immediate lease (ON CONFLICT for idempotency).
     -- Phase H step 6 slice 2: populate partition_number for symmetric load balancing.
-    INSERT INTO wh_perspective_events (
+    INSERT INTO __SCHEMA__.wh_perspective_events (
       event_work_id,
       stream_id,
       perspective_name,
@@ -68,7 +68,7 @@ BEGIN
     -- If conflict occurred, get existing work_id
     IF NOT v_was_new THEN
       SELECT pe.event_work_id INTO v_work_id
-      FROM wh_perspective_events pe
+      FROM __SCHEMA__.wh_perspective_events pe
       WHERE pe.stream_id = v_event.v_stream_id
         AND pe.perspective_name = v_event.v_perspective_name
         AND pe.event_id = v_event.v_event_id;
@@ -79,13 +79,13 @@ BEGIN
     -- UUID7 comparison works because UUID7 encodes timestamp in the most significant bits.
     IF v_was_new THEN
       IF EXISTS (
-        SELECT 1 FROM wh_perspective_cursors pc
+        SELECT 1 FROM __SCHEMA__.wh_perspective_cursors pc
         WHERE pc.stream_id = v_event.v_stream_id
           AND pc.perspective_name = v_event.v_perspective_name
           AND pc.last_event_id IS NOT NULL
           AND v_event.v_event_id < pc.last_event_id
       ) THEN
-        UPDATE wh_perspective_cursors
+        UPDATE __SCHEMA__.wh_perspective_cursors
         SET status = status | 32,  -- RewindRequired flag (1 << 5)
             rewind_trigger_event_id = v_event.v_event_id
         WHERE stream_id = v_event.v_stream_id

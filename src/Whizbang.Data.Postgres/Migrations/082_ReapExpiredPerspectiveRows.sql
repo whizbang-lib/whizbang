@@ -55,7 +55,7 @@ BEGIN
   IF v_debug_mode THEN
     v_rows := 0;
   ELSE
-    DELETE FROM wh_outbox WHERE processed_at IS NOT NULL;
+    DELETE FROM __SCHEMA__.wh_outbox WHERE processed_at IS NOT NULL;
     GET DIAGNOSTICS v_rows = ROW_COUNT;
   END IF;
   RETURN QUERY SELECT
@@ -71,7 +71,7 @@ BEGIN
   IF v_debug_mode THEN
     v_rows := 0;
   ELSE
-    DELETE FROM wh_inbox WHERE processed_at IS NOT NULL;
+    DELETE FROM __SCHEMA__.wh_inbox WHERE processed_at IS NOT NULL;
     GET DIAGNOSTICS v_rows = ROW_COUNT;
   END IF;
   RETURN QUERY SELECT
@@ -87,7 +87,7 @@ BEGIN
   IF v_debug_mode THEN
     v_rows := 0;
   ELSE
-    DELETE FROM wh_perspective_events WHERE processed_at IS NOT NULL;
+    DELETE FROM __SCHEMA__.wh_perspective_events WHERE processed_at IS NOT NULL;
     GET DIAGNOSTICS v_rows = ROW_COUNT;
   END IF;
   RETURN QUERY SELECT
@@ -105,7 +105,7 @@ BEGIN
   ) INTO v_dedup_retention_days;
 
   v_start := clock_timestamp();
-  DELETE FROM wh_message_deduplication
+  DELETE FROM __SCHEMA__.wh_message_deduplication
   WHERE first_seen_at < NOW() - (v_dedup_retention_days || ' days')::INTERVAL;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   RETURN QUERY SELECT
@@ -123,7 +123,7 @@ BEGIN
   ) INTO v_stuck_inbox_retention_days;
 
   v_start := clock_timestamp();
-  DELETE FROM wh_inbox
+  DELETE FROM __SCHEMA__.wh_inbox
   WHERE processed_at IS NULL
     AND lease_expiry IS NULL
     AND instance_id IS NULL

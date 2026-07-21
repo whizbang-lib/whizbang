@@ -24,7 +24,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
 BEGIN
   RETURN QUERY
   WITH claimed AS (
-    UPDATE wh_inbox i
+    UPDATE __SCHEMA__.wh_inbox i
     SET instance_id = p_instance_id,
         lease_expiry = p_lease_expiry,
         -- Phase H step 8 slice D: claim_orphaned is the SOLE source of attempt counting.

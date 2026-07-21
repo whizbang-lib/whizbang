@@ -116,7 +116,7 @@ BEGIN
   -- the recovery worker will rejoin against wh_event_store at recovery time.
   IF p_source_table = 'wh_outbox' THEN
     WITH moved AS (
-      DELETE FROM wh_outbox
+      DELETE FROM __SCHEMA__.wh_outbox
       WHERE message_id = p_source_id
       RETURNING
         stream_id,
@@ -133,7 +133,7 @@ BEGIN
     FROM moved m;
   ELSIF p_source_table = 'wh_inbox' THEN
     WITH moved AS (
-      DELETE FROM wh_inbox
+      DELETE FROM __SCHEMA__.wh_inbox
       WHERE message_id = p_source_id
       RETURNING
         stream_id,
@@ -149,7 +149,7 @@ BEGIN
     FROM moved m;
   ELSIF p_source_table = 'wh_perspective_events' THEN
     WITH moved AS (
-      DELETE FROM wh_perspective_events
+      DELETE FROM __SCHEMA__.wh_perspective_events
       WHERE event_work_id = p_source_id
       RETURNING
         stream_id,
@@ -177,7 +177,7 @@ BEGIN
   -- (the SQL function), three call sites (this INSERT, plus Slice 6's
   -- aggregate_dead_letters version-aware backfill). NULL p_error_text →
   -- NULL fingerprint + NULL version so the column NULLability flows through.
-  INSERT INTO wh_dead_letters (
+  INSERT INTO __SCHEMA__.wh_dead_letters (
     dead_letter_id,
     source_table,
     source_id,

@@ -52,8 +52,8 @@ BEGIN
   -- enforcing single-writer-per-stream so two pods never apply one stream concurrently.
   WITH eligible AS (
     SELECT pe.event_work_id, pe.instance_id, pe.attempts
-    FROM wh_perspective_events pe
-    INNER JOIN wh_event_store es
+    FROM __SCHEMA__.wh_perspective_events pe
+    INNER JOIN __SCHEMA__.wh_event_store es
       ON es.stream_id = pe.stream_id
       AND es.event_id = pe.event_id
     WHERE pe.stream_id = ANY(p_stream_ids)
@@ -69,13 +69,13 @@ BEGIN
       -- live LISTEN connection in pg_stat_activity). Caller-owned / unowned / dead-owner streams
       -- stay claimable.
       AND NOT EXISTS (
-        SELECT 1 FROM wh_active_streams ast
+        SELECT 1 FROM __SCHEMA__.wh_active_streams ast
         WHERE ast.stream_id = pe.stream_id
           AND ast.assigned_instance_id IS NOT NULL
           AND ast.assigned_instance_id <> p_instance_id
           AND (
             EXISTS (
-              SELECT 1 FROM wh_service_instances si
+              SELECT 1 FROM __SCHEMA__.wh_service_instances si
               WHERE si.instance_id = ast.assigned_instance_id
             )
             OR EXISTS (
@@ -87,7 +87,7 @@ BEGIN
     ORDER BY pe.event_work_id
     FOR UPDATE OF pe SKIP LOCKED
   )
-  UPDATE wh_perspective_events pe
+  UPDATE __SCHEMA__.wh_perspective_events pe
   SET instance_id = p_instance_id,
       lease_expiry = v_lease_expiry,
       attempts = pe.attempts + 1
@@ -106,8 +106,8 @@ BEGIN
     pe.perspective_name,
     es.commit_sequence,
     pe.attempts
-  FROM wh_perspective_events pe
-  INNER JOIN wh_event_store es
+  FROM __SCHEMA__.wh_perspective_events pe
+  INNER JOIN __SCHEMA__.wh_event_store es
     ON pe.stream_id = es.stream_id
     AND pe.event_id = es.event_id
   WHERE pe.instance_id = p_instance_id

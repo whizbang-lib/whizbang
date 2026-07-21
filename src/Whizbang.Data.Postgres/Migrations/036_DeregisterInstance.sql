@@ -15,27 +15,27 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.deregister_instance(
 ) RETURNS VOID AS $$
 BEGIN
   -- Release all outbox leases held by this instance
-  UPDATE wh_outbox SET instance_id = NULL, lease_expiry = NULL
+  UPDATE __SCHEMA__.wh_outbox SET instance_id = NULL, lease_expiry = NULL
   WHERE instance_id = p_instance_id AND processed_at IS NULL;
 
   -- Release all inbox leases held by this instance
-  UPDATE wh_inbox SET instance_id = NULL, lease_expiry = NULL
+  UPDATE __SCHEMA__.wh_inbox SET instance_id = NULL, lease_expiry = NULL
   WHERE instance_id = p_instance_id AND processed_at IS NULL;
 
   -- Release all perspective event leases held by this instance
-  UPDATE wh_perspective_events SET instance_id = NULL, lease_expiry = NULL
+  UPDATE __SCHEMA__.wh_perspective_events SET instance_id = NULL, lease_expiry = NULL
   WHERE instance_id = p_instance_id AND processed_at IS NULL;
 
   -- Release all receptor processing leases held by this instance
-  UPDATE wh_receptor_processing SET instance_id = NULL, lease_expiry = NULL
+  UPDATE __SCHEMA__.wh_receptor_processing SET instance_id = NULL, lease_expiry = NULL
   WHERE instance_id = p_instance_id AND completed_at IS NULL;
 
   -- Release all active stream assignments held by this instance
-  UPDATE wh_active_streams SET assigned_instance_id = NULL, lease_expiry = NULL
+  UPDATE __SCHEMA__.wh_active_streams SET assigned_instance_id = NULL, lease_expiry = NULL
   WHERE assigned_instance_id = p_instance_id;
 
   -- Log shutdown to wh_log for audit trail (guaranteed persistence)
-  INSERT INTO wh_log (log_level, source, message_id, error_message, metadata)
+  INSERT INTO __SCHEMA__.wh_log (log_level, source, message_id, error_message, metadata)
   VALUES (
     1,  -- Information
     'shutdown',
@@ -48,7 +48,7 @@ BEGIN
   );
 
   -- Remove the instance registration
-  DELETE FROM wh_service_instances WHERE instance_id = p_instance_id;
+  DELETE FROM __SCHEMA__.wh_service_instances WHERE instance_id = p_instance_id;
 END;
 $$ LANGUAGE plpgsql;
 

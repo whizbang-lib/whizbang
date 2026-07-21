@@ -28,7 +28,7 @@ BEGIN
     -- SOLE source of attempt counting. Bumping in both places would double-count every
     -- failed cycle (claim+1 then failure+1). Backoff formula uses i.attempts (the value
     -- AFTER claim's bump = the attempt that just failed) instead of i.attempts + 1.
-    UPDATE wh_inbox i
+    UPDATE __SCHEMA__.wh_inbox i
     SET status = i.status | v_failure.status_flags | 32768,  -- Set Failed bit (32768)
         error = v_failure.error_message,
         failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)

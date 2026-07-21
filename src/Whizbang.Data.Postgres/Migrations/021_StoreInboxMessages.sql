@@ -58,7 +58,7 @@ BEGIN
   LOOP
     -- Deduplication: Try to insert into deduplication table first
     -- If message_id already exists, this returns 0 rows and we skip the inbox insert
-    INSERT INTO wh_message_deduplication (message_id, first_seen_at)
+    INSERT INTO __SCHEMA__.wh_message_deduplication (message_id, first_seen_at)
     VALUES (v_msg.msg_id, p_now)
     ON CONFLICT ON CONSTRAINT wh_message_deduplication_pkey DO NOTHING;
 
@@ -74,7 +74,7 @@ BEGIN
       END IF;
 
       -- Insert message without lease — WorkCoordinatorPublisherWorker claims via claim_orphaned_inbox
-      INSERT INTO wh_inbox (
+      INSERT INTO __SCHEMA__.wh_inbox (
       message_id,
       handler_name,
       message_type,

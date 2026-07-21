@@ -40,7 +40,7 @@ BEGIN
     dl.dead_letter_id, dl.source_table, dl.source_id, dl.stream_id, dl.message_type,
     dl.failure_reason, dl.attempts_when_dlq, dl.dead_lettered_at,
     dl.recovery_status, dl.recovery_attempts, dl.generation
-  FROM wh_dead_letters dl
+  FROM __SCHEMA__.wh_dead_letters dl
   WHERE dl.recovered_at IS NULL
     AND dl.recovery_status NOT IN (2, 4)  -- HoldForReview, PermanentlyFailed
     AND dl.operator_disposition NOT IN (2, 3)  -- HoldIndefinitely, MarkPermanentlyFailed
@@ -85,7 +85,7 @@ BEGIN
   -- payload. If another worker raced us OR the row is already terminal, the UPDATE
   -- affects zero rows and we return false.
   WITH claimed AS (
-    UPDATE wh_dead_letters
+    UPDATE __SCHEMA__.wh_dead_letters
     SET recovery_status = 1,                  -- Recovering
         recovery_attempts = recovery_attempts + 1,
         last_recovery_at = NOW()
@@ -121,16 +121,16 @@ BEGIN
 
   -- Re-emit into the appropriate source table with attempts=0.
   IF v_source_table = 'wh_outbox' THEN
-    INSERT INTO wh_outbox (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number)
+    INSERT INTO __SCHEMA__.wh_outbox (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number)
     VALUES (v_source_id, v_destination, v_message_type, 'recovered', v_event_data, v_metadata, 0, 0, NOW(), v_stream_id, v_partition)
     ON CONFLICT (message_id) DO NOTHING;  -- already re-published; idempotent
   ELSIF v_source_table = 'wh_inbox' THEN
-    INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number)
+    INSERT INTO __SCHEMA__.wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number)
     VALUES (v_source_id, COALESCE(v_perspective, 'recovered'), v_message_type, v_event_data, v_metadata, 0, 0, NOW(), v_stream_id, v_partition)
     ON CONFLICT (message_id) DO NOTHING;
   ELSIF v_source_table = 'wh_perspective_events' THEN
     -- Perspective recovery uses the event_id snapshot to recreate the work row.
-    INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
+    INSERT INTO __SCHEMA__.wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
     VALUES (v_source_id, v_stream_id, v_perspective, (v_envelope ->> 'event_id')::UUID, v_partition, 0, 0, NOW())
     ON CONFLICT (event_work_id) DO NOTHING;
   ELSE
@@ -140,7 +140,7 @@ BEGIN
   END IF;
 
   -- Mark Recovered.
-  UPDATE wh_dead_letters
+  UPDATE __SCHEMA__.wh_dead_letters
   SET recovery_status = 3,
       recovered_at = NOW(),
       retried_on_generations =
@@ -165,7 +165,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.mark_dead_letter_holding(
   p_dead_letter_id UUID
 ) RETURNS VOID AS $$
 BEGIN
-  UPDATE wh_dead_letters
+  UPDATE __SCHEMA__.wh_dead_letters
   SET recovery_status = 2,                          -- HoldForReview
       next_recovery_at = NULL
   WHERE dead_letter_id = p_dead_letter_id
@@ -183,7 +183,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.mark_dead_letter_permanently_failed(
   p_dead_letter_id UUID
 ) RETURNS VOID AS $$
 BEGIN
-  UPDATE wh_dead_letters
+  UPDATE __SCHEMA__.wh_dead_letters
   SET recovery_status = 4,                          -- PermanentlyFailed
       next_recovery_at = NULL
   WHERE dead_letter_id = p_dead_letter_id
@@ -202,7 +202,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.schedule_next_dead_letter_attempt(
   p_next_at        TIMESTAMPTZ
 ) RETURNS VOID AS $$
 BEGIN
-  UPDATE wh_dead_letters
+  UPDATE __SCHEMA__.wh_dead_letters
   SET recovery_status = 0,                          -- back to Pending
       next_recovery_at = p_next_at
   WHERE dead_letter_id = p_dead_letter_id
@@ -226,7 +226,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.reset_dead_letters_for_generation(
 DECLARE
   v_count INTEGER;
 BEGIN
-  UPDATE wh_dead_letters
+  UPDATE __SCHEMA__.wh_dead_letters
   SET next_recovery_at = NOW(),
       retried_on_generations = array_append(retried_on_generations, p_current_generation),
       recovery_status = 0  -- Pending
