@@ -5,7 +5,7 @@
 --              Also removes lease columns from wh_perspective_cursors (moved to events table).
 -- Dependencies: 001-008 (requires wh_event_store and wh_perspective_cursors tables)
 
-CREATE TABLE IF NOT EXISTS wh_perspective_events (
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_perspective_events (
   -- Identity
   event_work_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   stream_id UUID NOT NULL,
@@ -47,39 +47,39 @@ CREATE TABLE IF NOT EXISTS wh_perspective_events (
 
 -- Backfill partition_number on schemas that pre-date Phase H step 6 (pre-v1.0 mutable migration).
 -- Safe to run on every init: compute_partition is IMMUTABLE so running again is idempotent.
-ALTER TABLE wh_perspective_events
+ALTER TABLE __SCHEMA__.wh_perspective_events
   ADD COLUMN IF NOT EXISTS partition_number INTEGER NOT NULL DEFAULT 0;
 
 -- Index for claiming work (used by claim_orphaned_perspective_events)
 CREATE INDEX IF NOT EXISTS idx_perspective_event_claim
-ON wh_perspective_events (instance_id, lease_expiry, scheduled_for)
+ON __SCHEMA__.wh_perspective_events (instance_id, lease_expiry, scheduled_for)
 WHERE processed_at IS NULL;
 
 -- Index for ordering within stream/perspective (ensures sequential processing via UUIDv7)
 CREATE INDEX IF NOT EXISTS idx_perspective_event_order
-ON wh_perspective_events (stream_id, perspective_name, event_id);
+ON __SCHEMA__.wh_perspective_events (stream_id, perspective_name, event_id);
 
-COMMENT ON TABLE wh_perspective_events IS
+COMMENT ON TABLE __SCHEMA__.wh_perspective_events IS
 'Ephemeral event tracking for perspective processing. Events are created when new events arrive for a perspective, leased by workers, and deleted after processing (unless debug mode).';
 
-COMMENT ON COLUMN wh_perspective_events.event_work_id IS 'Unique identifier for this work item';
-COMMENT ON COLUMN wh_perspective_events.stream_id IS 'Stream this event belongs to (for partition-based load balancing)';
-COMMENT ON COLUMN wh_perspective_events.perspective_name IS 'Name of the perspective that needs to process this event';
-COMMENT ON COLUMN wh_perspective_events.event_id IS 'Event to be processed (references wh_event_store). UUIDv7 provides temporal ordering';
-COMMENT ON COLUMN wh_perspective_events.instance_id IS 'Instance that claimed this work (NULL if not claimed)';
-COMMENT ON COLUMN wh_perspective_events.lease_expiry IS 'When the lease expires (NULL if not claimed)';
-COMMENT ON COLUMN wh_perspective_events.status IS 'Processing status flags (MessageProcessingStatus)';
-COMMENT ON COLUMN wh_perspective_events.attempts IS 'Number of processing attempts (for exponential backoff)';
-COMMENT ON COLUMN wh_perspective_events.error IS 'Error message if processing failed';
-COMMENT ON COLUMN wh_perspective_events.created_at IS 'When this work item was created';
-COMMENT ON COLUMN wh_perspective_events.claimed_at IS 'When this work item was claimed by an instance';
-COMMENT ON COLUMN wh_perspective_events.processed_at IS 'When this work item was processed (NULL if not processed)';
-COMMENT ON COLUMN wh_perspective_events.scheduled_for IS 'When to retry this work item (for failed work with backoff)';
-COMMENT ON COLUMN wh_perspective_events.failure_reason IS 'Reason for failure (FailureReason enum)';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.event_work_id IS 'Unique identifier for this work item';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.stream_id IS 'Stream this event belongs to (for partition-based load balancing)';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.perspective_name IS 'Name of the perspective that needs to process this event';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.event_id IS 'Event to be processed (references wh_event_store). UUIDv7 provides temporal ordering';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.instance_id IS 'Instance that claimed this work (NULL if not claimed)';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.lease_expiry IS 'When the lease expires (NULL if not claimed)';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.status IS 'Processing status flags (MessageProcessingStatus)';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.attempts IS 'Number of processing attempts (for exponential backoff)';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.error IS 'Error message if processing failed';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.created_at IS 'When this work item was created';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.claimed_at IS 'When this work item was claimed by an instance';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.processed_at IS 'When this work item was processed (NULL if not processed)';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.scheduled_for IS 'When to retry this work item (for failed work with backoff)';
+COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.failure_reason IS 'Reason for failure (FailureReason enum)';
 
 -- Remove lease management from wh_perspective_cursors
 -- (lease management has moved to wh_perspective_events)
-ALTER TABLE wh_perspective_cursors
+ALTER TABLE __SCHEMA__.wh_perspective_cursors
   DROP COLUMN IF EXISTS claimed_by_instance_id,
   DROP COLUMN IF EXISTS claimed_at;
 
@@ -87,5 +87,5 @@ ALTER TABLE wh_perspective_cursors
 DROP INDEX IF EXISTS idx_perspective_checkpoint_claim;
 
 -- Update table comment to reflect new purpose
-COMMENT ON TABLE wh_perspective_cursors IS
+COMMENT ON TABLE __SCHEMA__.wh_perspective_cursors IS
 'Persistent checkpoint tracking for perspectives. Records last processed event ID and completion status. Work item leasing moved to wh_perspective_events table.';
