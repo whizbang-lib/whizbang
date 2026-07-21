@@ -289,14 +289,18 @@ public sealed partial class ClaimWorker : BackgroundService {
         Interlocked.Increment(ref _consecutiveEmptyPolls);  // back off after errors too
       }
 
-      // F1 unify-now: when the signal bus is wired, bus pull sources (5s DB backstop) + NOTIFY
-      // push transport drive wake-ups via RequestImmediatePoll → the semaphore is the only
-      // trigger, no adaptive timer needed. When the bus isn't wired (legacy DI, tests), fall
-      // back to the adaptive backoff so the pre-unify-now behavior — and the regression tests
-      // locking it — stay green.
+      // F1 unify-now: when the signal bus is wired, bus signals + NOTIFY push drive the fast path via
+      // RequestImmediatePoll (the semaphore). But signals only cover work that is *owned* or has a
+      // targeted channel — ORPHANED/unleased work (e.g. cascade-created perspective rows with
+      // instance_id NULL and no wh_active_streams owner) has no signal, and the Postgres pull-source
+      // backstop isn't wired on every host (in-process transport). So keep a max-interval backstop poll
+      // even when bus-wired, so claim_work/claim_orphaned still run periodically and no work can wedge
+      // forever waiting on a signal that never fires. The interval (PollingMaxIntervalMs, ~10 s) is far
+      // longer than the bus-wake tests' wait window, so signal-driven behavior is unchanged for them.
+      // When the bus isn't wired (legacy DI), fall back to the adaptive backoff.
       try {
         if (_signalBus is not null) {
-          await _wake.WaitAsync(stoppingToken);
+          _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingMaxIntervalMilliseconds), stoppingToken);
         } else {
           _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(_computeAdaptivePollWaitMs()), stoppingToken);
         }

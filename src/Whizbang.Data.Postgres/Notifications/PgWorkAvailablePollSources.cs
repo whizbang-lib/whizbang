@@ -84,9 +84,19 @@ public sealed class PgPerspectiveWorkAvailablePollSource(
     SELECT EXISTS (
       SELECT 1
       FROM wh_perspective_events e
-      JOIN wh_active_streams s ON s.stream_id = e.stream_id
-      WHERE s.assigned_instance_id = @instance_id
-        AND e.processed_at IS NULL
+      WHERE e.processed_at IS NULL
+        AND (
+          -- Orphaned/unleased work (e.g. cascade-created rows with instance_id NULL, or an expired
+          -- lease): no wh_active_streams owner yet, so it must wake SOME instance to run claim_work
+          -- (claim_orphaned assigns it via partition-modulo). Without this, orphaned perspective work
+          -- is invisible to the backstop and never claimed when the bus is wired (no adaptive poll).
+          e.instance_id IS NULL OR e.lease_expiry < NOW()
+          -- Work already leased to this instance's owned stream.
+          OR EXISTS (
+            SELECT 1 FROM wh_active_streams s
+            WHERE s.stream_id = e.stream_id AND s.assigned_instance_id = @instance_id
+          )
+        )
       LIMIT 1
     )";
 }
