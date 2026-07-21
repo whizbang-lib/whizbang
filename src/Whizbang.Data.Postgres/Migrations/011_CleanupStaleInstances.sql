@@ -102,7 +102,7 @@ BEGIN
     WHERE instance_id = ANY(v_deleted_ids);
 
     -- Log stale instance removal to wh_log for audit trail
-    INSERT INTO __SCHEMA__.wh_log (log_level, source, message_id, error_message, metadata)
+    INSERT INTO wh_log (log_level, source, message_id, error_message, metadata)
     SELECT
       2,  -- Warning
       'stale_cleanup',

@@ -177,7 +177,7 @@ BEGIN
   -- (the SQL function), three call sites (this INSERT, plus Slice 6's
   -- aggregate_dead_letters version-aware backfill). NULL p_error_text →
   -- NULL fingerprint + NULL version so the column NULLability flows through.
-  INSERT INTO __SCHEMA__.wh_dead_letters (
+  INSERT INTO wh_dead_letters (
     dead_letter_id,
     source_table,
     source_id,

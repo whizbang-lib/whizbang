@@ -40,7 +40,7 @@ BEGIN
     dl.dead_letter_id, dl.source_table, dl.source_id, dl.stream_id, dl.message_type,
     dl.failure_reason, dl.attempts_when_dlq, dl.dead_lettered_at,
     dl.recovery_status, dl.recovery_attempts, dl.generation
-  FROM __SCHEMA__.wh_dead_letters dl
+  FROM wh_dead_letters dl
   WHERE dl.recovered_at IS NULL
     AND dl.recovery_status NOT IN (2, 4)  -- HoldForReview, PermanentlyFailed
     AND dl.operator_disposition NOT IN (2, 3)  -- HoldIndefinitely, MarkPermanentlyFailed
@@ -85,7 +85,7 @@ BEGIN
   -- payload. If another worker raced us OR the row is already terminal, the UPDATE
   -- affects zero rows and we return false.
   WITH claimed AS (
-    UPDATE __SCHEMA__.wh_dead_letters
+    UPDATE wh_dead_letters
     SET recovery_status = 1,                  -- Recovering
         recovery_attempts = recovery_attempts + 1,
         last_recovery_at = NOW()
@@ -140,7 +140,7 @@ BEGIN
   END IF;
 
   -- Mark Recovered.
-  UPDATE __SCHEMA__.wh_dead_letters
+  UPDATE wh_dead_letters
   SET recovery_status = 3,
       recovered_at = NOW(),
       retried_on_generations =
@@ -165,7 +165,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.mark_dead_letter_holding(
   p_dead_letter_id UUID
 ) RETURNS VOID AS $$
 BEGIN
-  UPDATE __SCHEMA__.wh_dead_letters
+  UPDATE wh_dead_letters
   SET recovery_status = 2,                          -- HoldForReview
       next_recovery_at = NULL
   WHERE dead_letter_id = p_dead_letter_id
@@ -183,7 +183,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.mark_dead_letter_permanently_failed(
   p_dead_letter_id UUID
 ) RETURNS VOID AS $$
 BEGIN
-  UPDATE __SCHEMA__.wh_dead_letters
+  UPDATE wh_dead_letters
   SET recovery_status = 4,                          -- PermanentlyFailed
       next_recovery_at = NULL
   WHERE dead_letter_id = p_dead_letter_id
@@ -202,7 +202,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.schedule_next_dead_letter_attempt(
   p_next_at        TIMESTAMPTZ
 ) RETURNS VOID AS $$
 BEGIN
-  UPDATE __SCHEMA__.wh_dead_letters
+  UPDATE wh_dead_letters
   SET recovery_status = 0,                          -- back to Pending
       next_recovery_at = p_next_at
   WHERE dead_letter_id = p_dead_letter_id
@@ -226,7 +226,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.reset_dead_letters_for_generation(
 DECLARE
   v_count INTEGER;
 BEGIN
-  UPDATE __SCHEMA__.wh_dead_letters
+  UPDATE wh_dead_letters
   SET next_recovery_at = NOW(),
       retried_on_generations = array_append(retried_on_generations, p_current_generation),
       recovery_status = 0  -- Pending

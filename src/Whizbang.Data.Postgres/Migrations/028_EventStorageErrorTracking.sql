@@ -95,7 +95,7 @@ BEGIN
 
   -- Only log if level >= configured minimum
   IF p_log_level >= v_min_log_level THEN
-    INSERT INTO __SCHEMA__.wh_log (
+    INSERT INTO wh_log (
       log_level,
       source,
       error_message,

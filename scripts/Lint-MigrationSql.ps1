@@ -45,7 +45,7 @@ $ErrorActionPreference = 'Stop'
 
 # Objects that genuinely live in `public` and MUST remain unqualified. Qualifying these is itself a
 # bug (42P01 on a non-public schema). Keep this list tight and reviewed.
-$PublicAllowList = @('wh_settings', 'wh_dead_letter_summary')
+$PublicAllowList = @('wh_settings', 'wh_dead_letter_summary', 'wh_dead_letters', 'wh_log')
 
 # A table reference is introduced by one of these keywords.
 $RefRegex = [regex]::new(
