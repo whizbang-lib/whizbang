@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -9,6 +10,10 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// wrapper over the 6 recovery SQL functions in migration 051.
 /// </summary>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+[SuppressMessage("csharpsquid", "S2077:Formatting SQL queries is security-sensitive",
+  Justification = "The only interpolated value is a schema-qualified SQL identifier (\"schema\".fn) " +
+    "resolved from the EF Core model's configured schema (HasDefaultSchema), not user input. SQL " +
+    "identifiers cannot be parameterized; there is no injection vector. All row values are @parameters.")]
 public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   TDbContext dbContext,
   ILogger<EFCoreDeadLetterRecoveryService<TDbContext>> logger,

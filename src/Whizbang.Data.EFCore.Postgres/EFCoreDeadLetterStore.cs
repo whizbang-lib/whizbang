@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -13,6 +14,10 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// statements.
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[SuppressMessage("csharpsquid", "S2077:Formatting SQL queries is security-sensitive",
+  Justification = "The only interpolated value is a schema-qualified SQL identifier (\"schema\".fn) " +
+    "resolved from the EF Core model's configured schema (HasDefaultSchema), not user input. SQL " +
+    "identifiers cannot be parameterized; there is no injection vector. All row values are @parameters.")]
 public sealed class EFCoreDeadLetterStore<TDbContext>(
   TDbContext dbContext,
   ILogger<EFCoreDeadLetterStore<TDbContext>> logger,
