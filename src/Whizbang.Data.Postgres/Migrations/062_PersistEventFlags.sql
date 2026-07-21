@@ -68,7 +68,7 @@ BEGIN
       v_partition := NULL;
     END IF;
 
-    INSERT INTO wh_outbox (
+    INSERT INTO __SCHEMA__.wh_outbox (
       message_id,
       destination,
       message_type,
@@ -202,7 +202,7 @@ BEGIN
     FROM jsonb_array_elements(p_messages) as elem
     ORDER BY (elem->>'StreamId')::UUID NULLS FIRST, (elem->>'MessageId')::UUID
   LOOP
-    INSERT INTO wh_message_deduplication (message_id, first_seen_at)
+    INSERT INTO __SCHEMA__.wh_message_deduplication (message_id, first_seen_at)
     VALUES (v_msg.msg_id, p_now)
     ON CONFLICT ON CONSTRAINT wh_message_deduplication_pkey DO NOTHING;
 
@@ -215,7 +215,7 @@ BEGIN
         v_partition := NULL;
       END IF;
 
-      INSERT INTO wh_inbox (
+      INSERT INTO __SCHEMA__.wh_inbox (
       message_id,
       handler_name,
       message_type,

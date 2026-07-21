@@ -94,6 +94,12 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await Assert.That(columns).ContainsKey("updated_at");
     await Assert.That(columns["updated_at"].DataType).IsEqualTo("timestamp with time zone");
     await Assert.That(columns["updated_at"].IsNullable).IsEqualTo("NO");
+
+    // E2-4d: every perspective table carries a NULLABLE expires_at (NULL = never expires; TtlRow perspectives
+    // stamp it on upsert so lens queries hide expired rows and a maintenance task reaps them).
+    await Assert.That(columns).ContainsKey("expires_at");
+    await Assert.That(columns["expires_at"].DataType).IsEqualTo("timestamp with time zone");
+    await Assert.That(columns["expires_at"].IsNullable).IsEqualTo("YES");
   }
 
   [Test]

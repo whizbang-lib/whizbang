@@ -680,6 +680,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     };
 
     context.Set<EventStoreRecord>().Add(record);
+    // Full split (078): the body lives in wh_event_body — seed it alongside the pointer.
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord { EventId = record.Id, EventData = record.EventData!.Value, Metadata = record.Metadata! });
     await context.SaveChangesAsync();
     context.ChangeTracker.Clear();
 
@@ -743,6 +745,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     };
 
     context.Set<EventStoreRecord>().Add(record);
+    // Full split (078): the body lives in wh_event_body — seed it alongside the pointer.
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord { EventId = record.Id, EventData = record.EventData!.Value, Metadata = record.Metadata! });
     await context.SaveChangesAsync();
     context.ChangeTracker.Clear();
 
@@ -791,6 +795,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     };
 
     context.Set<EventStoreRecord>().Add(record);
+    // Full split (078): the body lives in wh_event_body — seed it alongside the pointer.
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord { EventId = record.Id, EventData = record.EventData!.Value, Metadata = record.Metadata! });
     await context.SaveChangesAsync();
     context.ChangeTracker.Clear();
 
@@ -893,10 +899,12 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     // Act
     await eventStore.AppendAsync(streamId, message);
 
-    // Assert - metadata should have at least one hop
-    var record = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
-    await Assert.That(record.Metadata.Hops).Count().IsEqualTo(1);
-    await Assert.That(record.Metadata.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Unknown");
+    // Assert - metadata should have at least one hop. Full split (#13b4-2): the metadata lives on
+    // the wh_event_body row; the pointer's inline columns are NULL.
+    var pointer = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
+    var body = context.Set<EventBodyRecord>().Single(b => b.EventId == pointer.Id);
+    await Assert.That(body.Metadata.Hops).Count().IsEqualTo(1);
+    await Assert.That(body.Metadata.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Unknown");
   }
 
   // === AppendAsync with Null Hops Tests ===
@@ -921,9 +929,10 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     // Act
     await eventStore.AppendAsync(streamId, envelope);
 
-    // Assert
-    var record = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
-    await Assert.That(record.Metadata.Hops).Count().IsEqualTo(0);
+    // Assert — full split (#13b4-2): the metadata lives on the wh_event_body row.
+    var pointer = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
+    var body = context.Set<EventBodyRecord>().Single(b => b.EventId == pointer.Id);
+    await Assert.That(body.Metadata.Hops).Count().IsEqualTo(0);
   }
 
   // === ReadAsync by EventId Overload Tests ===
@@ -1261,6 +1270,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     };
 
     context.Set<EventStoreRecord>().Add(record);
+    // Full split (078): the body lives in wh_event_body — seed it alongside the pointer.
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord { EventId = record.Id, EventData = record.EventData!.Value, Metadata = record.Metadata! });
     await context.SaveChangesAsync();
     context.ChangeTracker.Clear();
 
@@ -1309,6 +1320,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     };
 
     context.Set<EventStoreRecord>().Add(record);
+    // Full split (078): the body lives in wh_event_body — seed it alongside the pointer.
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord { EventId = record.Id, EventData = record.EventData!.Value, Metadata = record.Metadata! });
     await context.SaveChangesAsync();
     context.ChangeTracker.Clear();
 
@@ -1357,6 +1370,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     };
 
     context.Set<EventStoreRecord>().Add(record);
+    // Full split (078): the body lives in wh_event_body — seed it alongside the pointer.
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord { EventId = record.Id, EventData = record.EventData!.Value, Metadata = record.Metadata! });
     await context.SaveChangesAsync();
     context.ChangeTracker.Clear();
 
@@ -1404,6 +1419,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     };
 
     context.Set<EventStoreRecord>().Add(record);
+    // Full split (078): the body lives in wh_event_body — seed it alongside the pointer.
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord { EventId = record.Id, EventData = record.EventData!.Value, Metadata = record.Metadata! });
     await context.SaveChangesAsync();
     context.ChangeTracker.Clear();
 
@@ -1517,6 +1534,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     };
 
     context.Set<EventStoreRecord>().Add(record);
+    // Full split (078): the body lives in wh_event_body — seed it alongside the pointer.
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord { EventId = record.Id, EventData = record.EventData!.Value, Metadata = record.Metadata! });
     await context.SaveChangesAsync();
     context.ChangeTracker.Clear();
 

@@ -26,7 +26,7 @@ BEGIN
     -- Update event with failure information and exponential backoff
     -- Phase H step 8 slice D: claim_orphaned_perspective_events is the SOLE source of
     -- attempt counting. See mig 018 for the rationale — symmetric across all three tables.
-    UPDATE wh_perspective_events pe
+    UPDATE __SCHEMA__.wh_perspective_events pe
     SET status = pe.status | v_failure.status_flags | 32768,  -- Set Failed bit (32768)
         error = v_failure.error_message,
         failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)

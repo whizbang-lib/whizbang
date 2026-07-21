@@ -91,7 +91,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
       // Assert - BestEffort returns empty batch; items remain queued for timer
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
-        .Because("BestEffort mode should not call ProcessWorkBatchAsync");
+        .Because("BestEffort mode should not flush to the work coordinator");
     } finally {
       await sut.DisposeAsync();
     }
@@ -1038,17 +1038,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     public MessageFailure[] LastOutboxFailures { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
@@ -1084,13 +1073,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   }
 
   private sealed class ThrowingWorkCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
@@ -1121,13 +1103,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   private sealed class SlowWorkCoordinator(int delayMs) : IWorkCoordinator {
     private readonly int _delayMs = delayMs;
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Legacy fallback (not in live path).
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
 
     public async Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,

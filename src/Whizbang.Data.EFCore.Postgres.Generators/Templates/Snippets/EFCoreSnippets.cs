@@ -60,6 +60,9 @@ public class EFCoreSnippets {
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
       entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
       entity.Property(e => e.Version).HasColumnName("version").IsRequired();
+      // Nullable TTL-row expiry (E2-4d) as a SHADOW property (no CLR property on PerspectiveRow — see the note
+      // there). NULL = never expires. The upsert stamps it for TtlRow perspectives; lens/reaper read it.
+      entity.Property<global::System.DateTime?>("expires_at").HasColumnName("expires_at");
 
       // Indexes
       entity.HasIndex(e => e.CreatedAt);
@@ -119,6 +122,9 @@ __PHYSICAL_FIELD_CONFIGS__
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
       entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
       entity.Property(e => e.Version).HasColumnName("version").IsRequired();
+      // Nullable TTL-row expiry (E2-4d) as a SHADOW property (no CLR property on PerspectiveRow — see the note
+      // there). NULL = never expires. The upsert stamps it for TtlRow perspectives; lens/reaper read it.
+      entity.Property<global::System.DateTime?>("expires_at").HasColumnName("expires_at");
 
       // Indexes
       entity.HasIndex(e => e.CreatedAt);

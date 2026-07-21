@@ -486,8 +486,8 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     await using (var seedEvent = connection.CreateCommand()) {
       seedEvent.CommandText = @"
         INSERT INTO wh_event_store
-          (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-        VALUES (@eid, @stream, @stream, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, NOW())";
+          (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+        VALUES (@eid, @stream, @stream, 'Test', 'TestEvent', 1, NOW())";
       seedEvent.Parameters.AddWithValue("eid", eventId);
       seedEvent.Parameters.AddWithValue("stream", streamId);
       await seedEvent.ExecuteNonQueryAsync();
@@ -868,8 +868,8 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       ins.CommandText = @"
         INSERT INTO wh_event_store
           (event_id, stream_id, aggregate_id, aggregate_type, event_type,
-           event_data, metadata, scope, version, created_at)
-        VALUES (@eid, @stream, @stream, 'Test', 'Test', '{}'::jsonb, '{}'::jsonb, NULL, 1, NOW())";
+           scope, version, created_at)
+        VALUES (@eid, @stream, @stream, 'Test', 'Test', NULL, 1, NOW())";
       ins.Parameters.AddWithValue("eid", eventId);
       ins.Parameters.AddWithValue("stream", streamId);
       await ins.ExecuteNonQueryAsync();

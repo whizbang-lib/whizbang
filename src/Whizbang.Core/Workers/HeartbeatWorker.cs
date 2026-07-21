@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 
 namespace Whizbang.Core.Workers;
 
@@ -21,7 +22,8 @@ public partial class HeartbeatWorker(
   IOptions<HeartbeatWorkerOptions> options,
   ILogger<HeartbeatWorker> logger,
   IPinnedConnectionPool? pinnedPool = null,
-  IInstanceAliveLockSource? aliveLockSource = null
+  IInstanceAliveLockSource? aliveLockSource = null,
+  ISignalBus? signalBus = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -30,6 +32,8 @@ public partial class HeartbeatWorker(
   private readonly ILogger<HeartbeatWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly IPinnedConnectionPool _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
   private readonly IInstanceAliveLockSource? _aliveLockSource = aliveLockSource;
+  private readonly ISignalBus? _signalBus = signalBus;
+  private int _joinedAnnounced;
 
   /// <summary>Internal hook for tests to query the current cadence decision.</summary>
   internal int CurrentCadenceSeconds => _resolveCadenceSeconds();
@@ -111,6 +115,37 @@ public partial class HeartbeatWorker(
       HostName: _instanceProvider.HostName,
       ProcessId: _instanceProvider.ProcessId), ct);
     OnHeartbeatRecorded?.Invoke();
+
+    // Announce InstanceJoined once, after the first successful heartbeat (which is the
+    // moment wh_service_instances first has a row for this pod). Subscribers use this to
+    // warm caches, rebalance topology, etc.
+    if (_signalBus is not null && Interlocked.CompareExchange(ref _joinedAnnounced, 1, 0) == 0) {
+      try {
+        await _signalBus.PublishAsync(new InstanceJoinedSignal(), SignalTarget.Broadcast, ct);
+      } catch (OperationCanceledException) { throw; } catch (Exception ex) {
+        // Failure to announce is non-fatal — reconciling consumers will pick it up via the
+        // heartbeat scan. Reset the flag so a later tick retries.
+        Interlocked.Exchange(ref _joinedAnnounced, 0);
+        LogJoinedPublishFailed(_logger, ex);
+      }
+    }
+  }
+
+  /// <inheritdoc />
+  public override async Task StopAsync(CancellationToken cancellationToken) {
+    // Best-effort InstanceLeaving on graceful shutdown so peers can rebalance without waiting
+    // for the stale-heartbeat threshold. Failures are silent — the InstanceDied monitor will
+    // still detect this pod's departure via the lease/heartbeat expiry.
+    if (_signalBus is not null) {
+      try {
+        await _signalBus.PublishAsync(new InstanceLeavingSignal(), SignalTarget.Broadcast, cancellationToken);
+      } catch (OperationCanceledException) {
+        // shutdown cancellation is fine
+      } catch (Exception ex) {
+        LogLeavingPublishFailed(_logger, ex);
+      }
+    }
+    await base.StopAsync(cancellationToken);
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
@@ -130,6 +165,14 @@ public partial class HeartbeatWorker(
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Whizbang receptor registry: {Contributions} assembly contribution(s), {AnyConsumerTypes} any-consumer type(s), {InboxHandlerTypes} inbox-handler type(s), {StageTypeCount} lifecycle-stage receptor type(s) across all stages. Zero values mean the multi-assembly [ModuleInitializer] pattern did not populate — every message will be dropped at the receive boundary.")]
   static partial void LogReceptorRegistrySnapshot(ILogger logger, int contributions, int anyConsumerTypes, int inboxHandlerTypes, int stageTypeCount);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
+    Message = "HeartbeatWorker failed to publish InstanceJoinedSignal; will retry on next heartbeat")]
+  static partial void LogJoinedPublishFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
+    Message = "HeartbeatWorker failed to publish InstanceLeavingSignal on graceful stop; peers will detect via heartbeat expiry")]
+  static partial void LogLeavingPublishFailed(ILogger logger, Exception ex);
 }
 
 /// <summary>

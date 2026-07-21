@@ -15,6 +15,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Temporal;
 using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Tests;
@@ -96,6 +97,40 @@ public class ServiceCollectionExtensionsTests {
     // Assert - singleton should return same instance
     await Assert.That(first).IsNotNull();
     await Assert.That(ReferenceEquals(first, second)).IsTrue();
+  }
+
+  // ==========================================================================
+  // Temporal Recurrence Factory Registration Tests
+  // ==========================================================================
+
+  [Test]
+  public async Task AddWhizbang_RegistersDefaultRecurrenceRuleFactoryAsync() {
+    var services = new ServiceCollection();
+
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+    var factory = provider.GetService<IRecurrenceRuleFactory>();
+
+    await Assert.That(factory).IsNotNull();
+    await Assert.That(factory).IsTypeOf<DefaultRecurrenceRuleFactory>();
+  }
+
+  [Test]
+  public async Task AddWhizbang_DeveloperRecurrenceFactory_WinsViaTryAddAsync() {
+    var services = new ServiceCollection();
+    // The override hook: a developer registers their own factory BEFORE AddWhizbang; TryAdd must defer.
+    services.AddSingleton<IRecurrenceRuleFactory, CustomRecurrenceRuleFactory>();
+
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+    var factory = provider.GetService<IRecurrenceRuleFactory>();
+
+    await Assert.That(factory).IsTypeOf<CustomRecurrenceRuleFactory>();
+  }
+
+  private sealed class CustomRecurrenceRuleFactory : IRecurrenceRuleFactory {
+    public IRecurrenceRule Create(RecurrenceKind kind, string? cronExpression, TimeSpan? interval, TimeZoneInfo? timeZone) =>
+      OneShotRecurrenceRule.Instance;
   }
 
   // ==========================================================================
@@ -1394,16 +1429,6 @@ public class ServiceCollectionExtensionsTests {
   /// Stub IWorkCoordinator for DI resolution tests.
   /// </summary>
   private sealed class StubWorkCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-        ProcessWorkBatchRequest request,
-        CancellationToken cancellationToken = default) {
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
         PerspectiveCursorCompletion completion,
         CancellationToken cancellationToken = default) {

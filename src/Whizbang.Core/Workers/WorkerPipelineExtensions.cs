@@ -51,6 +51,29 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<InboxDrainWorker>();
     services.TryAddSingleton<DeadLetterRecoveryWorker>();
     services.TryAddSingleton<TransportDeadLetterDrainWorker>();
+    // Type-definition fingerprint reconciler (F-4): detect-by-default, act-by-opt-in. Inert without a
+    // catalog (GetService returns null) or without the fingerprint tables (coordinator defaults no-op).
+    services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>();
+    services.TryAddSingleton(sp => new Whizbang.Core.Fingerprint.TypeDefinitionReconciler(
+      sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.EphemeralOptions>>(),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Fingerprint.TypeDefinitionReconciler>>(),
+      sp.GetService<Whizbang.Core.IMessageTypeCatalog>()));
+    services.TryAddSingleton<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>();
+    // A1 "close the books" (StreamCloser): fires the E2 destruction hook around a Sourced-stream close.
+    // Factory-resolved so the IDestructionHook is optional (null = a thin pass-through to the gated truncate).
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamCloser>(sp => new Whizbang.Core.Lifecycle.StreamCloser(
+      sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamCloser>>(),
+      sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>()));
+    // E3 Tier-2 compaction (StreamCompactor): folds a state-based stream to a permanent Compacted origin,
+    // reusing the snapshot store + event store + the A1 closer. On-demand, like IStreamCloser.
+    services.TryAddSingleton<Whizbang.Core.Perspectives.IStreamCompactor>(sp => new Whizbang.Core.Perspectives.StreamCompactor(
+      sp.GetRequiredService<Whizbang.Core.Perspectives.IPerspectiveSnapshotStore>(),
+      sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
+      sp.GetRequiredService<Whizbang.Core.Messaging.IEventStore>(),
+      sp.GetRequiredService<Whizbang.Core.Lifecycle.IStreamCloser>(),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Perspectives.StreamCompactor>>()));
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
     services.TryAddSingleton<IDeadLetterRecoveryPolicy, DefaultDeadLetterRecoveryPolicy>();
     services.TryAddSingleton<Whizbang.Core.Observability.DeadLetterMetrics>();
@@ -118,7 +141,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IMessageDiscardPolicy>(sp => new MessageDiscardPolicy(
       sp.GetRequiredService<IReceptorRegistryQuery>(),
       sp.GetRequiredService<ILogger<MessageDiscardPolicy>>(),
-      new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME)));
+      new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME),
+      sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()));
 #pragma warning restore CA2000
 
     // Hosted services — delegate to the singleton instance so DI hands the same one
@@ -143,6 +167,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>());
 
     // Slice 4 of zero-idle-polling: register the coordinator as a hosted service
     // AND its touch-hook binder so the subscriptions wire up at startup. The

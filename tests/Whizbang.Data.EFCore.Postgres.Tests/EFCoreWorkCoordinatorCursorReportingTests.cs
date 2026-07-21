@@ -257,8 +257,8 @@ public class EFCoreWorkCoordinatorCursorReportingTests : EFCoreTestBase {
     await using var ins = connection.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_event_store
-        (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, created_at)
-      VALUES (@evt, @stream, @stream, 'agg', 'P.Type', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 1, NOW())";
+        (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at)
+      VALUES (@evt, @stream, @stream, 'agg', 'P.Type', '{}'::jsonb, 1, NOW())";
     ins.Parameters.AddWithValue("evt", eventId);
     ins.Parameters.AddWithValue("stream", streamId);
     await ins.ExecuteNonQueryAsync();

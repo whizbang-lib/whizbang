@@ -549,9 +549,9 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     ins.CommandText = @"
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-         event_data, metadata, created_at, commit_sequence)
+         created_at, commit_sequence)
       VALUES (@id, @stream, @stream, 'TestAgg', @ver, 'TestEvt',
-              '{}'::jsonb, '{}'::jsonb, NOW(), @cs)";
+              NOW(), @cs)";
     ins.Parameters.AddWithValue("id", eventId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("ver", ver);
@@ -568,9 +568,9 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     ins.CommandText = @"
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-         event_data, metadata, created_at, commit_sequence)
+         created_at, commit_sequence)
       VALUES (@id, @stream, @stream, 'TestAgg', @ver, 'TestEvt',
-              '{}'::jsonb, '{}'::jsonb, NOW(), NULL)";
+              NOW(), NULL)";
     ins.Parameters.AddWithValue("id", eventId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("ver", ver);
@@ -591,9 +591,9 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     ins.CommandText = @"
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
-         event_data, metadata, created_at, commit_sequence)
+         created_at, commit_sequence)
       VALUES (@id, @stream, @stream, 'TestAgg', @ver, 'TestEvt',
-              '{}'::jsonb, '{}'::jsonb, NOW(), nextval('wh_commit_seq'))
+              NOW(), nextval('wh_commit_seq'))
       ON CONFLICT (event_id) DO NOTHING";
     ins.Parameters.AddWithValue("id", eventId);
     ins.Parameters.AddWithValue("stream", streamId);

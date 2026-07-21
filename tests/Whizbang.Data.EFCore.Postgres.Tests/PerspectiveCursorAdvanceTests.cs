@@ -148,8 +148,8 @@ public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       INSERT INTO wh_event_store
-        (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-      VALUES (@eid, @stream, @stream, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), NOW())";
+        (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@eid, @stream, @stream, 'Test', 'TestEvent', nextval('wh_event_sequence'), NOW())";
     cmd.Parameters.AddWithValue("eid", eventId);
     cmd.Parameters.AddWithValue("stream", streamId);
     await cmd.ExecuteNonQueryAsync();

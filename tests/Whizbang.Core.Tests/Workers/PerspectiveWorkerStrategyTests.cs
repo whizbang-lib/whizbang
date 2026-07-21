@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 public class PerspectiveWorkerStrategyTests {
   // DELETED (Category 1): PerspectiveWorker_WithBatchedStrategy_CollectsThenReportsOnNextCycle_Async
-  // The legacy assertion (completions reported via ProcessWorkBatchAsync parameters) doesn't apply
+  // The legacy assertion (completions reported via the coordinator poll request parameters) doesn't apply
   // post commit C — completions now flow through IPerspectiveCompletionChannel, not the SQL request.
   // BatchedCompletionStrategy behavior is covered by PerspectiveCompletionStrategyTests directly.
 
@@ -373,21 +373,12 @@ public class PerspectiveWorkerStrategyTests {
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
     private readonly TaskCompletionSource _completionReported = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _failureReported = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly Lock _cycleLock = new();
-    private int _processBatchCallCount;
     private int _reportCompletionCallCount;
     private int _reportFailureCallCount;
-    private int _cycleTarget;
-    private TaskCompletionSource? _cycleTargetReached;
 
     public List<PerspectiveWork> PerspectiveWorkToReturn { get; set; } = [];
-    public int ProcessWorkBatchCallCount => Volatile.Read(ref _processBatchCallCount);
     public int ReportCompletionCallCount => Volatile.Read(ref _reportCompletionCallCount);
     public int ReportFailureCallCount => Volatile.Read(ref _reportFailureCallCount);
-    public List<PerspectiveCursorCompletion> CompletionsReceivedViaProcessWorkBatch { get; } = [];
-    public List<PerspectiveCursorFailure> FailuresReceivedViaProcessWorkBatch { get; } = [];
-    public bool ReturnWorkOnEveryCycle { get; set; }
-    public PerspectiveWork? PerspectiveWorkTemplate { get; set; }
 
     /// <summary>
     /// Waits for a completion to be reported via ReportPerspectiveCompletionAsync.
@@ -411,60 +402,6 @@ public class PerspectiveWorkerStrategyTests {
       } catch (OperationCanceledException) {
         throw new TimeoutException($"Failure was not reported within {timeout}");
       }
-    }
-
-    /// <summary>
-    /// Waits until ProcessWorkBatchAsync has been called at least <paramref name="minCycles"/> times.
-    /// </summary>
-    public async Task WaitForProcessWorkBatchCyclesAsync(int minCycles, TimeSpan timeout) {
-      TaskCompletionSource tcs;
-      lock (_cycleLock) {
-        if (Volatile.Read(ref _processBatchCallCount) >= minCycles) {
-          return;
-        }
-        _cycleTarget = minCycles;
-        _cycleTargetReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        tcs = _cycleTargetReached;
-      }
-
-      using var cts = new CancellationTokenSource(timeout);
-      try {
-        await tcs.Task.WaitAsync(cts.Token);
-      } catch (OperationCanceledException) {
-        throw new TimeoutException(
-          $"ProcessWorkBatchAsync was called {ProcessWorkBatchCallCount} time(s); expected at least {minCycles} within {timeout}");
-      }
-    }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      var count = Interlocked.Increment(ref _processBatchCallCount);
-
-      // Track completions received via ProcessWorkBatchAsync parameters
-      CompletionsReceivedViaProcessWorkBatch.AddRange(request.PerspectiveCompletions);
-      FailuresReceivedViaProcessWorkBatch.AddRange(request.PerspectiveFailures);
-
-      lock (_cycleLock) {
-        if (_cycleTargetReached is not null && count >= _cycleTarget) {
-          _cycleTargetReached.TrySetResult();
-        }
-      }
-
-      // Return work
-      List<PerspectiveWork> work;
-      if (ReturnWorkOnEveryCycle && PerspectiveWorkTemplate != null) {
-        work = [PerspectiveWorkTemplate];
-      } else {
-        work = [.. PerspectiveWorkToReturn];
-        PerspectiveWorkToReturn.Clear();
-      }
-
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = work
-      });
     }
 
     public Task ReportPerspectiveCompletionAsync(

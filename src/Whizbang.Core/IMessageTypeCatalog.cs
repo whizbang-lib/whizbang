@@ -1,3 +1,5 @@
+using Whizbang.Core.Attributes;
+
 namespace Whizbang.Core;
 
 /// <summary>
@@ -21,6 +23,34 @@ public sealed record MessageTypeCatalogEntry(
   /// a stale <c>wh_message_type_registry</c> row (old name -&gt; current name) in place.
   /// </summary>
   public IReadOnlyList<string> FormerNames { get; init; } = System.Array.Empty<string>();
+
+  /// <summary>
+  /// The type's resolved ephemeral mode, or <c>null</c> when it is Sourced (the durable default). The
+  /// generator resolves this from <c>[Ephemeral]</c> at compile time — whether declared directly, on a
+  /// base record, or on a marker interface — so no reflection is needed to know how a message wants to
+  /// be treated. Only events carry it; commands and perspectives are always Sourced here (a perspective's
+  /// effective mode is <em>derived</em> from the events it applies, separately).
+  /// </summary>
+  public EphemeralInfo? Ephemeral { get; init; }
+
+  /// <summary>
+  /// Lowercase-hex content hash of the type's behavioral <em>settings</em> (its Sourced/Ephemeral mode +
+  /// destruction/storage config), computed canonically by the generator at compile time. A change here
+  /// means the type's storage/lifecycle behavior changed — the drift signal the fingerprint reconciler
+  /// uses to trigger reclassification. Empty string when the generator predates this field.
+  /// </summary>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  public string SettingsHash { get; init; } = "";
+
+  /// <summary>
+  /// Lowercase-hex content hash of the type's payload <em>schema</em> — a canonical, ordered signature of
+  /// its serializable properties (name + declared type), computed by the generator at compile time. A
+  /// change here means the payload shape evolved — the drift signal for versioning/upcasting and the
+  /// forgotten-<c>[SchemaVersion]</c>-bump guard. One level deep (incremental-safe); deep nested-DTO
+  /// changes are the job of explicit versioning. Empty string when the generator predates this field.
+  /// </summary>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  public string SchemaHash { get; init; } = "";
 }
 
 /// <summary>

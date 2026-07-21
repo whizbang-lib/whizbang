@@ -219,14 +219,14 @@ public class MessageAssociationsHashSyncTests : EFCoreTestBase {
     await conn.ExecuteAsync(@"
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, event_type,
-         event_data, metadata, version, created_at)
+         version, created_at)
       VALUES
         ('" + pendingEventId + "', '" + streamId + "', '" + streamId + @"',
          'TestAggregate', '" + OrphanMessageType + @"',
-         '{}'::jsonb, '{}'::jsonb, 1, NOW()),
+         1, NOW()),
         ('" + completedEventId + "', '" + streamId + "', '" + streamId + @"',
          'TestAggregate', '" + OrphanMessageType + @"',
-         '{}'::jsonb, '{}'::jsonb, 2, NOW())");
+         2, NOW())");
     await conn.ExecuteAsync(@"
       INSERT INTO wh_perspective_events
         (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)

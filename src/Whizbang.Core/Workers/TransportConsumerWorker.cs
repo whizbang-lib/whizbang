@@ -58,6 +58,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly string? _serviceName;
   private readonly IReceptorRegistryQuery? _receptorRegistry;
   private readonly IReceptorRegistry? _runtimeReceptorRegistry;
+  private readonly IEphemeralModeResolver? _ephemeralModeResolver;
 
   // Signals when SubscribeToAllDestinationsAsync has completed and the consumer
   // is ACTUALLY bound to its transport destinations. Completes regardless of
@@ -141,7 +142,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     IWorkChannelWriter? workChannelWriter = null,
     Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null,
     IReceptorRegistryQuery? receptorRegistry = null,
-    IReceptorRegistry? runtimeReceptorRegistry = null
+    IReceptorRegistry? runtimeReceptorRegistry = null,
+    IEphemeralModeResolver? ephemeralModeResolver = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -164,6 +166,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
     _receptorRegistry = receptorRegistry;
+    _ephemeralModeResolver = ephemeralModeResolver;
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
@@ -818,7 +821,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     }
 
     var flags = (payload is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
-              | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None);
+              | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
+              | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(payload, _ephemeralModeResolver);
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
@@ -831,7 +835,8 @@ public partial class TransportConsumerWorker : BackgroundService {
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
         Hops = envelope.Hops?.ToList() ?? [],
-        DispatchContext = envelope.DispatchContext
+        DispatchContext = envelope.DispatchContext,
+        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, _ephemeralModeResolver)
       },
       MessageType = messageTypeName,
       // Slice 26.6: propagate source identity from envelope → wh_inbox columns.

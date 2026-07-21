@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
@@ -63,6 +64,38 @@ public class MessageDiscardPolicyTests {
 
     await Assert.That(decision.ShouldDiscard).IsFalse();
     await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.None);
+  }
+
+  private static MessageDiscardPolicy _newPolicyWithAbsorb(Meter meter, params string[] absorb) {
+    var routing = new RoutingOptions();
+    routing.AbsorbNamespaces(absorb);
+    var registry = new TestRegistry(); // UNCONSUMED_TYPE has NO consumer
+    var logger = new RecordingLogger<MessageDiscardPolicy>();
+    return new MessageDiscardPolicy(registry, logger, meter, Options.Create(routing));
+  }
+
+  [Test]
+  public async Task EvaluateReceive_UnconsumedType_OnAbsorbedNamespace_IsKeptAsync() {
+    // A type with no local consumer whose NAMESPACE is absorbed must NOT be discarded at receive — it has to
+    // reach the inbox so the (unconditional) event-store write persists it for a later rebuild.
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.Absorb");
+    var policy = _newPolicyWithAbsorb(meter, "Test.Contracts"); // == namespace of UNCONSUMED_TYPE
+
+    var decision = policy.EvaluateReceive(UNCONSUMED_TYPE, topic: "someservice-test.contracts", subscription: "sub-1");
+
+    await Assert.That(decision.ShouldDiscard).IsFalse();
+  }
+
+  [Test]
+  public async Task EvaluateReceive_UnconsumedType_OnNonAbsorbedNamespace_StillDiscardsAsync() {
+    // Absorb is namespace-scoped: an unconsumed type on a DIFFERENT namespace still drops as before.
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.Absorb2");
+    var policy = _newPolicyWithAbsorb(meter, "Other.Namespace");
+
+    var decision = policy.EvaluateReceive(UNCONSUMED_TYPE, topic: "svc-test.contracts", subscription: "sub-1");
+
+    await Assert.That(decision.ShouldDiscard).IsTrue();
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
   }
 
   // Body-offload (claim-check): an offloaded message arrives with the internal

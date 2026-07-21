@@ -66,17 +66,24 @@ public sealed class EventStoreRecord {
   /// Event payload stored as JSON.
   /// Contains the actual event data (e.g., { "OrderId": "123", "Total": 99.99 }).
   /// Serialized directly from MessageEnvelope.Payload.
+  /// <para>
+  /// Full split (E1 #13b4, migration 077): on the Postgres providers the body lives in
+  /// <see cref="EventBodyRecord"/> (<c>wh_event_body</c>) and this inline column is always NULL —
+  /// the record is a narrow pointer. Inline-body providers (SQLite/Dapper degraded mode) still
+  /// populate it. Readers resolve body-first with inline fallback.
+  /// </para>
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
-  public required JsonElement EventData { get; set; }
+  public required JsonElement? EventData { get; set; }
 
   /// <summary>
   /// Event metadata stored as JSON.
   /// Contains MessageId and complete Hops chain with all observability data.
   /// Serialized directly from MessageEnvelope using System.Text.Json (no DTO mapping).
+  /// NULL on the Postgres providers post-077 (offloaded to <see cref="EventBodyRecord"/>).
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
-  public required EnvelopeMetadata Metadata { get; set; }
+  public required EnvelopeMetadata? Metadata { get; set; }
 
   /// <summary>
   /// Scope information for multi-tenancy stored as JSON.

@@ -31,7 +31,7 @@ BEGIN
       pe.perspective_name,
       pe.event_id,
       pe.partition_number
-    FROM wh_perspective_events pe
+    FROM __SCHEMA__.wh_perspective_events pe
     WHERE (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
       AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
       AND pe.processed_at IS NULL
@@ -77,7 +77,7 @@ BEGIN
       )
       -- Ensure ordering - no earlier uncompleted events in same perspective
       AND NOT EXISTS (
-        SELECT 1 FROM wh_perspective_events earlier
+        SELECT 1 FROM __SCHEMA__.wh_perspective_events earlier
         WHERE earlier.stream_id = pe.stream_id
           AND earlier.perspective_name = pe.perspective_name
           AND earlier.event_id < pe.event_id
@@ -95,7 +95,7 @@ BEGIN
   ),
   -- Claim ALL events for selected streams (full-stream capture)
   claimed AS (
-    UPDATE wh_perspective_events pe
+    UPDATE __SCHEMA__.wh_perspective_events pe
     SET instance_id = p_instance_id,
         lease_expiry = p_lease_expiry,
         -- Phase H step 8 slice D: see claim_orphaned_inbox (mig 025). Single-source

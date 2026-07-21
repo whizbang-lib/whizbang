@@ -111,6 +111,257 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_EphemeralPerspective_UsesAggressiveSnapshotSettingsAsync() {
+    // A perspective that applies an [Ephemeral] event is ephemeral-tainted → snapshots on the aggressive,
+    // single-slot ephemeral cadence so a fresh rewind floor exists within the grace window.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+  public record UserIsTyping : IEvent {
+    public string ConversationId { get; init; } = "";
+  }
+
+  public record PresenceModel {
+    [StreamId]
+    public string ConversationId { get; init; } = "";
+  }
+
+  public class PresencePerspective : IPerspectiveFor<PresenceModel, UserIsTyping> {
+    public PresenceModel Apply(PresenceModel currentData, UserIsTyping @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("EphemeralSnapshotEveryNEvents")
+      .Because("An ephemeral perspective snapshots on the aggressive ephemeral cadence.");
+    await Assert.That(runnerSource!).Contains("EphemeralMaxSnapshotsPerStream")
+      .Because("An ephemeral perspective prunes to the single-slot ephemeral retention.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_EphemeralPerspective_GuardsRewindFallbackAgainstReapedBodiesAsync() {
+    // E1 (3): an ephemeral perspective's runner must carry _isEphemeralPerspective = true so the
+    // rewind guard fires — an out-of-grace straggler with no snapshot floor is SKIPPED instead of
+    // replayed from zero over reaped (NULL) bodies, which would corrupt the authoritative model.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+  public record UserIsTyping : IEvent {
+    public string ConversationId { get; init; } = "";
+  }
+
+  public record PresenceModel {
+    [StreamId]
+    public string ConversationId { get; init; } = "";
+  }
+
+  public class PresencePerspective : IPerspectiveFor<PresenceModel, UserIsTyping> {
+    public PresenceModel Apply(PresenceModel currentData, UserIsTyping @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("private const bool _isEphemeralPerspective = true;")
+      .Because("An ephemeral perspective marks itself ephemeral so the rewind fallback guard fires.");
+    await Assert.That(runnerSource!).Contains("_isEphemeralPerspective && !hasSnapshot")
+      .Because("The rewind fallback is guarded so an ephemeral stream never replays from zero over reaped bodies.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_TtlRowPerspective_RegistersRowTtlAsync() {
+    // E2-4d: a perspective whose [Ephemeral] events chose TransientStorage.TtlRow emits a [ModuleInitializer]
+    // registering its row TTL (max across its TtlRow events) so the upsert stamps expires_at.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.AfterTtl, Storage = TransientStorage.TtlRow, TtlSeconds = 7776000)]
+  public record ChatMessage : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record ThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  public class ThreadPerspective : IPerspectiveFor<ThreadModel, ChatMessage> {
+    public ThreadModel Apply(ThreadModel currentData, ChatMessage @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]")
+      .Because("A TtlRow perspective registers its row TTL via a module initializer.");
+    await Assert.That(runnerSource!).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.ThreadModel), 7776000)")
+      .Because("The registration carries the perspective's model type and its resolved row TTL in seconds.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_NonTtlRowPerspective_DoesNotRegisterRowTtlAsync() {
+    // A WhenConsumed/InMemory ephemeral perspective is NOT TtlRow — its rows never expire, so no registration.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+  public record UserIsTyping : IEvent {
+    public string ConversationId { get; init; } = "";
+  }
+
+  public record PresenceModel {
+    [StreamId]
+    public string ConversationId { get; init; } = "";
+  }
+
+  public class PresencePerspective : IPerspectiveFor<PresenceModel, UserIsTyping> {
+    public PresenceModel Apply(PresenceModel currentData, UserIsTyping @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).DoesNotContain("PerspectiveTtlRegistry.Register")
+      .Because("A non-TtlRow perspective's rows never expire, so no TTL is registered.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_FullHistoryPerspective_RegistersNameAsync() {
+    // A1-6b: a [FullHistory] perspective emits a [ModuleInitializer] registering its name so the close guard
+    // refuses a discard-close of any stream it consumes.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record LedgerEntry : IEvent {
+    public string AccountId { get; init; } = "";
+  }
+
+  public record LedgerListModel {
+    [StreamId]
+    public string AccountId { get; init; } = "";
+  }
+
+  [FullHistory]
+  public class LedgerListPerspective : IPerspectiveFor<LedgerListModel, LedgerEntry> {
+    public LedgerListModel Apply(LedgerListModel currentData, LedgerEntry @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "LedgerListPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("FullHistoryPerspectiveRegistry.Register(")
+      .Because("A [FullHistory] perspective registers its name via a module initializer for the A1 close guard.");
+    await Assert.That(runnerSource!).Contains("LedgerListPerspective")
+      .Because("The registration carries the perspective's name (its association target_name).");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_ResumablePerspective_DoesNotRegisterFullHistoryAsync() {
+    // An unmarked perspective is resumable (rebuilds from the closing event forward) — no registration.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record BalanceChanged : IEvent {
+    public string AccountId { get; init; } = "";
+  }
+
+  public record BalanceModel {
+    [StreamId]
+    public string AccountId { get; init; } = "";
+  }
+
+  public class BalancePerspective : IPerspectiveFor<BalanceModel, BalanceChanged> {
+    public BalanceModel Apply(BalanceModel currentData, BalanceChanged @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "BalancePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).DoesNotContain("FullHistoryPerspectiveRegistry.Register")
+      .Because("A resumable (unmarked) perspective needs no full-history guard registration.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_SourcedPerspective_UsesStandardSnapshotSettingsAsync() {
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = "";
+  }
+
+  public record OrderReadModel {
+    [StreamId]
+    public string OrderId { get; init; } = "";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("_snapshotOptions.Value.SnapshotEveryNEvents")
+      .Because("A Sourced perspective uses the standard snapshot cadence.");
+    await Assert.That(runnerSource!).DoesNotContain("EphemeralSnapshotEveryNEvents")
+      .Because("A Sourced perspective does not use the ephemeral cadence.");
+    await Assert.That(runnerSource!).Contains("private const bool _isEphemeralPerspective = false;")
+      .Because("A Sourced perspective is not ephemeral, so the rewind fallback guard stays inert and it always replays.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_PerspectiveWithModelNoStreamId_GeneratesNothingAsync() {
     // Arrange - Model without [StreamId] attribute should not generate runner
     const string source = """

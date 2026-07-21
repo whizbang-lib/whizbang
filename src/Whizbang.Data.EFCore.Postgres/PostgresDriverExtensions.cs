@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -104,6 +105,10 @@ public static class PostgresDriverExtensions {
         // so a built-in receptor shipped from this assembly needs runtime registration.
         selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
 
+        // TURNKEY: A1 scheduled close — runtime-register ScheduledStreamCloseReceptor so a fired
+        // "close the books" schedule occurrence drives IStreamCloser.CloseAsync. Same rationale as above.
+        selector.Services.AddHostedService<ScheduledStreamCloseReceptorRegistrar>();
+
         // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
         // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
         // initializer's registration order in the IHostedService chain doesn't matter — even
@@ -139,10 +144,15 @@ public static class PostgresDriverExtensions {
           return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
         });
 
-        // TURNKEY: Register table statistics provider + collector for OTel metrics
+        // TURNKEY: Register table statistics provider + collector for OTel metrics.
+        // The provider schema-qualifies its queries — pass the model's default schema so
+        // multi-schema services report THEIR tables instead of probing a bare public schema.
         selector.Services.TryAddSingleton<ITableStatisticsProvider>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          return new PostgresTableStatisticsProvider(ds);
+          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
+          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
+          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          return new PostgresTableStatisticsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
         selector.Services.AddHostedService<TableStatisticsCollector>();

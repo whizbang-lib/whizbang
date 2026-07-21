@@ -121,16 +121,16 @@ BEGIN
 
   -- Re-emit into the appropriate source table with attempts=0.
   IF v_source_table = 'wh_outbox' THEN
-    INSERT INTO wh_outbox (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number)
+    INSERT INTO __SCHEMA__.wh_outbox (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number)
     VALUES (v_source_id, v_destination, v_message_type, 'recovered', v_event_data, v_metadata, 0, 0, NOW(), v_stream_id, v_partition)
     ON CONFLICT (message_id) DO NOTHING;  -- already re-published; idempotent
   ELSIF v_source_table = 'wh_inbox' THEN
-    INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number)
+    INSERT INTO __SCHEMA__.wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number)
     VALUES (v_source_id, COALESCE(v_perspective, 'recovered'), v_message_type, v_event_data, v_metadata, 0, 0, NOW(), v_stream_id, v_partition)
     ON CONFLICT (message_id) DO NOTHING;
   ELSIF v_source_table = 'wh_perspective_events' THEN
     -- Perspective recovery uses the event_id snapshot to recreate the work row.
-    INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
+    INSERT INTO __SCHEMA__.wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
     VALUES (v_source_id, v_stream_id, v_perspective, (v_envelope ->> 'event_id')::UUID, v_partition, 0, 0, NOW())
     ON CONFLICT (event_work_id) DO NOTHING;
   ELSE

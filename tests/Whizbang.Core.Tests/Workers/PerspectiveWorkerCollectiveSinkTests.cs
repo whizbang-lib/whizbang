@@ -598,7 +598,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
     public Task WaitForCyclesAsync(int minCycles, TimeSpan timeout) =>
       _waiters.GetOrAdd(minCycles, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task.WaitAsync(timeout);
-    public new Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
+    public new Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
       var c = Interlocked.Increment(ref _cycle);
       foreach (var kv in _waiters) { if (c >= kv.Key) { kv.Value.TrySetResult(); } }
       var pw = c == 1 ? new List<PerspectiveWork>(work) : [];

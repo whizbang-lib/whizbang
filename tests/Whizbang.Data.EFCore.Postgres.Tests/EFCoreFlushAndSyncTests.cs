@@ -86,10 +86,10 @@ public class EFCoreFlushAndSyncTests : EFCoreTestBase {
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = @"
         INSERT INTO wh_event_store
-          (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, event_data, metadata, created_at, scope)
+          (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, created_at, scope)
         VALUES
-          (@e1, @stream, @stream, 'TestAgg', 1, 'TestEvent', '{}', '{}', NOW(), 'null'::jsonb),
-          (@e2, @stream, @stream, 'TestAgg', 2, 'TestEvent', '{}', '{}', NOW(), 'null'::jsonb)";
+          (@e1, @stream, @stream, 'TestAgg', 1, 'TestEvent', NOW(), 'null'::jsonb),
+          (@e2, @stream, @stream, 'TestAgg', 2, 'TestEvent', NOW(), 'null'::jsonb)";
       ins.Parameters.AddWithValue("e1", (Guid)processedEventId);
       ins.Parameters.AddWithValue("e2", (Guid)pendingEventId);
       ins.Parameters.AddWithValue("stream", (Guid)streamId);

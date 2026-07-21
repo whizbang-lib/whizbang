@@ -23,178 +23,6 @@ public sealed record PartitionRecomputeResult {
 }
 
 /// <summary>
-/// Parameter object for ProcessWorkBatchAsync to reduce method complexity.
-/// Groups related parameters for better maintainability and caller ergonomics.
-/// </summary>
-public sealed record ProcessWorkBatchRequest {
-  /// <summary>
-  /// Unique ID for the service instance (should be UUIDv7 for time-ordered IDs).
-  /// Used for partition assignment and work claiming.
-  /// </summary>
-  public required Guid InstanceId { get; init; }
-
-  /// <summary>
-  /// Name of the service (e.g., "OrderService").
-  /// Used for monitoring and instance identification.
-  /// </summary>
-  public required string ServiceName { get; init; }
-
-  /// <summary>
-  /// Host name where service is running (e.g., "web-server-01").
-  /// Used for monitoring and debugging.
-  /// </summary>
-  public required string HostName { get; init; }
-
-  /// <summary>
-  /// Operating system process ID.
-  /// Used for monitoring and debugging.
-  /// </summary>
-  public required int ProcessId { get; init; }
-
-  /// <summary>
-  /// Optional JSONB metadata dictionary to persist with the instance.
-  /// Includes acknowledgement counts for completion tracking (outbox_completions_processed, inbox_completions_processed, etc.).
-  /// Pass null for no metadata.
-  /// </summary>
-  public Dictionary<string, JsonElement>? Metadata { get; init; }
-
-  /// <summary>
-  /// Array of outbox message completions to report.
-  /// Indicates which outbox messages were successfully published.
-  /// Empty array if no completions.
-  /// </summary>
-  public required MessageCompletion[] OutboxCompletions { get; init; }
-
-  /// <summary>
-  /// Array of outbox message failures to report.
-  /// Includes error details and partial completion tracking.
-  /// Empty array if no failures.
-  /// </summary>
-  public required MessageFailure[] OutboxFailures { get; init; }
-
-  /// <summary>
-  /// Array of inbox message completions to report.
-  /// Indicates which inbox messages were successfully processed.
-  /// Empty array if no completions.
-  /// </summary>
-  public required MessageCompletion[] InboxCompletions { get; init; }
-
-  /// <summary>
-  /// Array of inbox message failures to report.
-  /// Includes error details and partial completion tracking.
-  /// Empty array if no failures.
-  /// </summary>
-  public required MessageFailure[] InboxFailures { get; init; }
-
-  /// <summary>
-  /// Array of receptor processing completions (event handler completions).
-  /// Many receptors can process the same event.
-  /// Empty array if no completions.
-  /// </summary>
-  public required ReceptorProcessingCompletion[] ReceptorCompletions { get; init; }
-
-  /// <summary>
-  /// Array of receptor processing failures (event handler failures).
-  /// Includes error details for debugging.
-  /// Empty array if no failures.
-  /// </summary>
-  public required ReceptorProcessingFailure[] ReceptorFailures { get; init; }
-
-  /// <summary>
-  /// Array of perspective cursor completions (read model projection cursors).
-  /// Tracks last processed event per stream.
-  /// Empty array if no completions.
-  /// </summary>
-  public required PerspectiveCursorCompletion[] PerspectiveCompletions { get; init; }
-
-  /// <summary>
-  /// Array of perspective event completions (work IDs to delete from wh_perspective_events).
-  /// Used to clean up ephemeral event tracking rows after processing.
-  /// Empty array if no completions.
-  /// </summary>
-  public required PerspectiveEventCompletion[] PerspectiveEventCompletions { get; init; }
-
-  /// <summary>
-  /// Array of perspective cursor failures (read model projection failures).
-  /// Includes error details and last attempted event.
-  /// Empty array if no failures.
-  /// </summary>
-  public required PerspectiveCursorFailure[] PerspectiveFailures { get; init; }
-
-  /// <summary>
-  /// Array of new outbox messages to store.
-  /// These will be immediately returned as work in the same call (immediate processing pattern).
-  /// Empty array if no new messages.
-  /// </summary>
-  public required OutboxMessage[] NewOutboxMessages { get; init; }
-
-  /// <summary>
-  /// Array of new inbox messages to store.
-  /// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
-  /// Empty array if no new messages.
-  /// </summary>
-  public required InboxMessage[] NewInboxMessages { get; init; }
-
-  /// <summary>
-  /// Array of outbox message IDs to renew leases for.
-  /// Extends the lease expiry time to prevent orphan detection.
-  /// Empty array if no renewals needed.
-  /// </summary>
-  public required Guid[] RenewOutboxLeaseIds { get; init; }
-
-  /// <summary>
-  /// Array of inbox message IDs to renew leases for.
-  /// Extends the lease expiry time to prevent orphan detection.
-  /// Empty array if no renewals needed.
-  /// </summary>
-  public required Guid[] RenewInboxLeaseIds { get; init; }
-
-  /// <summary>
-  /// Array of sync inquiries to check perspective event processing status.
-  /// Results are returned in WorkBatch.SyncInquiryResults.
-  /// Null if no sync inquiries.
-  /// </summary>
-  /// <docs>fundamentals/perspectives/sync</docs>
-  public SyncInquiry[]? PerspectiveSyncInquiries { get; init; }
-
-  /// <summary>
-  /// Work batch flags for controlling behavior.
-  /// Examples: SkipNewWork, ForceClaimAll.
-  /// Defaults to None for normal operation.
-  /// </summary>
-  public WorkBatchOptions Flags { get; init; } = WorkBatchOptions.None;
-
-  /// <summary>
-  /// Total number of virtual partitions for consistent hashing (default: 10,000).
-  /// Determines partition number range [0, PartitionCount-1].
-  /// Higher values provide better distribution but increase computation.
-  /// </summary>
-  public int PartitionCount { get; init; } = 10_000;
-
-  /// <summary>
-  /// How long to hold work leases in seconds (default: 300 = 5 minutes).
-  /// Messages with expired leases become orphaned and can be reclaimed by other instances.
-  /// </summary>
-  public int LeaseSeconds { get; init; } = 300;
-
-  /// <summary>
-  /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
-  /// After this, the instance's message leases are released and its stream ownership no longer
-  /// blocks other instances from claiming fresh work. Heartbeats occur every
-  /// PollingIntervalMilliseconds (default 1 s); 30 s = 30 missed heartbeats.
-  /// Shorten for faster recovery after SIGKILL / crash; lengthen to tolerate longer pauses
-  /// (GC, disk stalls, network blips) without triggering work reassignment.
-  /// </summary>
-  public int AbandonStaleInstanceThresholdSeconds { get; init; } = 30;
-
-  /// <summary>
-  /// Maximum number of streams to return per batch for perspective processing.
-  /// Controls how many distinct streams the SQL returns per tick. Default: 300.
-  /// </summary>
-  public int MaxStreamsPerBatch { get; init; } = 300;
-}
-
-/// <summary>
 /// Coordinates work processing across multiple service instances using virtual partition assignment with consistent hashing.
 /// Provides atomic operations for heartbeat updates, message completion tracking,
 /// event store integration, and orphaned work recovery.
@@ -212,23 +40,6 @@ public sealed record ProcessWorkBatchRequest {
 public interface IWorkCoordinator {
 
   /// <summary>
-  /// Compatibility-only: returns an empty <see cref="WorkBatch"/>. The legacy orchestrator
-  /// SQL function <c>process_work_batch</c> has been dropped — work coordination is now
-  /// handled by <see cref="ClaimWorkAsync"/>, <see cref="StoreOutboxMessagesAsync"/>,
-  /// <see cref="StoreInboxMessagesAsync"/>, the per-completion / per-failure channel
-  /// flushers, and <see cref="CommitHandlerBatchAsync"/>. Retained so test fakes that
-  /// historically overrode the method continue to compile while migration completes.
-  /// </summary>
-  Task<WorkBatch> ProcessWorkBatchAsync(
-    ProcessWorkBatchRequest request,
-    CancellationToken cancellationToken = default
-  ) => Task.FromResult(new WorkBatch {
-    OutboxWork = [],
-    InboxWork = [],
-    PerspectiveWork = []
-  });
-
-  /// <summary>
   /// Deregisters this instance on graceful shutdown.
   /// Releases all leases (outbox, inbox, perspective events, receptors, active streams),
   /// logs shutdown to wh_log, and removes the instance from wh_service_instances.
@@ -237,8 +48,7 @@ public interface IWorkCoordinator {
   Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// Records a heartbeat for this instance. Decoupled from <see cref="ProcessWorkBatchAsync"/>
-  /// so the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
+  /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
   /// Sub-millisecond UPSERT against <c>wh_service_instances</c>. Default impl throws so existing
   /// non-Postgres backends (test fakes, in-memory) only opt in when ready.
   /// Phase B of work-pump decomposition.
@@ -454,8 +264,7 @@ public interface IWorkCoordinator {
   /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
   /// </summary>
   /// <param name="messages">Inbox messages to store</param>
-  /// <param name="partitionCount">Number of partitions for load balancing. Must match
-  /// <see cref="ProcessWorkBatchRequest.PartitionCount"/> used by the publisher worker
+  /// <param name="partitionCount">Number of partitions for load balancing. Must match the PartitionCount used by the publisher worker
   /// in this service — otherwise wh_inbox.partition_number and wh_active_streams.partition_number
   /// disagree for the same stream and claim_orphaned_inbox deadlocks.</param>
   /// <param name="cancellationToken">Cancellation token</param>
@@ -644,6 +453,243 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
   Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RewindCursorInfo>>([]);
+
+  /// <summary>
+  /// Reclassifies a formerly-Sourced event type to Ephemeral across its stored history: stamps
+  /// <c>EventFlags.Ephemeral</c> on the historical rows and offloads their inline bodies to
+  /// <c>wh_event_body</c>, so the tier-1 reaper then reaps them consumption-gated. Pass the type's FULL
+  /// name set (current CLR type name + former names) so a renamed type's history is matched under every
+  /// name it was stored as. Streams that would become mixed (the type plus a Sourced event of another
+  /// type) are skipped and reported, preserving the homogeneous-stream invariant. Deliberate,
+  /// developer-invoked — never run implicitly. No-op on engines without the ephemeral body offload.
+  /// </summary>
+  /// <param name="eventTypeNames">The logical type's name set (current + former).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Counts of events reclassified, streams reclassified, and streams skipped as mixed.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<EphemeralReclassificationResult> ReclassifyEventsEphemeralAsync(
+    IReadOnlyList<string> eventTypeNames,
+    CancellationToken cancellationToken = default) => Task.FromResult(EphemeralReclassificationResult.Empty);
+
+  /// <summary>
+  /// Counts stored Sourced (not-yet-ephemeral) events for the given type name set. Used by the startup
+  /// reconciler to DETECT historical drift — a type made <c>[Ephemeral]</c> that still has pre-existing
+  /// Sourced events the reaper cannot see. Read-only; returns 0 on engines without the offload.
+  /// </summary>
+  /// <param name="eventTypeNames">The logical type's name set (current + former).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of stored Sourced events across those names.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<long> CountSourcedEventsForTypesAsync(
+    IReadOnlyList<string> eventTypeNames,
+    CancellationToken cancellationToken = default) => Task.FromResult(0L);
+
+  /// <summary>
+  /// Loads every stored type-definition fingerprint (a pre-register snapshot the reconciler diffs the
+  /// code's current definitions against). Empty on engines without the fingerprint tables.
+  /// </summary>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  Task<IReadOnlyList<TypeDefinitionInfo>> GetTypeDefinitionsAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<TypeDefinitionInfo>>([]);
+
+  /// <summary>
+  /// Registers a type's current definition (content hashes) — idempotent by hash. Reports whether it was
+  /// newly inserted plus the type's previous definition id, so the reconciler can record a lineage edge.
+  /// No-op sentinel on engines without the fingerprint tables.
+  /// </summary>
+  /// <param name="eventTypeName">The type's (current) CLR name.</param>
+  /// <param name="settingsHashHex">Lowercase-hex settings hash from the catalog entry.</param>
+  /// <param name="schemaHashHex">Lowercase-hex schema hash from the catalog entry.</param>
+  /// <param name="schemaVersion">Developer-declared schema version (0 until [SchemaVersion] exists).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  Task<TypeDefinitionRegistration> RegisterTypeDefinitionAsync(
+    string eventTypeName,
+    string settingsHashHex,
+    string schemaHashHex,
+    int schemaVersion,
+    CancellationToken cancellationToken = default) => Task.FromResult(TypeDefinitionRegistration.None);
+
+  /// <summary>
+  /// Records a lineage edge between two definitions (how one superseded another + the migration that
+  /// bridges them). No-op on engines without the fingerprint tables.
+  /// </summary>
+  /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+  Task RecordDefinitionLineageAsync(
+    int fromDefinitionId,
+    int toDefinitionId,
+    DefinitionRelationship relationship,
+    string? migrationRef,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Returns the subset of <paramref name="streamIds"/> that are <strong>StateBased</strong> — streams holding
+  /// at least one event flagged <c>EventFlags.Ephemeral</c> OR <c>EventFlags.Compacted</c> (see
+  /// <see cref="EventFlagsExtensions.IsStateBased"/>). The rebuild/rewind guards use this to refuse them: a
+  /// StateBased stream's current state, not its event log, is the source of truth (ephemeral bodies are reaped;
+  /// a compacted stream replays only to its <c>Compacted</c> origin), so replaying it from events would corrupt
+  /// the projection. Empty on engines without the flags. (Was <c>GetEphemeralStreamIdsAsync</c>; widened when
+  /// <c>Compacted</c> — permanent StateBased — joined ephemeral under the StateBased base.)
+  /// </summary>
+  /// <param name="streamIds">Candidate stream ids to classify.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ids among <paramref name="streamIds"/> that are StateBased.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
+    IReadOnlyList<Guid> streamIds,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyCollection<Guid>>([]);
+
+  /// <summary>
+  /// Replaces the per-type rewind-grace overrides (from <c>[Ephemeral(RewindGraceSeconds = …)]</c>): upserts
+  /// the declared set and prunes any override no longer declared. Called once at startup by the reconciler.
+  /// The reaper resolves <c>COALESCE(type grace, global default)</c> per event. No-op on engines without the
+  /// grace table.
+  /// </summary>
+  /// <param name="graceOverrides">Types that declare a per-type grace (seconds); empty clears all overrides.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task SyncEphemeralTypeGraceAsync(
+    IReadOnlyList<EphemeralTypeGrace> graceOverrides,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Finds the <c>(stream, perspective)</c> pairs the maintenance cycle must snapshot BEFORE it reaps: an
+  /// ephemeral body that is consumed and aged past its grace window, whose consuming perspective has NO
+  /// snapshot at/past the event's <c>commit_sequence</c>. Snapshotting these (via the runner's bootstrap
+  /// hook) is what makes the reaper's coverage gate safe on low-volume / idle streams that never hit an
+  /// event-count snapshot threshold. Empty on engines without the ephemeral body offload.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Distinct pairs (with the perspective cursor's last event id to snapshot at).</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyList<EphemeralSnapshotTarget>> GetEphemeralPairsNeedingSnapshotAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<EphemeralSnapshotTarget>>([]);
+
+  /// <summary>
+  /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
+  /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
+  /// and the perspective cursor's last-event target survive the prune. The backing implementation is
+  /// OPT-IN (disabled by default) and self-gated to a long interval, so calling this every maintenance
+  /// cycle is cheap; it only actually prunes when enabled AND due. Default: unsupported no-op (engines
+  /// without the ephemeral body offload have nothing to prune).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Rows pruned plus a status string (<c>disabled</c> | <c>not due</c> | <c>ok</c> | …).</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(new EphemeralPointerPruneResult(0, "unsupported"));
+
+  /// <summary>
+  /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
+  /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
+  /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing
+  /// event / new origin). Discard-only in increment 1 (cold-storage archive is a later increment). The domain
+  /// appends its closing event BEFORE calling this. Default: unsupported no-op (engines without the primitive).
+  /// </summary>
+  /// <param name="streamId">The stream to close.</param>
+  /// <param name="throughVersion">The inclusive per-stream version below which detail is truncated.</param>
+  /// <param name="archive">
+  /// When <see langword="true"/>, the detail is copied to the cold-storage archive (<c>wh_event_archive</c>,
+  /// retrievable via <see cref="GetArchivedEventsAsync"/>) BEFORE the truncate, atomically. When
+  /// <see langword="false"/> (default), the detail is discarded.
+  /// </param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>debug_skipped</c> |
+  /// <c>unsupported</c>) plus the number of events truncated.
+  /// </returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<StreamCloseResult> CloseStreamAsync(
+    Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
+    Task.FromResult(new StreamCloseResult("unsupported", 0));
+
+  /// <summary>
+  /// A1 — read the archived detail of a closed stream from cold storage (<c>wh_event_archive</c>), ordered by
+  /// version. This is the retrieval side of an archiving close (<see cref="CloseStreamAsync"/> with
+  /// <c>archive: true</c>): the period's raw events, preserved out of the hot store for audit / full replay.
+  /// Default: empty (engines without the archive store).
+  /// </summary>
+  /// <param name="streamId">The stream whose archived detail to read.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The archived events for the stream, ordered by version.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyList<ArchivedEvent>> GetArchivedEventsAsync(
+    Guid streamId, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<ArchivedEvent>>([]);
+
+  /// <summary>
+  /// A1 — the distinct perspective names that consume any event in <paramref name="streamId"/> at or below
+  /// <paramref name="throughVersion"/> (via the message associations of those events' types). Used by
+  /// <see cref="Whizbang.Core.Lifecycle.IStreamCloser"/> to decide whether a discard-close would strand a
+  /// <see cref="Whizbang.Core.Attributes.FullHistoryAttribute"/> projection. Default: empty.
+  /// </summary>
+  /// <param name="streamId">The stream being closed.</param>
+  /// <param name="throughVersion">The inclusive per-stream version below which detail would be truncated.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The distinct consuming perspective names.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyList<string>> GetConsumingPerspectiveNamesAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<string>>([]);
+
+  /// <summary>
+  /// E3 — the per-stream version of the event with id <paramref name="eventId"/>, or <c>null</c> if unknown.
+  /// A Tier-2 compaction closes an ephemeral stream through the version of the snapshot's anchor event, so this
+  /// maps that anchor event id to the close point. Default: <c>null</c>.
+  /// </summary>
+  /// <param name="eventId">The event id to look up.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The event's per-stream version, or <c>null</c>.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<long?> GetEventVersionAsync(Guid eventId, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
+  /// E2 destruction hooks: the ephemeral event bodies the tier-1 reaper is about to delete THIS cycle —
+  /// the exact consumption-gated + aged-past-grace + snapshot-covered set of Task 8's <c>DELETE</c>, as a
+  /// query. The maintenance worker fires a registered <c>IDestructionHook</c> for each before the reap, so
+  /// a hook can preserve / compact / archive the body first. Default: empty (engines without the offload).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The (event, stream, type) targets about to be reaped.</returns>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>([]);
+
+  /// <summary>
+  /// E2-3: hold the given ephemeral bodies from the reaper until <paramref name="holdUntil"/>, honoring a
+  /// PreDestruction hook's decision — <c>Cancel</c> passes a far-future instant (keep the data; the
+  /// developer's leak-risk call), <c>Defer(until)</c> passes that instant (after which the body is offered
+  /// to the hook again). Task 8's reap skips any body with an active hold. Idempotent (upsert). Default
+  /// no-op (engines without the ephemeral body offload).
+  /// </summary>
+  /// <param name="eventIds">The event bodies to hold.</param>
+  /// <param name="holdUntil">The instant the hold lapses (e.g. <see cref="DateTimeOffset.MaxValue"/> for Cancel).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task HoldEphemeralDestructionAsync(
+    IReadOnlyList<Guid> eventIds, DateTimeOffset holdUntil, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// E2-5: records a destruction FAILURE for a batch (a throwing <c>PreDestruction</c> hook). Increments each
+  /// event's attempt count and holds the batch until <paramref name="retryHoldUntil"/> so the next cycle
+  /// re-offers it to the hook — UNLESS the attempt would exceed <paramref name="maxRetries"/>, in which case
+  /// the hold is set in the past so the reaper FORCE-deletes the batch (a permanently-broken hook can never
+  /// leak storage). Returns the highest attempt count in the batch. Default returns <see cref="int.MaxValue"/>
+  /// (engines without the hold infra ⇒ forced delete ⇒ the prior fail-open behaviour).
+  /// </summary>
+  /// <param name="eventIds">The failed batch's event bodies.</param>
+  /// <param name="retryHoldUntil">When the retry hold lapses (now + the configured backoff).</param>
+  /// <param name="maxRetries">Attempts allowed before a forced delete.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  Task<int> RecordDestructionFailureAsync(
+    IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries,
+    Lifecycle.OnDestroyFailure onFailure = Lifecycle.OnDestroyFailure.RetryThenForcedDelete,
+    CancellationToken cancellationToken = default) => Task.FromResult(int.MaxValue);
 
   /// <summary>
   /// Completes perspective events by deleting the specified work items from wh_perspective_events.
@@ -898,6 +944,106 @@ public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? Last
 public sealed record OrphanedLifecycleEvent(Guid EventId, Guid StreamId, IMessageEnvelope Envelope);
 
 /// <summary>
+/// Outcome of <see cref="IWorkCoordinator.ReclassifyEventsEphemeralAsync"/>: how many historical events of
+/// a type were reclassified Sourced→Ephemeral, across how many streams, and how many streams were skipped
+/// because reclassifying there would have produced a mixed (part-Sourced, part-Ephemeral) stream.
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralReclassificationResult(
+  long EventsReclassified,
+  long StreamsReclassified,
+  long StreamsBlocked) {
+  /// <summary>Nothing reclassified — the default/no-op result.</summary>
+  public static EphemeralReclassificationResult Empty { get; } = new(0, 0, 0);
+}
+
+/// <summary>
+/// A per-type rewind-grace override — the type's (current) CLR name and its
+/// <c>[Ephemeral(RewindGraceSeconds)]</c> value in seconds.
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralTypeGrace(string EventTypeName, int GraceSeconds);
+
+/// <summary>
+/// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,
+/// aged ephemeral bodies — carrying the perspective cursor's last processed event id to snapshot at (the
+/// current authoritative model through that point becomes the rewind floor).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralSnapshotTarget(Guid StreamId, string PerspectiveName, Guid LastEventId);
+
+/// <summary>
+/// Result of the tier-2 ancient-ephemeral-pointer prune
+/// (<see cref="IWorkCoordinator.PruneAncientEphemeralPointersAsync"/>): how many pointers were deleted and
+/// why/why-not (<c>disabled</c> | <c>skipped (debug_mode=true)</c> | <c>not due</c> | <c>ok</c> |
+/// <c>unsupported</c>).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status);
+
+/// <summary>
+/// Result of an A1 "close the books" gated truncate (<see cref="IWorkCoordinator.CloseStreamAsync"/>): the
+/// <see cref="Status"/> (<c>closed</c> = detail truncated | <c>blocked</c> = a perspective has not consumed
+/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>debug_skipped</c>
+/// | <c>unsupported</c>) and how many events were truncated (0 unless <c>closed</c>).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record StreamCloseResult(string Status, long EventsTruncated);
+
+/// <summary>
+/// An event read back from the A1 cold-storage archive (<c>wh_event_archive</c>) via
+/// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/> — the preserved detail of a closed stream. Carries
+/// identity + type + the raw body/metadata JSON (typed-envelope rehydration into a rebuild is a later phase).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record ArchivedEvent(
+  Guid EventId, Guid StreamId, long Version, string EventType, string? EventDataJson, string? MetadataJson);
+
+/// <summary>
+/// An ephemeral event body the reaper is about to delete (E2), passed to a destruction hook so it can
+/// preserve the body before the reap. Carries the identity + type needed to build a
+/// <see cref="Whizbang.Core.Lifecycle.DestructionContext"/>.
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+public sealed record EphemeralDestructionTarget(Guid EventId, Guid StreamId, string EventType);
+
+/// <summary>
+/// A stored type-definition fingerprint row — one distinct type-definition-version keyed by its content
+/// hashes (lowercase hex). Loaded on startup so the reconciler can diff the code's current definitions.
+/// </summary>
+/// <docs>fundamentals/events/type-definition-fingerprint</docs>
+public sealed record TypeDefinitionInfo(
+  int DefinitionId,
+  string EventType,
+  string SettingsHashHex,
+  string SchemaHashHex,
+  int SchemaVersion);
+
+/// <summary>
+/// Result of <see cref="IWorkCoordinator.RegisterTypeDefinitionAsync"/>: the definition's id, whether it
+/// was newly inserted, and the type's previous definition id (non-null only on a genuinely new insert).
+/// </summary>
+/// <docs>fundamentals/events/type-definition-fingerprint</docs>
+public sealed record TypeDefinitionRegistration(int DefinitionId, bool IsNew, int? PreviousDefinitionId) {
+  /// <summary>No-op sentinel for engines without the fingerprint tables.</summary>
+  public static TypeDefinitionRegistration None { get; } = new(0, false, null);
+}
+
+/// <summary>
+/// How one type definition superseded another — labels a <c>wh_definition_lineage</c> edge so a stale
+/// definition names the kind of migration that brings its events current.
+/// </summary>
+/// <docs>fundamentals/events/type-definition-fingerprint</docs>
+public enum DefinitionRelationship {
+  /// <summary>The payload schema changed — events need upcasting.</summary>
+  SchemaUpgradedTo = 0,
+  /// <summary>The storage classification changed (e.g. Sourced → Ephemeral) — events need reclassifying.</summary>
+  ReclassifiedTo = 1,
+  /// <summary>Behavioral settings changed without a storage-class or schema change.</summary>
+  MetadataChangedTo = 2,
+}
+
+/// <summary>
 /// Information about a perspective cursor.
 /// Used by PerspectiveWorker to determine where to start reading events.
 /// </summary>
@@ -942,7 +1088,7 @@ public record PerspectiveCursorInfo {
 }
 
 /// <summary>
-/// Result of ProcessWorkBatchAsync containing work that needs processing.
+/// Result of a claim/drain cycle containing work that needs processing.
 /// </summary>
 /// <summary>
 /// Statistics gathered periodically for observability gauges.
@@ -1342,6 +1488,14 @@ public record OutboxWork : IHasMessageIdAndStatus {
   /// Number of previous publishing attempts.
   /// </summary>
   public required int Attempts { get; init; }
+
+  /// <summary>
+  /// The message's raw <c>wh_outbox.metadata</c> JSON, as stored. The typed envelope metadata is a closed
+  /// shape, so provider-stamped keys (e.g. the temporal engine's <c>scheduleId</c> /
+  /// <c>deliveryGuarantee</c> / <c>authorityPrincipalId</c> on a schedule occurrence) only survive here.
+  /// Consumed by <c>IOccurrencePublishGate</c> to recognise an occurrence before it is published.
+  /// </summary>
+  public string? MetadataJson { get; init; }
 
   /// <summary>
   /// Current processing status flags.

@@ -112,8 +112,8 @@ public class GetStreamEventsCrossPodOwnershipTests : EFCoreTestBase {
   private static async Task _insertStampedEventAsync(NpgsqlConnection conn, Guid eventId, Guid streamId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, commit_sequence)
-      VALUES (@event, @stream, @stream, 'TestAggregate', 'TestEvent', '{}'::jsonb, '{}'::jsonb, NULL,
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence)
+      VALUES (@event, @stream, @stream, 'TestAggregate', 'TestEvent', NULL,
               (SELECT COALESCE(MAX(version),0)+1 FROM wh_event_store WHERE stream_id=@stream), nextval('wh_commit_seq'))";
     cmd.Parameters.AddWithValue("event", eventId);
     cmd.Parameters.AddWithValue("stream", streamId);

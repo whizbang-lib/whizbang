@@ -2304,6 +2304,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("  scope JSONB NOT NULL,");
     sb.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
     sb.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
+    // Nullable TTL-row expiry (E2-4d): NULL = never expires (PersistedRow/InMemory). Stamped on upsert for
+    // TtlRow perspectives; lens queries hide expired rows and a maintenance task reaps them.
+    sb.AppendLine("  expires_at TIMESTAMPTZ,");
 
     if (perspective.PhysicalFields.IsEmpty) {
       sb.AppendLine("  version INTEGER NOT NULL");
@@ -2317,6 +2320,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
     sb.AppendLine(");");
+    // Additive for tables created before E2-4d — CREATE ... IF NOT EXISTS above skips existing tables.
+    sb.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
     sb.AppendLine();
   }
 
@@ -2461,6 +2466,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     perspSql.AppendLine("  scope JSONB NOT NULL,");
     perspSql.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
     perspSql.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
+    // Nullable TTL-row expiry (E2-4d): NULL = never expires. See _appendCreateTableSql for the rationale.
+    perspSql.AppendLine("  expires_at TIMESTAMPTZ,");
 
     if (perspective.PhysicalFields.IsEmpty) {
       perspSql.AppendLine("  version INTEGER NOT NULL");
@@ -2474,6 +2481,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
     perspSql.AppendLine(");");
+    // Additive for tables created before E2-4d (CREATE ... IF NOT EXISTS skips existing tables).
+    perspSql.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
   }
 
   private static void _generatePerspectiveIndexSql(
@@ -2557,6 +2566,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       new("scope", "jsonb", false, false, false, null),
       new("created_at", "timestamptz", false, false, false, null),
       new("updated_at", "timestamptz", false, false, false, null),
+      new("expires_at", "timestamptz", true, false, false, null),
       new("version", "integer", false, false, false, null)
     };
 

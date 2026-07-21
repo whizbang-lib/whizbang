@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -112,6 +113,31 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // A perspective is ephemeral-tainted (viral) if it applies ANY ephemeral event. Ephemeral perspectives
+    // snapshot on their own aggressive, single-slot cadence so a fresh rewind floor exists within the grace
+    // window before consumed bodies are reaped. Resolved at compile time — zero reflection.
+    var isEphemeral = eventTypeSymbols.Any(static s => EphemeralResolver.IsEphemeral(s));
+
+    // TtlRow perspective-row expiry (E2-4d): resolved virally like isEphemeral. If ANY applied [Ephemeral]
+    // event chose TransientStorage.TtlRow, the perspective's rows expire; the TTL is the LONGEST of its
+    // TtlRow events' TtlSeconds (keep the row until its longest-lived contributing data expires). -1 = the
+    // rows never expire (no TtlRow event). The generator emits a [ModuleInitializer] to register this TTL.
+    var ttlRowSeconds = -1;
+    foreach (var s in eventTypeSymbols) {
+      if (s is INamedTypeSymbol named && EphemeralResolver.Resolve(named) is { Storage: "TtlRow" }) {
+        var ttl = EphemeralResolver.ResolveTtlSeconds(named);
+        if (ttl > ttlRowSeconds) {
+          ttlRowSeconds = ttl;
+        }
+      }
+    }
+
+    // A1-6b: a perspective marked [FullHistory] needs every event and cannot resume from a carry-forward /
+    // closing event — the A1 close guard refuses a discard-close of any stream it consumes. Resolved at compile
+    // time; the generator registers the perspective's name so the runtime guard can key off it.
+    var isFullHistory = classSymbol.GetAttributes().Any(
+        static a => a.AttributeClass?.Name is "FullHistoryAttribute" or "FullHistory");
+
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
@@ -182,7 +208,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             StorageMode: storageMode,
             IsModelRecord: isModelRecord,
             HasScopeInterface: hasScopeInterface,
-            InheritScopeOnCreate: inheritScopeOnCreate
+            InheritScopeOnCreate: inheritScopeOnCreate,
+            IsEphemeral: isEphemeral,
+            TtlRowSeconds: ttlRowSeconds,
+            IsFullHistory: isFullHistory
         ),
         Warning: null
     );
@@ -410,6 +439,21 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         "INHERIT_SCOPE_ON_CREATE",
         $"private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeOnCreate};");
 
+    result = TemplateUtilities.ReplaceRegion(result, "SNAPSHOT_SETTINGS", perspective.IsEphemeral
+        ? "var snapshotThreshold = _snapshotOptions.Value.EphemeralSnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream;"
+        : "var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;");
+    result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
+        $"private const bool _isEphemeralPerspective = {(perspective.IsEphemeral ? "true" : "false")};");
+    // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
+    // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
+    result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
+        ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerRowTtl() =>\n      global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.Register(typeof({modelTypeName}), {perspective.TtlRowSeconds});"
+        : "");
+    // A1-6b: register a [FullHistory] perspective's name (matching its association target_name = its ClrTypeName)
+    // so the close guard can refuse a discard-close of any stream it consumes. Empty for resumable perspectives.
+    result = TemplateUtilities.ReplaceRegion(result, "FULL_HISTORY_REGISTRATION", perspective.IsFullHistory
+        ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerFullHistory() =>\n      global::Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.Register(\"{perspective.ClrTypeName}\");"
+        : "");
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);

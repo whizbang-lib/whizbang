@@ -104,12 +104,21 @@ public class PerspectiveApplyExactlyOnceTests {
     var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
     var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
 
-    // Act — drive the worker. Wait for TWO cycles: cycle 2 starting means cycle 1 finished
-    // (drain branch + standard branch + completion reporting all drained). No timing-based waits.
+    // Act — drive the worker.
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createWorker(coordinator, registry, eventStore);
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+
+    // First wait on the DISPATCH itself. Waiting only on a cycle count was racy: the coordinator
+    // increments its cycle at the top of a poll, so cycle 2 can begin before cycle 1's dispatched
+    // work has actually run — the worker would then be cancelled with zero invocations recorded and
+    // the "at least one path fired" assertion would fail for reasons unrelated to the contract.
+    await runner.WaitForInvocationsAsync(1, TimeSpan.FromSeconds(10));
+
+    // THEN let cycle 1 finish draining (drain branch + standard branch + completion reporting), so
+    // that if the guard is broken and BOTH paths fire, the second invocation is recorded before we
+    // assert. Without this the test could pass vacuously by asserting too early.
     await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
@@ -295,11 +304,109 @@ public class PerspectiveApplyExactlyOnceTests {
     }
   }
 
+  // ==================== Scenario 1c: drain-path intra-pod stream-affinity gate ====================
+
+  /// <summary>
+  /// Suspect #1, deepest form: two drain consumers process the SAME (stream, perspective) concurrently.
+  /// The standard path holds a per-<c>(streamId, perspectiveName)</c> affinity semaphore around apply
+  /// (PerspectiveWorker.cs, <c>_streamAffinityGates</c>); the production-active DRAIN path historically
+  /// did not, so a second consumer could race through the cooldown check (still "fresh" while the first
+  /// is mid-apply) and dispatch the same event twice on stale state — the production saga-strand race
+  /// (019ee73d / 019ef473). See <c>plans/perspective-worker-stream-affinity.md</c>.
+  /// </summary>
+  /// <remarks>
+  /// Deterministic by construction: consumer A blocks INSIDE the runner (before cooldown is marked);
+  /// a second drain signal for the same stream is then enqueued so consumer B enters the same window.
+  /// Without the gate, B applies the event a second time. With the gate, B parks on the semaphore until
+  /// A finishes + marks cooldown, then skips the now-cooled event. No <c>Task.Delay</c> pacing — the
+  /// only bounded wait is the negative "B must NOT enter" assertion, which the fix satisfies by parking B.
+  /// </remarks>
+  [Test]
+  public async Task DrainMode_TwoConsumersSameStreamPerspective_AffinityGateSerializes_AppliesOnceAsync() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    const string perspectiveName = "Test.AffinityGatePerspective";
+    var runner = new _blockingDrainRunner();
+
+    var coordinator = new _dualPathCoordinator {
+      // We enqueue the drain signal MANUALLY (twice, at controlled times) so the two consumers overlap
+      // deterministically — the pump-driven path can't guarantee the second signal lands mid-apply.
+      StreamIdsToReturnOnce = [],
+      PerspectiveWorkToReturnOnce = [],
+      StreamEventsToReturn = [
+        new StreamEventData {
+          StreamId = streamId,
+          EventId = eventId,
+          EventType = TypeNameFormatter.Format(typeof(_fakeApplyEvent)),
+          EventData = JsonSerializer.Serialize(new _fakeApplyEvent(1)),
+          Metadata = null,
+          Scope = null,
+          EventWorkId = Guid.CreateVersion7()
+        }
+      ]
+    };
+    var envelope = new MessageEnvelope<IEvent> {
+      MessageId = new MessageId(eventId),
+      Payload = new _fakeApplyEvent(1),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+    var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
+    var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness) = _createWorker(coordinator, registry, eventStore,
+      o => { o.MaxConcurrentDrainConsumers = 2; o.DrainLoopMaxIterations = 1; });
+
+    // Completion signal for "a second consumer PARKED on the affinity gate for our (stream, perspective)".
+    // This is the deterministic seam that replaces any timing guess: the gate fires it the instant a
+    // second thread finds the gate held. If the gate is missing, this never fires and B reaches the
+    // runner instead — so we race the two signals and assert which one wins. No Task.Delay, no polling.
+    var gateParked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateContended += key => {
+      if (key.StreamId == streamId && key.PerspectiveName == perspectiveName) {
+        gateParked.TrySetResult();
+      }
+    };
+    var workerTask = worker.StartAsync(cts.Token);
+
+    try {
+      // Consumer A picks up the first signal, enters the runner, and BLOCKS before cooldown is marked
+      // — so A holds the gate for (stream, perspective) the whole time B is trying.
+      await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+      await runner.FirstEntered.WaitAsync(TimeSpan.FromSeconds(10));
+
+      // Second signal, same stream. The idle consumer B picks it up. With the gate, B parks (gateParked
+      // fires). Without it, B races through the still-fresh cooldown check into the runner (SecondEntered
+      // fires). Exactly one of these happens — wait for whichever, then assert it was the parking.
+      await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+      var winner = await Task.WhenAny(gateParked.Task, runner.SecondEntered)
+        .WaitAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(winner == gateParked.Task).IsTrue().Because(
+        "the drain path must hold the same per-(streamId,perspectiveName) affinity gate the standard path "
+        + "holds — a second consumer draining the same stream must PARK behind the first, never race into "
+        + "the runner and apply the same event concurrently on stale state (the production saga-strand race).");
+    } finally {
+      // Always unblock A — even if the assertion above threw — so no drain task is left parked.
+      runner.Release();
+    }
+
+    // A now returns, marks cooldown, and releases the gate BEFORE B can acquire it (the finally runs after
+    // the apply). B then acquires, sees the event cooled, and skips. Waiting for A's apply to return
+    // guarantees the cooldown mark (its next, synchronous step) happens before we tear down.
+    await runner.FirstReturned.WaitAsync(TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+
+    await Assert.That(runner.Entries).IsEqualTo(1).Because(
+      "with the affinity gate the event is applied exactly once across both drain consumers");
+  }
+
   // ==================== Scenario 2: IPerspectiveRunner not double-registered ====================
 
   /// <summary>
   /// Suspect #2 in the plan: the generator or consumer DI code registers the same
-  /// <c>IPerspectiveRunner&lt;T&gt;</c> twice, so every <c>ProcessWorkBatchAsync</c> cycle
+  /// <c>IPerspectiveRunner&lt;T&gt;</c> twice, so every <c>ClaimWorkAsync</c> cycle
   /// invokes both registrations.
   /// </summary>
   [Test]
@@ -506,7 +613,13 @@ public class PerspectiveApplyExactlyOnceTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      // Production ALWAYS wires the cooldown cache (WorkerPipelineExtensions). Omitting it here left
+      // the drain refetch loop (slice 30, DrainLoopMaxIterations>1) with no dedup: GetStreamEventsAsync
+      // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
+      // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
+      // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
     return (worker, harness);
   }
 
@@ -526,6 +639,8 @@ public class PerspectiveApplyExactlyOnceTests {
 
     private readonly ConcurrentBag<_Invocation> _invocations = [];
     private readonly TaskCompletionSource _terminalSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ConcurrentDictionary<int, TaskCompletionSource> _countWaiters = new();
+    private int _invocationCount;
 
     public IReadOnlyCollection<_Invocation> Invocations => [.. _invocations];
 
@@ -534,10 +649,31 @@ public class PerspectiveApplyExactlyOnceTests {
     /// cycle-count waits that race drain completion.</summary>
     public Task TerminalProcessed => _terminalSeen.Task;
 
+    /// <summary>
+    /// Completes once at least <paramref name="count"/> invocations have been recorded on ANY path.
+    /// Unlike <see cref="TerminalProcessed"/> — which only fires for the drain path, since the
+    /// standard path records <c>Guid.Empty</c> as its event id — this is path-agnostic, so a test
+    /// that does not know which path will win can still wait on the dispatch itself instead of on a
+    /// cycle boundary (a cycle can tick over before the dispatched work has actually run).
+    /// </summary>
+    public Task WaitForInvocationsAsync(int count, TimeSpan timeout) {
+      var tcs = _countWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      if (Volatile.Read(ref _invocationCount) >= count) {
+        tcs.TrySetResult();   // already reached before this waiter registered
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
     private void _record(_Invocation invocation) {
       _invocations.Add(invocation);
       if (invocation.EventId == AdvanceToEventId) {
         _terminalSeen.TrySetResult();
+      }
+      var seen = Interlocked.Increment(ref _invocationCount);
+      foreach (var waiter in _countWaiters) {
+        if (seen >= waiter.Key) {
+          waiter.Value.TrySetResult();
+        }
       }
     }
 
@@ -589,6 +725,80 @@ public class PerspectiveApplyExactlyOnceTests {
   }
 
   /// <summary>
+  /// Runner that HOLDS its first RunWithEventsAsync open (blocked before cooldown is marked) so a test
+  /// can drive a second consumer into the same (stream, perspective) window and assert the drain-path
+  /// affinity gate serializes them. Counts total entries; signals first + second entry.
+  /// </summary>
+  private sealed class _blockingDrainRunner : IPerspectiveRunner {
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _firstEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _firstReturned = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _secondEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _entries;
+
+    public Task FirstEntered => _firstEntered.Task;
+    public Task FirstReturned => _firstReturned.Task;
+    public Task SecondEntered => _secondEntered.Task;
+    public int Entries => Volatile.Read(ref _entries);
+    public void Release() => _release.TrySetResult();
+
+    public Type PerspectiveType => typeof(object);
+
+    public async Task<PerspectiveCursorCompletion> RunWithEventsAsync(
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
+        IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
+      var n = Interlocked.Increment(ref _entries);
+      if (n == 1) {
+        _firstEntered.TrySetResult();
+        // Hold the apply open: cooldown is marked only AFTER this returns, so while we block here the
+        // (stream, perspective) is still "fresh" to any second consumer — exactly the race window.
+        // Intentionally NOT tied to the worker CT: Release() must reliably let A return so it marks
+        // cooldown (its first, synchronous post-apply step). Tying it to the CT let a near-simultaneous
+        // worker cancel win the race, skip A's mark, and leave the event "fresh" for B — a teardown
+        // flake unrelated to the gate under test.
+        await _release.Task.ConfigureAwait(false);
+      } else {
+        _secondEntered.TrySetResult();
+      }
+      var lastId = events.Count > 0 ? events[^1].MessageId.Value : lastProcessedEventId ?? Guid.Empty;
+      if (n == 1) {
+        _firstReturned.TrySetResult();
+      }
+      return new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = lastId,
+        Status = events.Count > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None,
+        EventsProcessed = events.Count
+      };
+    }
+
+    public Task<PerspectiveCursorCompletion> RunAsync(
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+      Task.FromResult(new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = lastProcessedEventId ?? Guid.Empty,
+        Status = PerspectiveProcessingStatus.None,
+        EventsProcessed = 0
+      });
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
+        Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = triggeringEventId,
+        Status = PerspectiveProcessingStatus.Completed,
+        EventsProcessed = 1
+      });
+
+    public Task BootstrapSnapshotAsync(
+        Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+  }
+
+  /// <summary>
   /// Coordinator that returns a WorkBatch with BOTH PerspectiveStreamIds AND PerspectiveWork
   /// populated for the same stream. Models the production condition the plan calls out as
   /// suspect #1. After one cycle, subsequent polls return an empty batch so the test settles.
@@ -604,10 +814,13 @@ public class PerspectiveApplyExactlyOnceTests {
 
     public Task WaitForCyclesAsync(int minCycles, TimeSpan timeout) {
       var tcs = _cycleWaiters.GetOrAdd(minCycles, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      if (Volatile.Read(ref _cycleCount) >= minCycles) {
+        tcs.TrySetResult();   // cycle already passed before this waiter registered — don't hang
+      }
       return tcs.Task.WaitAsync(timeout);
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
       foreach (var kvp in _cycleWaiters) {
         if (current >= kvp.Key) {
@@ -725,7 +938,8 @@ public class PerspectiveApplyExactlyOnceTests {
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createWorker(
       IWorkCoordinator coordinator,
       IPerspectiveRunnerRegistry registry,
-      IEventStore eventStore) {
+      IEventStore eventStore,
+      Action<PerspectiveWorkerOptions>? configureOptions = null) {
     var instanceProvider = new _fakeInstanceProvider();
     var strategy = new InstantCompletionStrategy();
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -740,17 +954,25 @@ public class PerspectiveApplyExactlyOnceTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var options = new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 };
+    configureOptions?.Invoke(options);
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      Options.Create(options),
       tracingOptions: null,
       strategy,
       eventTypeProvider: registry,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      // Production ALWAYS wires the cooldown cache (WorkerPipelineExtensions). Omitting it here left
+      // the drain refetch loop (slice 30, DrainLoopMaxIterations>1) with no dedup: GetStreamEventsAsync
+      // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
+      // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
+      // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
     return (worker, harness);
   }
 }

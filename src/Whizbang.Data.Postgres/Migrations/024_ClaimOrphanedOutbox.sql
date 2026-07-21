@@ -24,7 +24,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_outbox(
 BEGIN
   RETURN QUERY
   WITH claimed AS (
-    UPDATE wh_outbox o
+    UPDATE __SCHEMA__.wh_outbox o
     SET instance_id = p_instance_id,
         lease_expiry = p_lease_expiry,
         -- Phase H step 8 slice D: see claim_orphaned_inbox (mig 025). Single-source
@@ -76,7 +76,7 @@ BEGIN
       -- STREAM ORDERING CHECK: Don't claim if there's an earlier message in the same stream
       -- that's scheduled for future retry (blocks later messages until retry time passes)
       AND NOT EXISTS (
-        SELECT 1 FROM wh_outbox earlier
+        SELECT 1 FROM __SCHEMA__.wh_outbox earlier
         WHERE earlier.stream_id = o.stream_id
           AND earlier.created_at < o.created_at
           AND earlier.scheduled_for IS NOT NULL

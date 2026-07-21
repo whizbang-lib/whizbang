@@ -1027,7 +1027,7 @@ public class PerspectiveWorkerCoverageTests {
   #endregion
 
   // DELETED (Category 1): Worker_WithDebugMode_SetsDebugFlagOnRequestAsync
-  // The DebugMode flag was a property of ProcessWorkBatchRequest. The channel architecture
+  // The DebugMode flag was a property of the removed work-batch request. The channel architecture
   // doesn't build that request — perspective work flows through IPerspectiveChannelWriter
   // directly. There is no equivalent assertion in the new path.
 
@@ -1186,7 +1186,7 @@ public class PerspectiveWorkerCoverageTests {
   #endregion
 
   // DELETED (Category 1): Worker_WithInstanceMetadata_PassesMetadataToRequestAsync
-  // InstanceMetadata was a property of ProcessWorkBatchRequest. The channel architecture
+  // InstanceMetadata was a property of the removed work-batch request. The channel architecture
   // routes metadata through HeartbeatRequest instead; this test has no equivalent in the
   // new path. PerspectiveWorkerOptions.InstanceMetadata is unused post commit C.
 
@@ -1365,12 +1365,10 @@ public class PerspectiveWorkerCoverageTests {
     public int ReportCompletionCallCount { get; private set; }
     public int ReportFailureCallCount { get; private set; }
     public WorkBatch? WorkBatchOverride { get; set; }
-    public bool CaptureRequests { get; set; }
-    public List<ProcessWorkBatchRequest> CapturedRequests { get; } = [];
 
     /// <summary>
     /// Pumps work into the harness channel and ticks the cycle counter on a loop.
-    /// Drives the worker the way ProcessWorkBatchAsync used to, before commit C deleted
+    /// Drives the worker the way the coordinator poll used to, before commit C deleted
     /// the legacy poll path. Tests fire this after StartAsync to exercise channel mode.
     /// </summary>
     public async Task RunPumpLoopAsync(PerspectiveWorkerTestHarness harness, CancellationToken ct) {
@@ -1405,29 +1403,6 @@ public class PerspectiveWorkerCoverageTests {
       } catch (OperationCanceledException) {
         throw new TimeoutException($"Failure was not reported within {timeout}");
       }
-    }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-        ProcessWorkBatchRequest request,
-        CancellationToken cancellationToken = default) {
-      ProcessWorkBatchCallCount++;
-
-      if (CaptureRequests) {
-        CapturedRequests.Add(request);
-      }
-
-      if (WorkBatchOverride is not null) {
-        return Task.FromResult(WorkBatchOverride);
-      }
-
-      var work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
-      PerspectiveWorkToReturn.Clear();
-
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = work
-      });
     }
 
     public Task ReportPerspectiveCompletionAsync(

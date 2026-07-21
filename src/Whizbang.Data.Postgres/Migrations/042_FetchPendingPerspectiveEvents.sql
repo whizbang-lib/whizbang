@@ -32,8 +32,8 @@ BEGIN
     pe.event_work_id,
     pe.event_id,
     es.commit_sequence
-  FROM wh_perspective_events pe
-  INNER JOIN wh_event_store es ON es.event_id = pe.event_id
+  FROM __SCHEMA__.wh_perspective_events pe
+  INNER JOIN __SCHEMA__.wh_event_store es ON es.event_id = pe.event_id
   WHERE pe.stream_id = p_stream_id
     AND pe.perspective_name = p_perspective_name
     AND pe.instance_id = p_instance_id
@@ -112,8 +112,8 @@ BEGIN
   -- (pg_stat_user_tables on a consumer after run 19: 5.7M UPDATEs vs 800k inserts).
   WITH eligible AS (
     SELECT pe.event_work_id, pe.instance_id, pe.attempts
-    FROM wh_perspective_events pe
-    INNER JOIN wh_event_store es ON es.event_id = pe.event_id
+    FROM __SCHEMA__.wh_perspective_events pe
+    INNER JOIN __SCHEMA__.wh_event_store es ON es.event_id = pe.event_id
     WHERE pe.stream_id = p_stream_id
       AND pe.perspective_name = p_perspective_name
       AND pe.processed_at IS NULL
@@ -126,7 +126,7 @@ BEGIN
     ORDER BY pe.event_work_id
     FOR UPDATE OF pe SKIP LOCKED
   )
-  UPDATE wh_perspective_events pe
+  UPDATE __SCHEMA__.wh_perspective_events pe
   SET instance_id = p_instance_id,
       lease_expiry = p_lease_expiry,
       attempts = pe.attempts + 1
@@ -142,8 +142,8 @@ BEGIN
     pe.event_work_id,
     pe.event_id,
     es.commit_sequence
-  FROM wh_perspective_events pe
-  INNER JOIN wh_event_store es ON es.event_id = pe.event_id
+  FROM __SCHEMA__.wh_perspective_events pe
+  INNER JOIN __SCHEMA__.wh_event_store es ON es.event_id = pe.event_id
   WHERE pe.stream_id = p_stream_id
     AND pe.perspective_name = p_perspective_name
     AND pe.instance_id = p_instance_id

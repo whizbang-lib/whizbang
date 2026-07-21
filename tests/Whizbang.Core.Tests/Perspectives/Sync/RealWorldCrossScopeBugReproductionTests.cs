@@ -64,7 +64,7 @@ public class RealWorldCrossScopeBugReproductionTests {
     // - Event IS in wh_perspective_events with processed_at = NULL (PENDING)
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
       queryCount++;
-      var inquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      var inquiry = (request.Count > 0 ? request[0] : null);
       capturedEventTypeFilter = inquiry?.EventTypeFilter;
 
       // Simulate: Event discovered, but NOT YET PROCESSED
@@ -180,7 +180,7 @@ public class RealWorldCrossScopeBugReproductionTests {
     // Mock coordinator that returns: PendingCount=0, ProcessedCount=0
     // This could mean "no events to wait for" OR "events exist but aren't tracked yet"
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      var inquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      var inquiry = (request.Count > 0 ? request[0] : null);
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -228,7 +228,7 @@ public class RealWorldCrossScopeBugReproductionTests {
     string[]? capturedFilter = null;
 
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      capturedFilter = request.PerspectiveSyncInquiries?.FirstOrDefault()?.EventTypeFilter;
+      capturedFilter = (request.Count > 0 ? request[0].EventTypeFilter : null);
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],

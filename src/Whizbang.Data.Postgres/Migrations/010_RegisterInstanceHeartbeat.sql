@@ -25,7 +25,7 @@ BEGIN
   -- on a tiny wh_service_instances table). 10 s leaves 20 s of safety margin
   -- before cleanup_stale_instances (default p_stale_threshold_seconds = 30 s)
   -- would mark this instance stale.
-  INSERT INTO wh_service_instances (
+  INSERT INTO __SCHEMA__.wh_service_instances (
     instance_id,
     service_name,
     host_name,

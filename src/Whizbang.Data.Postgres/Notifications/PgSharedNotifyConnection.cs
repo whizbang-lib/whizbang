@@ -129,7 +129,7 @@ public sealed partial class PgSharedNotifyConnection(
   public async Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) {
     cancellationToken.ThrowIfCancellationRequested();
     var resolution = NotificationConnectionStringResolver.Resolve(
-      _options, _configuration, _connectionStringFallback);
+      _options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null && _dataSource is null) {
       _setAvailable(false, "no connection string resolvable");
       return false;
@@ -312,7 +312,7 @@ public sealed partial class PgSharedNotifyConnection(
     }
 
     var resolution = NotificationConnectionStringResolver.Resolve(
-      _options, _configuration, _connectionStringFallback);
+      _options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null && _dataSource is null) {
       if (_options.SignalingMode == WorkSignalingMode.ListenNotify) {
         throw new InvalidOperationException(

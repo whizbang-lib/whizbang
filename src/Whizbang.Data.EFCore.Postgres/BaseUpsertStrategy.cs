@@ -175,13 +175,20 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerEventApplyHooks.ApplyModelSetters(args.Model, hookPlan.ModelFieldSetters);
     }
 
+    // TtlRow perspective-row expiry (E2-4d): a perspective whose [Ephemeral] events chose TransientStorage.TtlRow
+    // gets a sliding row TTL — stamp expires_at = now + ttl on every upsert (last-activity window). The generator
+    // registers the model's TTL virally; an unregistered model (PersistedRow/InMemory/Sourced) resolves to -1 and
+    // its rows never expire (expires_at stays NULL).
+    var ttlSeconds = Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(TModel));
+    DateTimeOffset? expiresAt = ttlSeconds >= 0 ? DateTimeOffset.UtcNow.AddSeconds(ttlSeconds) : null;
+
     // Path 1 atomic upsert. When configured (see PathOnePersistenceOptionsProvider) and
     // applicable (no physical fields, table name supplied), this single round-trip replaces
     // the SELECT-then-INSERT/UPDATE pattern and structurally eliminates the 23505 dup-key
     // race that slice 19's retry loop was built to recover from. Returns false to signal
     // the caller should fall back to the retry loop (config off, physical fields present,
     // or any other unsupported case).
-    if (await _tryAtomicUpsertAsync(context, args, hookPlan, cancellationToken)) {
+    if (await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, cancellationToken)) {
       return;
     }
 
@@ -194,7 +201,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // propagates and the caller routes the work through the failure channel.
     for (var attempt = 0; attempt <= MAX_DUPLICATE_KEY_RETRIES; attempt++) {
       try {
-        await _upsertCoreInnerAsync(context, args, hookPlan, cancellationToken);
+        await _upsertCoreInnerAsync(context, args, hookPlan, expiresAt, cancellationToken);
         if (attempt > 0) {
           Interlocked.Increment(ref _duplicateKeyRetriesRecovered);
         }
@@ -222,6 +229,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       DbContext context,
       UpsertRowArgs<TModel> args,
       PerEventApplyHookPlan hookPlan,
+      DateTimeOffset? expiresAt,
       CancellationToken cancellationToken)
       where TModel : class {
     var optionsProvider = PathOnePersistenceOptionsProvider;
@@ -350,13 +358,20 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
 
     // updated_at + the version bump come from the resolved per-event hook plan (default whizbang.timestamps:
     // updated_at = now, bump = 1). created_at is always the real now on insert (a hook cannot rewrite it).
+    // expires_at is TtlRow-only (E2-4d). For a non-TtlRow model (expiresAt == null) the clause is omitted
+    // entirely, so the SQL is byte-identical to the pre-E2-4d form — a perspective table that never carries
+    // the column (the common case + hand-written test schemas) is unaffected. A TtlRow perspective uses the
+    // generated schema, which has the column.
+    var expiresColumn = expiresAt.HasValue ? ", expires_at" : "";
+    var expiresValue = expiresAt.HasValue ? ", @wb_expires" : "";
+    var expiresUpdate = expiresAt.HasValue ? "\n          expires_at = EXCLUDED.expires_at," : "";
     var sql = $@"
-        INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, version{pfColumnsClause})
-        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, 1{pfValuesClause})
+        INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, version{expiresColumn}{pfColumnsClause})
+        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, 1{expiresValue}{pfValuesClause})
         ON CONFLICT (id) DO UPDATE SET
           data = EXCLUDED.data,
           metadata = EXCLUDED.metadata,
-          updated_at = EXCLUDED.updated_at,
+          updated_at = EXCLUDED.updated_at,{expiresUpdate}
           version = {qualifiedTable}.version + @wb_versionbump{scopeUpdateClause}{pfUpdateClause}{whereClause}";
 
     var connection = context.Database.GetDbConnection();
@@ -379,6 +394,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       cmd.Parameters.Add(new NpgsqlParameter("scope", scopeJson));
       cmd.Parameters.Add(new NpgsqlParameter("wb_created", DateTime.UtcNow));
       cmd.Parameters.Add(new NpgsqlParameter("wb_updated", hookPlan.UpdatedAt?.UtcDateTime ?? DateTime.UtcNow));
+      if (expiresAt.HasValue) {
+        cmd.Parameters.Add(new NpgsqlParameter("wb_expires", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = expiresAt.Value.UtcDateTime });
+      }
       cmd.Parameters.Add(new NpgsqlParameter("wb_versionbump", hookPlan.BumpVersion ? 1 : 0));
       if (pfCount > 0) {
         var i = 0;
@@ -458,6 +476,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       DbContext context,
       UpsertRowArgs<TModel> args,
       PerEventApplyHookPlan hookPlan,
+      DateTimeOffset? expiresAt,
       CancellationToken cancellationToken)
       where TModel : class {
     var id = args.Id;
@@ -530,6 +549,13 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     } else {
       row = _createNewRow(id, model, metadata, scope, now, updatedAt);
       context.Set<PerspectiveRow<TModel>>().Add(row);
+    }
+
+    // TtlRow perspective-row expiry (E2-4d): set the expires_at SHADOW property (a sliding last-activity
+    // window). ONLY for TtlRow models (expiresAt.HasValue) so a context that never declares the shadow
+    // property (every non-TtlRow / hand-configured test context) is untouched — no CLR property, no auto-map.
+    if (expiresAt.HasValue) {
+      context.Entry(row).Property("expires_at").CurrentValue = expiresAt.Value.UtcDateTime;
     }
 
     if (physicalFieldValues != null) {

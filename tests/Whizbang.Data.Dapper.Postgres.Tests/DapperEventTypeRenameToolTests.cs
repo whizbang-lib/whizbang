@@ -196,8 +196,8 @@ public class DapperEventTypeRenameToolTests : IAsyncDisposable {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
     await connection.ExecuteAsync(
-      @"INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
-        VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), @Clr, @Clr, '{}'::jsonb, '{}'::jsonb, 1, NOW())",
+      @"INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+        VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), @Clr, @Clr, 1, NOW())",
       new { Clr = clrTypeName });
   }
 

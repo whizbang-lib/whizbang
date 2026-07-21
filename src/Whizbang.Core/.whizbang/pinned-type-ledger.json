@@ -2,6 +2,12 @@
   "version": 1,
   "types": [
     {
+      "pinnedId": "b6f3c2a1-7d84-4e59-9c0b-2a1f8e6d3b70",
+      "clrTypeName": "Whizbang.Core.Archival.ScheduledStreamClose",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
       "pinnedId": "5b8636e8-5c28-4520-8013-bf1e95b7f783",
       "clrTypeName": "Whizbang.Core.Commands.System.CancelPerspectiveRebuildCommand",
       "kind": "command",
@@ -112,6 +118,12 @@
     {
       "pinnedId": "e3accb0d-aecb-4b54-9bb5-945d5adf844b",
       "clrTypeName": "Whizbang.Core.Events.System.StreamRewindStarted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "d4e8c1a6-9b03-4f27-8a5e-1c7b2d9e6f04",
+      "clrTypeName": "Whizbang.Core.Perspectives.Compacted",
       "kind": "event",
       "formerNames": []
     },

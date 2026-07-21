@@ -67,7 +67,7 @@ BEGIN
     END IF;
 
     -- Insert message with immediate lease (ON CONFLICT for idempotency)
-    INSERT INTO wh_outbox (
+    INSERT INTO __SCHEMA__.wh_outbox (
       message_id,
       destination,
       message_type,

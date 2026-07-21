@@ -13,10 +13,11 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_HasTwentyFiveValuesAsync() {
-    // 24 lifecycle stages + 1 special AfterReceptorCompletion for tag hooks
+  public async Task LifecycleStage_HasTwentyNineValuesAsync() {
+    // 28 lifecycle stages + 1 special AfterReceptorCompletion for tag hooks.
+    // (E2 added the 4 Pre/PostDestruction Inline+Detached stages.)
     var values = Enum.GetValues<LifecycleStage>();
-    await Assert.That(values.Length).IsEqualTo(25);
+    await Assert.That(values.Length).IsEqualTo(29);
   }
 
   // ==========================================================================

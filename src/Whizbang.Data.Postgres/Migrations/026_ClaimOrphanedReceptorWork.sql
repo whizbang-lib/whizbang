@@ -18,7 +18,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_receptor_work(
 ) AS $$
 BEGIN
   RETURN QUERY
-  UPDATE wh_receptor_processing rp
+  UPDATE __SCHEMA__.wh_receptor_processing rp
   SET instance_id = p_instance_id,
       lease_expiry = p_lease_expiry,
       claimed_at = p_now

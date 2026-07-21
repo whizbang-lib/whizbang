@@ -25,6 +25,8 @@ public sealed class DbContextNotificationConnectionStringFallback : INotificatio
   private readonly Type _dbContextType;
   private string? _cached;
   private bool _resolved;
+  private string? _cachedSearchPath;
+  private bool _searchPathResolved;
   private readonly Lock _gate = new();
 
   /// <summary>
@@ -65,6 +67,34 @@ public sealed class DbContextNotificationConnectionStringFallback : INotificatio
       }
       _resolved = true;
       return _cached;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// Surfaces the EF Core model's default schema so the notification layer's raw connections
+  /// resolve unqualified Whizbang tables/functions (<c>wh_signals</c>,
+  /// <c>wh_claim_due_schedules</c>, …) in the SERVICE schema instead of <c>public</c>.
+  /// Returns <c>null</c> for single-schema (public) deployments — no search path needed.
+  /// </remarks>
+  public string? GetSearchPath() {
+    if (_searchPathResolved) {
+      return _cachedSearchPath;
+    }
+    lock (_gate) {
+      if (_searchPathResolved) {
+        return _cachedSearchPath;
+      }
+      using var scope = _serviceProvider.CreateScope();
+      var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
+      try {
+        _cachedSearchPath = dbContext.Model.GetDefaultSchema();
+      } catch (InvalidOperationException) {
+        // Non-relational provider — treat as "no schema known".
+        _cachedSearchPath = null;
+      }
+      _searchPathResolved = true;
+      return _cachedSearchPath;
     }
   }
 

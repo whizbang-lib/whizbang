@@ -20,7 +20,7 @@ BEGIN
       si.instance_id,
       (ROW_NUMBER() OVER (ORDER BY si.instance_id) - 1)::INTEGER as rank,
       COUNT(*) OVER ()::INTEGER as total_count
-    FROM wh_service_instances si
+    FROM __SCHEMA__.wh_service_instances si
     WHERE si.last_heartbeat_at >= p_stale_cutoff
   )
   SELECT

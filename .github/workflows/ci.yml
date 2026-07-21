@@ -98,6 +98,13 @@ jobs:
       - name: Verify Code Formatting
         run: dotnet format --verify-no-changes --no-restore
 
+      # Fails on NEW unqualified service-schema table refs inside migration function bodies
+      # (the multi-schema search_path bug class). Existing debt is baselined; see
+      # scripts/Lint-MigrationSql.ps1 and contributors/data-engines/writing-migrations.md rule 3.
+      - name: Lint SQL migrations (schema qualification)
+        shell: pwsh
+        run: ./scripts/Lint-MigrationSql.ps1
+
   build:
     name: Build
     needs: [version, changes]

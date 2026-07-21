@@ -162,10 +162,17 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
   public async Task DetachedLifecycleStage_DoesNotThrowFirstChanceOceWhenLeaseDisposesAsync() {
     var firstChanceOces = new ConcurrentBag<Exception>();
     void handler(object? _, FirstChanceExceptionEventArgs e) {
-      // Filter to TaskCanceledException whose stack involves the InboxDispatchWorker pipeline.
-      // Without the filter, concurrent test-infrastructure OCEs (TUnit's own machinery) pollute
-      // the count.
-      if (e.Exception is TaskCanceledException && (e.Exception.StackTrace?.Contains("Whizbang.Core.Workers", StringComparison.Ordinal) ?? false)) {
+      // FirstChanceException is a PROCESS-WIDE hook, so the filter must pin the exception to THIS
+      // test's pipeline. Matching the whole Whizbang.Core.Workers namespace also counted OCEs thrown
+      // by other workers (e.g. a PerspectiveWorker shutting down in a test running concurrently in
+      // this process), which made the test fail for reasons that had nothing to do with it.
+      // InboxDispatchWorker + HungDetachedInvoker are the only frames unique to this test, and the
+      // regression this locks in (lease-token cancellation reaching the detached stage) throws
+      // through both.
+      if (e.Exception is TaskCanceledException
+          && e.Exception.StackTrace is { } stack
+          && (stack.Contains(nameof(InboxDispatchWorker), StringComparison.Ordinal)
+              || stack.Contains(nameof(HungDetachedInvoker), StringComparison.Ordinal))) {
         firstChanceOces.Add(e.Exception);
       }
     }

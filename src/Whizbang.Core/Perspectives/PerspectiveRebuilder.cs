@@ -81,6 +81,28 @@ public sealed partial class PerspectiveRebuilder(
       // perspective (most RunAsync calls become no-ops).
       streamIds ??= await _resolveStreamIdsToReplayAsync(sp, registry, perspectiveName, ct);
 
+      // StateBased streams (ephemeral OR compacted) are NOT a rebuildable source of truth — an ephemeral
+      // stream's events self-destruct + bodies are reaped, a compacted stream replays only to its Compacted
+      // origin — so replaying one from events would corrupt the projection. Refuse them up front (the runtime
+      // backstop to the compile-time analyzer). Optional dependency: an absent coordinator = no filtering,
+      // so engines without the flags are unaffected.
+      var stateBasedGuard = sp.GetService<IWorkCoordinator>();
+      if (stateBasedGuard is not null && streamIds.Count > 0) {
+        var stateBased = await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ct);
+        if (stateBased.Count > 0) {
+          var stateBasedSet = stateBased as ISet<Guid> ?? new HashSet<Guid>(stateBased);
+          var kept = new List<Guid>(streamIds.Count);
+          foreach (var id in streamIds) {
+            if (stateBasedSet.Contains(id)) {
+              LogRebuildRefusedEphemeral(logger, perspectiveName, id);
+            } else {
+              kept.Add(id);
+            }
+          }
+          streamIds = kept;
+        }
+      }
+
       var totalStreams = streamIds.Count;
 
       // Track active rebuild status
@@ -256,6 +278,10 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "Rebuild {Perspective}: failed on stream {StreamId} ({Processed}/{Total})")]
   private static partial void LogStreamFailed(ILogger logger, Exception ex, string perspective, Guid streamId, int processed, int total);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Rebuild {Perspective}: refused ephemeral stream {StreamId} — ephemeral streams are not a rebuildable source of truth (events self-destruct, bodies are reaped). Skipped.")]
+  private static partial void LogRebuildRefusedEphemeral(ILogger logger, string perspective, Guid streamId);
 
   [LoggerMessage(Level = LogLevel.Debug,
       Message = "Rebuild {Perspective}: stream {StreamId} replayed to event {LastEventId} (status {Status}) in {ElapsedMs}ms ({Processed}/{Total})")]

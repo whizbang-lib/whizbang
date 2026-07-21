@@ -244,12 +244,14 @@ public class ServiceBusIntegrationFixtureSanityTests {
     await connection.OpenAsync();
 
     await using var cmd = connection.CreateCommand();
+    // Body split (migration 078): event bodies moved from wh_event_store.event_data to wh_event_body.
     cmd.CommandText = @"
-      SELECT event_data::text
-      FROM inventory.wh_event_store
-      WHERE stream_id = @streamId
-        AND event_type = 'ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts'
-      ORDER BY version DESC
+      SELECT eb.event_data::text
+      FROM inventory.wh_event_store es
+      JOIN inventory.wh_event_body eb ON eb.event_id = es.event_id
+      WHERE es.stream_id = @streamId
+        AND es.event_type = 'ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts'
+      ORDER BY es.version DESC
       LIMIT 1";
     cmd.Parameters.AddWithValue("streamId", testProductId.Value);
 
@@ -344,10 +346,11 @@ public class ServiceBusIntegrationFixtureSanityTests {
       // Diagnostic 1: Events in wh_event_store
       await using var cmd = connection.CreateCommand();
       cmd.CommandText = @"
-        SELECT version, event_type, event_data::text
-        FROM inventory.wh_event_store
-        WHERE stream_id = @streamId
-        ORDER BY version";
+        SELECT es.version, es.event_type, eb.event_data::text
+        FROM inventory.wh_event_store es
+        JOIN inventory.wh_event_body eb ON eb.event_id = es.event_id
+        WHERE es.stream_id = @streamId
+        ORDER BY es.version";
       cmd.Parameters.AddWithValue("streamId", testProductId.Value);
 
       await using var reader = await cmd.ExecuteReaderAsync();

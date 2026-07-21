@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -13,6 +14,10 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// statements.
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[SuppressMessage("csharpsquid", "S2077:Formatting SQL queries is security-sensitive",
+  Justification = "The only interpolated value is a schema-qualified SQL identifier (\"schema\".fn) " +
+    "resolved from the EF Core model's configured schema (HasDefaultSchema), not user input. SQL " +
+    "identifiers cannot be parameterized; there is no injection vector. All row values are @parameters.")]
 public sealed class EFCoreDeadLetterStore<TDbContext>(
   TDbContext dbContext,
   ILogger<EFCoreDeadLetterStore<TDbContext>> logger,
@@ -21,6 +26,14 @@ public sealed class EFCoreDeadLetterStore<TDbContext>(
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
   private readonly ILogger<EFCoreDeadLetterStore<TDbContext>> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly WorkCoordinatorGate? _gate = gate;
+
+  // move_to_dead_letters lives in the service schema (__SCHEMA__.<fn>); qualify it like
+  // EFCoreWorkCoordinator does — a bare call only resolves when the connection's search_path
+  // includes the service schema, which is not guaranteed (multi-schema: 42883).
+  private string _fn(string name) {
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
+    return string.IsNullOrWhiteSpace(schema) || schema == "public" ? name : $"\"{schema}\".{name}";
+  }
 
   /// <inheritdoc />
   public async Task<Guid?> MoveAsync(
@@ -42,7 +55,7 @@ public sealed class EFCoreDeadLetterStore<TDbContext>(
       await conn.OpenAsync(ct).ConfigureAwait(false);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT move_to_dead_letters(@dlq, @tbl, @src, @reason, @err, @inst, @gen)";
+    cmd.CommandText = $"SELECT {_fn("move_to_dead_letters")}(@dlq, @tbl, @src, @reason, @err, @inst, @gen)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("dlq", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("tbl", NpgsqlTypes.NpgsqlDbType.Text) { Value = sourceTable });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("src", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = sourceId });

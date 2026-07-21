@@ -131,7 +131,7 @@ public class WorkCoordinatorDrainTests {
     public OutboxMessage[] LastStoredOutbox { get; private set; } = [];
     public int FlushCount { get; private set; }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
       // Legacy fallback (not in live path).
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],

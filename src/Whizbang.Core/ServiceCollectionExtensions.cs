@@ -284,6 +284,9 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<ISyncEventTracker, SyncEventTracker>();
     services.TryAddSingleton<IEventCompletionAwaiter, EventCompletionAwaiter>();
     services.TryAddSingleton<ITrackedEventTypeRegistry, TrackedEventTypeRegistry>();
+    // Temporal engine (F2): the home-grown recurrence next-fire factory. TryAdd so a developer's
+    // own IRecurrenceRuleFactory (the override hook — e.g. a different cron parser) takes precedence.
+    services.TryAddSingleton<Temporal.IRecurrenceRuleFactory, Temporal.DefaultRecurrenceRuleFactory>();
   }
 
   /// <summary>

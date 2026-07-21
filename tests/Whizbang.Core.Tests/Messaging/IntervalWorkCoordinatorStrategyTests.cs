@@ -680,7 +680,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       // Assert — ExecuteFlushAsync signals publisher but does not write to channel
       await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
         .Because("ExecuteFlushAsync signals publisher but does not write to channel");
-      // Work was still persisted via ProcessWorkBatchAsync
+      // Work was still persisted via the work coordinator
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
     } finally {
       await sut.DisposeAsync();
@@ -738,24 +738,12 @@ public class IntervalWorkCoordinatorStrategyTests {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     /// <summary>
-    /// Waits for at least one call to ProcessWorkBatchAsync.
+    /// Waits for at least one flush to the work coordinator.
     /// </summary>
     public async Task WaitForFlushAsync(TimeSpan timeout) {
       if (!await _flushSignal.WaitAsync(timeout)) {
-        throw new TimeoutException("ProcessWorkBatchAsync was not called within timeout");
+        throw new TimeoutException("The work coordinator was not flushed within timeout");
       }
-    }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      // Post-Phase-H: not in the live path. Kept so the fake honors the full interface;
-      // counting and signaling live in Store{Outbox,Inbox}MessagesAsync below.
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = WorkToReturn,
-        InboxWork = [],
-        PerspectiveWork = []
-      });
     }
 
     public Task StoreOutboxMessagesAsync(
@@ -856,15 +844,12 @@ public class IntervalWorkCoordinatorStrategyTests {
   private sealed class SlowWorkCoordinator(int delayMilliseconds) : IWorkCoordinator {
     private readonly int _delayMilliseconds = delayMilliseconds;
 
-    public async Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
+    public async Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
       CancellationToken cancellationToken = default) {
+      // Slow the live store path so a concurrent flush observes one in progress.
       await Task.Delay(_delayMilliseconds, cancellationToken);
-      return new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      };
     }
 
     public Task ReportPerspectiveCompletionAsync(

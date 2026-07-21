@@ -42,7 +42,7 @@ BEGIN
   -- preserve the adaptive-heartbeat correctness case. NULL preserves pre-v0.687
   -- behavior (single-arg callers get the legacy semantics).
   WITH deleted AS (
-    DELETE FROM wh_service_instances
+    DELETE FROM __SCHEMA__.wh_service_instances
     WHERE last_heartbeat_at < p_stale_cutoff
       AND (
         -- v0.687 definitive-dead bypass: heartbeat is older than the caller's
@@ -72,31 +72,31 @@ BEGIN
   -- Release all work from deleted instances
   IF v_deleted_ids IS NOT NULL THEN
     -- Release outbox messages
-    UPDATE wh_outbox
+    UPDATE __SCHEMA__.wh_outbox
     SET instance_id = NULL,
         lease_expiry = NULL
     WHERE instance_id = ANY(v_deleted_ids);
 
     -- Release inbox messages
-    UPDATE wh_inbox
+    UPDATE __SCHEMA__.wh_inbox
     SET instance_id = NULL,
         lease_expiry = NULL
     WHERE instance_id = ANY(v_deleted_ids);
 
     -- Release perspective events
-    UPDATE wh_perspective_events
+    UPDATE __SCHEMA__.wh_perspective_events
     SET instance_id = NULL,
         lease_expiry = NULL
     WHERE instance_id = ANY(v_deleted_ids);
 
     -- Release active stream assignments from deleted instances
-    UPDATE wh_active_streams
+    UPDATE __SCHEMA__.wh_active_streams
     SET assigned_instance_id = NULL,
         lease_expiry = NULL
     WHERE assigned_instance_id = ANY(v_deleted_ids);
 
     -- Release receptor processing leases from deleted instances
-    UPDATE wh_receptor_processing
+    UPDATE __SCHEMA__.wh_receptor_processing
     SET instance_id = NULL,
         lease_expiry = NULL
     WHERE instance_id = ANY(v_deleted_ids);
@@ -125,7 +125,7 @@ BEGIN
     --   wh_work_i_{instance_id}
     -- Payload "orphan" signals "go run claim_orphaned_*" to ClaimWorker._onSignal.
     PERFORM pg_notify('wh_work_i_' || si.instance_id::text, 'orphan')
-    FROM wh_service_instances si
+    FROM __SCHEMA__.wh_service_instances si
     WHERE si.last_heartbeat_at >= p_stale_cutoff;  -- live instances only
   END IF;
 
