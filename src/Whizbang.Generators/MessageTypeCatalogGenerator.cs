@@ -271,9 +271,10 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
           $"{info.EphemeralTtlSeconds})");
       }
       // Type-definition fingerprint (F-3): every entry carries its deterministic settings + schema hashes.
+      // These two are always added, so initParts is never empty — the initializer is unconditional.
       initParts.Add($"SettingsHash = \"{info.SettingsHash}\"");
       initParts.Add($"SchemaHash = \"{info.SchemaHash}\"");
-      var initializer = initParts.Count > 0 ? $" {{ {string.Join(", ", initParts)} }}" : "";
+      var initializer = $" {{ {string.Join(", ", initParts)} }}";
       source.AppendLine($"    new(typeof({info.TypeName}), \"{info.ClrTypeName}\", \"{info.Kind}\", {pinnedIdLiteral}){initializer},");
     }
     source.AppendLine("  };");
