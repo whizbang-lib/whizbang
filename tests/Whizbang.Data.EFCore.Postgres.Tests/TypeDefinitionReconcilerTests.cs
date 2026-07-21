@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -37,8 +38,18 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
   private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
+  // The reconciler now resolves the scoped IWorkCoordinator from a scope per pass (captive-dependency
+  // fix); this double hands it a scope whose provider yields the test's coordinator.
+  private sealed class SingleCoordinatorScopeFactory(IWorkCoordinator coordinator)
+    : IServiceScopeFactory, IServiceScope, IServiceProvider {
+    public IServiceScope CreateScope() => this;
+    public IServiceProvider ServiceProvider => this;
+    public object? GetService(Type serviceType) => serviceType == typeof(IWorkCoordinator) ? coordinator : null;
+    public void Dispose() { }
+  }
+
   private static TypeDefinitionReconciler _reconciler(IWorkCoordinator coordinator, IMessageTypeCatalog catalog, bool act) =>
-    new(coordinator,
+    new(new SingleCoordinatorScopeFactory(coordinator),
         Options.Create(new EphemeralOptions { ReconcileHistoricalOnStartup = act }),
         NullLogger<TypeDefinitionReconciler>.Instance,
         catalog);
