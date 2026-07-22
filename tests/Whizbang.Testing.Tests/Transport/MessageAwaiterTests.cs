@@ -108,6 +108,24 @@ public class MessageAwaiterTests {
   }
 
   [Test]
+  public async Task MessageIdAwaiter_WithExpectedId_IgnoresStragglers_CompletesOnMatchAsync() {
+    var expected = EnvelopeFactory.Create("expected");
+    var straggler = EnvelopeFactory.Create("straggler");
+    var awaiter = new MessageIdAwaiter(expected.MessageId.ToString());
+
+    // A non-matching (stale/straggler) message must NOT complete the awaiter — this is what makes a
+    // correlated routing assertion deterministic instead of racing whichever message arrives first.
+    await awaiter.Handler(straggler, null, CancellationToken.None);
+    await Assert.That(awaiter.IsCompleted).IsFalse();
+
+    // The awaited message completes it; WaitAsync returns that id.
+    await awaiter.Handler(expected, null, CancellationToken.None);
+    var received = await awaiter.WaitAsync(_longTimeout);
+    await Assert.That(received).IsEqualTo(expected.MessageId.ToString());
+    await Assert.That(awaiter.IsCompleted).IsTrue();
+  }
+
+  [Test]
   public async Task MessageIdAwaiter_WaitWithZeroTimeout_NoMessage_ThrowsTimeoutAsync() {
     var awaiter = new MessageIdAwaiter();
 
