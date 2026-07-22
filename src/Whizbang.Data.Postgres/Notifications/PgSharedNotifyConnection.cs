@@ -60,6 +60,11 @@ public sealed partial class PgSharedNotifyConnection(
   private readonly Lock _connectionGate = new();
   private readonly Lock _availabilityGate = new();
   private readonly HashSet<string> _listenedChannels = new(StringComparer.Ordinal);
+  // Per-channel signal completed once a LISTEN for the channel has actually been issued on the
+  // shared connection (Subscribe only registers intent; the dispatch loop issues LISTEN later).
+  // Reset on UNLISTEN so a re-subscribe awaits the new LISTEN rather than a stale completion.
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource> _channelListenedSignals =
+    new(StringComparer.Ordinal);
   private NpgsqlConnection? _connection;
   // Slice 33.3 — Subscribe wakes the dispatch loop by cancelling this CTS so the next
   // iteration can issue LISTEN for the newly-registered channel. The dispatch loop holds
@@ -245,6 +250,22 @@ public sealed partial class PgSharedNotifyConnection(
   }
 
   /// <summary>
+  /// Completes once a <c>LISTEN</c> for <paramref name="channel"/> has been issued on the shared
+  /// connection — i.e. a NOTIFY on that channel will now be delivered to subscribers. Because
+  /// <see cref="Subscribe"/> only registers intent and the dispatch loop issues the actual LISTEN
+  /// asynchronously, callers that need to observe a notification deterministically (rather than race
+  /// the loop) can await this before emitting on the channel.
+  /// </summary>
+  public Task WaitForChannelListenedAsync(string channel, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(channel);
+    return _channelSignal(channel).Task.WaitAsync(cancellationToken);
+  }
+
+  private TaskCompletionSource _channelSignal(string channel)
+    => _channelListenedSignals.GetOrAdd(channel,
+        static _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+
+  /// <summary>
   /// Slice 33.3 — wakes the dispatch loop so it can sync LISTEN/UNLISTEN state with the
   /// registry. NpgsqlConnection isn't thread-safe; issuing LISTEN directly from Subscribe
   /// while the dispatch loop holds the conn via WaitAsync would throw. Instead we cancel
@@ -281,6 +302,8 @@ public sealed partial class PgSharedNotifyConnection(
         await listenCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         _listenedChannels.Add(channel);
         LogChannelListened(_logger, channel);
+        // The LISTEN is now live — a NOTIFY on this channel will be delivered. Signal any waiter.
+        _channelSignal(channel).TrySetResult();
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogListenFailed(_logger, channel, ex);
       }
@@ -296,6 +319,8 @@ public sealed partial class PgSharedNotifyConnection(
         await unlistenCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         _listenedChannels.Remove(channel);
         LogChannelUnlistened(_logger, channel);
+        // Drop the listened-signal so a future re-subscribe awaits the new LISTEN, not a stale one.
+        _channelListenedSignals.TryRemove(channel, out _);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogUnlistenFailed(_logger, channel, ex);
       }
