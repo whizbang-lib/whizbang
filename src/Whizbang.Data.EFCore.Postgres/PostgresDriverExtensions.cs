@@ -114,6 +114,7 @@ public static class PostgresDriverExtensions {
         // initializer's registration order in the IHostedService chain doesn't matter — even
         // if a worker's StartAsync runs first, it blocks on the gate until the initializer
         // calls MarkReady() at the end of migrations.
+        selector.Services.TryAddSingleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>();
         selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
 
         // Message type registry populator — reconciles wh_message_type_registry against the

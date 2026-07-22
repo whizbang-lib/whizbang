@@ -54,6 +54,9 @@ public static class WorkerPipelineExtensions {
     // Type-definition fingerprint reconciler (F-4): detect-by-default, act-by-opt-in. Inert without a
     // catalog (GetService returns null) or without the fingerprint tables (coordinator defaults no-op).
     services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>();
+    // Schema-init behavior (blocking by default; opt-in non-blocking + optional migration timeout).
+    services.AddOptions<SchemaInitializationOptions>();
+    services.TryAddSingleton(TimeProvider.System);
     services.TryAddSingleton(sp => new Whizbang.Core.Fingerprint.TypeDefinitionReconciler(
       sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
       sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.EphemeralOptions>>(),
