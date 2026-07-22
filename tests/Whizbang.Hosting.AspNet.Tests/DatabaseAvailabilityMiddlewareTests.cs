@@ -62,4 +62,58 @@ public class DatabaseAvailabilityMiddlewareTests {
     await Assert.That(nextCalled).IsTrue();
     await Assert.That(context.Response.StatusCode).IsEqualTo(StatusCodes.Status200OK);
   }
+
+  [Test]
+  public async Task NotReady_DefaultExemptPath_PassesThroughAsync() {
+    var nextCalled = false;
+    var context = new DefaultHttpContext();
+    context.Request.Path = "/alive";
+    context.Response.Body = new MemoryStream();
+
+    var middleware = new DatabaseAvailabilityMiddleware(
+      next: _ => { nextCalled = true; return Task.CompletedTask; },
+      schemaReadyGate: new FakeGate(ready: false));
+
+    await middleware.InvokeAsync(context);
+
+    // /alive is a default exempt path: passes through even though the schema is not ready, so the
+    // liveness probe keeps succeeding while migrations run.
+    await Assert.That(nextCalled).IsTrue();
+    await Assert.That(context.Response.StatusCode).IsEqualTo(StatusCodes.Status200OK);
+  }
+
+  [Test]
+  public async Task NotReady_CustomExemptPath_PassesThroughAsync() {
+    var nextCalled = false;
+    var context = new DefaultHttpContext();
+    context.Request.Path = "/probe";
+    context.Response.Body = new MemoryStream();
+
+    var middleware = new DatabaseAvailabilityMiddleware(
+      next: _ => { nextCalled = true; return Task.CompletedTask; },
+      schemaReadyGate: new FakeGate(ready: false),
+      exemptPaths: ["/probe"]);
+
+    await middleware.InvokeAsync(context);
+
+    await Assert.That(nextCalled).IsTrue();
+  }
+
+  [Test]
+  public async Task NotReady_NonExemptPath_Returns503Async() {
+    var nextCalled = false;
+    var context = new DefaultHttpContext();
+    context.Request.Path = "/api/jobs";
+    context.Response.Body = new MemoryStream();
+
+    var middleware = new DatabaseAvailabilityMiddleware(
+      next: _ => { nextCalled = true; return Task.CompletedTask; },
+      schemaReadyGate: new FakeGate(ready: false));
+
+    await middleware.InvokeAsync(context);
+
+    // A real API path is still gated with 503 while the schema is not ready.
+    await Assert.That(nextCalled).IsFalse();
+    await Assert.That(context.Response.StatusCode).IsEqualTo(StatusCodes.Status503ServiceUnavailable);
+  }
 }

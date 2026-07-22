@@ -98,12 +98,22 @@ public sealed class MessageAwaiter<TResult>(
 }
 
 /// <summary>
-/// A simple string-based message awaiter for common test scenarios.
-/// Extracts MessageId as the result.
+/// A simple string-based message awaiter for common test scenarios. Completes with the received
+/// message's id. When constructed with an <c>expectedMessageId</c>, it completes only when THAT
+/// message arrives — ignoring any stragglers (e.g. an incompletely-drained message from a prior
+/// test), so a routing/correlation assertion is deterministic instead of racing whichever message
+/// happens to be delivered first.
 /// </summary>
 public sealed class MessageIdAwaiter : IAwaiterIdentity {
   private readonly TaskCompletionSource<string> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private readonly string? _expectedMessageId;
+
+  /// <summary>
+  /// Creates a message-id awaiter. When <paramref name="expectedMessageId"/> is non-null, only a
+  /// message with that id completes the awaiter; otherwise the first message received completes it.
+  /// </summary>
+  public MessageIdAwaiter(string? expectedMessageId = null) => _expectedMessageId = expectedMessageId;
 
   public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
@@ -117,7 +127,12 @@ public sealed class MessageIdAwaiter : IAwaiterIdentity {
   /// </summary>
   public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
     async (envelope, _, _) => {
-      _tcs.TrySetResult(envelope.MessageId.ToString());
+      var messageId = envelope.MessageId.ToString();
+      // Correlate: when an expected id was given, ignore any other (stale/straggler) message so it
+      // can't win the race and fail the assertion; complete only on the awaited message.
+      if (_expectedMessageId is null || string.Equals(messageId, _expectedMessageId, StringComparison.Ordinal)) {
+        _tcs.TrySetResult(messageId);
+      }
       await Task.CompletedTask;
     };
 

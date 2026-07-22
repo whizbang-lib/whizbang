@@ -201,9 +201,14 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     await _drainMessagesAsync("topic-00", "sub-00-a");
     await _drainMessagesAsync("topic-01", "sub-01-a");
 
-    // Use MessageIdAwaiter harnesses (internally use RunContinuationsAsynchronously)
-    var awaiter00 = new MessageIdAwaiter();
-    var awaiter01 = new MessageIdAwaiter();
+    // Create the envelopes up front so each awaiter can correlate on its OWN message id. A
+    // straggler/stale message (e.g. one an earlier test's drain missed) can then no longer win the
+    // race and fail the routing assertion — the awaiter completes only on the message it awaits.
+    var envelope00 = _createTestEnvelope();
+    var envelope01 = _createTestEnvelope();
+
+    var awaiter00 = new MessageIdAwaiter(envelope00.MessageId.ToString());
+    var awaiter01 = new MessageIdAwaiter(envelope01.MessageId.ToString());
 
     var subscription00 = await transport.SubscribeAsync(
       awaiter00.Handler,
@@ -216,16 +221,13 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     );
 
     try {
-      await Task.Delay(500);
-
-      // Publish to both topics
-      var envelope00 = _createTestEnvelope();
-      var envelope01 = _createTestEnvelope();
-
+      // Subscriptions are durable, so a message published now is delivered whenever the receiver
+      // polls — no Task.Delay warm-up race; the 30s correlated wait below covers any latency.
       await transport.PublishAsync(envelope00, new TransportDestination("topic-00"));
       await transport.PublishAsync(envelope01, new TransportDestination("topic-01"));
 
-      // Assert - harnesses handle timeout with proper exception
+      // WaitAsync completes only when the awaited message arrives on its topic — deterministically
+      // asserting routing (envelope00 -> topic-00/sub-00-a, envelope01 -> topic-01/sub-01-a).
       var received00 = await awaiter00.WaitAsync(TimeSpan.FromSeconds(30));
       var received01 = await awaiter01.WaitAsync(TimeSpan.FromSeconds(30));
 

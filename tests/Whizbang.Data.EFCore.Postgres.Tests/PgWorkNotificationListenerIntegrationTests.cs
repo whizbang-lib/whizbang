@@ -133,6 +133,12 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     await using var stack = await _startStackAsync(listener, shared, cts.Token);
     var tcs = await _attachAsync(listener);
 
+    // Deterministic: wait until the LISTEN for this channel is actually registered on the shared
+    // connection before emitting. Subscribe only registers intent — the dispatch loop issues LISTEN
+    // asynchronously — so a NOTIFY sent before then would fire into a not-yet-listening connection
+    // and be lost (the prior flake: IsHealthy went true while LISTEN was still pending).
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instanceId}", cts.Token);
+
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
