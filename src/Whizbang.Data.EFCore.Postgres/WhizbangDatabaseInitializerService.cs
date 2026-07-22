@@ -46,14 +46,16 @@ internal sealed partial class WhizbangDatabaseInitializerService(
     // Best-effort: recompute partition_number columns that may have drifted across a
     // PartitionCount change. NEVER blocks MarkReady — workers can run on a stale partition
     // map (next claim cycle picks them up correctly via the live PartitionCount).
-    await _tryRecomputePartitionsAsync(cancellationToken);
+    await TryRecomputePartitionsAsync(cancellationToken);
 
     _schemaReadyGate.MarkReady();
   }
 
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-  private async Task _tryRecomputePartitionsAsync(CancellationToken cancellationToken) {
+  // internal (not private) so tests can exercise the best-effort/cancellation contract directly
+  // without driving the static DbContextInitializationRegistry that StartAsync runs first.
+  internal async Task TryRecomputePartitionsAsync(CancellationToken cancellationToken) {
     try {
       await using var scope = _serviceProvider.CreateAsyncScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
@@ -67,6 +69,13 @@ internal sealed partial class WhizbangDatabaseInitializerService(
         LogPartitionRecompute(_logger, partitionCount,
           result.InboxRowsRecomputed, result.OutboxRowsRecomputed, result.ActiveStreamsRowsRecomputed);
       }
+    } catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested) {
+      // Query-level cancellation (e.g. a command timeout under startup load) — NOT host
+      // shutdown. Recompute is best-effort and self-heals on the next claim cycle, so swallowing
+      // it honors the documented "never blocks MarkReady" contract instead of letting the OCE
+      // escape StartAsync and abort the host. A genuine host-shutdown cancellation (the token IS
+      // cancelled) still propagates so startup halts cleanly.
+      LogPartitionRecomputeFailed(_logger, ex);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogPartitionRecomputeFailed(_logger, ex);
     }
