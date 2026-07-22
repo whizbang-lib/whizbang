@@ -68,15 +68,28 @@ public class SignalTypeRegistryTests {
   }
 
   [Test]
-  public async Task RegisteredCount_IncreasesWithEachRegisterAsync() {
-    // Use a unique-per-test wire-name so the assertion is robust to whatever else has registered
-    // into the process-wide static registry.
+  public async Task Register_EntryBecomesQueryableByWireNameAsync() {
+    // Deterministic: assert on THIS registration's unique wire-name via IsRegistered, so the test is
+    // immune to whatever else registers into the process-wide static registry in parallel (module
+    // initializers, other tests). Asserting the exact RegisteredCount delta would race those
+    // concurrent registrations — the flake this replaces.
+    const string wireName = "utest-register-queryable";
     var before = SignalTypeRegistry.RegisteredCount;
+    await Assert.That(SignalTypeRegistry.IsRegistered(wireName)).IsFalse();
+
     SignalTypeRegistry.Register(new FakeSource([
-      new SignalTypeEntry(typeof(SigA), "utest-count", SignalDeliveryClass.BestEffort, SignalTargeting.Broadcast,
+      new SignalTypeEntry(typeof(SigA), wireName, SignalDeliveryClass.BestEffort, SignalTargeting.Broadcast,
         static (sink, ct) => sink.ReceiveAsync<SigA>(default, ct)),
     ]));
 
-    await Assert.That(SignalTypeRegistry.RegisteredCount).IsEqualTo(before + 1);
+    await Assert.That(SignalTypeRegistry.IsRegistered(wireName)).IsTrue();
+    // RegisteredCount only grows, so it is at least one more than before — a race-free check
+    // (>= not ==: concurrent tests may register too; asserting an exact delta is the removed flake).
+    await Assert.That(SignalTypeRegistry.RegisteredCount).IsGreaterThanOrEqualTo(before + 1);
+  }
+
+  [Test]
+  public async Task IsRegistered_NullWireName_ThrowsAsync() {
+    await Assert.That(() => SignalTypeRegistry.IsRegistered(null!)).Throws<ArgumentNullException>();
   }
 }
