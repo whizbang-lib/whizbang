@@ -27,6 +27,25 @@ public static class SignalTypeRegistry {
     return combined;
   }
 
+  /// <summary>
+  /// True when a signal type with the given <paramref name="wireName"/> is registered. Lets callers
+  /// deterministically confirm a specific signal contract is wired — e.g. asserting a generated
+  /// source registered after startup, or verifying a transport can route a wire-name — without
+  /// depending on the process-wide <see cref="RegisteredCount"/>, which every source across the
+  /// dependency chain mutates (so an exact count is inherently racy under concurrent registration).
+  /// </summary>
+  public static bool IsRegistered(string wireName) {
+    ArgumentNullException.ThrowIfNull(wireName);
+    foreach (var source in _sources) {
+      foreach (var entry in source.GetSignalTypes()) {
+        if (string.Equals(entry.WireName, wireName, StringComparison.Ordinal)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   /// <summary>Number of registered sources (diagnostics/testing).</summary>
   public static int RegisteredCount => _sources.Count;
 
