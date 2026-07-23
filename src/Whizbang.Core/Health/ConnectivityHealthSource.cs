@@ -66,6 +66,18 @@ public sealed class ConnectivityHealthSource : IWhizbangHealthSource {
       string component, Func<CancellationToken, ValueTask<bool>> probe, IWhizbangLifecycleState lifecycle, string? faultDetail = null)
     => new(component, probe, lifecycle, ConnectivityRequirement.RequiredWhenRunning, faultDetail);
 
+  /// <summary>
+  /// A placeholder for a managed surface that does not yet have a real connectivity probe (e.g. the
+  /// transport broker, the offload store, the signal bus). It represents the surface in the health model
+  /// and is still phase-aware (it reports the intentional states), but its probe always succeeds — so it
+  /// never fails readiness. <b>TODO:</b> replace with a real per-driver reachability probe; a real source
+  /// for the same component supersedes this placeholder.
+  /// </summary>
+  public static ConnectivityHealthSource AssumedHealthy(
+      string component, IWhizbangLifecycleState lifecycle,
+      ConnectivityRequirement requirement = ConnectivityRequirement.RequiredWhenRunning)
+    => new(component, static _ => new ValueTask<bool>(true), lifecycle, requirement);
+
   /// <inheritdoc />
   public string Component { get; }
 

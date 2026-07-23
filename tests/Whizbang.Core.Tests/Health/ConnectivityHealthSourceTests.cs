@@ -105,4 +105,22 @@ public class ConnectivityHealthSourceTests {
     await Assert.That(health.State).IsEqualTo(ComponentState.Faulted);
     await Assert.That(health.Detail).IsEqualTo("cannot reach db");
   }
+
+  // ---- AssumedHealthy (placeholder — hard-coded healthy, phase-aware) ----
+
+  [Test]
+  [Arguments(LifecyclePhase.Running, ComponentState.Operational)]
+  [Arguments(LifecyclePhase.Migrating, ComponentState.PausedByDesign)]
+  [Arguments(LifecyclePhase.Connecting, ComponentState.Connecting)]
+  [Arguments(LifecyclePhase.Stopping, ComponentState.Draining)]
+  public async Task AssumedHealthy_IsPhaseAware_NeverFaultsFromProbeAsync(LifecyclePhase phase, ComponentState expected) {
+    var source = ConnectivityHealthSource.AssumedHealthy("transport", new FakeLifecycle(phase));
+    await Assert.That((await source.ReportAsync(CancellationToken.None)).State).IsEqualTo(expected);
+  }
+
+  [Test]
+  public async Task AssumedHealthy_Component_IsSetAsync() {
+    var source = ConnectivityHealthSource.AssumedHealthy("offload", new FakeLifecycle(LifecyclePhase.Running));
+    await Assert.That(source.Component).IsEqualTo("offload");
+  }
 }
