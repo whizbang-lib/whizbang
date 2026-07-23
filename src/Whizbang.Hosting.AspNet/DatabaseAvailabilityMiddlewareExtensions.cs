@@ -20,18 +20,21 @@ public static class DatabaseAvailabilityMiddlewareExtensions {
 
   /// <summary>
   /// Adds the schema-availability gate with an explicit set of exempt path prefixes (e.g. custom
-  /// health/probe endpoints) that always pass through even before the schema is ready.
-  /// <see langword="null"/> uses <see cref="DatabaseAvailabilityMiddleware.DefaultExemptPaths"/>.
+  /// health/probe endpoints) that always pass through even before the schema is ready
+  /// (<see langword="null"/> uses <see cref="DatabaseAvailabilityMiddleware.DefaultExemptPaths"/>), and
+  /// a <paramref name="mode"/> selecting whether to gate every non-exempt request or only mutating
+  /// ones (<see cref="AvailabilityGateMode.MutationsOnly"/> lets reads serve during migration).
   /// </summary>
   /// <docs>resilience/database-availability-middleware</docs>
   public static IApplicationBuilder UseDatabaseAvailabilityGate(
-      this IApplicationBuilder app, IReadOnlyList<string>? exemptPaths) {
+      this IApplicationBuilder app, IReadOnlyList<string>? exemptPaths,
+      AvailabilityGateMode mode = AvailabilityGateMode.AllNonExempt) {
     ArgumentNullException.ThrowIfNull(app);
     // Resolve the singleton gate once at build time and construct the middleware explicitly, so the
     // gate (DI) and the exempt paths (explicit) are unambiguously combined.
     var gate = app.ApplicationServices.GetRequiredService<ISchemaReadyGate>();
     return app.Use(next => {
-      var middleware = new DatabaseAvailabilityMiddleware(next, gate, exemptPaths);
+      var middleware = new DatabaseAvailabilityMiddleware(next, gate, exemptPaths, mode);
       return middleware.InvokeAsync;
     });
   }

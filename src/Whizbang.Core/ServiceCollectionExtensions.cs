@@ -162,6 +162,13 @@ public static class ServiceCollectionExtensions {
     // These are set by source-generated module initializers in consumer assemblies
     ServiceRegistrationCallbacks.InvokeAll(services, coreOptions.Services);
 
+    // Turnkey: if the ASP.NET hosting assembly is loaded, its [ModuleInitializer] set
+    // HostingIntegration; fold AddWhizbangAspNet() in automatically (health checks + the
+    // schema-availability gate). Opt out via AutoRegisterAspNetHosting = false and call it yourself.
+    if (coreOptions.AutoRegisterAspNetHosting) {
+      ServiceRegistrationCallbacks.HostingIntegration?.Invoke(services);
+    }
+
     // Auto-invoke WhizbangId provider DI callbacks if any were registered
     WhizbangIdProviderRegistry.InvokeDICallbacks(services);
 

@@ -3,9 +3,11 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Health;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Routing;
+using Whizbang.Core.RunControl;
 
 namespace Whizbang.Core.Workers;
 
@@ -31,6 +33,31 @@ public static class WorkerPipelineExtensions {
     // initializer (e.g., WhizbangDatabaseInitializerService) calls MarkReady after migrations
     // complete. Singleton because all workers + the initializer must observe the same instance.
     services.TryAddSingleton<ISchemaReadyGate, SchemaReadyGate>();
+
+    // Managed-resource health: register the aggregator + the "schema" source over the gate. When a
+    // consumer wires AddWhizbangManagedHealthChecks() the schema reports "migrating" (ready under the
+    // default Lenient policy) during a startup migration instead of failing readiness.
+    services.AddWhizbangManagedHealth();
+    services.AddWhizbangHealthSource<Health.SchemaHealthSource>();
+    services.AddWhizbangHealthSource<Health.WorkerHealthSource>();
+
+    // Managed surfaces without a real connectivity probe yet report ASSUMED-HEALTHY (hard-coded healthy,
+    // still phase-aware). This represents the full managed-surface set in the health model without failing
+    // readiness. The event-store/DB source has a real probe (wired in the Postgres driver). TODO: write real
+    // reachability checks for transport / offload / signal-bus in a later pass; a real source for the same
+    // component supersedes the placeholder. See docs proposal resilience/managed-resource-health.
+    foreach (var surface in new[] { "transport", "offload", "signal-bus" }) {
+      var component = surface;
+      services.AddSingleton<Health.IWhizbangHealthSource>(sp =>
+        Health.ConnectivityHealthSource.AssumedHealthy(
+          component, sp.GetRequiredService<IWhizbangLifecycleState>()));
+    }
+
+    // Run-control (killswitch) plane + the driver that advances the lifecycle phase from the schema
+    // gate (Migrating at startup, Ready once migrations complete), so any registered run-control
+    // adapter is paused/resumed automatically. Inert when no adapters are registered.
+    services.AddWhizbangRunControl();
+    services.AddHostedService<LifecyclePhaseWorker>();
 
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
