@@ -38,6 +38,7 @@ public static class WorkerPipelineExtensions {
     // default Lenient policy) during a startup migration instead of failing readiness.
     services.AddWhizbangManagedHealth();
     services.AddWhizbangHealthSource<Health.SchemaHealthSource>();
+    services.AddWhizbangHealthSource<Health.WorkerHealthSource>();
 
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
