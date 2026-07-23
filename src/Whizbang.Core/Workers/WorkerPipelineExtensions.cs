@@ -7,6 +7,7 @@ using Whizbang.Core.Health;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Routing;
+using Whizbang.Core.RunControl;
 
 namespace Whizbang.Core.Workers;
 
@@ -39,6 +40,12 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangManagedHealth();
     services.AddWhizbangHealthSource<Health.SchemaHealthSource>();
     services.AddWhizbangHealthSource<Health.WorkerHealthSource>();
+
+    // Run-control (killswitch) plane + the driver that advances the lifecycle phase from the schema
+    // gate (Migrating at startup, Ready once migrations complete), so any registered run-control
+    // adapter is paused/resumed automatically. Inert when no adapters are registered.
+    services.AddWhizbangRunControl();
+    services.AddHostedService<LifecyclePhaseWorker>();
 
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
