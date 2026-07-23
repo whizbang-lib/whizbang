@@ -21,6 +21,8 @@ public static class WhizbangRunControlServiceCollectionExtensions {
     services.TryAddSingleton(options);
     services.TryAddSingleton(static sp => new WhizbangRunController(
       sp.GetServices<IWhizbangRunControl>(), sp.GetRequiredService<WhizbangRunControlOptions>()));
+    services.TryAddSingleton<IWhizbangLifecycleState>(static sp =>
+      new WhizbangLifecycleState(sp.GetRequiredService<WhizbangRunController>()));
     return services;
   }
 
