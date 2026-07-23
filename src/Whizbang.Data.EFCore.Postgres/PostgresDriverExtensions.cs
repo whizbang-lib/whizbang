@@ -6,10 +6,12 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Health;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.RunControl;
 using Whizbang.Data.EFCore.Postgres.Dispatch;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
@@ -145,6 +147,18 @@ public static class PostgresDriverExtensions {
           return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
         });
 
+        // TURNKEY: managed-resource health for the event-store DB. AlwaysRequired — a DB fault is a
+        // real fault even during a migration (the migration needs it), so this replaces a consumer's
+        // naive readiness check (no SELECT count(*) that a migration would make time out). The probe
+        // is a lightweight SELECT 1 via the same NpgsqlDataSource; ConnectivityHealthSource combines
+        // it with the lifecycle phase (Starting => not probed, Connecting => still warming, else probe).
+        selector.Services.AddSingleton<IWhizbangHealthSource>(sp =>
+          ConnectivityHealthSource.AlwaysRequired(
+            "event-store",
+            ct => _pingEventStoreAsync(sp.GetRequiredService<NpgsqlDataSource>(), ct),
+            sp.GetRequiredService<IWhizbangLifecycleState>(),
+            "event-store database unreachable"));
+
         // TURNKEY: Register table statistics provider + collector for OTel metrics.
         // The provider schema-qualifies its queries — pass the model's default schema so
         // multi-schema services report THEIR tables instead of probing a bare public schema.
@@ -235,4 +249,17 @@ public static class PostgresDriverExtensions {
   /// </summary>
   internal static string _deriveConnectionStringName(string dbContextClassName)
     => Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName(dbContextClassName);
+
+  /// <summary>
+  /// Lightweight event-store DB reachability probe: opens a pooled connection and runs <c>SELECT 1</c>.
+  /// Throwing (connection refused, auth, timeout) is caught by <see cref="ConnectivityHealthSource"/>
+  /// and read as unreachable. Deliberately trivial so it never queries a mid-migration table.
+  /// </summary>
+  private static async ValueTask<bool> _pingEventStoreAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) {
+    await using var connection = await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT 1";
+    await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return true;
+  }
 }
