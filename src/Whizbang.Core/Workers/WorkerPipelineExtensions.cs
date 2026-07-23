@@ -41,12 +41,25 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangHealthSource<Health.SchemaHealthSource>();
     services.AddWhizbangHealthSource<Health.WorkerHealthSource>();
 
-    // Managed surfaces without a real connectivity probe yet report ASSUMED-HEALTHY (hard-coded healthy,
-    // still phase-aware). This represents the full managed-surface set in the health model without failing
-    // readiness. The event-store/DB source has a real probe (wired in the Postgres driver). TODO: write real
-    // reachability checks for transport / offload / signal-bus in a later pass; a real source for the same
-    // component supersedes the placeholder. See docs proposal resilience/managed-resource-health.
-    foreach (var surface in new[] { "transport", "offload", "signal-bus" }) {
+    // Transport managed-resource health: a REAL probe when a transport is registered — the driver's
+    // ITransport.CheckConnectivityAsync (RabbitMQ IConnection.IsOpen / Service Bus !IsClosed) detects a
+    // broker connection that dropped after init; RequiredWhenRunning, so a disconnected transport during a
+    // migration is by-design. When there is no transport (single-service apps) it reports assumed-healthy.
+    // One source either way — no duplication.
+    services.AddSingleton<Health.IWhizbangHealthSource>(sp => {
+      var lifecycle = sp.GetRequiredService<IWhizbangLifecycleState>();
+      var transport = sp.GetService<Whizbang.Core.Transports.ITransport>();
+      return transport is null
+        ? Health.ConnectivityHealthSource.AssumedHealthy("transport", lifecycle)
+        : Health.ConnectivityHealthSource.RequiredWhenRunning(
+            "transport", transport.CheckConnectivityAsync, lifecycle, "transport broker unreachable");
+    });
+
+    // The remaining surfaces without a real probe yet report ASSUMED-HEALTHY (hard-coded healthy, still
+    // phase-aware) so the full managed-surface set is represented without failing readiness. The
+    // event-store/DB source has a real probe (Postgres driver). TODO: real reachability checks for
+    // offload / signal-bus in a later pass; a real source for the same component supersedes the placeholder.
+    foreach (var surface in new[] { "offload", "signal-bus" }) {
       var component = surface;
       services.AddSingleton<Health.IWhizbangHealthSource>(sp =>
         Health.ConnectivityHealthSource.AssumedHealthy(
