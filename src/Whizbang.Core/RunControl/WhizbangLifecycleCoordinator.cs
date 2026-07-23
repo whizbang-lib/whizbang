@@ -18,6 +18,7 @@ public sealed class WhizbangLifecycleCoordinator : IDisposable {
   private readonly WhizbangLifecycleOptions _options;
   private readonly TimeProvider _timeProvider;
   private readonly SemaphoreSlim _serialize = new(1, 1);
+  private readonly Dictionary<string, LifecyclePhase> _overrides = new(StringComparer.Ordinal);
 
   /// <summary>Creates a coordinator over the registered resources, options, and a clock (defaults to the system clock).</summary>
   public WhizbangLifecycleCoordinator(
@@ -41,7 +42,39 @@ public sealed class WhizbangLifecycleCoordinator : IDisposable {
     try {
       var acks = new List<Task>();
       foreach (var participant in _participants) {
-        acks.Add(_ackAsync(participant, phase, cancellationToken));
+        // A per-component operator override pins that component to its own phase, independent of the
+        // system phase (e.g. drain one transport for maintenance while the rest keep Running).
+        var effective = _overrides.TryGetValue(participant.Component, out var pinned) ? pinned : phase;
+        acks.Add(_ackAsync(participant, effective, cancellationToken));
+      }
+      await Task.WhenAll(acks).ConfigureAwait(false);
+    } finally {
+      _serialize.Release();
+    }
+  }
+
+  /// <summary>
+  /// Operator override: pin <paramref name="component"/> to <paramref name="overridePhase"/> (or clear
+  /// it with <see langword="null"/>) regardless of the system phase, then re-apply the effective phase
+  /// to that component. While pinned it ignores system transitions; clearing returns it to the system
+  /// phase (<paramref name="systemPhase"/>).
+  /// </summary>
+  public async ValueTask SetComponentOverrideAsync(
+      string component, LifecyclePhase? overridePhase, LifecyclePhase systemPhase, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(component);
+    await _serialize.WaitAsync(cancellationToken).ConfigureAwait(false);
+    try {
+      if (overridePhase is null) {
+        _overrides.Remove(component);
+      } else {
+        _overrides[component] = overridePhase.Value;
+      }
+      var effective = overridePhase ?? systemPhase;
+      var acks = new List<Task>();
+      foreach (var participant in _participants) {
+        if (string.Equals(participant.Component, component, StringComparison.Ordinal)) {
+          acks.Add(_ackAsync(participant, effective, cancellationToken));
+        }
       }
       await Task.WhenAll(acks).ConfigureAwait(false);
     } finally {

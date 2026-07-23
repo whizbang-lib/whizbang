@@ -28,6 +28,9 @@ public static class WhizbangRunControlServiceCollectionExtensions {
       sp.GetRequiredService<WhizbangLifecycleCoordinator>(),
       sp.GetRequiredService<WhizbangLifecycleOptions>(),
       sp.GetService<TimeProvider>()));
+    services.TryAddSingleton<IWhizbangKillswitch>(static sp => new WhizbangKillswitch(
+      sp.GetRequiredService<IWhizbangLifecycleState>(),
+      sp.GetRequiredService<WhizbangLifecycleCoordinator>()));
     return services;
   }
 
