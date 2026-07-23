@@ -92,6 +92,15 @@ public static class ServiceRegistrationCallbacks {
   public static Action<IServiceCollection>? PerspectivePersistenceOptions { get; set; }
 
   /// <summary>
+  /// Callback that folds the ASP.NET hosting integration (<c>AddWhizbangAspNet()</c>) into
+  /// <see cref="ServiceCollectionExtensions.AddWhizbang"/>. Set by the Whizbang.Hosting.AspNet
+  /// assembly's <c>[ModuleInitializer]</c>, so it is present only when that assembly is loaded — i.e.
+  /// when the ASP.NET hosting library is referenced/used. Invoked by <c>AddWhizbang</c> unless the
+  /// consumer opts out via <c>WhizbangCoreOptions.AutoRegisterAspNetHosting = false</c>.
+  /// </summary>
+  public static Action<IServiceCollection>? HostingIntegration { get; set; }
+
+  /// <summary>
   /// Invokes all registered service callbacks with the provided options.
   /// Called by <see cref="ServiceCollectionExtensions.AddWhizbang"/> to auto-register services.
   /// </summary>
@@ -130,6 +139,7 @@ public static class ServiceRegistrationCallbacks {
       PinnedIdRegistry = null;
       MessageTypeCatalog = null;
       PerspectivePersistenceOptions = null;
+      HostingIntegration = null;
     }
   }
 }

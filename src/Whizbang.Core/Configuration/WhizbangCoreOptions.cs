@@ -74,6 +74,15 @@ public sealed class WhizbangCoreOptions {
   public ServiceRegistrationOptions Services { get; } = new();
 
   /// <summary>
+  /// When <see langword="true"/> (the default — turnkey), <see cref="ServiceCollectionExtensions.AddWhizbang"/>
+  /// automatically folds in <c>AddWhizbangAspNet()</c> if the Whizbang.Hosting.AspNet assembly is loaded
+  /// (health checks + the schema-availability gate wired via startup filters). Set to
+  /// <see langword="false"/> to opt out and call <c>AddWhizbangAspNet()</c> yourself — e.g. if you need
+  /// to control its position relative to other registrations.
+  /// </summary>
+  public bool AutoRegisterAspNetHosting { get; set; } = true;
+
+  /// <summary>
   /// Gets or sets whether tag processing is enabled.
   /// Default: true (process tags after receptor completion).
   /// </summary>

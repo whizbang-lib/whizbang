@@ -7,21 +7,20 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/startup-ordering</docs>
 public sealed class SchemaInitializationOptions {
   /// <summary>
-  /// When <see langword="false"/> (the default), schema initialization runs <b>inline in the
-  /// host's <c>StartAsync</c></b> — the host does not finish starting (no HTTP port bound, no
-  /// workers) until migrations complete, and a migration failure aborts startup. This is the safe,
-  /// unchanged default for every consumer.
+  /// When <see langword="true"/> (<b>the default — turnkey</b>), initialization runs <b>in the
+  /// background</b>: <c>StartAsync</c> returns immediately so the host binds and can answer a liveness
+  /// probe, while <see cref="ISchemaReadyGate"/> stays closed until migrations succeed. Gated workers
+  /// (and the managed readiness health that reports "migrating" as ready) hold off until then, so
+  /// nothing touches an unmigrated schema and the pod is not rolled back for a long migration. On
+  /// failure the gate never opens (fail-closed).
   /// <para>
-  /// When <see langword="true"/>, initialization runs <b>in the background</b>: <c>StartAsync</c>
-  /// returns immediately so the host binds and can answer a liveness probe, while
-  /// <see cref="ISchemaReadyGate"/> stays closed until migrations succeed. Gated workers (and a
-  /// readiness health check that reads the gate) hold off until then, so nothing touches an
-  /// unmigrated schema. Intended for hosts whose one-time migration is longer than a
-  /// k8s startup-probe budget — the pod stays alive and out of traffic rotation instead of being
-  /// killed mid-migration. On failure the gate never opens (fail-closed).
+  /// Opt out by setting <see langword="false"/>: schema initialization then runs <b>inline in the
+  /// host's <c>StartAsync</c></b> — the host does not finish starting (no HTTP port bound, no workers)
+  /// until migrations complete, and a migration failure aborts startup. Choose this only if code after
+  /// <c>host.Run()</c> must assume a fully-migrated schema the instant the host starts.
   /// </para>
   /// </summary>
-  public bool NonBlockingSchemaInit { get; set; }
+  public bool NonBlockingSchemaInit { get; set; } = true;
 
   /// <summary>
   /// Optional hard ceiling for a single initialization attempt. Only meaningful with
