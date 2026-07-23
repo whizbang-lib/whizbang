@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Health;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Routing;
@@ -31,6 +32,12 @@ public static class WorkerPipelineExtensions {
     // initializer (e.g., WhizbangDatabaseInitializerService) calls MarkReady after migrations
     // complete. Singleton because all workers + the initializer must observe the same instance.
     services.TryAddSingleton<ISchemaReadyGate, SchemaReadyGate>();
+
+    // Managed-resource health: register the aggregator + the "schema" source over the gate. When a
+    // consumer wires AddWhizbangManagedHealthChecks() the schema reports "migrating" (ready under the
+    // default Lenient policy) during a startup migration instead of failing readiness.
+    services.AddWhizbangManagedHealth();
+    services.AddWhizbangHealthSource<Health.SchemaHealthSource>();
 
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
