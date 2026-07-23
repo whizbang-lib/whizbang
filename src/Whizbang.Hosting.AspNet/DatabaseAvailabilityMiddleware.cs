@@ -28,25 +28,30 @@ public class DatabaseAvailabilityMiddleware {
   private readonly RequestDelegate _next;
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly PathString[] _exemptPaths;
+  private readonly AvailabilityGateMode _mode;
 
   /// <summary>
   /// Creates the middleware. <paramref name="exemptPaths"/> is the set of path prefixes that always
-  /// pass through even before the schema is ready; <see langword="null"/> uses
-  /// <see cref="DefaultExemptPaths"/>.
+  /// pass through even before the schema is ready (<see langword="null"/> uses
+  /// <see cref="DefaultExemptPaths"/>); <paramref name="mode"/> selects whether every non-exempt
+  /// request is gated or only mutating ones (see <see cref="AvailabilityGateMode"/>).
   /// </summary>
   public DatabaseAvailabilityMiddleware(
-      RequestDelegate next, ISchemaReadyGate schemaReadyGate, IReadOnlyList<string>? exemptPaths = null) {
+      RequestDelegate next, ISchemaReadyGate schemaReadyGate, IReadOnlyList<string>? exemptPaths = null,
+      AvailabilityGateMode mode = AvailabilityGateMode.AllNonExempt) {
     _next = next;
     _schemaReadyGate = schemaReadyGate;
     _exemptPaths = [.. (exemptPaths ?? DefaultExemptPaths).Select(static p => new PathString(p))];
+    _mode = mode;
   }
 
   /// <summary>
   /// Returns 503 with a JSON error body and Retry-After header when the schema gate has not yet
-  /// signaled ready and the request path is not exempt; otherwise delegates to the next middleware.
+  /// signaled ready and the request is gated (not exempt, and — in <see cref="AvailabilityGateMode.MutationsOnly"/>
+  /// mode — a mutating request); otherwise delegates to the next middleware.
   /// </summary>
   public async Task InvokeAsync(HttpContext context) {
-    if (!_schemaReadyGate.IsReady && !_isExempt(context.Request.Path)) {
+    if (!_schemaReadyGate.IsReady && !_isExempt(context.Request.Path) && _isGated(context.Request.Method)) {
       context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
       context.Response.Headers.RetryAfter = "30";
       context.Response.ContentType = "application/json";
@@ -56,6 +61,12 @@ public class DatabaseAvailabilityMiddleware {
 
     await _next(context);
   }
+
+  private bool _isGated(string method) => _mode switch {
+    AvailabilityGateMode.MutationsOnly =>
+      !(HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method)),
+    _ => true
+  };
 
   private bool _isExempt(PathString path) {
     foreach (var exempt in _exemptPaths) {
