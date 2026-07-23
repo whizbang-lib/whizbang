@@ -48,11 +48,14 @@ public sealed class HealthPolicy {
     foreach (var state in Enum.GetValues<ComponentState>()) {
       map[(state, HealthProbe.Liveness)] = HealthStatus.Healthy;
     }
-    // Readiness: serve-ability.
+    // Readiness: serve-ability. Intentional states (startup, migrating, paused, connecting, draining)
+    // are healthy under Lenient / held out of rotation under Strict; a real Faulted always fails.
     map[(ComponentState.Operational, HealthProbe.Readiness)] = HealthStatus.Healthy;
     map[(ComponentState.Starting, HealthProbe.Readiness)] = readinessForStartupStates;
+    map[(ComponentState.Connecting, HealthProbe.Readiness)] = readinessForStartupStates;
     map[(ComponentState.Migrating, HealthProbe.Readiness)] = readinessForStartupStates;
     map[(ComponentState.PausedByDesign, HealthProbe.Readiness)] = readinessForStartupStates;
+    map[(ComponentState.Draining, HealthProbe.Readiness)] = readinessForStartupStates;
     map[(ComponentState.Degraded, HealthProbe.Readiness)] = HealthStatus.Degraded;
     map[(ComponentState.Faulted, HealthProbe.Readiness)] = HealthStatus.Unhealthy;
     return map;

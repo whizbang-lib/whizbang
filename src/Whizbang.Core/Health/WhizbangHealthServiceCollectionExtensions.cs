@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whizbang.Core.RunControl;
 
 namespace Whizbang.Core.Health;
 
@@ -18,6 +19,9 @@ public static class WhizbangHealthServiceCollectionExtensions {
   public static IServiceCollection AddWhizbangManagedHealth(
       this IServiceCollection services, Action<WhizbangHealthOptions>? configure = null) {
     ArgumentNullException.ThrowIfNull(services);
+    // The managed health sources judge their state against the lifecycle phase, so ensure the
+    // lifecycle plane (IWhizbangLifecycleState) is registered. Idempotent (TryAdd throughout).
+    services.AddWhizbangRunControl();
     var options = new WhizbangHealthOptions();
     configure?.Invoke(options);
     services.TryAddSingleton(options);

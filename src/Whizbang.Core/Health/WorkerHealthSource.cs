@@ -1,27 +1,36 @@
-using Whizbang.Core.Workers;
+using Whizbang.Core.RunControl;
 
 namespace Whizbang.Core.Health;
 
 /// <summary>
-/// The <c>"workers"</c> managed-resource health source. The worker pipeline waits on the schema-ready
-/// gate before issuing SQL, so while the gate is closed the workers are <b>intentionally held</b> —
-/// <see cref="ComponentState.PausedByDesign"/> (healthy by default), not "not running = broken" — and
-/// <see cref="ComponentState.Operational"/> once the gate opens.
+/// The <c>"workers"</c> managed-resource health source. It mirrors the worker pipeline's phase-driven
+/// run-state: <see cref="ComponentState.Operational"/> while <see cref="LifecyclePhase.Running"/>,
+/// <see cref="ComponentState.Draining"/> while <see cref="LifecyclePhase.Stopping"/>,
+/// <see cref="ComponentState.Faulted"/> on the fault path, and <see cref="ComponentState.PausedByDesign"/>
+/// otherwise (workers intentionally held during startup, connecting, migrating, or pause) — healthy by
+/// default, not "not running = broken".
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
 public sealed class WorkerHealthSource : IWhizbangHealthSource {
-  private readonly ISchemaReadyGate _gate;
+  private readonly IWhizbangLifecycleState _lifecycle;
 
-  /// <summary>Creates the worker health source over the schema-ready gate.</summary>
-  public WorkerHealthSource(ISchemaReadyGate gate) {
-    ArgumentNullException.ThrowIfNull(gate);
-    _gate = gate;
+  /// <summary>Creates the worker health source over the lifecycle phase.</summary>
+  public WorkerHealthSource(IWhizbangLifecycleState lifecycle) {
+    ArgumentNullException.ThrowIfNull(lifecycle);
+    _lifecycle = lifecycle;
   }
 
   /// <inheritdoc />
   public string Component => "workers";
 
   /// <inheritdoc />
-  public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken)
-    => new(new ComponentHealth(_gate.IsReady ? ComponentState.Operational : ComponentState.PausedByDesign));
+  public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
+    var state = _lifecycle.Phase switch {
+      LifecyclePhase.Running => ComponentState.Operational,
+      LifecyclePhase.Stopping => ComponentState.Draining,
+      LifecyclePhase.Faulted or LifecyclePhase.Halted => ComponentState.Faulted,
+      _ => ComponentState.PausedByDesign
+    };
+    return new ValueTask<ComponentHealth>(new ComponentHealth(state));
+  }
 }

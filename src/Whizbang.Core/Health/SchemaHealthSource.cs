@@ -1,30 +1,41 @@
+using Whizbang.Core.RunControl;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Health;
 
 /// <summary>
-/// The <c>"schema"</c> managed-resource health source. Reports <see cref="ComponentState.Migrating"/>
-/// while the schema-ready gate is closed and <see cref="ComponentState.Operational"/> once it opens.
-/// Under the default <see cref="HealthPolicy.Lenient"/> policy, Migrating maps to <b>ready</b> — so a
-/// host doing a long non-blocking startup migration stays in rotation instead of being rolled back,
-/// which is exactly what the older <c>SchemaReadyHealthCheck</c>'s always-Unhealthy-while-gated
-/// behavior got wrong. (A failed/stalled migration surfaces as <see cref="ComponentState.Faulted"/>
-/// once the stall guard is wired; the gate alone only distinguishes migrating vs ready.)
+/// The <c>"schema"</c> managed-resource health source. It judges its state against the current
+/// <see cref="LifecyclePhase"/> (which it reads, not a central override): a failed/wedged migration
+/// (phase <see cref="LifecyclePhase.Faulted"/>/<see cref="LifecyclePhase.Halted"/>) is
+/// <see cref="ComponentState.Faulted"/>; a ready gate is <see cref="ComponentState.Operational"/>;
+/// otherwise it is <see cref="ComponentState.Connecting"/>/<see cref="ComponentState.Starting"/> while
+/// connecting and <see cref="ComponentState.Migrating"/> while the migration runs. Under the Lenient
+/// default, <c>Migrating</c> maps to <b>ready</b> — so a long non-blocking startup migration stays in
+/// rotation instead of being rolled back, and a genuine failure surfaces as <c>Faulted</c>.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
 public sealed class SchemaHealthSource : IWhizbangHealthSource {
   private readonly ISchemaReadyGate _gate;
+  private readonly IWhizbangLifecycleState _lifecycle;
 
-  /// <summary>Creates the schema health source over the schema-ready gate.</summary>
-  public SchemaHealthSource(ISchemaReadyGate gate) {
+  /// <summary>Creates the schema health source over the schema-ready gate and the lifecycle phase.</summary>
+  public SchemaHealthSource(ISchemaReadyGate gate, IWhizbangLifecycleState lifecycle) {
     ArgumentNullException.ThrowIfNull(gate);
+    ArgumentNullException.ThrowIfNull(lifecycle);
     _gate = gate;
+    _lifecycle = lifecycle;
   }
 
   /// <inheritdoc />
   public string Component => "schema";
 
   /// <inheritdoc />
-  public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken)
-    => new(new ComponentHealth(_gate.IsReady ? ComponentState.Operational : ComponentState.Migrating));
+  public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
+    var phase = _lifecycle.Phase;
+    var state = phase is LifecyclePhase.Faulted or LifecyclePhase.Halted ? ComponentState.Faulted
+      : _gate.IsReady ? ComponentState.Operational
+      : phase is LifecyclePhase.Starting or LifecyclePhase.Connecting ? ComponentState.Connecting
+      : ComponentState.Migrating;
+    return new ValueTask<ComponentHealth>(new ComponentHealth(state));
+  }
 }

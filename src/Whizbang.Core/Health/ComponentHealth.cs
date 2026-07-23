@@ -10,12 +10,16 @@ namespace Whizbang.Core.Health;
 public enum ComponentState {
   /// <summary>Running normally.</summary>
   Operational,
-  /// <summary>Coming up (connecting, warming). Intentional and transient.</summary>
+  /// <summary>Coming up (process boot). Intentional and transient.</summary>
   Starting,
+  /// <summary>Warming a network connection (DB/transport/offload). Intentional and transient.</summary>
+  Connecting,
   /// <summary>A schema/data migration is in progress. Intentional.</summary>
   Migrating,
-  /// <summary>Gated/drained on purpose (e.g. workers held on the schema gate). Intentional.</summary>
+  /// <summary>Gated/drained on purpose (e.g. workers held during a migration or pause). Intentional.</summary>
   PausedByDesign,
+  /// <summary>Finishing in-flight work for a graceful stop, taking no new. Intentional.</summary>
+  Draining,
   /// <summary>Working but impaired (slow, partial). Still serves.</summary>
   Degraded,
   /// <summary>Genuinely broken — a real fault (dependency dead, migration stalled/failed).</summary>
