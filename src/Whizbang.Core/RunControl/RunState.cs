@@ -1,36 +1,19 @@
 namespace Whizbang.Core.RunControl;
 
 /// <summary>
-/// Whether a managed resource is currently permitted to do work. The framework's run-controller sets
-/// this from the lifecycle phase + config; the resource enforces it. A resource the controller sets
-/// to <see cref="Paused"/> reports <c>ComponentState.PausedByDesign</c> to its health source — so
-/// control (this) and observation (health) never disagree.
+/// The gate vocabulary of a <see cref="WhizbangRunPermit"/> — a subsystem-internal mechanism, NOT the
+/// run-control interface currency. A resource interprets the lifecycle <see cref="LifecyclePhase"/>
+/// (in its <c>IWhizbangRunControl.OnPhaseAsync</c>) and drives its permit to one of these: open
+/// (<see cref="Running"/>), closed-but-resumable (<see cref="Paused"/>), or draining/cancelling
+/// (<see cref="Stopped"/>). The lifecycle phase is what crosses the interface; this is how a permit
+/// expresses the resulting gate state.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
 public enum RunState {
-  /// <summary>Permitted to do work.</summary>
+  /// <summary>Permit open — awaiters proceed.</summary>
   Running,
-  /// <summary>Intentionally held, resumable (e.g. workers held during a migration).</summary>
+  /// <summary>Permit closed but resumable — awaiters block until re-opened.</summary>
   Paused,
-  /// <summary>Intentionally shut — drained for shutdown or an operator killswitch.</summary>
+  /// <summary>Permit draining — awaiters are cancelled (finish in-flight, take no new).</summary>
   Stopped
-}
-
-/// <summary>
-/// The service's overall lifecycle phase — the shared signal both run-control (what may run) and
-/// health (what a state means) read. Driven forward by startup/shutdown (e.g. the schema initializer
-/// moves Starting → Migrating → Ready; graceful shutdown enters Draining).
-/// </summary>
-/// <docs>resilience/managed-resource-run-control</docs>
-public enum LifecyclePhase {
-  /// <summary>Process coming up, before/around dependency connect.</summary>
-  Starting,
-  /// <summary>A schema/data migration is in progress.</summary>
-  Migrating,
-  /// <summary>Fully up — everything permitted to run.</summary>
-  Ready,
-  /// <summary>Graceful shutdown — everything transitions to <see cref="RunState.Stopped"/>.</summary>
-  Draining,
-  /// <summary>Startup failed (e.g. migration failed/stalled) — held closed.</summary>
-  Faulted
 }

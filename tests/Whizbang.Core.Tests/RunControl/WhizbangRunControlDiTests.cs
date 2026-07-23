@@ -8,33 +8,45 @@ using Whizbang.Core.RunControl;
 namespace Whizbang.Core.Tests.RunControl;
 
 /// <summary>
-/// Covers the run-control DI wiring: <c>AddWhizbangRunControl</c> registers a controller that drives
-/// every adapter added via <c>AddWhizbangRunControlAdapter</c>, under the default phase policy.
+/// Covers the run-control DI wiring: <c>AddWhizbangRunControl</c> registers the lifecycle coordinator +
+/// options + shared state, and <c>AddWhizbangRunControlAdapter</c> registers a participant the
+/// coordinator broadcasts to.
 /// </summary>
 public class WhizbangRunControlDiTests {
 
   private sealed class FakeAdapter : IWhizbangRunControl {
     public string Component => "workers";
-    public RunState Current { get; private set; } = RunState.Running;
-    public ValueTask ApplyAsync(RunState desired, CancellationToken cancellationToken) {
-      Current = desired;
+    public LifecyclePhase? Last { get; private set; }
+    public ValueTask OnPhaseAsync(LifecyclePhase phase, CancellationToken cancellationToken) {
+      Last = phase;
       return default;
     }
   }
 
   [Test]
-  public async Task AddWhizbangRunControl_DrivesRegisteredAdaptersAsync() {
+  public async Task AddWhizbangRunControl_RegistersCoordinatorAndStateAsync() {
+    var services = new ServiceCollection();
+    services.AddWhizbangRunControl();
+    using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetService<WhizbangLifecycleCoordinator>()).IsNotNull();
+    await Assert.That(provider.GetService<IWhizbangLifecycleState>()).IsNotNull();
+    await Assert.That(provider.GetService<WhizbangLifecycleOptions>()).IsNotNull();
+  }
+
+  [Test]
+  public async Task AddWhizbangRunControl_BroadcastsToRegisteredAdaptersAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangRunControl();
     services.AddWhizbangRunControlAdapter<FakeAdapter>();
     using var provider = services.BuildServiceProvider();
 
-    var controller = provider.GetRequiredService<WhizbangRunController>();
+    var lifecycle = provider.GetRequiredService<IWhizbangLifecycleState>();
     var adapter = provider.GetServices<IWhizbangRunControl>().OfType<FakeAdapter>().Single();
 
-    await controller.TransitionAsync(LifecyclePhase.Migrating, CancellationToken.None);
+    await lifecycle.AdvanceToAsync(LifecyclePhase.Migrating, CancellationToken.None);
 
-    // "workers" is paused during a migration by WhizbangRunControlOptions.Default().
-    await Assert.That(adapter.Current).IsEqualTo(RunState.Paused);
+    await Assert.That(adapter.Last).IsEqualTo(LifecyclePhase.Migrating);
+    await Assert.That(lifecycle.Phase).IsEqualTo(LifecyclePhase.Migrating);
   }
 }

@@ -41,11 +41,11 @@ public class WhizbangRunPermitTests {
   }
 
   [Test]
-  public async Task Adapter_AppliesRunStateToPermitAsync() {
+  public async Task Adapter_InterpretsPhaseIntoPermitAsync() {
     var permit = new WhizbangRunPermit();
-    var adapter = new RunPermitControl("workers", permit);
+    var adapter = RunPermitControl.ForWorkers("workers", permit);
 
-    await adapter.ApplyAsync(RunState.Paused, CancellationToken.None);
+    await adapter.OnPhaseAsync(LifecyclePhase.Migrating, CancellationToken.None);
 
     await Assert.That(permit.State).IsEqualTo(RunState.Paused);
     await Assert.That(adapter.Current).IsEqualTo(RunState.Paused);
@@ -53,15 +53,29 @@ public class WhizbangRunPermitTests {
   }
 
   [Test]
-  public async Task Adapter_DrivenByController_PausesPermitOnMigrationAsync() {
+  public async Task Adapter_DrivenByCoordinator_PausesThenRunsThenDrainsAsync() {
     var permit = new WhizbangRunPermit();
-    var controller = new WhizbangRunController(
-      [new RunPermitControl("workers", permit)], WhizbangRunControlOptions.Default());
+    var coordinator = new WhizbangLifecycleCoordinator(
+      [RunPermitControl.ForWorkers("workers", permit)], new WhizbangLifecycleOptions());
 
-    await controller.TransitionAsync(LifecyclePhase.Migrating, CancellationToken.None);
-    await Assert.That(permit.State).IsEqualTo(RunState.Paused);
+    await coordinator.TransitionAsync(LifecyclePhase.Migrating, CancellationToken.None);
+    await Assert.That(permit.State).IsEqualTo(RunState.Paused); // paused during migration
 
-    await controller.TransitionAsync(LifecyclePhase.Ready, CancellationToken.None);
-    await Assert.That(permit.State).IsEqualTo(RunState.Running);
+    await coordinator.TransitionAsync(LifecyclePhase.Running, CancellationToken.None);
+    await Assert.That(permit.State).IsEqualTo(RunState.Running); // resumes when running
+
+    await coordinator.TransitionAsync(LifecyclePhase.Stopping, CancellationToken.None);
+    await Assert.That(permit.State).IsEqualTo(RunState.Stopped); // drains on stopping
   }
+
+  [Test]
+  [Arguments(LifecyclePhase.Running, RunState.Running)]
+  [Arguments(LifecyclePhase.Migrating, RunState.Paused)]
+  [Arguments(LifecyclePhase.Connecting, RunState.Paused)]
+  [Arguments(LifecyclePhase.Paused, RunState.Paused)]
+  [Arguments(LifecyclePhase.Stopping, RunState.Stopped)]
+  [Arguments(LifecyclePhase.Stopped, RunState.Stopped)]
+  [Arguments(LifecyclePhase.Faulted, RunState.Stopped)]
+  public async Task ForWorkers_InterpretationAsync(LifecyclePhase phase, RunState expected)
+    => await Assert.That(RunPermitControl.InterpretForWorkers(phase)).IsEqualTo(expected);
 }
