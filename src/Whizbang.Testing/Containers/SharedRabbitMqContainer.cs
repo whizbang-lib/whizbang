@@ -29,6 +29,10 @@ namespace Whizbang.Testing.Containers;
 /// </code>
 /// </para>
 /// </remarks>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2068:Hard-coded credentials are security-sensitive",
+  Justification = "Throwaway Testcontainers credential (the RabbitMQ image's stock default) for a local, " +
+    "run-scoped test broker never reachable off the developer machine/CI runner. Shared-container reuse " +
+    "across test processes requires stable credentials.")]
 public static class SharedRabbitMqContainer {
   private const string CONTAINER_NAME = "whizbang-test-rabbitmq";
   private const string IMAGE_NAME = "rabbitmq:3.13-management-alpine";

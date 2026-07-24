@@ -32,7 +32,10 @@ jobs:
 
     - name: Install and Run OSV Scanner
       run: |
-        go install github.com/google/osv-scanner/cmd/osv-scanner@latest
+        # Pinned version (githubactions:S8545): @latest makes the toolchain unpredictable
+        # and is a supply-chain risk in the very workflow that guards the supply chain.
+        # Pinned within v1 — v2 renames the subcommand to `scan source`, a separate migration.
+        go install github.com/google/osv-scanner/cmd/osv-scanner@v1.9.2
         $HOME/go/bin/osv-scanner scan --recursive --format=sarif --output=osv-results.sarif . || echo "No vulnerabilities found"
 
     - name: Upload SARIF results

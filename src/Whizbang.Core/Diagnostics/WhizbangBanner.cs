@@ -197,9 +197,9 @@ public static partial class WhizbangBanner {
     // Fixed width matching the logo banner
     const int innerWidth = BANNER_WIDTH - 4;
 
-    var titleLine = whizbangVersion != null
-        ? $"  {name} v{version} (Whizbang v{whizbangVersion})"
-        : $"  {name} v{version}";
+    // whizbangVersion is never null here — the ??= above falls back to the compile-time
+    // constant — so the version suffix is unconditional (S2583: the null branch was dead code).
+    var titleLine = $"  {name} v{version} (Whizbang v{whizbangVersion})";
 
     writer.WriteLine($"  ╔{new string('═', innerWidth)}╗");
     writer.WriteLine($"  ║{titleLine.PadRight(innerWidth)}║");

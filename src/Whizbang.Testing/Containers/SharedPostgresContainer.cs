@@ -29,6 +29,10 @@ namespace Whizbang.Testing.Containers;
 /// </code>
 /// </para>
 /// </remarks>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2068:Hard-coded credentials are security-sensitive",
+  Justification = "Throwaway Testcontainers credential for a local, run-scoped test database that is never " +
+    "reachable off the developer machine/CI runner. Shared-container reuse across test processes requires a " +
+    "stable password, so a random per-run value would break the reuse path.")]
 public static class SharedPostgresContainer {
   private const string CONTAINER_NAME = "whizbang-test-postgres";
   private const string IMAGE_NAME = "pgvector/pgvector:pg17";
