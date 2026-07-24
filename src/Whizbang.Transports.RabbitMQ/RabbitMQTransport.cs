@@ -117,6 +117,10 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   public bool IsInitialized => _isInitialized;
 
   /// <inheritdoc />
+  public ValueTask<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default)
+    => ValueTask.FromResult(_connection.IsOpen);
+
+  /// <inheritdoc />
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
     TransportCapabilities.Reliable |

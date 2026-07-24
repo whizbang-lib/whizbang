@@ -254,6 +254,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   public bool IsInitialized => _isInitialized;
 
   /// <inheritdoc />
+  public ValueTask<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default)
+    => ValueTask.FromResult(!_client.IsClosed);
+
+  /// <inheritdoc />
   /// <tests>No tests found</tests>
   public async Task InitializeAsync(CancellationToken cancellationToken = default) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");

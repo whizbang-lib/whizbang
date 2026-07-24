@@ -75,4 +75,16 @@ public interface IMessageBodyStore {
     MessageBodyClaim claim,
     MessageBodyDeleteOptions? options = null,
     CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Reports whether the offload store is reachable — a cheap, non-throwing connectivity signal for the
+  /// managed-resource health model (<c>ConnectivityHealthSource</c>). The default returns
+  /// <see langword="true"/> (an in-memory/local store is always reachable); a remote store (blob, S3)
+  /// overrides it with a lightweight service round-trip. Throwing is treated as unreachable by the caller.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns><see langword="true"/> if the store is reachable.</returns>
+  /// <docs>resilience/managed-resource-health</docs>
+  ValueTask<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default)
+    => ValueTask.FromResult(true);
 }

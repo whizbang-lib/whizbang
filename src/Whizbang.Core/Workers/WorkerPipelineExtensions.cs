@@ -41,17 +41,38 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangHealthSource<Health.SchemaHealthSource>();
     services.AddWhizbangHealthSource<Health.WorkerHealthSource>();
 
-    // Managed surfaces without a real connectivity probe yet report ASSUMED-HEALTHY (hard-coded healthy,
-    // still phase-aware). This represents the full managed-surface set in the health model without failing
-    // readiness. The event-store/DB source has a real probe (wired in the Postgres driver). TODO: write real
-    // reachability checks for transport / offload / signal-bus in a later pass; a real source for the same
-    // component supersedes the placeholder. See docs proposal resilience/managed-resource-health.
-    foreach (var surface in new[] { "transport", "offload", "signal-bus" }) {
-      var component = surface;
-      services.AddSingleton<Health.IWhizbangHealthSource>(sp =>
-        Health.ConnectivityHealthSource.AssumedHealthy(
-          component, sp.GetRequiredService<IWhizbangLifecycleState>()));
-    }
+    // Transport managed-resource health: a REAL probe when a transport is registered — the driver's
+    // ITransport.CheckConnectivityAsync (RabbitMQ IConnection.IsOpen / Service Bus !IsClosed) detects a
+    // broker connection that dropped after init; RequiredWhenRunning, so a disconnected transport during a
+    // migration is by-design. When there is no transport (single-service apps) it reports assumed-healthy.
+    // One source either way — no duplication.
+    services.AddSingleton<Health.IWhizbangHealthSource>(sp => {
+      var lifecycle = sp.GetRequiredService<IWhizbangLifecycleState>();
+      var transport = sp.GetService<Whizbang.Core.Transports.ITransport>();
+      return transport is null
+        ? Health.ConnectivityHealthSource.AssumedHealthy("transport", lifecycle)
+        : Health.ConnectivityHealthSource.RequiredWhenRunning(
+            "transport", transport.CheckConnectivityAsync, lifecycle, "transport broker unreachable");
+    });
+
+    // Offload managed-resource health: a REAL probe when an offload store is registered — the store's
+    // IMessageBodyStore.CheckConnectivityAsync (a blob service round-trip; in-memory is always reachable);
+    // assumed-healthy when no offload is configured. RequiredWhenRunning, one source either way.
+    services.AddSingleton<Health.IWhizbangHealthSource>(sp => {
+      var lifecycle = sp.GetRequiredService<IWhizbangLifecycleState>();
+      var store = sp.GetService<Whizbang.Core.Offloads.IMessageBodyStore>();
+      return store is null
+        ? Health.ConnectivityHealthSource.AssumedHealthy("offload", lifecycle)
+        : Health.ConnectivityHealthSource.RequiredWhenRunning(
+            "offload", store.CheckConnectivityAsync, lifecycle, "offload store unreachable");
+    });
+
+    // signal-bus: ASSUMED-HEALTHY placeholder. Its real dependency is the same Postgres the event-store/DB
+    // source already probes (wh_signals + LISTEN/NOTIFY), so a DB outage that breaks the signal bus already
+    // surfaces there. TODO: a dedicated notify-connection liveness probe if finer signal is wanted.
+    services.AddSingleton<Health.IWhizbangHealthSource>(sp =>
+      Health.ConnectivityHealthSource.AssumedHealthy(
+        "signal-bus", sp.GetRequiredService<IWhizbangLifecycleState>()));
 
     // Run-control (killswitch) plane + the driver that advances the lifecycle phase from the schema
     // gate (Migrating at startup, Ready once migrations complete), so any registered run-control

@@ -44,6 +44,20 @@ public interface ITransport {
   Task InitializeAsync(CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Reports whether the transport can currently reach its broker — a cheap, non-throwing connectivity
+  /// signal for the managed-resource health model (<c>ConnectivityHealthSource</c>). The default returns
+  /// <see cref="IsInitialized"/>; a transport holding a live connection handle overrides it to detect a
+  /// connection that dropped <em>after</em> initialization (RabbitMQ <c>IConnection.IsOpen</c>, Service
+  /// Bus <c>!ServiceBusClient.IsClosed</c>). Called only while the system is running, so it need not
+  /// re-check initialization.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns><see langword="true"/> if the broker is reachable.</returns>
+  /// <docs>resilience/managed-resource-health</docs>
+  ValueTask<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default)
+    => ValueTask.FromResult(IsInitialized);
+
+  /// <summary>
   /// Gets the capabilities of this transport.
   /// Describes what patterns and semantics this transport supports.
   /// </summary>
