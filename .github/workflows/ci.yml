@@ -15,8 +15,14 @@ on:
 permissions: {}
 
 concurrency:
-  # Use head branch for PRs, ref_name for pushes - ensures push and PR from same branch share group
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  # Include event_name so a release-branch PUSH run and the release PR run land in
+  # DIFFERENT groups. Start-Release pushes release/v** (push event) AND opens the
+  # release PR (pull_request event) at the same SHA; with a shared group the PR run's
+  # cancel-in-progress killed the push run, leaving a spurious "CI Result: FAILURE"
+  # that blocked the release merge — violating "a publish must never be cancelled
+  # mid-push". Same-branch PR supersession still works: all pull_request runs for a
+  # branch share one group keyed by head_ref, so a new commit cancels the older PR run.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   # PRs cancel superseded runs; pushes (develop/release publishes) queue instead — a publish
   # must never be cancelled mid-push.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
