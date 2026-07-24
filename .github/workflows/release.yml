@@ -597,53 +597,74 @@ jobs:
     needs: [check-release, publish]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write        # push the throwaway sync branch (sync/*, not protected)
+      pull-requests: write    # open the review PR into protected develop
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # RELEASE_PAT (not GITHUB_TOKEN) so the sync PR triggers CI — GITHUB_TOKEN-created
+          # PRs are left in action_required and their required checks never run.
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Merge main into develop
+      - name: Sync main into develop (via PR — never a direct push)
         env:
           RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
-          echo "Syncing main -> develop after v$RELEASE_VERSION release"
-
-          # Fetch all branches
           git fetch origin main develop
 
-          # Checkout develop
-          git checkout develop
-
-          # Merge main into develop (should be fast-forward or simple merge)
-          if git merge origin/main --no-edit -m "chore: sync main into develop after v$RELEASE_VERSION release"; then
-            echo "Successfully merged main into develop"
-            git push origin develop
-          else
-            echo "Merge conflict detected"
-            echo "This usually means develop has commits not in main."
-            echo "Manual intervention may be required."
-            git merge --abort
-            exit 1
+          # develop is protected (no direct push) AND intentionally keeps its LOCAL
+          # Directory.Build.props placeholder — the release version bump must NOT flow into
+          # develop (the published version comes from GitVersion, not this file). So exclude
+          # it when deciding whether there is anything real to bring back.
+          # THREE-dot: only what main added since it diverged from develop (the release's own
+          # changes) — NOT develop's post-cut advances, which a two-dot diff would wrongly include.
+          DIFF=$(git diff --name-only origin/develop...origin/main -- . ':(exclude)Directory.Build.props')
+          if [ -z "$DIFF" ]; then
+            echo "Only Directory.Build.props differs (the release version bump)."
+            echo "develop keeps its local placeholder by convention — nothing to sync."
+            {
+              echo "## Develop Sync — no-op"
+              echo ""
+              echo "Only the release version bump differed; develop keeps its local placeholder. Nothing to sync."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
 
-      - name: Summary
-        env:
-          RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
-        run: |
-          echo "## Develop Branch Synced" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Main has been merged into develop after v$RELEASE_VERSION release." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "This ensures develop has all release commits (version bumps, etc.)." >> "$GITHUB_STEP_SUMMARY"
+          echo "main has changes develop is missing (beyond the version bump):"
+          echo "$DIFF"
+
+          SYNC_BRANCH="sync/main-to-develop-v${RELEASE_VERSION}"
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1; then
+            echo "Sync branch $SYNC_BRANCH already exists — leaving the existing PR."
+            exit 0
+          fi
+
+          # Build the sync branch from main, but restore develop's Directory.Build.props so the
+          # merge brings the real changes without overwriting develop's local placeholder.
+          git checkout -B "$SYNC_BRANCH" origin/main
+          git checkout origin/develop -- Directory.Build.props
+          git commit -am "chore: keep develop's local Directory.Build.props during main->develop sync" || true
+          git push origin "$SYNC_BRANCH"
+
+          gh pr create --base develop --head "$SYNC_BRANCH" \
+            --title "chore: sync main into develop after v${RELEASE_VERSION} release" \
+            --label automated \
+            --body "Back-merges release-stabilization changes from **main** that **develop** is missing after the v${RELEASE_VERSION} release. \`Directory.Build.props\` is intentionally kept at develop's local placeholder — the release version is not carried into develop (versions come from GitVersion). Review and merge."
+
+          {
+            echo "## Develop Sync — review PR opened"
+            echo ""
+            echo "main had changes beyond the version bump; opened a PR from \`$SYNC_BRANCH\` into develop for review."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ============================================================================
   # Notifications - comprehensive failure detection
