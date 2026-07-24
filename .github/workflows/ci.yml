@@ -420,12 +420,46 @@ jobs:
   # this run's tested pack artifact, so the pushed packages are the exact bits
   # that passed the matrix — plus the git tag + GitHub release.
   # The branch-creation push is skipped (the base cut has no changes yet).
+  # GUARD: a release branch with an OPEN PR into main publishes on MERGE (release.yml). The
+  # release-guard job below skips this push-publish in that case, so a push to the release branch
+  # (a conflict fix, a stabilization commit) never competes with the merge for the approval gate
+  # or attempts a duplicate version+tag. This path then serves standalone (no-PR) release branches
+  # — e.g. a direct hotfix that publishes without a main PR.
   # ============================================================================
+
+  release-guard:
+    name: Release Publish Guard
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+    steps:
+      - name: Skip if an open release PR to main exists (the merge will publish)
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          # If this release branch has an OPEN PR into main, the canonical publish happens on
+          # merge (release.yml); publishing here too would compete for the nuget-publish approval
+          # gate and attempt a duplicate version+tag. Only publish from a push when there is NO
+          # such PR (e.g. a standalone hotfix branch).
+          PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // ""')
+          if [ -n "$PR" ]; then
+            echo "Open release PR to main (#$PR) — the merge will publish. Skipping release-branch publish."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No open release PR to main — publishing from the release-branch push."
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
   release-publish:
     name: Publish Release NuGet
-    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created
+    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, release-guard]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created && needs.release-guard.outputs.should_publish == 'true'
     permissions:
       contents: write   # nuget-publish creates the tag + GitHub release
       id-token: write   # NuGet OIDC trusted publishing

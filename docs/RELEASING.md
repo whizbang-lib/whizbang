@@ -267,3 +267,9 @@ and `start-release minor` after the stable computes `0.960.0`.
   ruleset's required checks or every merge wedges on a phantom "expected" check.
 - **Tags are forever.** Because GitVersion keys on the highest repo-wide tag, a stray high tag
   (e.g. an accidental `v9.9.9`) will hijack every subsequent version. Delete mistaken tags promptly.
+- **Two publish paths don't compete.** A push to a `release/v*` branch can publish via
+  `ci.yml`'s `release-publish`, and the merge to main publishes via `release.yml` — both would target
+  the same version+tag. The `release-guard` job skips `release-publish` whenever the branch has an
+  **open PR into main** (the merge will publish), so a conflict fix or stabilization push to a release
+  branch never spawns a competing approval-gate deployment. Only standalone (no-PR) release branches
+  publish on push.
