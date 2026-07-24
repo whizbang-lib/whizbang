@@ -68,7 +68,33 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           PR_NUMBER: ${{ github.event.number }}
           RUN_NUMBER: ${{ github.run_number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
+          # A release PR ("chore(release): vX.Y.Z" into main) publishes EXACTLY the title
+          # version on merge — release.yml (check-release) reads that same title. So the PR
+          # PREVIEW must equal it (never GitVersion, never a -pr suffix) to keep preview ==
+          # published == the version stamped into the assemblies/nupkgs. Match release.yml's
+          # source of truth (the title) rather than the branch name, so an edited title still
+          # previews correctly.
+          if [ "$EVENT_NAME" = "pull_request" ] && \
+             [[ "$PR_TITLE" =~ ^chore\(release\):\ v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"; MINOR="${BASH_REMATCH[2]}"; PATCH="${BASH_REMATCH[3]}"; SUFFIX="${BASH_REMATCH[4]}"
+            SEMVER="$MAJOR.$MINOR.$PATCH$SUFFIX"
+            LABEL="${SUFFIX#-}"
+            {
+              echo "override=true"
+              echo "semVer=$SEMVER"
+              echo "fullSemVer=$SEMVER"
+              echo "major=$MAJOR"
+              echo "minor=$MINOR"
+              echo "patch=$PATCH"
+              echo "preReleaseTag=$LABEL"
+            } >> "$GITHUB_OUTPUT"
+            echo "Release-PR override: $SEMVER (from PR title) — equals what release.yml publishes on merge"
+            echo "::notice::Release-PR version: $SEMVER (from PR title — preview == publish)"
+            exit 0
+          fi
+
           BRANCH=""
           if [ "$EVENT_NAME" = "pull_request" ]; then
             BRANCH="$BASE_REF"
