@@ -163,6 +163,14 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
     }
   }
 
+  /// <inheritdoc />
+  public async ValueTask<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default) {
+    // A lightweight round-trip to the blob service; reaching it (container present or not) is healthy.
+    // A network/auth failure throws and is read as unreachable by ConnectivityHealthSource.
+    await _containerClient.ExistsAsync(cancellationToken).ConfigureAwait(false);
+    return true;
+  }
+
   private async Task _ensureContainerAsync(CancellationToken cancellationToken) {
     if (Interlocked.CompareExchange(ref _containerEnsured, 1, 0) != 0) {
       return;
