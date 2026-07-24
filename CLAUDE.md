@@ -4,6 +4,17 @@
 
 ---
 
+## Releasing & Versioning
+
+📖 **Read [`docs/RELEASING.md`](docs/RELEASING.md)** before cutting a release or touching any release
+workflow (`reusable-version.yml`, `release.yml`, `start-release.yml`, `ci.yml` publish jobs,
+`nuget-*.yml`). It documents — with diagrams — the gitflow branching model, the three publish channels,
+how the version is decided and kept identical across **preview → publish → stamp → tag**, the tag-driven
+GitVersion sync (highest repo-wide tag), and the `nuget-publish` approval gate. `Directory.Build.props`
+is a **local placeholder**, never the source of truth.
+
+---
+
 ## Essential Standards
 
 ### Code Style
