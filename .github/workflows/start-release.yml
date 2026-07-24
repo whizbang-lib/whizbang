@@ -161,6 +161,33 @@ jobs:
           BRANCH="${{ steps.version.outputs.branch }}"
           git checkout -b "$BRANCH"
 
+      - name: Merge main into the release branch
+        run: |
+          # Bring main into the release branch BEFORE opening the PR so the release PR is
+          # conflict-free. main carries the PREVIOUS release's version in Directory.Build.props
+          # while develop keeps its local placeholder, so main and develop have diverged — and
+          # without this, every release PR conflicts on that one file (both sides changed the
+          # <Version> line from their shared base). We resolve that EXPECTED props conflict (the
+          # version is re-stamped in the next step regardless); any OTHER conflict is unexpected
+          # and fails loudly rather than being silently dropped.
+          git fetch origin main
+          if git merge origin/main --no-edit -m "chore: merge main into release branch before release"; then
+            echo "Merged main cleanly (nothing to reconcile or already contained)."
+          else
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            if [ "$CONFLICTS" = "Directory.Build.props" ]; then
+              echo "Resolving the expected Directory.Build.props version conflict."
+              git checkout --ours -- Directory.Build.props
+              git add Directory.Build.props
+              git commit --no-edit
+            else
+              echo "::error::Unexpected merge conflict beyond Directory.Build.props:"
+              echo "$CONFLICTS"
+              git merge --abort
+              exit 1
+            fi
+          fi
+
       - name: Update Version in Directory.Build.props
         run: |
           VERSION="${{ steps.version.outputs.semver }}"
