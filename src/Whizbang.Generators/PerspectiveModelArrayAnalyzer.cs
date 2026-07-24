@@ -56,7 +56,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   }
 
   private static void _analyzeTypeDeclaration(SyntaxNodeAnalysisContext context, TypeDeclarationSyntax typeDeclaration) {
-    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(typeDeclaration);
+    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(typeDeclaration, context.CancellationToken);
     if (typeSymbol is null) {
       return;
     }

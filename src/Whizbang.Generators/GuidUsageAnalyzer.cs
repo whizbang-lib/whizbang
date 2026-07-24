@@ -41,7 +41,7 @@ public class GuidUsageAnalyzer : DiagnosticAnalyzer {
     }
 
     var methodName = memberAccess.Name.Identifier.Text;
-    var symbolInfo = context.SemanticModel.GetSymbolInfo(invocation);
+    var symbolInfo = context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken);
 
     if (symbolInfo.Symbol is not IMethodSymbol methodSymbol) {
       return;

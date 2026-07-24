@@ -71,7 +71,7 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeClass(SyntaxNodeAnalysisContext context) {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
-    var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration);
+    var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, context.CancellationToken);
 
     if (classSymbol is null) {
       return;

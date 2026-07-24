@@ -650,10 +650,10 @@ public abstract partial class Dispatcher(
         await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
         // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(message, messageType);
+        await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
         // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
       } finally {
         _envelopeRegistry?.Unregister(envelope);
       }
@@ -846,10 +846,10 @@ public abstract partial class Dispatcher(
         await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
         // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(message, messageType);
+        await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
         // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
 
       } finally {
         _envelopeRegistry?.Unregister(envelope);
@@ -1998,13 +1998,13 @@ public abstract partial class Dispatcher(
       await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
       // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(message, messageType);
+      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
-      await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
+      await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
 
       // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
 
       // Unwrap Routed<T> from result if receptor returned a wrapped value
       // This enables receptors to return Route.Local(event) for cascade control
@@ -2051,10 +2051,10 @@ public abstract partial class Dispatcher(
       await invoker(message);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
-      await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
+      await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
 
       // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
     } finally {
       _envelopeRegistry?.Unregister(envelope);
     }
@@ -2291,13 +2291,13 @@ public abstract partial class Dispatcher(
       var result = await invoker(message);
 
       await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
-      await _processTagsIfEnabledAsync(message, messageType);
+      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
-      await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
+      await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
 
       // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
 
       // Unwrap Routed<T> from result
       TResult unwrapped;
@@ -3136,7 +3136,7 @@ public abstract partial class Dispatcher(
         }
 
         // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(eventData, eventType);
+        await _processTagsIfEnabledAsync(eventData, eventType, options.CancellationToken);
       }
 
       await outboxTask;

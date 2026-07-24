@@ -93,7 +93,7 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
     }
 
     if (!Guid.TryParse(pinnedIdValue, out _)) {
-      var attributeLocation = pinnedIdAttribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? location;
+      var attributeLocation = pinnedIdAttribute.ApplicationSyntaxReference?.GetSyntax(context.CancellationToken).GetLocation() ?? location;
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PinnedIdNotAValidGuid,
           attributeLocation,

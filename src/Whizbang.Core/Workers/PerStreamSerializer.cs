@@ -121,7 +121,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
 
   /// <inheritdoc />
   public async ValueTask DisposeAsync() {
-    await FlushAndStopAsync().ConfigureAwait(false);
+    await FlushAndStopAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -141,7 +141,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
       if (allEmpty) {
         return;
       }
-      await Task.Delay(10).ConfigureAwait(false);
+      await Task.Delay(10, _stopCts.Token).ConfigureAwait(false);
     }
   }
 
@@ -152,7 +152,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
       FullMode = BoundedChannelFullMode.Wait,
     });
     var stream = new StreamChannel(key, channel, _timeProvider.GetUtcNow());
-    stream.Worker = Task.Run(() => _drainStreamAsync(stream));
+    stream.Worker = Task.Run(() => _drainStreamAsync(stream), _stopCts.Token);
     return stream;
   }
 

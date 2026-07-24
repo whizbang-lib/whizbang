@@ -189,7 +189,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
     }
 
     // Flush remaining unit (if any)
-    await _unitLock.WaitAsync();
+    await _unitLock.WaitAsync(CancellationToken.None);
     try {
       if (_currentUnit?.Messages.Count > 0) {
         if (OnFlushRequested != null) {

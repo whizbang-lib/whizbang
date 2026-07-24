@@ -178,7 +178,11 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     if (options.StatementTimeoutSeconds is int secs && secs > 0) {
       await using var setCmd = connection.CreateCommand();
       setCmd.Transaction = tx;
+      // 'secs' is a validated int (checked > 0 above); PostgreSQL SET LOCAL cannot be parameterized, so the
+      // integer is concatenated directly — injection-safe (no string input reaches the command text).
+#pragma warning disable S2077
       setCmd.CommandText = "SET LOCAL statement_timeout = " + (secs * 1000).ToString(CultureInfo.InvariantCulture);
+#pragma warning restore S2077
       await setCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

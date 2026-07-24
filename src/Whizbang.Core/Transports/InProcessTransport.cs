@@ -169,7 +169,7 @@ public class InProcessTransport : ITransport {
       await PublishAsync(requestEnvelope, destination, envelopeType: null, preSerializedBytes: null, cancellationToken);
 
       // Wait for response (with cancellation support)
-      using (cancellationToken.Register(() => tcs.TrySetCanceled())) {
+      using (cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken))) {
         return await tcs.Task;
       }
     } finally {

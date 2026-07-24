@@ -96,9 +96,9 @@ public static class SagaItemStreams {
     nameBytes.CopyTo(input, namespaceBytes.Length);
 
     Span<byte> hash = stackalloc byte[20];
-#pragma warning disable CA5350 // RFC 4122 v5 mandates SHA-1; this is identity derivation, not authentication.
+#pragma warning disable CA5350, S4790 // RFC 4122 v5 mandates SHA-1; this is deterministic identity derivation, not authentication/security.
     SHA1.HashData(input, hash);
-#pragma warning restore CA5350
+#pragma warning restore CA5350, S4790
 
     Span<byte> uuid = hash[..16];
     uuid[6] = (byte)((uuid[6] & 0x0F) | 0x50);   // version 5

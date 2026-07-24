@@ -135,7 +135,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeMethod(SyntaxNodeAnalysisContext context) {
     var methodDeclaration = (MethodDeclarationSyntax)context.Node;
-    var methodSymbol = context.SemanticModel.GetDeclaredSymbol(methodDeclaration);
+    var methodSymbol = context.SemanticModel.GetDeclaredSymbol(methodDeclaration, context.CancellationToken);
 
     if (methodSymbol is null) {
       return;
@@ -240,7 +240,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     // returned IQueryable may fail to bind (System.Linq.Queryable not in scope), which would null the
     // invocation symbol, but `query`'s own type still resolves.
     foreach (var memberAccess in methodDeclaration.DescendantNodes().OfType<MemberAccessExpressionSyntax>()) {
-      var receiverType = context.SemanticModel.GetTypeInfo(memberAccess.Expression).Type;
+      var receiverType = context.SemanticModel.GetTypeInfo(memberAccess.Expression, context.CancellationToken).Type;
       if (receiverType?.ToDisplayString() != COLLECTIVE_QUERY_FULL_NAME) {
         continue;
       }
@@ -255,7 +255,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeConstructor(SyntaxNodeAnalysisContext context) {
     var constructorDeclaration = (ConstructorDeclarationSyntax)context.Node;
-    var constructorSymbol = context.SemanticModel.GetDeclaredSymbol(constructorDeclaration);
+    var constructorSymbol = context.SemanticModel.GetDeclaredSymbol(constructorDeclaration, context.CancellationToken);
 
     if (constructorSymbol is null) {
       return;

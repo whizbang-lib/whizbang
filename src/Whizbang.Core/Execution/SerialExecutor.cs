@@ -261,7 +261,7 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     }
 
     // Stop the executor if running
-    await StopAsync();
+    await StopAsync(CancellationToken.None);
 
     // Dispose the cancellation token source
     _workerCts?.Dispose();

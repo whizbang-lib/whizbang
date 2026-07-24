@@ -102,7 +102,7 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
 
   /// <inheritdoc />
   public async ValueTask DisposeAsync() {
-    await FlushAndStopAsync().ConfigureAwait(false);
+    await FlushAndStopAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   private StreamBuffer _createStreamBuffer(Guid key) {
@@ -118,7 +118,7 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
     };
     var batcher = new SlidingWindowBatcher<Guid>(channel.Reader, batcherOptions, _timeProvider);
     var buffer = new StreamBuffer(key, channel, _timeProvider.GetUtcNow());
-    buffer.Worker = Task.Run(() => _drainBufferAsync(buffer, batcher));
+    buffer.Worker = Task.Run(() => _drainBufferAsync(buffer, batcher), _stopCts.Token);
     return buffer;
   }
 

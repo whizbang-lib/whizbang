@@ -63,7 +63,7 @@ public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
     foreach (var attribute in propertySymbol.GetAttributes()) {
       if (attribute.AttributeClass?.ToDisplayString() == VECTOR_FIELD_ATTRIBUTE) {
         // Found [VectorField] but package is not referenced - report diagnostic
-        var location = attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ??
+        var location = attribute.ApplicationSyntaxReference?.GetSyntax(context.CancellationToken).GetLocation() ??
                        propertySymbol.Locations.FirstOrDefault() ??
                        Location.None;
 
