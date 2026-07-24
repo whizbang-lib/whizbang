@@ -222,12 +222,21 @@ Use `start-release` (Actions → **Start Release** → *Run workflow*, from `dev
 | `major` | GitVersion base, major bump | breaking release |
 | `auto` | whatever GitVersion computes | rarely needed |
 
-It creates `release/vX.Y.Z[-label]`, writes the version into `Directory.Build.props`, and opens a PR
-to `main` titled `chore(release): vX.Y.Z[-label]`. Then:
+It creates `release/vX.Y.Z[-label]`, **merges `main` into it** (so the PR is conflict-free — see
+below), writes the version into `Directory.Build.props`, and opens a PR to `main` titled
+`chore(release): vX.Y.Z[-label]`. Then:
 
 1. **Review the PR.** The version-preview comment now shows the exact version that will publish.
 2. **Merge it.** `release.yml` runs: creates the tag, packs, and requests the `nuget-publish` approval.
 3. **Approve** in the Actions UI → packages publish to nuget.org.
+
+> **Why start-release merges main first.** `main` carries the *previous* release's version in
+> `Directory.Build.props` while `develop` keeps its local placeholder, so the two have diverged
+> (`main` is not an ancestor of `develop`). Without reconciling, **every** release PR would conflict on
+> that one line. `start-release` merges `main` into the fresh release branch and resolves that single
+> expected conflict (the version is re-stamped immediately after), so the PR to `main` opens clean —
+> without ever touching develop's placeholder. Any *other* merge conflict is unexpected and fails the
+> run loudly rather than being silently dropped.
 
 ### Prerelease vs final
 
