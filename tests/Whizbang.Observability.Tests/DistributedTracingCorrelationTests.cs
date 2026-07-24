@@ -227,14 +227,13 @@ public class DistributedTracingCorrelationTests {
       }
 
       // Inbox activity parented to BFF request
-      using (var inbox = WhizbangActivitySource.Transport.StartActivity(
+      using var inbox = WhizbangActivitySource.Transport.StartActivity(
         "Inbox UserCreatedEvent",
         ActivityKind.Consumer,
-        parentContext: parentContext)) {
+        parentContext: parentContext);
 
-        // Receptor runs under inbox
-        using (WhizbangActivitySource.Tracing.StartActivity("Receptor UserCreatedHandler", ActivityKind.Internal)) { }
-      }
+      // Receptor runs under inbox
+      using (WhizbangActivitySource.Tracing.StartActivity("Receptor UserCreatedHandler", ActivityKind.Internal)) { }
     }
 
     // Assert - Build tree and verify hierarchy
@@ -296,7 +295,7 @@ public class DistributedTracingCorrelationTests {
         parentContext: perspectiveParentContext)) {
 
         // Create child lifecycle activities
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveAsync", ActivityKind.Internal)) { }
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveDetached", ActivityKind.Internal)) { }
         using (WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal)) { }
 
         // Assert - Perspective should be linked to BFF request (while activities are still open)

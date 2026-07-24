@@ -7,14 +7,9 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// Wraps IMessagePublishStrategy to add topic pool suffix for test isolation.
 /// Transforms "products" → "products-{suffix}", "inventory" → "inventory-{suffix}", etc.
 /// </summary>
-public sealed class TestInstancePublishStrategy : IMessagePublishStrategy {
-  private readonly IMessagePublishStrategy _inner;
-  private readonly string _topicPoolSuffix;
-
-  public TestInstancePublishStrategy(IMessagePublishStrategy inner, string topicPoolSuffix) {
-    _inner = inner;
-    _topicPoolSuffix = topicPoolSuffix;
-  }
+public sealed class TestInstancePublishStrategy(IMessagePublishStrategy inner, string topicPoolSuffix) : IMessagePublishStrategy {
+  private readonly IMessagePublishStrategy _inner = inner;
+  private readonly string _topicPoolSuffix = topicPoolSuffix;
 
   public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
     return await _inner.IsReadyAsync(cancellationToken);

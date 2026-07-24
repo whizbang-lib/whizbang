@@ -5,21 +5,21 @@ namespace Whizbang.Core.Observability;
 /// Implementations are invoked in registration order during context creation via CascadeContextFactory.
 /// </summary>
 /// <remarks>
-/// Use this interface to inject custom data into the cascade context.
+/// <para>Use this interface to inject custom data into the cascade context.
 /// Each enricher receives the context and returns a (possibly modified) context.
-/// Enrichers should be stateless and idempotent.
+/// Enrichers should be stateless and idempotent.</para>
 ///
-/// Example use cases:
+/// <para>Example use cases:
 /// - Adding correlation metadata from custom headers
 /// - Injecting feature flags or experiment IDs
-/// - Adding custom tenant-specific context
+/// - Adding custom tenant-specific context</para>
 ///
-/// Enrichers are registered via DI and automatically collected by CascadeContextFactory:
+/// <para>Enrichers are registered via DI and automatically collected by CascadeContextFactory:
 /// <code>
 /// services.AddSingleton&lt;ICascadeContextEnricher, MyCustomEnricher&gt;();
-/// </code>
+/// </code></para>
 /// </remarks>
-/// <docs>core-concepts/cascade-context#enrichers</docs>
+/// <docs>fundamentals/messages/cascade-context#enrichers</docs>
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs</tests>
 public interface ICascadeContextEnricher {
   /// <summary>

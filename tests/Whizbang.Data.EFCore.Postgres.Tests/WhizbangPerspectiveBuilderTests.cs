@@ -34,7 +34,7 @@ public class WhizbangPerspectiveBuilderTests {
     var exception = await Assert.That(() => new WhizbangPerspectiveBuilder(services!))
         .Throws<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName!).IsEqualTo("services");
+    await Assert.That(exception.ParamName).IsEqualTo("services");
   }
 
   [Test]

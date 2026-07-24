@@ -6,14 +6,9 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// <summary>
 /// Test service instance provider with fixed instance ID and service name.
 /// </summary>
-public sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
-  public TestServiceInstanceProvider(Guid instanceId, string serviceName) {
-    InstanceId = instanceId;
-    ServiceName = serviceName;
-  }
-
-  public Guid InstanceId { get; }
-  public string ServiceName { get; }
+public sealed class TestServiceInstanceProvider(Guid instanceId, string serviceName) : IServiceInstanceProvider {
+  public Guid InstanceId { get; } = instanceId;
+  public string ServiceName { get; } = serviceName;
   public string HostName => "test-host";
   public int ProcessId => 12345;
 

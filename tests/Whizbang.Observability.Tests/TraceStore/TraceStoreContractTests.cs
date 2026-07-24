@@ -1,6 +1,8 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -34,7 +36,8 @@ public abstract class TraceStoreContractTests {
     var envelope = new Whizbang.Core.Observability.MessageEnvelope<TMessage> {
       MessageId = messageId ?? MessageId.New(),
       Payload = payload,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     envelope.AddHop(new MessageHop {

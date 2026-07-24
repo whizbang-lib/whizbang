@@ -7,7 +7,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// RabbitMQ implementation of IInfrastructureProvisioner.
 /// Creates topic exchanges for owned domains at worker startup.
 /// </summary>
-/// <docs>core-concepts/routing#domain-topic-provisioning</docs>
+/// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
 /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Infrastructure provisioning - startup overhead not critical")]
 public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvisioner {
@@ -48,9 +48,9 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    if (_logger.IsEnabled(LogLevel.Information)) {
+    if (_logger.IsEnabled(LogLevel.Debug)) {
       var count = ownedDomains.Count;
-      _logger.LogInformation(
+      _logger.LogDebug(
         "Provisioning {Count} RabbitMQ exchanges for owned domains",
         count);
     }
@@ -83,8 +83,8 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
         noWait: false,
         cancellationToken: cancellationToken);
 
-      if (_logger.IsEnabled(LogLevel.Information)) {
-        _logger.LogInformation(
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
           "Provisioned exchange '{Exchange}' for owned domain",
           exchangeName);
       }

@@ -459,6 +459,71 @@ public class MessageSecurityServiceCollectionExtensionsTests {
   }
 
   // ========================================
+  // IScopeContext Factory Exception Tests
+  // ========================================
+
+  [Test]
+  public async Task IScopeContext_WhenNoContextSet_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity();
+    var provider = services.BuildServiceProvider();
+
+    using var scope = provider.CreateScope();
+
+    // Act & Assert - IScopeContext should throw when no context is set
+    await Assert.That(() => scope.ServiceProvider.GetRequiredService<IScopeContext>())
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*IScopeContext is not available*");
+  }
+
+  [Test]
+  public async Task IScopeContext_WhenContextIsSet_ReturnsScopeContextAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity();
+    var provider = services.BuildServiceProvider();
+
+    using var scope = provider.CreateScope();
+    var accessor = scope.ServiceProvider.GetRequiredService<IScopeContextAccessor>();
+    var extraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { UserId = "scope-user", TenantId = "scope-tenant" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test"
+    };
+    accessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+    // Act
+    var scopeContext = scope.ServiceProvider.GetRequiredService<IScopeContext>();
+
+    // Assert
+    await Assert.That(scopeContext).IsNotNull();
+    await Assert.That(scopeContext.Scope.UserId).IsEqualTo("scope-user");
+  }
+
+  // ========================================
+  // Duplicate Registration Tests (TryAdd behavior)
+  // ========================================
+
+  [Test]
+  public async Task AddWhizbangMessageSecurity_CalledTwice_FirstOptionsWinAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act - register twice with different options
+    services.AddWhizbangMessageSecurity(o => o.AllowAnonymous = true);
+    services.AddWhizbangMessageSecurity(o => o.AllowAnonymous = false);
+    var provider = services.BuildServiceProvider();
+
+    // Assert - first registration wins (TryAddSingleton)
+    var options = provider.GetRequiredService<MessageSecurityOptions>();
+    await Assert.That(options.AllowAnonymous).IsTrue();
+  }
+
+  // ========================================
   // Test Doubles
   // ========================================
 

@@ -11,6 +11,39 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 /// </summary>
 public static class SharedRabbitMqFixtureSource {
   private static bool _initialized = false;
+  private static RabbitMqIntegrationFixture? _fixture;
+  private static readonly SemaphoreSlim _fixtureLock = new(1, 1);
+
+  /// <summary>
+  /// Gets or creates the shared RabbitMQ integration fixture.
+  /// Created once, reused across ALL tests. Thread-safe via semaphore.
+  /// Tests call CleanupDatabaseAsync between runs for isolation.
+  /// </summary>
+  public static async Task<RabbitMqIntegrationFixture> GetFixtureAsync(CancellationToken cancellationToken = default) {
+    await _fixtureLock.WaitAsync(cancellationToken);
+    try {
+      if (_fixture == null) {
+        await InitializeAsync(cancellationToken);
+
+        var inventoryDbConnection = GetPerTestDatabaseConnectionString();
+        var bffDbConnection = GetPerTestDatabaseConnectionString();
+
+        var fixture = new RabbitMqIntegrationFixture(
+          RabbitMqConnectionString,
+          inventoryDbConnection,
+          bffDbConnection,
+          ManagementApiUri,
+          testId: Guid.NewGuid().ToString("N")[..12]
+        );
+        await fixture.InitializeAsync(cancellationToken);
+        _fixture = fixture;  // Only assign after successful initialization
+        Console.WriteLine("[SharedRabbitMqFixture] Shared fixture created and initialized");
+      }
+      return _fixture;
+    } finally {
+      _fixtureLock.Release();
+    }
+  }
 
   /// <summary>
   /// Gets the shared RabbitMQ connection string.
@@ -47,12 +80,13 @@ public static class SharedRabbitMqFixtureSource {
     }
 
     // Initialize both shared containers (they handle their own singleton pattern and health checks)
-    await SharedPostgresContainer.InitializeAsync(cancellationToken);
+    // Use InitializeOrSkipAsync to gracefully skip tests when Docker/infrastructure is unavailable
+    await SharedPostgresContainer.InitializeOrSkipAsync(cancellationToken);
     if (!wasInitialized) {
       Console.WriteLine("[SharedRabbitMqFixture] SharedPostgresContainer ready");
     }
 
-    await SharedRabbitMqContainer.InitializeAsync(cancellationToken);
+    await SharedRabbitMqContainer.InitializeOrSkipAsync(cancellationToken);
     if (!wasInitialized) {
       Console.WriteLine("[SharedRabbitMqFixture] SharedRabbitMqContainer ready");
     }

@@ -16,20 +16,20 @@
       "children": []
     },
     {
-      "name": "Lifecycle PreDistributeAsync",
+      "name": "Lifecycle PreDistributeDetached",
       "kind": "Internal",
       "status": "Unset",
       "tags": {
-        "whizbang.lifecycle.stage": "PreDistributeAsync"
+        "whizbang.lifecycle.stage": "PreDistributeDetached"
       },
       "children": []
     },
     {
-      "name": "Lifecycle DistributeAsync",
+      "name": "Lifecycle DistributeDetached",
       "kind": "Internal",
       "status": "Unset",
       "tags": {
-        "whizbang.lifecycle.stage": "DistributeAsync"
+        "whizbang.lifecycle.stage": "DistributeDetached"
       },
       "children": []
     },
@@ -43,11 +43,11 @@
       "children": []
     },
     {
-      "name": "Lifecycle PostDistributeAsync",
+      "name": "Lifecycle PostDistributeDetached",
       "kind": "Internal",
       "status": "Unset",
       "tags": {
-        "whizbang.lifecycle.stage": "PostDistributeAsync"
+        "whizbang.lifecycle.stage": "PostDistributeDetached"
       },
       "children": []
     }

@@ -1,4 +1,6 @@
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -57,6 +59,55 @@ public sealed class SecurityContextEventStoreDecoratorTests {
       await Assert.That(scopeContext?.Scope?.TenantId).IsEqualTo("tenant-456");
     } finally {
       ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task AppendAsync_WithMessage_WithAmbientInitiatingContext_PropagatesCascadeIdentityAsync() {
+    // Arrange — the decorator re-derives scope from the ambient context when appending a raw message.
+    // It must ALSO carry the cascade identity (CorrelationId + CausationId) from the ambient initiating
+    // context, otherwise a raw event stored through this path loses its correlation (the production defect
+    // where the persisted hop had `sc` but no `co`/`ca`).
+    var capturingStore = new CapturingEventStore();
+    var decorator = new SecurityContextEventStoreDecorator(capturingStore);
+    var streamId = Guid.NewGuid();
+    var message = new TestEvent("test");
+
+    var expectedCorrelation = CorrelationId.New();
+    var initiatingMessageId = MessageId.New();
+    var scope = new PerspectiveScope { UserId = "user-123", TenantId = "tenant-456" };
+    var extraction = new SecurityExtraction {
+      Scope = scope,
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test"
+    };
+    var immutableContext = new ImmutableScopeContext(extraction, shouldPropagate: true);
+    var initiatingContext = new MessageContext {
+      MessageId = initiatingMessageId,
+      CorrelationId = expectedCorrelation,
+      CausationId = MessageId.New(),
+      ScopeContext = immutableContext
+    };
+    ScopeContextAccessor.CurrentContext = immutableContext;
+    ScopeContextAccessor.CurrentInitiatingContext = initiatingContext;
+
+    try {
+      // Act
+      await decorator.AppendAsync(streamId, message);
+
+      // Assert
+      await Assert.That(capturingStore.CapturedEnvelope).IsNotNull();
+      var hop = capturingStore.CapturedEnvelope!.Hops[0];
+      await Assert.That(hop.CorrelationId).IsEqualTo(expectedCorrelation)
+        .Because("The stored hop must inherit CorrelationId from the ambient initiating context, alongside scope.");
+      await Assert.That(hop.CausationId).IsEqualTo(initiatingMessageId)
+        .Because("CausationId is the initiating message's id — stripped alongside correlation at the same seam.");
+    } finally {
+      ScopeContextAccessor.CurrentContext = null;
+      ScopeContextAccessor.CurrentInitiatingContext = null;
     }
   }
 
@@ -127,7 +178,8 @@ public sealed class SecurityContextEventStoreDecoratorTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = "original-user" })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -191,6 +243,8 @@ public sealed class SecurityContextEventStoreDecoratorTests {
     public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) => Task.FromResult(-1L);
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   /// <summary>
@@ -236,5 +290,7 @@ public sealed class SecurityContextEventStoreDecoratorTests {
       GetLastSequenceCalled = true;
       return Task.FromResult(LastSequenceToReturn);
     }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 }

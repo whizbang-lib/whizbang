@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
@@ -126,7 +127,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -151,7 +153,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -177,7 +180,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -209,7 +213,8 @@ public class TransportConsumerWorkerResilienceTests {
       await SubscriptionRetryHelper.SubscribeWithRetryAsync(
         transport,
         state.Destination,
-        async (_, _, _) => await Task.CompletedTask,
+        (_, _) => Task.CompletedTask,
+        new TransportBatchOptions(),
         state,
         options,
         NullLogger.Instance,
@@ -238,7 +243,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -262,7 +268,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -293,7 +300,7 @@ public class TransportConsumerWorkerResilienceTests {
     var serviceProvider = serviceCollection.BuildServiceProvider();
 
     // Act - create worker (should register recovery handler)
-    var worker = _createWorkerWithResilience(transport, options, resilienceOptions, serviceProvider);
+    _ = _createWorkerWithResilience(transport, options, resilienceOptions, serviceProvider);
 
     // Assert
     await Assert.That(transport.HasRecoveryHandler).IsTrue()
@@ -405,7 +412,7 @@ public class TransportConsumerWorkerResilienceTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
   }
@@ -414,18 +421,13 @@ public class TransportConsumerWorkerResilienceTests {
 
   #region Test Doubles
 
-  private sealed class FailingTransport : ITransport {
-    private readonly int _failureCount;
-    private readonly Exception _exceptionToThrow;
+  private sealed class FailingTransport(int failureCount, Exception? exceptionToThrow = null) : ITransport {
+    private readonly int _failureCount = failureCount;
+    private readonly Exception _exceptionToThrow = exceptionToThrow ?? new InvalidOperationException("Subscription failed");
     private int _currentFailureCount;
 
     public int SubscribeCallCount { get; private set; }
     public Action? OnSubscribeAttempt { get; set; }
-
-    public FailingTransport(int failureCount, Exception? exceptionToThrow = null) {
-      _failureCount = failureCount;
-      _exceptionToThrow = exceptionToThrow ?? new InvalidOperationException("Subscription failed");
-    }
 
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -436,12 +438,30 @@ public class TransportConsumerWorkerResilienceTests {
       IMessageEnvelope envelope,
       TransportDestination destination,
       string? envelopeType = null,
+      ReadOnlyMemory<byte>? preSerializedBytes = null,
       CancellationToken cancellationToken = default
     ) => Task.CompletedTask;
 
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination,
+      CancellationToken cancellationToken = default
+    ) {
+      SubscribeCallCount++;
+      OnSubscribeAttempt?.Invoke();
+
+      if (_currentFailureCount < _failureCount) {
+        _currentFailureCount++;
+        throw _exceptionToThrow;
+      }
+
+      return Task.FromResult<ISubscription>(new FakeSubscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
       CancellationToken cancellationToken = default
     ) {
       SubscribeCallCount++;
@@ -487,12 +507,23 @@ public class TransportConsumerWorkerResilienceTests {
       IMessageEnvelope envelope,
       TransportDestination destination,
       string? envelopeType = null,
+      ReadOnlyMemory<byte>? preSerializedBytes = null,
       CancellationToken cancellationToken = default
     ) => Task.CompletedTask;
 
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination,
+      CancellationToken cancellationToken = default
+    ) {
+      SubscribeCallCount++;
+      return Task.FromResult<ISubscription>(new FakeSubscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
       CancellationToken cancellationToken = default
     ) {
       SubscribeCallCount++;
@@ -507,13 +538,9 @@ public class TransportConsumerWorkerResilienceTests {
       throw new NotSupportedException();
   }
 
-  private sealed class SelectiveFailingTransport : ITransport {
-    private readonly HashSet<string> _failingTopics;
+  private sealed class SelectiveFailingTransport(IEnumerable<string> failingTopics) : ITransport {
+    private readonly HashSet<string> _failingTopics = [.. failingTopics];
     private readonly List<TransportDestination> _successfulSubscriptions = [];
-
-    public SelectiveFailingTransport(IEnumerable<string> failingTopics) {
-      _failingTopics = new HashSet<string>(failingTopics);
-    }
 
     public IReadOnlyList<TransportDestination> SuccessfulSubscriptions => _successfulSubscriptions;
     public bool IsInitialized => true;
@@ -525,12 +552,27 @@ public class TransportConsumerWorkerResilienceTests {
       IMessageEnvelope envelope,
       TransportDestination destination,
       string? envelopeType = null,
+      ReadOnlyMemory<byte>? preSerializedBytes = null,
       CancellationToken cancellationToken = default
     ) => Task.CompletedTask;
 
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination,
+      CancellationToken cancellationToken = default
+    ) {
+      if (_failingTopics.Contains(destination.Address)) {
+        throw new InvalidOperationException($"Subscription to {destination.Address} failed");
+      }
+
+      _successfulSubscriptions.Add(destination);
+      return Task.FromResult<ISubscription>(new FakeSubscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
       CancellationToken cancellationToken = default
     ) {
       if (_failingTopics.Contains(destination.Address)) {
@@ -598,16 +640,31 @@ public class TransportConsumerWorkerResilienceTests {
       throw new NotImplementedException();
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
       throw new NotImplementedException();
+    public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) =>
+      throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
       throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) =>
       throw new NotImplementedException();
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
       throw new NotImplementedException();
-    public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
+      throw new NotImplementedException();
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) =>
+      throw new NotImplementedException();
+    public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull =>
+      throw new NotImplementedException();
+    public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
+      throw new NotImplementedException();
+    public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
-    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
+    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message) => throw new NotImplementedException();
+    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, Whizbang.Core.Dispatch.DispatchOptions options) => throw new NotImplementedException();
   }
 
   #endregion

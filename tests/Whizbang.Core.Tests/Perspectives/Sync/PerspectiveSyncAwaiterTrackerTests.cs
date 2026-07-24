@@ -46,8 +46,8 @@ public class PerspectiveSyncAwaiterTrackerTests {
         coordinator,
         clock,
         NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: scopedTracker,
-        syncEventTracker: syncEventTracker);
+        syncEventTracker: syncEventTracker,
+        tracker: scopedTracker);
 
     // Assert
     await Assert.That(awaiter).IsNotNull();
@@ -65,7 +65,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
         coordinator,
         clock,
         NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: syncEventTracker);
 
     // Assert
@@ -94,7 +93,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: syncEventTracker);
 
     // Simulate perspective worker calling MarkProcessedByPerspective after a short delay
@@ -117,58 +115,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
   }
 
   [Test]
-  public async Task WaitForStreamAsync_WithNoTrackedEvents_FallsThroughToDbDiscoveryAsync() {
-    // Arrange - tracker is empty (no events tracked for this stream)
-    // This is the CRITICAL scenario: ISyncEventTracker exists but has no events
-    // We should NOT return Synced immediately - fall through to database discovery
-    var streamId = Guid.NewGuid();
-    var syncEventTracker = new SyncEventTracker();
-    // Track an event on a DIFFERENT stream (so our target stream has no tracked events)
-    syncEventTracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), Guid.NewGuid(), typeof(TestPerspective).FullName!);
-
-    SyncInquiry? capturedInquiry = null;
-    var coordinator = new MockWorkCoordinator((request, _) => {
-      capturedInquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        SyncInquiryResults = [
-          new SyncInquiryResult {
-            InquiryId = capturedInquiry?.InquiryId ?? Guid.NewGuid(),
-            StreamId = streamId,
-            PendingCount = 0,
-            ProcessedCount = 0,
-            ProcessedEventIds = []
-          }
-        ]
-      });
-    });
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(
-        coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
-        syncEventTracker: syncEventTracker);
-
-    // Act
-    var result = await awaiter.WaitForStreamAsync(
-        typeof(TestPerspective),
-        streamId,
-        eventTypes: [typeof(TestEventA)],
-        timeout: TimeSpan.FromSeconds(5),
-        eventIdToAwait: null);
-
-    // Assert - should fall through to database discovery
-    await Assert.That(capturedInquiry).IsNotNull()
-      .Because("Should query database when tracker has no events for this stream");
-    await Assert.That(capturedInquiry!.DiscoverPendingFromOutbox).IsTrue()
-      .Because("Should use database discovery when no explicit event IDs available");
-    await Assert.That(capturedInquiry.EventTypeFilter).IsNotNull()
-      .Because("EventTypeFilter should be set for database discovery");
-  }
-
-  [Test]
   public async Task WaitForStreamAsync_TrackerFiltersEventTypesAsync() {
     // Arrange
     var streamId = Guid.NewGuid();
@@ -187,7 +133,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: syncEventTracker);
 
     // Simulate perspective worker calling MarkProcessedByPerspective for eventIdA only
@@ -234,7 +179,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: syncEventTracker);
 
     // Simulate perspective worker calling MarkProcessedByPerspective only for the matching perspective's event
@@ -279,7 +223,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: syncEventTracker);
 
     // Simulate perspective worker calling MarkProcessedByPerspective after a delay
@@ -322,7 +265,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: syncEventTracker);
 
     // Act - No MarkProcessed is called, so event-driven waiting should timeout
@@ -340,39 +282,23 @@ public class PerspectiveSyncAwaiterTrackerTests {
 
   [Test]
   public async Task WaitForStreamAsync_ExplicitEventId_TakesPriorityOverTrackerAsync() {
-    // Arrange
+    // Arrange - explicit eventIdToAwait goes through event-driven wait.
+    // Since the explicit ID isn't tracked in SyncEventTracker,
+    // WaitForPerspectiveEventsAsync returns true immediately → Synced.
     var streamId = Guid.NewGuid();
     var trackedEventId = Guid.NewGuid();
     var explicitEventId = Guid.NewGuid();
     var perspectiveName = typeof(TestPerspective).FullName!;
 
-    // Tracker has one event
+    // Tracker has one event (different from explicitEventId)
     var syncEventTracker = new SyncEventTracker();
     syncEventTracker.TrackEvent(typeof(TestEventA), trackedEventId, streamId, perspectiveName);
 
-    SyncInquiry? capturedInquiry = null;
-    var coordinator = new MockWorkCoordinator((request, _) => {
-      capturedInquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        SyncInquiryResults = [
-          new SyncInquiryResult {
-            InquiryId = capturedInquiry?.InquiryId ?? Guid.NewGuid(),
-            StreamId = streamId,
-            PendingCount = 0,
-            ProcessedCount = 1,
-            ProcessedEventIds = [explicitEventId]
-          }
-        ]
-      });
-    });
+    var coordinator = new MockWorkCoordinator();
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: syncEventTracker);
 
     // Act - provide explicit event ID
@@ -383,12 +309,14 @@ public class PerspectiveSyncAwaiterTrackerTests {
         timeout: TimeSpan.FromSeconds(5),
         eventIdToAwait: explicitEventId);
 
-    // Assert - explicit event ID takes priority over tracker
-    await Assert.That(capturedInquiry).IsNotNull();
-    await Assert.That(capturedInquiry!.EventIds).IsNotNull();
-    await Assert.That(capturedInquiry.EventIds!.Length).IsEqualTo(1);
-    await Assert.That(capturedInquiry.EventIds).Contains(explicitEventId);
-    await Assert.That(capturedInquiry.EventIds).DoesNotContain(trackedEventId);
+    // Assert - explicit event ID goes through event-driven wait, completes immediately
+    // since explicitEventId is not tracked in the SyncEventTracker
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+
+    // Tracked event should still be in tracker (not cleaned up since we used explicit ID path)
+    var pending = syncEventTracker.GetPendingEvents(streamId, perspectiveName, [typeof(TestEventA)]);
+    await Assert.That(pending.Count).IsEqualTo(1);
+    await Assert.That(pending[0].EventId).IsEqualTo(trackedEventId);
   }
 
   // ==========================================================================
@@ -421,7 +349,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
     // Request 2 has NO scoped tracker (different scope), but uses shared ISyncEventTracker
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null, // No scoped tracker - cross-scope
         syncEventTracker: sharedTracker); // Shared singleton
 
     // Simulate PerspectiveWorker processing the event
@@ -466,7 +393,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: sharedTracker);
 
     // Simulate PerspectiveWorker calling MarkProcessedByPerspective (which both signals waiters AND cleans up)
@@ -494,7 +420,9 @@ public class PerspectiveSyncAwaiterTrackerTests {
   [Test]
   public async Task CrossScope_ExplicitEventId_DoesNotCleanupTrackerAsync() {
     // When explicit eventIdToAwait is provided, the tracker should NOT be cleaned up
-    // because we didn't use the tracker as the source of expected IDs
+    // because we didn't use the tracker as the source of expected IDs.
+    // Explicit event ID goes through event-driven wait. Since explicitEventId isn't
+    // tracked, WaitForPerspectiveEventsAsync returns true immediately → Synced.
 
     var streamId = Guid.NewGuid();
     var trackedEventId = Guid.NewGuid();
@@ -505,28 +433,11 @@ public class PerspectiveSyncAwaiterTrackerTests {
     var sharedTracker = new SyncEventTracker();
     sharedTracker.TrackEvent(typeof(TestEventA), trackedEventId, streamId, perspectiveName);
 
-    var coordinator = new MockWorkCoordinator((request, _) => {
-      var inquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        SyncInquiryResults = [
-          new SyncInquiryResult {
-            InquiryId = inquiry?.InquiryId ?? Guid.NewGuid(),
-            StreamId = streamId,
-            PendingCount = 0,
-            ProcessedCount = 1,
-            ProcessedEventIds = [explicitEventId]
-          }
-        ]
-      });
-    });
+    var coordinator = new MockWorkCoordinator();
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: sharedTracker);
 
     // Act - use explicit event ID
@@ -537,138 +448,13 @@ public class PerspectiveSyncAwaiterTrackerTests {
         timeout: TimeSpan.FromSeconds(5),
         eventIdToAwait: explicitEventId);
 
-    // Assert - sync succeeded
+    // Assert - sync succeeded (explicitEventId not tracked → immediate completion)
     await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
 
     // Assert - tracker should NOT be cleaned up (we used explicit ID, not tracker)
     var pendingAfter = sharedTracker.GetPendingEvents(streamId, perspectiveName);
     await Assert.That(pendingAfter.Count).IsEqualTo(1);
     await Assert.That(pendingAfter[0].EventId).IsEqualTo(trackedEventId);
-  }
-
-  /// <summary>
-  /// CRITICAL BUG FIX TEST:
-  /// This test reproduces the EXACT user scenario where:
-  /// 1. Request 1 (StartActivityCommandHandler) emits StartedEvent
-  /// 2. Request 2 (RequestActivityStatusCommandHandler) has [AwaitPerspectiveSync]
-  /// 3. The ISyncEventTracker exists but the event was NOT tracked (e.g., generator not wired)
-  /// 4. BUG: Handler fired immediately because tracker had no events -> returned Synced
-  /// 5. FIX: Should fall through to database discovery and wait for pending events
-  /// </summary>
-  [Test]
-  public async Task BUGFIX_TrackerHasNoEvents_ShouldFallThroughToDbDiscovery_AndWaitAsync() {
-    // Arrange - This simulates the user's exact scenario:
-    // - ISyncEventTracker exists (it's registered in DI)
-    // - BUT the event was NOT tracked (ITrackedEventTypeRegistry not populated by generator)
-    // - Event EXISTS in database (Request 1 stored it) but perspective hasn't processed it
-    var streamId = Guid.NewGuid();
-    var pendingEventId = Guid.NewGuid();
-
-    // Empty tracker - event was NOT tracked (simulates generator not wiring correctly)
-    var emptyTracker = new SyncEventTracker();
-
-    var queryCount = 0;
-    var coordinator = new MockWorkCoordinator((request, _) => {
-      queryCount++;
-      var inquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
-
-      // Simulate: Event IS in database, IS pending (not yet processed by perspective)
-      // On 4th query, event is processed
-      var isProcessed = queryCount >= 4;
-
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        SyncInquiryResults = [
-          new SyncInquiryResult {
-            InquiryId = inquiry?.InquiryId ?? Guid.NewGuid(),
-            StreamId = streamId,
-            PendingCount = isProcessed ? 0 : 1,
-            ProcessedCount = isProcessed ? 1 : 0,
-            ProcessedEventIds = isProcessed ? [pendingEventId] : [],
-            PendingEventIds = isProcessed ? [] : [pendingEventId]
-          }
-        ]
-      });
-    });
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-
-    // Request 2 has:
-    // - No scoped tracker (different scope from Request 1)
-    // - ISyncEventTracker exists but is EMPTY for this stream
-    var awaiter = new PerspectiveSyncAwaiter(
-        coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
-        syncEventTracker: emptyTracker);
-
-    // Act - This is what [AwaitPerspectiveSync] does
-    var result = await awaiter.WaitForStreamAsync(
-        typeof(TestPerspective),
-        streamId,
-        eventTypes: [typeof(TestEventA)],
-        timeout: TimeSpan.FromSeconds(5),
-        eventIdToAwait: null);
-
-    // Assert
-    // BEFORE FIX: Would return Synced immediately (queryCount = 0) - BUG!
-    // AFTER FIX: Falls through to database discovery, waits for event
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
-      .Because("Should wait for database to confirm event is processed");
-    await Assert.That(queryCount).IsGreaterThanOrEqualTo(4)
-      .Because("Should poll database until event is processed (not return immediately)");
-  }
-
-  /// <summary>
-  /// Verifies that when tracker is empty, the inquiry has DiscoverPendingFromOutbox = true.
-  /// </summary>
-  [Test]
-  public async Task BUGFIX_TrackerEmpty_ShouldSetDiscoverPendingFromOutboxAsync() {
-    // Arrange
-    var streamId = Guid.NewGuid();
-    var emptyTracker = new SyncEventTracker();
-
-    SyncInquiry? capturedInquiry = null;
-    var coordinator = new MockWorkCoordinator((request, _) => {
-      capturedInquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        SyncInquiryResults = [
-          new SyncInquiryResult {
-            InquiryId = capturedInquiry?.InquiryId ?? Guid.NewGuid(),
-            StreamId = streamId,
-            PendingCount = 0,
-            ProcessedCount = 1
-          }
-        ]
-      });
-    });
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(
-        coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
-        syncEventTracker: emptyTracker);
-
-    // Act
-    await awaiter.WaitForStreamAsync(
-        typeof(TestPerspective),
-        streamId,
-        eventTypes: [typeof(TestEventA)],
-        timeout: TimeSpan.FromSeconds(1),
-        eventIdToAwait: null);
-
-    // Assert - inquiry should use database discovery
-    await Assert.That(capturedInquiry).IsNotNull();
-    await Assert.That(capturedInquiry!.DiscoverPendingFromOutbox).IsTrue()
-      .Because("When tracker is empty, should fall through to database discovery");
-    await Assert.That(capturedInquiry.EventIds).IsNull()
-      .Because("No explicit event IDs when using database discovery");
-    await Assert.That(capturedInquiry.EventTypeFilter).IsNotNull()
-      .Because("Should include event type filter for discovery");
   }
 
   [Test]
@@ -690,7 +476,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     var awaiter = new PerspectiveSyncAwaiter(
         coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
         syncEventTracker: sharedTracker);
 
     // Simulate PerspectiveWorker processing the event after a delay

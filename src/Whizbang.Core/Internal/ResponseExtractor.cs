@@ -11,7 +11,7 @@ namespace Whizbang.Core.Internal;
 /// Supports: single value, tuples (ValueTuple/ITuple), arrays, enumerables, and Routed&lt;T&gt; wrappers.
 /// AOT-compatible: uses ITuple interface and pattern matching, no reflection.
 /// </summary>
-/// <docs>core-concepts/rpc-extraction</docs>
+/// <docs>fundamentals/dispatcher/rpc-extraction</docs>
 /// <tests>Whizbang.Core.Tests/Internal/ResponseExtractorTests.cs</tests>
 public static class ResponseExtractor {
   /// <summary>
@@ -38,11 +38,7 @@ public static class ResponseExtractor {
     // Handle Routed<T> wrapper - unwrap and search inner value
     // Skip RoutedNone values (discriminated union "no value" marker)
     if (result is IRouted routed) {
-      if (routed.Mode == DispatchMode.None) {
-        response = default;
-        return false;
-      }
-      return TryExtractResponse(routed.Value, out response);
+      return _tryExtractFromRouted(routed, out response);
     }
 
     // Handle direct match
@@ -53,28 +49,53 @@ public static class ResponseExtractor {
 
     // Handle ValueTuple types (ITuple interface) - AOT-compatible
     if (result is ITuple tuple) {
-      for (int i = 0; i < tuple.Length; i++) {
-        var item = tuple[i];
-        if (item != null && TryExtractResponse(item, out response)) {
-          return true;
-        }
-      }
-      response = default;
-      return false;
+      return _tryExtractFromTuple<TResponse>(tuple, out response);
     }
 
     // Handle general IEnumerable (arrays, lists, etc.) but not string
     if (result is IEnumerable enumerable and not string) {
-      foreach (var item in enumerable) {
-        if (item != null && TryExtractResponse(item, out response)) {
-          return true;
-        }
-      }
-      response = default;
-      return false;
+      return _tryExtractFromEnumerable<TResponse>(enumerable, out response);
     }
 
     // No match found
+    response = default;
+    return false;
+  }
+
+  /// <summary>
+  /// Unwraps a Routed wrapper and recursively extracts the response.
+  /// </summary>
+  private static bool _tryExtractFromRouted<TResponse>(IRouted routed, out TResponse? response) {
+    if (routed.Mode == DispatchModes.None) {
+      response = default;
+      return false;
+    }
+    return TryExtractResponse(routed.Value, out response);
+  }
+
+  /// <summary>
+  /// Searches tuple items recursively for a matching response type.
+  /// </summary>
+  private static bool _tryExtractFromTuple<TResponse>(ITuple tuple, out TResponse? response) {
+    for (int i = 0; i < tuple.Length; i++) {
+      var item = tuple[i];
+      if (item != null && TryExtractResponse(item, out response)) {
+        return true;
+      }
+    }
+    response = default;
+    return false;
+  }
+
+  /// <summary>
+  /// Searches enumerable items recursively for a matching response type.
+  /// </summary>
+  private static bool _tryExtractFromEnumerable<TResponse>(IEnumerable enumerable, out TResponse? response) {
+    foreach (var item in enumerable) {
+      if (item != null && TryExtractResponse(item, out response)) {
+        return true;
+      }
+    }
     response = default;
     return false;
   }

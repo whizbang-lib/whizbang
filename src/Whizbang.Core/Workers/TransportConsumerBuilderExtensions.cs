@@ -22,7 +22,7 @@ namespace Whizbang.Core.Workers;
 /// derived from <see cref="RoutingOptions"/>. The additional destinations
 /// are appended after auto-generated inbox and event subscriptions.
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#additional-destinations</docs>
+/// <docs>messaging/transports/transport-consumer#additional-destinations</docs>
 public sealed class TransportConsumerConfiguration {
   /// <summary>
   /// Gets the list of additional destinations to subscribe to beyond auto-generated ones.
@@ -40,7 +40,7 @@ public sealed class TransportConsumerConfiguration {
   /// Gets the resilience options for subscription retry behavior.
   /// Resilience is always enabled - subscriptions retry with exponential backoff on failure.
   /// </summary>
-  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   public SubscriptionResilienceOptions ResilienceOptions { get; } = new();
 }
 
@@ -62,9 +62,11 @@ public sealed class TransportConsumerConfiguration {
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#auto-configuration</docs>
+/// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs</tests>
 public static class TransportConsumerBuilderExtensions {
+  private const string HEALTH_CHECK_NAME = "subscriptions";
+
   /// <summary>
   /// Registers <see cref="TransportConsumerWorker"/> with auto-generated subscriptions
   /// from routing configuration.
@@ -114,7 +116,7 @@ public static class TransportConsumerBuilderExtensions {
   ///     });
   /// </code>
   /// </example>
-  /// <docs>core-concepts/transport-consumer#auto-configuration</docs>
+  /// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs:AddTransportConsumer_AutoPopulatesInboxDestination_FromOwnDomainsAsync</tests>
   public static WhizbangBuilder AddTransportConsumer(
       this WhizbangBuilder builder,
@@ -163,9 +165,7 @@ public static class TransportConsumerBuilderExtensions {
       subscriptionBuilder.ConfigureOptions(options);
 
       // Add any additional custom destinations
-      foreach (var destination in additionalDestinations) {
-        options.Destinations.Add(destination);
-      }
+      options.Destinations.AddRange(additionalDestinations);
 
       return options;
     });
@@ -195,13 +195,29 @@ public static class TransportConsumerBuilderExtensions {
       return new NullReceptorInvoker();
     });
 
+    // Register MessageProcessingOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new MessageProcessingOptions());
+
+    // Register TransportBatchOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new TransportBatchOptions());
+
+    // Register inbox channel for routing claimed inbox work to publisher worker
+    builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
+
+
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
+
+    // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
+    // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +
+    // PerspectiveCompletionFlushWorker + HeartbeatWorker now cover what the legacy
+    // monolith did; registration moved to AddWhizbangWorkers. Develop's re-registration
+    // here was dropped by the merge.
 
     // Register health check for subscription monitoring
     builder.Services.AddHealthChecks()
       .Add(new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
-        "subscriptions",
+        HEALTH_CHECK_NAME,
         sp => {
           var worker = sp.GetService<TransportConsumerWorker>();
           var states = worker?.SubscriptionStates
@@ -209,7 +225,7 @@ public static class TransportConsumerBuilderExtensions {
           return new SubscriptionHealthCheck(states);
         },
         failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded,
-        tags: ["transport", "subscriptions"]));
+        tags: ["transport", HEALTH_CHECK_NAME]));
 
     return builder;
   }
@@ -236,7 +252,7 @@ public static class TransportConsumerBuilderExtensions {
   ///     .AddTransportConsumer();
   /// </code>
   /// </example>
-  /// <docs>core-concepts/transport-consumer#auto-configuration</docs>
+  /// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
   public static WhizbangPerspectiveBuilder AddTransportConsumer(
       this WhizbangPerspectiveBuilder builder,
       Action<TransportConsumerConfiguration>? configure = null) {
@@ -283,9 +299,7 @@ public static class TransportConsumerBuilderExtensions {
       subscriptionBuilder.ConfigureOptions(options);
 
       // Add any additional custom destinations
-      foreach (var destination in additionalDestinations) {
-        options.Destinations.Add(destination);
-      }
+      options.Destinations.AddRange(additionalDestinations);
 
       return options;
     });
@@ -315,13 +329,29 @@ public static class TransportConsumerBuilderExtensions {
       return new NullReceptorInvoker();
     });
 
+    // Register MessageProcessingOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new MessageProcessingOptions());
+
+    // Register TransportBatchOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new TransportBatchOptions());
+
+    // Register inbox channel for routing claimed inbox work to publisher worker
+    builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
+
+
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
+
+    // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
+    // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +
+    // PerspectiveCompletionFlushWorker + HeartbeatWorker now cover what the legacy
+    // monolith did; registration moved to AddWhizbangWorkers. Develop's re-registration
+    // here was dropped by the merge.
 
     // Register health check for subscription monitoring
     builder.Services.AddHealthChecks()
       .Add(new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
-        "subscriptions",
+        HEALTH_CHECK_NAME,
         sp => {
           var worker = sp.GetService<TransportConsumerWorker>();
           var states = worker?.SubscriptionStates
@@ -329,7 +359,7 @@ public static class TransportConsumerBuilderExtensions {
           return new SubscriptionHealthCheck(states);
         },
         failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded,
-        tags: ["transport", "subscriptions"]));
+        tags: ["transport", HEALTH_CHECK_NAME]));
 
     return builder;
   }

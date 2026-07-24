@@ -105,4 +105,11 @@ public class PerspectiveRow<TModel> where TModel : class {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_MultipleEvents_IncrementsVersionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PerspectiveTable_ShouldHaveCorrectSchemaAsync</tests>
   public required int Version { get; set; }
+
+  // NOTE (E2-4d): the row's TTL expiry (expires_at) is deliberately NOT a CLR property here. A public property
+  // would be auto-mapped by EF Core convention in EVERY hand-configured perspective context (25+ test
+  // contexts, plus consumers), breaking reads against tables that lack the column. Instead expires_at is a
+  // SHADOW property declared only in the generated production config; the upsert sets it (conditionally, for
+  // TtlRow perspectives) via context.Entry(row).Property("expires_at"), and the lens filter + reaper read it
+  // as a column. So a non-TtlRow context never touches it. See PerspectiveTtlRegistry + BaseUpsertStrategy.
 }

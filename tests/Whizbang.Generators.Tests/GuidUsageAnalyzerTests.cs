@@ -20,7 +20,7 @@ public class GuidUsageAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_GuidNewGuid_ReportsWHIZ055ErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -48,7 +48,7 @@ public class GuidUsageAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_TrackedGuidNewMedo_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -74,7 +74,7 @@ public class GuidUsageAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_WhizbangIdNew_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -104,7 +104,7 @@ public class GuidUsageAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_GuidCreateVersion7_ReportsWHIZ056ErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -136,7 +136,7 @@ public class GuidUsageAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_WithPragmaSuppress_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -164,7 +164,7 @@ public class GuidUsageAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MultipleGuidNewGuid_ReportsMultipleErrorsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -196,7 +196,7 @@ public class GuidUsageAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_GuidParse_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -222,7 +222,7 @@ public class GuidUsageAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_GuidEmpty_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;

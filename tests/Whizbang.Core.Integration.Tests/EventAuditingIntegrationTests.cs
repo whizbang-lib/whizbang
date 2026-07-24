@@ -4,6 +4,8 @@ using Microsoft.Extensions.Options;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Audit;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
@@ -304,7 +306,8 @@ public class EventAuditingIntegrationTests {
     return new MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 }
@@ -319,16 +322,11 @@ public class CapturedSystemEvents {
 /// <summary>
 /// Testable implementation of ISystemEventEmitter that captures events.
 /// </summary>
-public class TestableSystemEventEmitter : ISystemEventEmitter {
-  private readonly CapturedSystemEvents _captured;
-  private readonly SystemEventOptions _options;
-
-  public TestableSystemEventEmitter(
-      CapturedSystemEvents captured,
-      IOptions<SystemEventOptions> options) {
-    _captured = captured;
-    _options = options.Value;
-  }
+public class TestableSystemEventEmitter(
+    CapturedSystemEvents captured,
+    IOptions<SystemEventOptions> options) : ISystemEventEmitter {
+  private readonly CapturedSystemEvents _captured = captured;
+  private readonly SystemEventOptions _options = options.Value;
 
   public Task EmitEventAuditedAsync<TEvent>(
       Guid streamId,

@@ -82,6 +82,56 @@ public class SecurityAttributeTests {
     await Assert.That(attr.Permission.Value).IsEqualTo("customers:admin");
   }
 
+  [Test]
+  public async Task RequirePermissionAttribute_Operation_DefaultsToAnyAsync() {
+    var attr = new RequirePermissionAttribute("orders:read");
+    var op = attr.Operation;
+    await Assert.That(op).IsEqualTo(ScopeOperation.Any);
+  }
+
+  [Test]
+  public async Task RequirePermissionAttribute_Operation_AcceptsReadAsync() {
+    var attr = new RequirePermissionAttribute("orders:read") { Operation = ScopeOperation.Read };
+    var op = attr.Operation;
+    await Assert.That(op).IsEqualTo(ScopeOperation.Read);
+  }
+
+  [Test]
+  public async Task RequirePermissionAttribute_Operation_AcceptsWriteAsync() {
+    var attr = new RequirePermissionAttribute("orders:write") { Operation = ScopeOperation.Write };
+    var op = attr.Operation;
+    await Assert.That(op).IsEqualTo(ScopeOperation.Write);
+  }
+
+  [Test]
+  public async Task RequirePermissionAttribute_TargetsClassAndMethodAsync() {
+    var usage = (AttributeUsageAttribute?)Attribute.GetCustomAttribute(
+      typeof(RequirePermissionAttribute), typeof(AttributeUsageAttribute));
+    await Assert.That(usage).IsNotNull();
+    var validOn = usage!.ValidOn;
+    var hasClass = validOn.HasFlag(AttributeTargets.Class);
+    var hasMethod = validOn.HasFlag(AttributeTargets.Method);
+    await Assert.That(hasClass).IsTrue();
+    await Assert.That(hasMethod).IsTrue();
+    await Assert.That(usage.AllowMultiple).IsTrue();
+  }
+
+  [Test]
+  public async Task RequirePermissionAttribute_AppliedToMethod_IsDiscoverableViaReflectionAsync() {
+    var method = typeof(SampleResolver).GetMethod(nameof(SampleResolver.GetThing))!;
+    var attrs = Attribute.GetCustomAttributes(method, typeof(RequirePermissionAttribute))
+      .Cast<RequirePermissionAttribute>().ToList();
+    await Assert.That(attrs.Count).IsEqualTo(1);
+    var op = attrs[0].Operation;
+    await Assert.That(attrs[0].Permission.Value).IsEqualTo("thing:read");
+    await Assert.That(op).IsEqualTo(ScopeOperation.Read);
+  }
+
+  private sealed class SampleResolver {
+    [RequirePermission("thing:read", Operation = ScopeOperation.Read)]
+    public string GetThing() => "x";
+  }
+
   #endregion
 
   #region ScopedAttribute
@@ -92,43 +142,43 @@ public class SecurityAttributeTests {
     var attr = new ScopedAttribute();
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Tenant);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Tenant);
   }
 
   [Test]
   public async Task ScopedAttribute_Constructor_WithFilter_SetsFilterAsync() {
     // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilter.User);
+    var attr = new ScopedAttribute(ScopeFilters.User);
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.User);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.User);
   }
 
   [Test]
   public async Task ScopedAttribute_Constructor_WithCombinedFilters_SetsFilterAsync() {
     // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilter.Tenant | ScopeFilter.User);
+    var attr = new ScopedAttribute(ScopeFilters.Tenant | ScopeFilters.User);
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Tenant | ScopeFilter.User);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Tenant | ScopeFilters.User);
   }
 
   [Test]
   public async Task ScopedAttribute_Constructor_WithOrganization_SetsFilterAsync() {
     // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilter.Organization);
+    var attr = new ScopedAttribute(ScopeFilters.Organization);
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Organization);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Organization);
   }
 
   [Test]
   public async Task ScopedAttribute_Constructor_WithPrincipal_SetsFilterAsync() {
     // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilter.Principal);
+    var attr = new ScopedAttribute(ScopeFilters.Principal);
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Principal);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Principal);
   }
 
   #endregion

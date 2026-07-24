@@ -10,6 +10,8 @@ using Microsoft.Extensions.Hosting;
 using Npgsql;
 using Testcontainers.ServiceBus;
 using Whizbang.Core;
+using Whizbang.Core.Configuration;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -127,7 +129,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost _createInventoryHost(string postgresConnection, string serviceBusConnection) {
+  private static IHost _createInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Add connection string to configuration for generated turnkey extensions
@@ -137,7 +139,10 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     });
 
     // Register Azure Service Bus transport
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    // EnableSessions=false matches the emulator config (RequiresSession=false).
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, opts => {
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -149,23 +154,22 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers WhizbangId JSON converters for JSONB serialization
-    var inventoryDataSourceBuilder = new NpgsqlDataSourceBuilder(postgresConnection);
-    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    inventoryDataSourceBuilder.EnableDynamicJson();
-    var inventoryDataSource = inventoryDataSourceBuilder.Build();
-    builder.Services.AddSingleton(inventoryDataSource);
-
-    builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options =>
-      options.UseNpgsql(inventoryDataSource));
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<InventoryDbContext> with UseNpgsql
+    // - IDbContextFactory<InventoryDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
@@ -199,7 +203,6 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<ServiceBusConsumerWorker>();
 
     return builder.Build();
@@ -210,7 +213,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost _createBffHost(string postgresConnection, string serviceBusConnection) {
+  private static IHost _createBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Add connection string to configuration for generated turnkey extensions
@@ -220,7 +223,10 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     });
 
     // Register Azure Service Bus transport
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    // EnableSessions=false matches the emulator config (RequiresSession=false).
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, opts => {
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -232,23 +238,22 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers WhizbangId JSON converters for JSONB serialization
-    var bffDataSourceBuilder = new NpgsqlDataSourceBuilder(postgresConnection);
-    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    bffDataSourceBuilder.EnableDynamicJson();
-    var bffDataSource = bffDataSourceBuilder.Build();
-    builder.Services.AddSingleton(bffDataSource);
-
-    builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
-      options.UseNpgsql(bffDataSource));
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<BffDbContext> with UseNpgsql
+    // - IDbContextFactory<BffDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:bff-db" above)
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
@@ -285,12 +290,12 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for both InventoryWorker and BFF
     using (var scope = _inventoryHost!.Services.CreateScope()) {
       var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
-      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger: null, cancellationToken);
+      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger: null, cancellationToken: cancellationToken);
     }
 
     using (var scope = _bffHost!.Services.CreateScope()) {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
-      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken);
+      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken: cancellationToken);
     }
 
     // Note: Service-specific schemas for perspectives are created by EnsureWhizbangDatabaseInitializedAsync()
@@ -307,13 +312,13 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
 
     // Truncate all Whizbang tables in the shared database
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    using (var scope = _inventoryHost!.Services.CreateScope()) {
-      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+    using var scope = _inventoryHost!.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-      // Truncate Whizbang core tables and all perspective tables
-      // CASCADE ensures all dependent data is cleared
-      // Use DO block to gracefully handle case where tables don't exist
-      await dbContext.Database.ExecuteSqlRawAsync(@"
+    // Truncate Whizbang core tables and all perspective tables
+    // CASCADE ensures all dependent data is cleared
+    // Use DO block to gracefully handle case where tables don't exist
+    await dbContext.Database.ExecuteSqlRawAsync(@"
         DO $$
         BEGIN
           TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_events, inventory.wh_message_deduplication CASCADE;
@@ -323,7 +328,6 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
             NULL;
         END $$;
       ", cancellationToken);
-    }
   }
 
   public async ValueTask DisposeAsync() {

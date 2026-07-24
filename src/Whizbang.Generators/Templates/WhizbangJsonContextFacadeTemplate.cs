@@ -28,9 +28,13 @@ public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver 
   /// </summary>
   public static WhizbangJsonContext Default { get; } = new();
 
+  /// <summary>Initializes a new instance of the <see cref="WhizbangJsonContext"/> class.</summary>
   public WhizbangJsonContext() : base(null) { }
+  /// <summary>Initializes a new instance of the <see cref="WhizbangJsonContext"/> class with the specified options.</summary>
+  /// <param name="options">The JSON serializer options to use.</param>
   public WhizbangJsonContext(JsonSerializerOptions options) : base(options) { }
 
+  /// <inheritdoc/>
   protected override JsonSerializerOptions? GeneratedSerializerOptions => null;
 
   /// <summary>

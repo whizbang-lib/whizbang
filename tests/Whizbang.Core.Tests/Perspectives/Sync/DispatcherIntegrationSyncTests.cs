@@ -1,3 +1,4 @@
+using System.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
@@ -9,13 +10,13 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// Integration tests that verify the FULL Dispatcher flow for perspective sync:
+/// <para>Integration tests that verify the FULL Dispatcher flow for perspective sync:
 /// 1. Command A sent → Receptor A invoked → Returns Event B
 /// 2. Event B cascaded → Tracked in ISyncEventTracker (if registered in ITrackedEventTypeRegistry)
 /// 3. Command E sent → Sync check finds tracked event → Waits for MarkProcessed
-/// 4. Perspective worker calls MarkProcessed → Sync completes → E's receptor fires
+/// 4. Perspective worker calls MarkProcessed → Sync completes → E's receptor fires</para>
 ///
-/// These tests verify the complete end-to-end integration, not just individual components.
+/// <para>These tests verify the complete end-to-end integration, not just individual components.</para>
 /// </summary>
 /// <remarks>
 /// These tests use shared SyncEventTracker instances and SyncEventTypeRegistrations,
@@ -23,6 +24,36 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// </remarks>
 [NotInParallel("SyncTests")]
 public class DispatcherIntegrationSyncTests {
+
+  /// <summary>
+  /// Delegating <see cref="ISyncEventTracker"/> that fires a one-shot callback immediately after the
+  /// next <see cref="GetPendingEvents"/> returns. Lets a test mark an event processed exactly when the
+  /// awaiter first observes it as pending — a deterministic completion signal in place of timing.
+  /// </summary>
+  private sealed class _firstPollSignalTracker(SyncEventTracker inner) : ISyncEventTracker {
+    private Action? _nextPoll;
+
+    public void ArmNextPoll(Action callback) => _nextPoll = callback;
+
+    public IReadOnlyList<TrackedSyncEvent> GetPendingEvents(Guid streamId, string perspectiveName, Type[]? eventTypes = null) {
+      var result = inner.GetPendingEvents(streamId, perspectiveName, eventTypes);
+      var cb = _nextPoll;
+      _nextPoll = null;
+      cb?.Invoke();
+      return result;
+    }
+
+    public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) => inner.TrackEvent(eventType, eventId, streamId, perspectiveName);
+    public void MarkProcessed(IEnumerable<Guid> eventIds) => inner.MarkProcessed(eventIds);
+    public IReadOnlyList<Guid> GetAllTrackedEventIds() => inner.GetAllTrackedEventIds();
+    public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null, CancellationToken cancellationToken = default) => inner.WaitForEventsAsync(eventIds, timeout, awaiterId, cancellationToken);
+    public void MarkProcessedByPerspective(IEnumerable<Guid> eventIds, string perspectiveName) => inner.MarkProcessedByPerspective(eventIds, perspectiveName);
+    public Task<bool> WaitForPerspectiveEventsAsync(IReadOnlyList<Guid> eventIds, string perspectiveName, TimeSpan timeout, Guid? awaiterId = null, CancellationToken cancellationToken = default) => inner.WaitForPerspectiveEventsAsync(eventIds, perspectiveName, timeout, awaiterId, cancellationToken);
+    public Task<bool> WaitForAllPerspectivesAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null, CancellationToken cancellationToken = default) => inner.WaitForAllPerspectivesAsync(eventIds, timeout, awaiterId, cancellationToken);
+    public void UnregisterAwaiter(Guid awaiterId) => inner.UnregisterAwaiter(awaiterId);
+    public int CleanupStaleEntries(TimeSpan maxAge) => inner.CleanupStaleEntries(maxAge);
+    public void MarkPerspectiveStreamProcessed(string perspectiveName, Guid streamId) => inner.MarkPerspectiveStreamProcessed(perspectiveName, streamId);
+  }
 
   /// <summary>
   /// CRITICAL TEST: Verify that when events are cascaded, they ARE tracked in the singleton tracker.
@@ -77,7 +108,7 @@ public class DispatcherIntegrationSyncTests {
     // Arrange - clear any existing registrations and add a test one
     SyncEventTypeRegistrations.Clear();
     var testEventType = typeof(IntegrationTestEventB);
-    var testPerspectiveName = "Test.Perspective.Name";
+    const string testPerspectiveName = "Test.Perspective.Name";
 
     SyncEventTypeRegistrations.Register(testEventType, testPerspectiveName);
 
@@ -105,8 +136,11 @@ public class DispatcherIntegrationSyncTests {
     var perspectiveCName = typeof(IntegrationTestPerspectiveC).FullName!;
     var executionOrder = new List<string>();
 
-    // Setup: singleton tracker and type registry
-    var singletonTracker = new SyncEventTracker();
+    // Setup: singleton tracker and type registry. The tracker is wrapped so the perspective marks the
+    // event processed on the awaiter's FIRST pending-check — a deterministic completion signal that
+    // replaces the previous Task.Delay race (two competing delays inverted under CI thread starvation,
+    // yielding NoPendingEvents).
+    var singletonTracker = new _firstPollSignalTracker(new SyncEventTracker());
     var typeRegistry = new TrackedEventTypeRegistry(new Dictionary<Type, string[]> {
       { typeof(IntegrationTestEventB), [perspectiveCName] }
     });
@@ -131,38 +165,25 @@ public class DispatcherIntegrationSyncTests {
 
     var awaiter = new PerspectiveSyncAwaiter(
         mockCoordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
-        syncEventTracker: singletonTracker);
+        singletonTracker);
 
-    // === STEP 3: Perspective worker processes Event B ===
-    var perspectiveTask = Task.Run(async () => {
-      await Task.Delay(100); // Simulate processing time
+    // === STEP 3+4: Command E waits; Perspective C processes Event B exactly when the awaiter first
+    // observes it pending. No racing tasks, no timing assumptions: the awaiter's first GetPendingEvents
+    // returns Event B (so it enters the wait), and that same poll marks it processed, so the wait
+    // completes with Synced. The generous timeout is never reached.
+    singletonTracker.ArmNextPoll(() => {
       executionOrder.Add("Perspective C processed Event B (Apply called)");
       singletonTracker.MarkProcessedByPerspective([eventBId], perspectiveCName);
     });
 
-    // === STEP 4: Command E is sent - should wait for sync ===
-    var syncTask = Task.Run(async () => {
-      // Small delay to ensure tracking happened first
-      await Task.Delay(10);
+    var syncResult = await awaiter.WaitForStreamAsync(
+        typeof(IntegrationTestPerspectiveC),
+        streamId,
+        eventTypes: [typeof(IntegrationTestEventB)],
+        timeout: TimeSpan.FromSeconds(5),
+        eventIdToAwait: null);
 
-      // This is what _awaitPerspectiveSyncIfNeededAsync does
-      var result = await awaiter.WaitForStreamAsync(
-          typeof(IntegrationTestPerspectiveC),
-          streamId,
-          eventTypes: [typeof(IntegrationTestEventB)],
-          timeout: TimeSpan.FromMilliseconds(500),
-          eventIdToAwait: null);
-
-      // After sync completes, E's receptor would fire
-      executionOrder.Add("Command E receptor executed (after sync)");
-
-      return result;
-    });
-
-    // Wait for both
-    var syncResult = await syncTask;
-    await perspectiveTask;
+    executionOrder.Add("Command E receptor executed (after sync)");
 
     // === ASSERTIONS ===
     await Assert.That(syncResult.Outcome).IsEqualTo(SyncOutcome.Synced)
@@ -194,7 +215,7 @@ public class DispatcherIntegrationSyncTests {
   [Test]
   public async Task NoRegistryMapping_EventNotTracked_FallsBackToDbAsync() {
     // Arrange
-    var streamId = Guid.NewGuid();
+    _ = Guid.NewGuid();
     var singletonTracker = new SyncEventTracker();
 
     // Empty registry - no mappings

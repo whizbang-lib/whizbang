@@ -1,191 +1,205 @@
 name: NuGet Publish
 
+# Canonical explicit-version publish pipeline: build + pack at the given version from the given
+# ref, push THROUGH nuget-push.yml — the only workflow file trusted by nuget.org's Trusted
+# Publishing policy (pushing from any other workflow fails OIDC token exchange with
+# "Workflow mismatch for policy") — then create the git tag + GitHub release.
+#
+# Used by: manual workflow_dispatch, and ci.yml's release-publish job (release/v* branch
+# pushes). When the caller already built, tested, and packed the bits (ci.yml), it passes
+# artifact-name and the pack job here is skipped — the pushed packages are the exact bits
+# that went through the test matrix.
+
 on:
-  # Note: Removed direct tag trigger to avoid race condition with release.yml
-  # release.yml creates the GitHub release and then calls this workflow
-  # Having both triggers causes the release to become immutable before assets can be uploaded
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag to publish (e.g., v0.3.0-alpha.26)'
+      version:
+        description: 'Version to publish (e.g., 0.3.0-alpha.26)'
         required: true
+        type: string
+      ref:
+        description: 'Git ref to checkout (branch, tag, or SHA). Defaults to current ref.'
+        required: false
         type: string
   workflow_call:
     inputs:
-      tag:
-        description: 'Tag to publish'
+      version:
+        description: 'Version to publish'
         required: true
         type: string
+      ref:
+        description: 'Git ref to checkout'
+        required: false
+        type: string
+      artifact-name:
+        description: >-
+          Name of an existing NuGet packages artifact uploaded earlier in the calling run.
+          When set, the pack job is skipped and these packages are pushed/released as-is.
+        required: false
+        type: string
+        default: ''
+    secrets:
+      PUSHOVER_API_TOKEN:
+        required: false
+      PUSHOVER_USER_KEY_1:
+        required: false
+      PUSHOVER_USER_KEY_2:
+        required: false
+      PUSHOVER_USER_KEY_3:
+        required: false
+      PUSHOVER_USER_KEY_4:
+        required: false
+      PUSHOVER_USER_KEY_5:
+        required: false
+      PUSHOVER_USER_KEY_6:
+        required: false
+      PUSHOVER_USER_KEY_7:
+        required: false
+      PUSHOVER_USER_KEY_8:
+        required: false
+      PUSHOVER_USER_KEY_9:
+        required: false
+      PUSHOVER_USER_KEY_10:
+        required: false
+
+# Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
+# what it needs.
+permissions: {}
 
 jobs:
-  publish:
+  pack:
+    name: Build & Pack
+    # Skipped when the caller supplies an already-tested packages artifact.
+    if: ${{ inputs.artifact-name == '' }}
     runs-on: ubuntu-latest
-    environment: nuget-publish  # Required for trusted publishing
     permissions:
-      contents: write   # Required for creating GitHub releases
-      id-token: write   # Required for NuGet trusted publishing (OIDC)
-
-    steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      with:
-        fetch-depth: 0  # Full history for GitVersion
-        ref: ${{ inputs.tag || github.ref }}
-
-    - name: Extract Version from Tag
-      id: version
-      env:
-        INPUT_TAG: ${{ inputs.tag || github.ref }}
-      run: |
-        VERSION_REF="$INPUT_TAG"
-        # Strip refs/tags/ prefix and v prefix to get bare semver
-        VERSION=$(echo "$VERSION_REF" | sed 's|refs/tags/||; s|^v||')
-        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-        echo "## Publishing Version" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| **Version** | \`$VERSION\` |" >> $GITHUB_STEP_SUMMARY
-        echo "| **Ref** | \`$VERSION_REF\` |" >> $GITHUB_STEP_SUMMARY
-        echo "| **Commit** | \`$(git rev-parse HEAD)\` |" >> $GITHUB_STEP_SUMMARY
-        echo ""
-        echo "Publishing version: $VERSION"
-        echo "From ref: $VERSION_REF"
-        echo "Commit: $(git rev-parse HEAD)"
-
-    - name: Setup .NET
-      uses: ./.github/actions/setup-dotnet-retry
-      with:
-        dotnet-version: '10.0.x'
-
-    - name: Restore dependencies
-      run: dotnet restore
-
-    - name: Build
-      run: dotnet build --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
-
-    - name: Pack NuGet packages
-      # Note: NU5017 false positive occurs for analyzer packages in .NET 10 SDK
-      # The packages are created correctly despite the error, so we verify and continue
-      # Version is derived from the git tag, not Directory.Build.props
-      run: |
-        dotnet pack --configuration Release --output ./packages -p:Version=${{ steps.version.outputs.version }} || true
-        # Verify packages were created
-        ls -la ./packages/*.nupkg
-        if [ $(ls ./packages/*.nupkg 2>/dev/null | wc -l) -eq 0 ]; then
-          echo "ERROR: No packages were created"
-          exit 1
-        fi
-
-    - name: NuGet Login (OIDC Trusted Publishing)
-      uses: nuget/login@d22cc5f58ff5b88bf9bd452535b4335137e24544 # v1
-      id: nuget-login
-      with:
-        user: phil.carbone
-
-    - name: Publish to NuGet
-      run: dotnet nuget push "./packages/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
-
-    - name: Generate SHA256 Hashes
-      run: |
-        cd ./packages
-        for file in *.nupkg; do
-          sha256sum "$file" > "$file.sha256"
-          echo "Generated hash for $file:"
-          cat "$file.sha256"
-        done
-
-    - name: Determine Release Type
-      id: release_type
-      env:
-        INPUT_TAG: ${{ inputs.tag || github.ref_name }}
-      run: |
-        TAG="$INPUT_TAG"
-        # Check if version contains prerelease suffix (e.g., -alpha, -beta, -rc)
-        if [[ "$TAG" =~ -[a-zA-Z] ]]; then
-          echo "prerelease=true" >> $GITHUB_OUTPUT
-          echo "Release type: Pre-release"
-        else
-          echo "prerelease=false" >> $GITHUB_OUTPUT
-          echo "Release type: Stable"
-        fi
-
-    # Note: GitHub Release is created as DRAFT by release.yml
-    # This step uploads assets and publishes the release (removes draft status)
-    - name: Upload Assets and Publish GitHub Release
-      uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
-      with:
-        tag_name: ${{ inputs.tag || github.ref_name }}
-        files: |
-          ./packages/*.nupkg
-          ./packages/*.sha256
-        fail_on_unmatched_files: false
-        draft: false
-
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-
-  # ============================================================================
-  # Notifications - Send push notifications on deployment completion
-  # ============================================================================
-
-  notify-deployed:
-    name: Notify Deployed
-    needs: [publish]
-    if: success() && vars.PUSHOVER_ENABLED == 'true'
-    runs-on: ubuntu-latest
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          sparse-checkout: .github/actions/notify-pushover
+          ref: ${{ inputs.ref || github.ref }}
 
-      - name: Send Notification
-        uses: ./.github/actions/notify-pushover
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
         with:
-          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
-          user-key-1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
-          user-key-2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
-          user-key-3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
-          user-key-4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
-          user-key-5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
-          user-key-6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
-          user-key-7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
-          user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
-          user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
-          user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
-          title: "🚀 Deployed v${{ needs.publish.outputs.version }}"
-          message: "Whizbang v${{ needs.publish.outputs.version }} published to NuGet"
-          status: deployed
-          url: "https://www.nuget.org/packages/Whizbang.Core/${{ needs.publish.outputs.version }}"
-          url-title: "View on NuGet"
+          dotnet-version: '10.0.x'
 
-  notify-deploy-failed:
-    name: Notify Deploy Failed
-    needs: [publish]
-    if: failure() && vars.PUSHOVER_ENABLED == 'true'
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        env:
+          VERSION: ${{ inputs.version }}
+        run: dotnet build --configuration Release --no-restore -p:Version="$VERSION"
+
+      - name: Pack NuGet packages (no rebuild)
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          # NU5017 false positive for analyzer packages in .NET 10 SDK
+          dotnet pack --configuration Release --no-build --output ./packages -p:Version="$VERSION" || true
+          ls -la ./packages/*.nupkg
+          if [ "$(ls ./packages/*.nupkg 2>/dev/null | wc -l)" -eq 0 ]; then
+            echo "ERROR: No packages were created"
+            exit 1
+          fi
+
+      - name: Upload packages artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: nuget-packages-publish-${{ github.run_id }}
+          path: ./packages/*.nupkg
+
+  push:
+    name: Push (Trusted Publishing)
+    needs: pack
+    # pack is skipped (not failed) when artifact-name is supplied; run on skip, stop on failure.
+    if: ${{ !failure() && !cancelled() }}
+    permissions:
+      contents: read
+      id-token: write   # NuGet OIDC trusted publishing
+    uses: ./.github/workflows/nuget-push.yml
+    with:
+      version: ${{ inputs.version }}
+      artifact-name: ${{ inputs.artifact-name || format('nuget-packages-publish-{0}', github.run_id) }}
+    secrets: inherit
+
+  release:
+    name: Tag & GitHub Release
+    needs: [pack, push]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # tag + GitHub release creation (only job that needs write)
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          sparse-checkout: .github/actions/notify-pushover
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
 
-      - name: Send Notification
-        uses: ./.github/actions/notify-pushover
+      - name: Download packages artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
-          user-key-1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
-          user-key-2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
-          user-key-3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
-          user-key-4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
-          user-key-5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
-          user-key-6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
-          user-key-7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
-          user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
-          user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
-          user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
-          title: "❌ Deploy Failed"
-          message: "Failed to publish Whizbang to NuGet"
-          status: deploy-failed
-          url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          url-title: "View Workflow"
+          name: ${{ inputs.artifact-name || format('nuget-packages-publish-{0}', github.run_id) }}
+          path: ./packages
+
+      - name: Generate SHA256 Hashes
+        run: |
+          cd ./packages
+          for file in *.nupkg; do
+            sha256sum "$file" > "$file.sha256"
+          done
+
+      - name: Determine Release Type
+        id: release_type
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$VERSION" =~ -[a-zA-Z] ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Tag if Missing
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v$VERSION"
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
+            echo "Tag $TAG already exists"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "Created tag: $TAG"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: v${{ inputs.version }}
+          name: ${{ steps.release_type.outputs.prerelease == 'true' && format('Pre-release v{0}', inputs.version) || format('Release v{0}', inputs.version) }}
+          generate_release_notes: true
+          prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
+          files: |
+            ./packages/*.nupkg
+            ./packages/*.sha256
+          fail_on_unmatched_files: false
+          draft: false
+
+      - name: Summary
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          PACKAGE_COUNT=$(ls ./packages/*.nupkg 2>/dev/null | wc -l)
+          {
+            echo "## Published v$VERSION"
+            echo ""
+            echo "- **Version**: \`$VERSION\`"
+            echo "- **Packages**: $PACKAGE_COUNT"
+            echo "- **NuGet**: https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/$VERSION"
+          } >> "$GITHUB_STEP_SUMMARY"

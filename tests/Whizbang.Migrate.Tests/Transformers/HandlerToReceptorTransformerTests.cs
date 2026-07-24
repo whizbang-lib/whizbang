@@ -11,7 +11,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_ConvertsIHandleToIReceptor_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -35,7 +35,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_ConvertsIHandleWithResultToIReceptorWithResult_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class GetOrderHandler : IHandle<GetOrderQuery, OrderResult> {
@@ -59,7 +59,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_RenamesHandleMethodToReceiveAsync_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -83,7 +83,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_UpdatesUsingDirectives_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -107,7 +107,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_RemovesWolverineHandlerAttribute_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       [WolverineHandler]
@@ -131,7 +131,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_TracksChanges_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -155,7 +155,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_PreservesClassBody_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -189,7 +189,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_HandlesMultipleHandlersInFile_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -216,7 +216,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_PreservesNonHandlerClasses_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -242,7 +242,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_NoHandlers_ReturnsUnchanged_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public void Process() { }
       }
@@ -260,7 +260,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_PreservesNamespace_Async() {
     // Arrange
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       namespace MyApp.Handlers;
@@ -287,7 +287,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_H01_WolverineHandlerWithDocumentSession_TransformsToIReceptorAsync() {
     // Arrange - H01: Wolverine IHandle<T> with Marten IDocumentSession
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -322,7 +322,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_H02_NestedStaticClassHandlers_TransformsToSeparateReceptorsAsync() {
     // Arrange - H02: Nested static class handlers
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public static class OrderHandlers {
@@ -353,7 +353,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_H03_WolverineRpcHandler_TransformsToIReceptorWithResultAsync() {
     // Arrange - H03: Wolverine RPC handlers with request/response using IHandle<T, TResult>
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class GetOrderHandler : IHandle<GetOrderQuery, OrderResult> {
@@ -386,7 +386,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_H04_LocalMessageWrapper_TransformsToLocalInvokeAsync() {
     // Arrange - H04: LocalMessage<T> wrapper for in-process calls
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderService {
@@ -421,7 +421,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_H05_HandlerWithNotificationService_PreservesDependencyAsync() {
     // Arrange - H05: Handler with notification service dependency
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderCompletedHandler : IHandle<OrderCompletedEvent> {
@@ -460,7 +460,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_H06_HandlerWithTokenEnrichment_TransformsToMessageEnvelopeAsync() {
     // Arrange - H06: Handler accessing correlation/token context
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class AuditedHandler : IHandle<AuditedCommand> {
@@ -499,7 +499,7 @@ public class HandlerToReceptorTransformerTests {
   public async Task TransformAsync_H07_HandlerWithTelemetryActivity_TransformsWithObservabilityAsync() {
     // Arrange - H07: Handler with Activity tracing
     var transformer = new HandlerToReceptorTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System.Diagnostics;
       using Wolverine;
 

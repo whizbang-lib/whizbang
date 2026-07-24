@@ -3,7 +3,9 @@ using System.Text.Json;
 using Dapper;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
+using ECommerce.InMemory.Integration.Tests.Workflows;
 using ECommerce.Integration.Tests.Fixtures;
+using ECommerce.Integration.TestUtilities.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.EntityFrameworkCore;
@@ -14,11 +16,14 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -134,6 +139,19 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       _lensScopes.Add(scope);  // Track for disposal
       return scope.ServiceProvider.GetRequiredService<IInventoryLevelsLens>();
     }
+  }
+
+  /// <summary>
+  /// Gets the InventoryWorker's service provider for resolving services in tests.
+  /// Creates a new scope to ensure fresh dependencies.
+  /// </summary>
+  public IServiceScope CreateInventoryScope() {
+    if (_inventoryHost == null) {
+      throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+    }
+    var scope = _inventoryHost.Services.CreateScope();
+    _lensScopes.Add(scope);
+    return scope;
   }
 
   /// <summary>
@@ -258,28 +276,22 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers WhizbangId JSON converters for JSONB serialization
-    var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
-    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    inventoryDataSourceBuilder.EnableDynamicJson();
-    var inventoryDataSource = inventoryDataSourceBuilder.Build();
-    builder.Services.AddSingleton(inventoryDataSource);
-
-    builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options =>
-      options.UseNpgsql(inventoryDataSource));
-
-    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
-    // The fixture already ensures the database schema is created before starting hosts,
-    // and the PostgresDatabaseReadinessCheck looks for tables in 'public' schema but we use
-    // named schemas (inventory, bff). DefaultDatabaseReadinessCheck avoids this mismatch.
-    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
-
-    // Register Whizbang with EFCore infrastructure
-    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<InventoryDbContext> with UseNpgsql
+    // - IDbContextFactory<InventoryDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
+
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // The ECommerce.Integration.TestUtilities assembly has a module initializer that overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with its own callback (which registers
+    // DistributeStageTestReceptor). That receptor requires TaskCompletionSource<ProductCreatedEvent>
+    // in its constructor, which is not registered in DI, causing a build failure.
+    // Since we explicitly call AddReceptors() and AddWhizbangDispatcher() below,
+    // the auto-registration callback is not needed.
+    ServiceRegistrationCallbacks.Dispatcher = null;
 
     _ = builder.Services
       .AddWhizbang()
@@ -294,13 +306,16 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     var strategyDescriptor = builder.Services.FirstOrDefault(sd => sd.ServiceType == typeof(IWorkCoordinatorStrategy));
     Console.WriteLine($"[InMemoryFixture] InventoryWorker IWorkCoordinatorStrategy registered: {strategyDescriptor != null} (Lifetime: {strategyDescriptor?.Lifetime})");
 
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
+
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
 
     // Register lifecycle services for Perspective stage support
-    ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
-    builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
     // Register TopicRegistry to provide base topic names for events
@@ -313,15 +328,6 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(routingStrategyInstance);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
 
@@ -362,15 +368,25 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 was deliberately tuned
+    // for production multi-pod loads where NOTIFY reliably wakes the work loop within milli-
+    // seconds. In these fixtures the cascade-write → claim-discovery NOTIFY isn't always
+    // delivered before the listener subscribes, so the 30 s safety-net poll becomes the
+    // observed latency floor. Drop it to a test-friendly cadence so the safety net catches
+    // up promptly when NOTIFY misses.
+    // Centralized test-side timing overrides (ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, SlidingWindow* MaxWait). See
+    // TestWorkerTimingOverrides XML doc — PR #251 forensic for rationale.
+    builder.Services.ApplyTestTimings();
+
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync
     // This processes inbox work (dispatches to handlers, stores events) synchronously when messages arrive
@@ -410,33 +426,36 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Register JsonSerializerOptions for Npgsql JSONB serialization
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers WhizbangId JSON converters for JSONB serialization
-    var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
-    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    bffDataSourceBuilder.EnableDynamicJson();
-    var bffDataSource = bffDataSourceBuilder.Build();
-    builder.Services.AddSingleton(bffDataSource);
-
-    builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
-      options.UseNpgsql(bffDataSource));
-
-    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
-    // The fixture already ensures the database schema is created before starting hosts,
-    // and the PostgresDatabaseReadinessCheck looks for tables in 'public' schema but we use
-    // named schemas (inventory, bff). DefaultDatabaseReadinessCheck avoids this mismatch.
-    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
-
-    // Register Whizbang with EFCore infrastructure
-    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<BffDbContext> with UseNpgsql
+    // - IDbContextFactory<BffDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:bff-db" above)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // The ECommerce.Integration.TestUtilities assembly has a module initializer that overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with its own callback (which registers
+    // DistributeStageTestReceptor). That receptor requires TaskCompletionSource<ProductCreatedEvent>
+    // in its constructor, which is not registered in DI, causing a build failure.
+    // Since we explicitly call AddWhizbangDispatcher() and related registrations below,
+    // the auto-registration callback is not needed.
+    ServiceRegistrationCallbacks.Dispatcher = null;
+
     _ = builder.Services
-      .AddWhizbang()
+      .AddWhizbang(options => {
+        // Register tracking tag hook at PostLifecycleInline — verifies tag hooks fire after perspective processing
+        options.Tags.UseHook<Whizbang.Core.Attributes.AuditEventAttribute, TrackingAuditTagHook>(
+          fireAt: Whizbang.Core.Messaging.LifecycleStage.PostLifecycleInline);
+      })
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Configure security to allow anonymous messages for testing
     builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
@@ -457,6 +476,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
 
+    // Register dispatcher infrastructure (includes IReceptorRegistry needed for PostPerspectiveInline lifecycle callbacks)
+    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
+
     // Register perspective invoker for scoped event processing (use BFF's generated invoker)
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
 
@@ -464,21 +486,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
     // Register lifecycle services for Perspective stage support
-    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
-    builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
@@ -512,15 +523,25 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 was deliberately tuned
+    // for production multi-pod loads where NOTIFY reliably wakes the work loop within milli-
+    // seconds. In these fixtures the cascade-write → claim-discovery NOTIFY isn't always
+    // delivered before the listener subscribes, so the 30 s safety-net poll becomes the
+    // observed latency floor. Drop it to a test-friendly cadence so the safety net catches
+    // up promptly when NOTIFY misses.
+    // Centralized test-side timing overrides (ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, SlidingWindow* MaxWait). See
+    // TestWorkerTimingOverrides XML doc — PR #251 forensic for rationale.
+    builder.Services.ApplyTestTimings();
+
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync
     // This processes inbox work (dispatches to handlers, stores events) synchronously when messages arrive
@@ -532,7 +553,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// Waits for PostgreSQL to be ready to accept connections by attempting to open a connection.
   /// Polls up to 30 times (30 seconds total) with 1 second delay between attempts.
   /// </summary>
-  private async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
+  private static async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
     var maxAttempts = 30; // 30 seconds total
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -559,7 +580,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
       Console.WriteLine("[InMemoryFixture] Initializing InventoryWorker schema...");
-      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger, cancellationToken);
+      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger, cancellationToken: cancellationToken);
       Console.WriteLine("[InMemoryFixture] InventoryWorker schema (inventory) initialized");
     }
 
@@ -569,7 +590,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
       Console.WriteLine("[InMemoryFixture] Initializing BFF schema...");
-      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger, cancellationToken);
+      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger, cancellationToken: cancellationToken);
       Console.WriteLine("[InMemoryFixture] BFF schema (bff) initialized");
     }
 
@@ -681,13 +702,13 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       Console.WriteLine($"[DIAGNOSTIC]   message_type: '{assoc}'");
     }
 
-    // Query perspective checkpoints created
+    // Query perspective cursors created
     var checkpointCount = await dbContext.Database.SqlQueryRaw<int>(@"
-      SELECT COUNT(*)::int FROM inventory.wh_perspective_checkpoints
+      SELECT COUNT(*)::int FROM inventory.wh_perspective_cursors
     ").FirstOrDefaultAsync(cancellationToken);
 
-    output.AppendLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
-    Console.WriteLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
+    output.AppendLine($"[DIAGNOSTIC] Found {checkpointCount} perspective cursors in wh_perspective_cursors");
+    Console.WriteLine($"[DIAGNOSTIC] Found {checkpointCount} perspective cursors in wh_perspective_cursors");
 
     // Write to file for examination
     await System.IO.File.WriteAllTextAsync("/tmp/event-type-diagnostic.log", output.ToString(), cancellationToken);
@@ -725,7 +746,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       .Where(a => !eventTypes.Contains(a) && eventTypes.Any(e => e.Contains(a.Replace("global::", ""))))
       .ToList();
 
-    if (mismatches.Any()) {
+    if (mismatches.Count > 0) {
       Console.WriteLine("=== DETECTED TYPE NAME MISMATCHES ===");
       foreach (var mismatch in mismatches) {
         Console.WriteLine($"Association has 'global::' prefix: {mismatch}");
@@ -761,8 +782,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     int bffPerspectives)
     where TEvent : IEvent {
 
-    var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
-    var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
+    var bffRegistry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
 
     return new PerspectiveCompletionWaiter<TEvent>(
       inventoryRegistry,
@@ -804,7 +825,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
         inventoryPerspectives
       );
 
-      var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+      var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
       inventoryRegistry.Register<TEvent>(inventoryCountingReceptor, LifecycleStage.PostPerspectiveInline);
       tasksToWait.Add(inventoryCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds)));
     } else {
@@ -819,7 +840,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
         bffPerspectives
       );
 
-      var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+      var bffRegistry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
       bffRegistry.Register<TEvent>(bffCountingReceptor, LifecycleStage.PostPerspectiveInline);
       tasksToWait.Add(bffCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds)));
     } else {
@@ -841,16 +862,49 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     } finally {
       // Unregister receptors
       if (inventoryCountingReceptor != null) {
-        var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+        var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
         inventoryRegistry.Unregister<TEvent>(inventoryCountingReceptor, LifecycleStage.PostPerspectiveInline);
       }
       if (bffCountingReceptor != null) {
-        var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+        var bffRegistry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
         bffRegistry.Unregister<TEvent>(bffCountingReceptor, LifecycleStage.PostPerspectiveInline);
       }
     }
 
     Console.WriteLine($"[WaitForPerspective] {typeof(TEvent).Name} processing complete!");
+  }
+
+  /// <summary>
+  /// Waits for a specific number of perspective completions using the
+  /// OnPerspectiveEventProcessed hook. Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var completionCount = 0;
+    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    void WireWorker(PerspectiveWorker? worker) {
+      if (worker is null) { return; }
+      void handler(PerspectiveEventProcessedEvent e) {
+        var current = Interlocked.Increment(ref completionCount);
+        if (current >= expectedCompletions) { tcs.TrySetResult(true); }
+      }
+
+      worker.OnPerspectiveEventProcessed += handler;
+    }
+    if (hostFilter is null or "inventory") {
+      var inventoryWorker = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(inventoryWorker);
+    }
+    if (hostFilter is null or "bff") {
+      var bffWorker = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(bffWorker);
+    }
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
   }
 
   /// <summary>
@@ -873,18 +927,18 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       try {
         // Truncate all Whizbang tables in the shared database
         // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-        using (var scope = _inventoryHost!.Services.CreateScope()) {
-          var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+        using var scope = _inventoryHost!.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-          // Truncate Whizbang core tables, perspective tables, and checkpoints
-          // CASCADE ensures all dependent data is cleared
-          // Use DO block to gracefully handle case where tables don't exist
-          // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
-          await dbContext.Database.ExecuteSqlRawAsync(@"
+        // Truncate Whizbang core tables, perspective tables, and checkpoints
+        // CASCADE ensures all dependent data is cleared
+        // Use DO block to gracefully handle case where tables don't exist
+        // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
+        await dbContext.Database.ExecuteSqlRawAsync(@"
             DO $$
             BEGIN
               -- Truncate core infrastructure tables (INVENTORY schema)
-              TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+              TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
 
               -- Truncate all perspective tables (INVENTORY schema)
               TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
@@ -892,7 +946,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
               TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
 
               -- Truncate core infrastructure tables (BFF schema)
-              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
 
               -- Truncate all perspective tables (BFF schema)
               TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
@@ -904,7 +958,6 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
                 NULL;
             END $$;
           ", cancellationToken);
-        }
 
         return; // Success, exit retry loop
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
@@ -927,15 +980,25 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private async Task _setupTransportSubscriptionsAsync(CancellationToken cancellationToken) {
     // Subscribe InventoryWorker to generic topics (topic-00, topic-01)
     // CRITICAL: Must match GenericTopicRoutingStrategy which routes events to these topics
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-00", "inventory-worker"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-01", "inventory-worker"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
@@ -943,15 +1006,25 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // Subscribe BFF to generic topics (topic-00, topic-01) with different subscription name
     // This simulates independent Service Bus subscriptions for each service
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-00", "bff-service"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-01", "bff-service"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
@@ -961,9 +1034,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Handles incoming messages from transport - full processing flow.
   /// CRITICAL: Must process inbox work (dispatch to handlers, store events) - not just write to inbox!
-  /// This creates events which trigger perspective checkpoints for PerspectiveWorker to process.
+  /// This creates events which trigger perspective cursors for PerspectiveWorker to process.
   /// </summary>
-  private async Task _handleMessageForHostAsync(IHost host, IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
+  private static async Task _handleMessageForHostAsync(IHost host, IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
     try {
       // Validate envelope type is present
       if (string.IsNullOrWhiteSpace(envelopeType)) {
@@ -985,7 +1058,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       strategy.QueueInboxMessage(newInboxMessage);
 
       // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
-      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct);
+      var workBatch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None, ct);
 
       // 4. Check if work was returned - empty means duplicate (already processed)
       var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
@@ -1001,14 +1074,14 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       // process_work_batch automatically:
       // - Stores events from inbox (Phase 4.5B) if is_event=true
       // - Creates perspective events (Phase 4.6)
-      // - Creates perspective checkpoints (Phase 4.7)
+      // - Creates perspective cursors (Phase 4.7)
       await orderedProcessor.ProcessInboxWorkAsync(
         myWork,
         processor: async (work) => {
           // Deserialize event from work item
           var @event = _deserializeEvent(work, jsonOptions);
 
-          // Mark as EventStored - process_work_batch will store it and create perspective checkpoints
+          // Mark as EventStored - process_work_batch will store it and create perspective cursors
           // The is_event flag (set in _serializeToNewInboxMessage) tells process_work_batch to store it
           if (@event is IEvent) {
             return MessageProcessingStatus.EventStored;
@@ -1027,7 +1100,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       );
 
       // 6. Report completions/failures back to database
-      await strategy.FlushAsync(WorkBatchFlags.None, ct);
+      await strategy.FlushAsync(WorkBatchOptions.None, ct: ct);
 
       Console.WriteLine($"[InMemoryFixture] Successfully processed message {envelope.MessageId}");
     } catch (Exception ex) {
@@ -1080,7 +1153,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Extract simple type name for handler name (last part after last '.')
     var lastDotIndex = messageTypeName.LastIndexOf('.');
     var simpleTypeName = lastDotIndex >= 0
-      ? messageTypeName.Substring(lastDotIndex + 1).Split(',')[0].Trim()
+      ? messageTypeName[(lastDotIndex + 1)..].Split(',')[0].Trim()
       : messageTypeName.Split(',')[0].Trim();
     var handlerName = simpleTypeName + "Handler";
 
@@ -1179,5 +1252,20 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
         _connectionString = null;
       }
     }
+  }
+}
+
+/// <summary>
+/// Tag hook that tracks invocations via static counter for integration test assertions.
+/// Registered at PostLifecycleInline to verify the full lifecycle pipeline fires correctly.
+/// </summary>
+public sealed class TrackingAuditTagHook : IMessageTagHook<AuditEventAttribute> {
+  public ValueTask<System.Text.Json.JsonElement?> OnTaggedMessageAsync(
+    TagContext<AuditEventAttribute> context,
+    CancellationToken ct) {
+    if (context.Stage == LifecycleStage.PostLifecycleInline) {
+      TagHookCallTracker.RecordPostLifecycleInline();
+    }
+    return ValueTask.FromResult<System.Text.Json.JsonElement?>(null);
   }
 }

@@ -7,7 +7,7 @@ public class WhizbangIdRegistrationGenerationTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesRegistrationClassAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       [WhizbangId]
@@ -26,7 +26,7 @@ public class WhizbangIdRegistrationGenerationTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_RegistrationHasModuleInitializerAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       [WhizbangId]
@@ -39,7 +39,7 @@ public class WhizbangIdRegistrationGenerationTests {
     // Assert
     var registrationSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
     await Assert.That(registrationSource).IsNotNull();
-    await Assert.That(registrationSource!).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(registrationSource).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
     await Assert.That(registrationSource).Contains("public static void Initialize()");
   }
 
@@ -47,7 +47,7 @@ public class WhizbangIdRegistrationGenerationTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_RegistrationCallsRegisterFactoryAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       [WhizbangId]
@@ -60,7 +60,7 @@ public class WhizbangIdRegistrationGenerationTests {
     // Assert
     var registrationSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
     await Assert.That(registrationSource).IsNotNull();
-    await Assert.That(registrationSource!).Contains("WhizbangIdProviderRegistry.RegisterFactory<");
+    await Assert.That(registrationSource).Contains("WhizbangIdProviderRegistry.RegisterFactory<");
     await Assert.That(registrationSource).Contains("new TestIdProvider(baseProvider)");
   }
 
@@ -68,7 +68,7 @@ public class WhizbangIdRegistrationGenerationTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_RegistrationHasRegisterAllMethodAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       [WhizbangId]
@@ -81,7 +81,7 @@ public class WhizbangIdRegistrationGenerationTests {
     // Assert
     var registrationSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
     await Assert.That(registrationSource).IsNotNull();
-    await Assert.That(registrationSource!).Contains("public static void RegisterAll(");
+    await Assert.That(registrationSource).Contains("public static void RegisterAll(");
     await Assert.That(registrationSource).Contains("IServiceCollection services");
   }
 
@@ -89,7 +89,7 @@ public class WhizbangIdRegistrationGenerationTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_RegistrationRegistersAllProvidersAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       [WhizbangId]
@@ -105,7 +105,7 @@ public class WhizbangIdRegistrationGenerationTests {
     // Assert
     var registrationSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
     await Assert.That(registrationSource).IsNotNull();
-    await Assert.That(registrationSource!).Contains("AddSingleton<global::Whizbang.Core.IWhizbangIdProvider<");
+    await Assert.That(registrationSource).Contains("AddSingleton<global::Whizbang.Core.IWhizbangIdProvider<");
 
     // Count should be 2 (one for each ID type)
     var addSingletonCount = registrationSource.Split("AddSingleton<global::Whizbang.Core.IWhizbangIdProvider<").Length - 1;

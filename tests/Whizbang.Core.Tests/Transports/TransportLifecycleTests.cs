@@ -1,6 +1,7 @@
 using TUnit.Assertions.Extensions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Transports;
 
@@ -126,13 +127,20 @@ internal sealed class TestTransport : ITransport {
     _isInitialized = true;
   }
 
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 
   public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
+
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException();
 
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default)
     where TRequest : notnull
@@ -146,7 +154,7 @@ internal sealed class TestTransport : ITransport {
 /// </summary>
 internal sealed class FailingInitializationTransport : ITransport {
 #pragma warning disable CS0649 // Field is never assigned to, and will always have its default value - intentional for test
-  private bool _isInitialized; // Intentionally never set - initialization always fails
+  private readonly bool _isInitialized; // Intentionally never set - initialization always fails
 #pragma warning restore CS0649
 
   public bool IsInitialized => _isInitialized;
@@ -156,13 +164,20 @@ internal sealed class FailingInitializationTransport : ITransport {
     throw new InvalidOperationException("Failed to connect to transport");
   }
 
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 
   public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
+
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException();
 
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default)
     where TRequest : notnull
@@ -190,13 +205,20 @@ internal sealed class RetryableInitializationTransport : ITransport {
     return Task.CompletedTask;
   }
 
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 
   public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
+
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException();
 
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default)
     where TRequest : notnull

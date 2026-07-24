@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whizbang.Core.Configuration;
 
 namespace Whizbang.Core;
@@ -34,7 +35,7 @@ namespace Whizbang.Core;
 /// </code>
 /// </example>
 public static class ServiceRegistrationCallbacks {
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   /// <summary>
   /// Callback for registering discovered lens services (ILensQuery implementations).
@@ -55,6 +56,51 @@ public static class ServiceRegistrationCallbacks {
   public static Action<IServiceCollection>? Dispatcher { get; set; }
 
   /// <summary>
+  /// Callback for registering the generated <see cref="IPinnedIdRegistry"/>.
+  /// Set by the PinnedIdRegistryGenerator's module initializer in the consumer assembly.
+  /// </summary>
+  public static Action<IServiceCollection>? PinnedIdRegistry { get; set; }
+
+  /// <summary>
+  /// Callback for registering the generated <see cref="IMessageTypeCatalog"/>.
+  /// Set by the MessageTypeCatalogGenerator's module initializer in the consumer assembly.
+  /// </summary>
+  public static Action<IServiceCollection>? MessageTypeCatalog { get; set; }
+
+  /// <summary>
+  /// Callback for registering discovered <see cref="Whizbang.Core.Messaging.IRawReceptor"/>
+  /// implementations and the <see cref="Whizbang.Core.Messaging.IRawReceptorRegistry"/>.
+  /// Set by the RawReceptorDiscoveryGenerator's module initializer in the consumer assembly.
+  /// </summary>
+  public static Action<IServiceCollection>? RawReceptors { get; set; }
+
+  /// <summary>
+  /// Callback for wiring the Path 1 atomic-upsert options provider on
+  /// <c>BaseUpsertStrategy.PathOnePersistenceOptionsProvider</c>. Set by the
+  /// PerspectivePersistenceJsonContextGenerator's module initializer in the consumer
+  /// assembly. Fires inside <see cref="InvokeAll"/> so that ordering is deterministic
+  /// regardless of cross-assembly module-load order.
+  /// </summary>
+  /// <remarks>
+  /// When fired, the callback sets <c>BaseUpsertStrategy.PathOnePersistenceOptionsProvider</c>
+  /// to a delegate returning <c>PerspectivePersistenceJsonContext.CreateOptions(
+  /// MessageJsonContext.Default, InfrastructureJsonContext.Default)</c>. After this point,
+  /// every <c>UpsertPerspectiveRowAsync</c> call routes through the atomic
+  /// <c>INSERT…ON CONFLICT DO UPDATE</c> path instead of the slice-19 retry loop —
+  /// structurally eliminating the 23505 dup-key storm.
+  /// </remarks>
+  public static Action<IServiceCollection>? PerspectivePersistenceOptions { get; set; }
+
+  /// <summary>
+  /// Callback that folds the ASP.NET hosting integration (<c>AddWhizbangAspNet()</c>) into
+  /// <see cref="ServiceCollectionExtensions.AddWhizbang"/>. Set by the Whizbang.Hosting.AspNet
+  /// assembly's <c>[ModuleInitializer]</c>, so it is present only when that assembly is loaded — i.e.
+  /// when the ASP.NET hosting library is referenced/used. Invoked by <c>AddWhizbang</c> unless the
+  /// consumer opts out via <c>WhizbangCoreOptions.AutoRegisterAspNetHosting = false</c>.
+  /// </summary>
+  public static Action<IServiceCollection>? HostingIntegration { get; set; }
+
+  /// <summary>
   /// Invokes all registered service callbacks with the provided options.
   /// Called by <see cref="ServiceCollectionExtensions.AddWhizbang"/> to auto-register services.
   /// </summary>
@@ -65,6 +111,19 @@ public static class ServiceRegistrationCallbacks {
       LensServices?.Invoke(services, options);
       PerspectiveServices?.Invoke(services, options);
       Dispatcher?.Invoke(services);
+      RawReceptors?.Invoke(services);
+      PinnedIdRegistry?.Invoke(services);
+      MessageTypeCatalog?.Invoke(services);
+      if (MessageTypeCatalog is not null) {
+        // The ephemeral-mode resolver derives its ClrTypeName -> EphemeralInfo lookup from the
+        // catalog just registered above, so it is only wired when a catalog exists to feed it.
+        services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
+      }
+      // Path 1 atomic-upsert wiring fires last — it depends on JsonSerializerContext
+      // statics that are populated by their own [ModuleInitializer] runs on consumer
+      // assembly load, and on BaseUpsertStrategy's static hook which is process-wide.
+      // It doesn't add services, so the IServiceCollection argument is unused.
+      PerspectivePersistenceOptions?.Invoke(services);
     }
   }
 
@@ -75,7 +134,12 @@ public static class ServiceRegistrationCallbacks {
     lock (_lock) {
       LensServices = null;
       PerspectiveServices = null;
+      RawReceptors = null;
       Dispatcher = null;
+      PinnedIdRegistry = null;
+      MessageTypeCatalog = null;
+      PerspectivePersistenceOptions = null;
+      HostingIntegration = null;
     }
   }
 }

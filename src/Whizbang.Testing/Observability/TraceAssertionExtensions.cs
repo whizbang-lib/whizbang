@@ -179,11 +179,8 @@ public static class TraceAssertionExtensions {
     ArgumentNullException.ThrowIfNull(collector);
     ArgumentNullException.ThrowIfNull(spanName);
 
-    var span = collector.FirstOrDefault(s => s.Name == spanName);
-    if (span is null) {
-      throw new TraceAssertionException($"Span '{spanName}' not found.");
-    }
-    return span;
+    return collector.FirstOrDefault(s => s.Name == spanName)
+      ?? throw new TraceAssertionException($"Span '{spanName}' not found.");
   }
 
   /// <summary>

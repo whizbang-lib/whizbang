@@ -7,17 +7,12 @@ namespace Whizbang.Core.Security;
 /// <see cref="IMessageContextAccessor"/> and <see cref="IScopeContextAccessor"/>.
 /// Enables DI injection of IMessageContext in receptors.
 /// </summary>
-/// <docs>core-concepts/message-security#scoped-message-context</docs>
-internal sealed class ScopedMessageContext : IMessageContext {
-  private readonly IMessageContextAccessor _messageContextAccessor;
-  private readonly IScopeContextAccessor _scopeContextAccessor;
-
-  public ScopedMessageContext(
-    IMessageContextAccessor messageContextAccessor,
-    IScopeContextAccessor scopeContextAccessor) {
-    _messageContextAccessor = messageContextAccessor;
-    _scopeContextAccessor = scopeContextAccessor;
-  }
+/// <docs>fundamentals/security/message-security#scoped-message-context</docs>
+internal sealed class ScopedMessageContext(
+  IMessageContextAccessor messageContextAccessor,
+  IScopeContextAccessor scopeContextAccessor) : IMessageContext {
+  private readonly IMessageContextAccessor _messageContextAccessor = messageContextAccessor;
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   /// <inheritdoc />
   public MessageId MessageId =>
@@ -42,7 +37,7 @@ internal sealed class ScopedMessageContext : IMessageContext {
   /// 2. IScopeContext.Scope (populated from envelope hop SecurityContext)
   /// 3. IMessageContextAccessor.Current (fallback)
   /// </remarks>
-  /// <docs>core-concepts/cascade-context#scoped-message-context</docs>
+  /// <docs>fundamentals/messages/cascade-context#scoped-message-context</docs>
   public string? UserId =>
     _scopeContextAccessor.InitiatingContext?.UserId
     ?? _scopeContextAccessor.Current?.Scope.UserId
@@ -54,9 +49,9 @@ internal sealed class ScopedMessageContext : IMessageContext {
   /// 1. InitiatingContext (SOURCE OF TRUTH - the IMessageContext that started this scope)
   /// 2. IScopeContext.Scope (populated from envelope hop SecurityContext)
   /// 3. IMessageContextAccessor.Current (fallback)
-  /// This ensures tenant context is available even in deferred lifecycle stages like PostPerspectiveAsync.
+  /// This ensures tenant context is available even in deferred lifecycle stages like PostPerspectiveDetached.
   /// </remarks>
-  /// <docs>core-concepts/cascade-context#scoped-message-context</docs>
+  /// <docs>fundamentals/messages/cascade-context#scoped-message-context</docs>
   public string? TenantId =>
     _scopeContextAccessor.InitiatingContext?.TenantId
     ?? _scopeContextAccessor.Current?.Scope.TenantId
@@ -75,4 +70,8 @@ internal sealed class ScopedMessageContext : IMessageContext {
   public IScopeContext? ScopeContext =>
     _scopeContextAccessor.InitiatingContext?.ScopeContext
     ?? _scopeContextAccessor.Current;
+
+  /// <inheritdoc />
+  public Observability.ICallerInfo? CallerInfo =>
+    _messageContextAccessor.Current?.CallerInfo;
 }

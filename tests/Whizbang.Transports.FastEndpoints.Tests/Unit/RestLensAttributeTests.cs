@@ -24,10 +24,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task Route_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.Route = "/api/orders";
+    var attribute = new RestLensAttribute {
+      // Act
+      Route = "/api/orders"
+    };
 
     // Assert
     await Assert.That(attribute.Route).IsEqualTo("/api/orders");
@@ -36,10 +36,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task Route_WithPathParameters_ShouldRetainParametersAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.Route = "/api/v1/orders/{id}";
+    var attribute = new RestLensAttribute {
+      // Act
+      Route = "/api/v1/orders/{id}"
+    };
 
     // Assert
     await Assert.That(attribute.Route).IsEqualTo("/api/v1/orders/{id}");
@@ -48,10 +48,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task EnableFiltering_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.EnableFiltering = false;
+    var attribute = new RestLensAttribute {
+      // Act
+      EnableFiltering = false
+    };
 
     // Assert
     await Assert.That(attribute.EnableFiltering).IsFalse();
@@ -60,10 +60,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task EnableSorting_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.EnableSorting = false;
+    var attribute = new RestLensAttribute {
+      // Act
+      EnableSorting = false
+    };
 
     // Assert
     await Assert.That(attribute.EnableSorting).IsFalse();
@@ -72,10 +72,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task EnablePaging_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.EnablePaging = false;
+    var attribute = new RestLensAttribute {
+      // Act
+      EnablePaging = false
+    };
 
     // Assert
     await Assert.That(attribute.EnablePaging).IsFalse();
@@ -84,10 +84,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task DefaultPageSize_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.DefaultPageSize = 25;
+    var attribute = new RestLensAttribute {
+      // Act
+      DefaultPageSize = 25
+    };
 
     // Assert
     await Assert.That(attribute.DefaultPageSize).IsEqualTo(25);
@@ -96,10 +96,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task MaxPageSize_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.MaxPageSize = 500;
+    var attribute = new RestLensAttribute {
+      // Act
+      MaxPageSize = 500
+    };
 
     // Assert
     await Assert.That(attribute.MaxPageSize).IsEqualTo(500);
@@ -129,10 +129,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task Route_EmptyString_ShouldBeAllowedAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.Route = "";
+    var attribute = new RestLensAttribute {
+      // Act
+      Route = ""
+    };
 
     // Assert
     await Assert.That(attribute.Route).IsEqualTo("");
@@ -141,10 +141,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task DefaultPageSize_Zero_ShouldBeAllowedAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.DefaultPageSize = 0;
+    var attribute = new RestLensAttribute {
+      // Act
+      DefaultPageSize = 0
+    };
 
     // Assert
     await Assert.That(attribute.DefaultPageSize).IsEqualTo(0);
@@ -153,11 +153,11 @@ public class RestLensAttributeTests {
   [Test]
   public async Task MaxPageSize_LessThanDefault_ShouldBeAllowedAsync() {
     // Arrange - attribute doesn't enforce validation, that's done at runtime
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.DefaultPageSize = 100;
-    attribute.MaxPageSize = 50;
+    var attribute = new RestLensAttribute {
+      // Act
+      DefaultPageSize = 100,
+      MaxPageSize = 50
+    };
 
     // Assert - values are stored as-is (validation at runtime)
     await Assert.That(attribute.DefaultPageSize).IsEqualTo(100);
@@ -216,10 +216,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task Route_WithQueryString_ShouldRetainQueryStringAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act - route templates shouldn't have query strings, but attribute stores as-is
-    attribute.Route = "/api/orders?status=active";
+    var attribute = new RestLensAttribute {
+      // Act - route templates shouldn't have query strings, but attribute stores as-is
+      Route = "/api/orders?status=active"
+    };
 
     // Assert
     await Assert.That(attribute.Route).IsEqualTo("/api/orders?status=active");
@@ -228,10 +228,10 @@ public class RestLensAttributeTests {
   [Test]
   public async Task Route_WithVersionPrefix_ShouldRetainVersionAsync() {
     // Arrange
-    var attribute = new RestLensAttribute();
-
-    // Act
-    attribute.Route = "/api/v2/orders";
+    var attribute = new RestLensAttribute {
+      // Act
+      Route = "/api/v2/orders"
+    };
 
     // Assert
     await Assert.That(attribute.Route).IsEqualTo("/api/v2/orders");

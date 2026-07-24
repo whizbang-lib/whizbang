@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -65,25 +66,32 @@ public sealed class EventStoreRecord {
   /// Event payload stored as JSON.
   /// Contains the actual event data (e.g., { "OrderId": "123", "Total": 99.99 }).
   /// Serialized directly from MessageEnvelope.Payload.
+  /// <para>
+  /// Full split (E1 #13b4, migration 077): on the Postgres providers the body lives in
+  /// <see cref="EventBodyRecord"/> (<c>wh_event_body</c>) and this inline column is always NULL —
+  /// the record is a narrow pointer. Inline-body providers (SQLite/Dapper degraded mode) still
+  /// populate it. Readers resolve body-first with inline fallback.
+  /// </para>
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
-  public required JsonElement EventData { get; set; }
+  public required JsonElement? EventData { get; set; }
 
   /// <summary>
   /// Event metadata stored as JSON.
   /// Contains MessageId and complete Hops chain with all observability data.
   /// Serialized directly from MessageEnvelope using System.Text.Json (no DTO mapping).
+  /// NULL on the Postgres providers post-077 (offloaded to <see cref="EventBodyRecord"/>).
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
-  public required EnvelopeMetadata Metadata { get; set; }
+  public required EnvelopeMetadata? Metadata { get; set; }
 
   /// <summary>
   /// Scope information for multi-tenancy stored as JSON.
-  /// Contains tenant/user/partition information for query filtering.
-  /// Schema: { "TenantId": "...", "UserId": "...", "PartitionKey": "..." }
+  /// Contains tenant/user/customer/organization information for query filtering.
+  /// Schema: { "t": "...", "u": "...", "c": "...", "o": "...", "ap": [...], "ex": [...] }
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
-  public MessageScope? Scope { get; set; }
+  public PerspectiveScope? Scope { get; set; }
 
   /// <summary>
   /// UTC timestamp when the event was persisted to the event store.
@@ -91,4 +99,28 @@ public sealed class EventStoreRecord {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
   public DateTime CreatedAt { get; set; }
+
+  /// <summary>
+  /// Slice 26 — post-commit stamp by the commit-order stamper worker. NULL until stamped.
+  /// Read order primitive for deterministic replay: events are applied in commit_sequence
+  /// order in both live and replay paths, so replaying after a snapshot reproduces the same
+  /// model state regardless of when concurrent saga writers committed.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? CommitSequence { get; set; }
+
+  /// <summary>
+  /// Slice 26 — originating service when this event was forwarded 1:1 from another service.
+  /// NULL for locally-originated events; outbox publish then COALESCEs to local
+  /// wh_service_config.service_id for the envelope's SourceServiceId.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public Guid? OriginServiceId { get; set; }
+
+  /// <summary>
+  /// Slice 26 — companion to OriginServiceId. The upstream commit_sequence preserved for
+  /// 1:1 forwarded events.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? OriginCommitSequence { get; set; }
 }

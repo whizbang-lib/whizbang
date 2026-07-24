@@ -21,7 +21,7 @@ namespace Whizbang.Core.Observability;
 /// scenarios where contention is low.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/envelope-registry</docs>
+/// <docs>fundamentals/messages/envelope-registry</docs>
 /// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Register_WithEnvelope_CanBeRetrievedByMessageAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:TryGetEnvelope_WithUnregisteredMessage_ReturnsNullAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:TryGetEnvelope_WithDifferentInstanceSameValue_ReturnsNullAsync</tests>
@@ -39,7 +39,7 @@ public sealed class EnvelopeRegistry : IEnvelopeRegistry, IDisposable {
   private const int MAX_POOL_SIZE = 256;
 
   private readonly Dictionary<object, IMessageEnvelope> _entries;
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
 
   /// <summary>
   /// Creates a new EnvelopeRegistry, renting a dictionary from the pool if available.

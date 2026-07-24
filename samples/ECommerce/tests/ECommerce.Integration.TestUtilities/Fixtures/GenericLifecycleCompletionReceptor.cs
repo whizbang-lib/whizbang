@@ -22,12 +22,12 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// var completionSource = new TaskCompletionSource&lt;bool&gt;();
 /// var receptor = new GenericLifecycleCompletionReceptor&lt;CreateProductCommand&gt;(
 ///   completionSource,
-///   expectedStage: LifecycleStage.ImmediateAsync
+///   expectedStage: LifecycleStage.ImmediateDetached
 /// );
 ///
 /// // Register with runtime registry
-/// var registry = host.Services.GetRequiredService&lt;ILifecycleReceptorRegistry&gt;();
-/// registry.Register&lt;CreateProductCommand&gt;(receptor, LifecycleStage.ImmediateAsync);
+/// var registry = host.Services.GetRequiredService&lt;IReceptorRegistry&gt;();
+/// registry.Register&lt;CreateProductCommand&gt;(receptor, LifecycleStage.ImmediateDetached);
 ///
 /// try {
 ///   // Dispatch command
@@ -39,18 +39,29 @@ namespace ECommerce.Integration.Tests.Fixtures;
 ///   // Verify stage was invoked
 ///   Assert.That(receptor.InvocationCount).IsEqualTo(1);
 /// } finally {
-///   registry.Unregister&lt;CreateProductCommand&gt;(receptor, LifecycleStage.ImmediateAsync);
+///   registry.Unregister&lt;CreateProductCommand&gt;(receptor, LifecycleStage.ImmediateDetached);
 /// }
 /// </code>
 /// </remarks>
 /// <docs>testing/lifecycle-synchronization</docs>
-public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMessage>, IAcceptsLifecycleContext
+/// <remarks>
+/// Creates a new generic lifecycle completion receptor.
+/// </remarks>
+/// <param name="completionSource">Task completion source to signal when processing completes.</param>
+/// <param name="expectedStage">Optional lifecycle stage to validate (null = any stage).</param>
+/// <param name="perspectiveName">Optional perspective name to filter by (null = any perspective).</param>
+/// <param name="messageFilter">Optional predicate to filter which messages signal completion.</param>
+public sealed class GenericLifecycleCompletionReceptor<TMessage>(
+  TaskCompletionSource<bool> completionSource,
+  LifecycleStage? expectedStage = null,
+  string? perspectiveName = null,
+  Func<TMessage, bool>? messageFilter = null) : IReceptor<TMessage>, IAcceptsLifecycleContext
   where TMessage : IMessage {
 
-  private readonly TaskCompletionSource<bool> _completionSource;
-  private readonly LifecycleStage? _expectedStage;
-  private readonly string? _perspectiveName;
-  private readonly Func<TMessage, bool>? _messageFilter;
+  private readonly TaskCompletionSource<bool> _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
+  private readonly LifecycleStage? _expectedStage = expectedStage;
+  private readonly string? _perspectiveName = perspectiveName;
+  private readonly Func<TMessage, bool>? _messageFilter = messageFilter;
   private int _invocationCount;
   private static readonly AsyncLocal<ILifecycleContext?> _asyncLocalContext = new();
 
@@ -69,25 +80,6 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
   /// Gets the last message received by this receptor.
   /// </summary>
   public TMessage? LastMessage { get; private set; }
-
-  /// <summary>
-  /// Creates a new generic lifecycle completion receptor.
-  /// </summary>
-  /// <param name="completionSource">Task completion source to signal when processing completes.</param>
-  /// <param name="expectedStage">Optional lifecycle stage to validate (null = any stage).</param>
-  /// <param name="perspectiveName">Optional perspective name to filter by (null = any perspective).</param>
-  /// <param name="messageFilter">Optional predicate to filter which messages signal completion.</param>
-  public GenericLifecycleCompletionReceptor(
-    TaskCompletionSource<bool> completionSource,
-    LifecycleStage? expectedStage = null,
-    string? perspectiveName = null,
-    Func<TMessage, bool>? messageFilter = null) {
-
-    _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
-    _expectedStage = expectedStage;
-    _perspectiveName = perspectiveName;
-    _messageFilter = messageFilter;
-  }
 
   /// <summary>
   /// Handles the message by signaling completion.
@@ -133,9 +125,9 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
       // Skip Inbox invocations (receiving from transport) to avoid duplicate counts
       // This prevents counting the same event twice: once when published, again when received
       var isDistributeStage = LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeInline ||
-                              LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeAsync ||
-                              LastLifecycleContext.CurrentStage == LifecycleStage.DistributeAsync ||
-                              LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeAsync ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeDetached ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.DistributeDetached ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeDetached ||
                               LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeInline;
 
       if (isDistributeStage && LastLifecycleContext.MessageSource == MessageSource.Inbox) {

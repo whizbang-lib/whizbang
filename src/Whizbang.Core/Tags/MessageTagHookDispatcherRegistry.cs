@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Registry;
 using Whizbang.Core.Security;
 
@@ -19,7 +20,7 @@ namespace Whizbang.Core.Tags;
 /// for custom attribute types that aren't built-in Whizbang types.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#dispatcher-registry</docs>
+/// <docs>fundamentals/messages/message-tags#dispatcher-registry</docs>
 public static class MessageTagHookDispatcherRegistry {
   /// <summary>
   /// Gets the number of registered dispatchers.
@@ -46,9 +47,10 @@ public static class MessageTagHookDispatcherRegistry {
       object message,
       Type messageType,
       JsonElement payload,
-      IScopeContext? scope) {
+      IScopeContext? scope,
+      LifecycleStage stage) {
     foreach (var dispatcher in AssemblyRegistry<IMessageTagHookDispatcher>.GetOrderedContributions()) {
-      var context = dispatcher.TryCreateContext(attributeType, attribute, message, messageType, payload, scope);
+      var context = dispatcher.TryCreateContext(attributeType, attribute, message, messageType, payload, scope, stage);
       if (context is not null) {
         return context;
       }

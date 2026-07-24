@@ -210,7 +210,7 @@ Templates are:
 <PropertyGroup>
   <!-- Enable viewing generated files (for debugging) -->
   <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-  <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+  <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
 </PropertyGroup>
 ```
 
@@ -226,11 +226,11 @@ Templates are:
 **CompilerGeneratedFilesOutputPath**:
 - Custom output directory for generated files
 - Default: `obj/Debug/netstandard2.0/generated/`
-- Custom: `.whizbang-generated/` (easier to find)
+- Custom: `.whizbang/cache/` (easier to find)
 
 **Generated files location**:
 ```
-.whizbang-generated/
+.whizbang/cache/
 ├── Whizbang.Generators/
 │   ├── ReceptorDiscoveryGenerator/
 │   │   ├── Dispatcher.g.cs
@@ -339,7 +339,7 @@ Generator 'DiagnosticsGenerator' took 1ms
 
     <!-- Debugging -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
 
     <!-- Performance -->
     <ReportAnalyzer>true</ReportAnalyzer>

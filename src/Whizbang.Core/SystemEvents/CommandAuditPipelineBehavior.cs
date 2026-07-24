@@ -26,27 +26,21 @@ namespace Whizbang.Core.SystemEvents;
 /// </remarks>
 /// <typeparam name="TCommand">The command type being processed.</typeparam>
 /// <typeparam name="TResponse">The response type from the receptor.</typeparam>
-/// <docs>core-concepts/system-events#command-auditing</docs>
-public sealed class CommandAuditPipelineBehavior<TCommand, TResponse> : PipelineBehavior<TCommand, TResponse>
+/// <docs>fundamentals/events/system-events#command-auditing</docs>
+/// <remarks>
+/// Creates a new command audit pipeline behavior.
+/// </remarks>
+/// <param name="emitter">The system event emitter for audit events.</param>
+/// <param name="options">System event configuration options.</param>
+/// <param name="context">Optional message context for extracting receptor name and scope.</param>
+public sealed class CommandAuditPipelineBehavior<TCommand, TResponse>(
+    ISystemEventEmitter emitter,
+    IOptions<SystemEventOptions> options,
+    IMessageContext? context = null) : PipelineBehavior<TCommand, TResponse>
     where TCommand : notnull {
-  private readonly ISystemEventEmitter _emitter;
-  private readonly SystemEventOptions _options;
-  private readonly IMessageContext? _context;
-
-  /// <summary>
-  /// Creates a new command audit pipeline behavior.
-  /// </summary>
-  /// <param name="emitter">The system event emitter for audit events.</param>
-  /// <param name="options">System event configuration options.</param>
-  /// <param name="context">Optional message context for extracting receptor name and scope.</param>
-  public CommandAuditPipelineBehavior(
-      ISystemEventEmitter emitter,
-      IOptions<SystemEventOptions> options,
-      IMessageContext? context = null) {
-    _emitter = emitter ?? throw new ArgumentNullException(nameof(emitter));
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _context = context;
-  }
+  private readonly ISystemEventEmitter _emitter = emitter ?? throw new ArgumentNullException(nameof(emitter));
+  private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly IMessageContext? _context = context;
 
   /// <inheritdoc />
   public override async Task<TResponse> HandleAsync(

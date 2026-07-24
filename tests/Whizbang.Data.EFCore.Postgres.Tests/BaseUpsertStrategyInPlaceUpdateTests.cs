@@ -1,4 +1,3 @@
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
@@ -328,14 +327,16 @@ public class BaseUpsertStrategyInPlaceUpdateTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    var result = await conn.QuerySingleAsync<(int version, string scope)>(
+    var (version, scope) = await conn.QuerySingleAsync<(int version, string scope)>(
       "SELECT version, scope::text FROM wh_per_order WHERE id = @id",
       new { id = testId });
 
-    await Assert.That(result.version).IsEqualTo(2);
-    await Assert.That(result.scope).Contains("tenant-2");
-    await Assert.That(result.scope).Contains("user:bob");
-    await Assert.That(result.scope).Contains("eu-central");
+    await Assert.That(version).IsEqualTo(2);
+    // SECURITY: Scope is set only on INSERT and preserved on UPDATE.
+    // The original scope (tenant-1, user:alice, us-west) must be retained.
+    await Assert.That(scope).Contains("tenant-1");
+    await Assert.That(scope).Contains("user:alice");
+    await Assert.That(scope).Contains("us-west");
   }
 
   // ============================================================================
@@ -569,12 +570,12 @@ public class BaseUpsertStrategyInPlaceUpdateTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    var result = await conn.QuerySingleAsync<(int version, decimal amount, string status)>(
+    var (version, amount, status) = await conn.QuerySingleAsync<(int version, decimal amount, string status)>(
       "SELECT version, (data->>'Amount')::decimal as amount, data->>'Status' as status FROM wh_per_order WHERE id = @id",
       new { id = testId });
 
-    await Assert.That(result.version).IsEqualTo(2);
-    await Assert.That(result.amount).IsEqualTo(200.00m);
-    await Assert.That(result.status).IsEqualTo("Updated");
+    await Assert.That(version).IsEqualTo(2);
+    await Assert.That(amount).IsEqualTo(200.00m);
+    await Assert.That(status).IsEqualTo("Updated");
   }
 }

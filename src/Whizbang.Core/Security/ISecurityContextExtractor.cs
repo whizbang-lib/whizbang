@@ -7,15 +7,15 @@ namespace Whizbang.Core.Security;
 /// Multiple extractors can be registered and are tried in priority order (lower = first).
 /// </summary>
 /// <remarks>
-/// Implement this interface to extract security information from different sources:
+/// <para>Implement this interface to extract security information from different sources:
 /// - MessageHop.Scope (propagated from previous hop via ScopeDelta)
 /// - Message payload (e.g., embedded JWT token)
-/// - Transport metadata (Service Bus properties, Kafka headers)
+/// - Transport metadata (Service Bus properties, Kafka headers)</para>
 ///
-/// Extractors should return null if they cannot handle the message, allowing
-/// the next extractor in priority order to try.
+/// <para>Extractors should return null if they cannot handle the message, allowing
+/// the next extractor in priority order to try.</para>
 /// </remarks>
-/// <docs>core-concepts/message-security#extractors</docs>
+/// <docs>fundamentals/security/message-security#extractors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
 /// <example>
 /// public class JwtPayloadExtractor : ISecurityContextExtractor {

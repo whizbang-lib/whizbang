@@ -10,7 +10,6 @@ namespace ECommerce.OrderService.API.Endpoints.Orders;
 /// FastEndpoints endpoint for creating orders
 /// </summary>
 public class CreateOrderEndpoint(IDispatcher dispatcher) : Endpoint<CreateOrderRequest, CreateOrderResponse> {
-  private readonly IDispatcher _dispatcher = dispatcher;
 
   public override void Configure() {
     Post("/orders");
@@ -51,7 +50,7 @@ public class CreateOrderEndpoint(IDispatcher dispatcher) : Endpoint<CreateOrderR
     };
 
     // Dispatch the command locally and wait for the result
-    var orderCreated = await _dispatcher.LocalInvokeAsync<OrderCreatedEvent>(command);
+    var orderCreated = await dispatcher.LocalInvokeAsync<OrderCreatedEvent>(command);
 
     Response = new CreateOrderResponse {
       OrderId = orderCreated.OrderId.Value.ToString(),

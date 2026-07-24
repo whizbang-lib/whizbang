@@ -18,7 +18,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
   [Test]
   public async Task GetSchemaWithFallback_WhenSchemaIsValid_ReturnsSchemaAsync() {
     // Arrange
-    var expectedSchema = "my_custom_schema";
+    const string expectedSchema = "my_custom_schema";
     var logger = new CapturingLogger();
 
     // Act
@@ -36,7 +36,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
   [Test]
   public async Task GetSchemaWithFallback_WhenSchemaIsNull_LogsWarningAndReturnsDefaultAsync() {
     // Arrange
-    string? schema = null;
+    const string? schema = null;
     var logger = new CapturingLogger();
 
     // Act
@@ -74,7 +74,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
   [Test]
   public async Task GetSchemaWithFallback_WhenSchemaIsWhitespace_LogsWarningAndReturnsDefaultAsync() {
     // Arrange
-    string? schema = "   ";
+    const string? schema = "   ";
     var logger = new CapturingLogger();
 
     // Act
@@ -92,7 +92,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
   [Test]
   public async Task GetSchemaWithFallback_WhenLoggerIsNull_DoesNotThrowAsync() {
     // Arrange - null logger should not cause exceptions
-    string? schema = null;
+    const string? schema = null;
 
     // Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.GetSchemaWithFallback(
@@ -113,10 +113,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Arrange & Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "public",
-      "process_work_batch");
+      "claim_work");
 
     // Assert - Should NOT have schema prefix for public
-    await Assert.That(result).IsEqualTo("process_work_batch");
+    await Assert.That(result).IsEqualTo("claim_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 
@@ -125,10 +125,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Arrange & Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "",
-      "process_work_batch");
+      "claim_work");
 
     // Assert - Should NOT have leading dot
-    await Assert.That(result).IsEqualTo("process_work_batch");
+    await Assert.That(result).IsEqualTo("claim_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 
@@ -137,10 +137,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Arrange & Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "   ",
-      "process_work_batch");
+      "claim_work");
 
     // Assert - Should NOT have leading dot
-    await Assert.That(result).IsEqualTo("process_work_batch");
+    await Assert.That(result).IsEqualTo("claim_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 
@@ -149,10 +149,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Arrange & Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "inventory",
-      "process_work_batch");
+      "claim_work");
 
     // Assert - Should have quoted schema prefix
-    await Assert.That(result).IsEqualTo("\"inventory\".process_work_batch");
+    await Assert.That(result).IsEqualTo("\"inventory\".claim_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 
@@ -162,10 +162,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "user",
-      "complete_perspective_checkpoint_work");
+      "complete_perspective_cursor_work");
 
     // Assert - Should have quoted schema to handle reserved word
-    await Assert.That(result).IsEqualTo("\"user\".complete_perspective_checkpoint_work");
+    await Assert.That(result).IsEqualTo("\"user\".complete_perspective_cursor_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 

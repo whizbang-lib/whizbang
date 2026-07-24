@@ -24,7 +24,7 @@ public class SyncEventTrackerTests {
     var eventType = typeof(TestEventA);
     var eventId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var trackedAt = DateTime.UtcNow;
 
     var tracked = new TrackedSyncEvent(eventType, eventId, streamId, perspectiveName, trackedAt);
@@ -92,7 +92,7 @@ public class SyncEventTrackerTests {
     var tracker = new SyncEventTracker();
     var targetStreamId = Guid.NewGuid();
     var otherStreamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), targetStreamId, perspectiveName);
     tracker.TrackEvent(typeof(TestEventB), Guid.NewGuid(), otherStreamId, perspectiveName);
@@ -123,7 +123,7 @@ public class SyncEventTrackerTests {
   public async Task GetPendingEvents_FiltersByEventTypesAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamId, perspectiveName);
     tracker.TrackEvent(typeof(TestEventB), Guid.NewGuid(), streamId, perspectiveName);
@@ -141,7 +141,7 @@ public class SyncEventTrackerTests {
   public async Task GetPendingEvents_NoEventTypes_ReturnsAllForStreamAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamId, perspectiveName);
     tracker.TrackEvent(typeof(TestEventB), Guid.NewGuid(), streamId, perspectiveName);
@@ -155,7 +155,7 @@ public class SyncEventTrackerTests {
   public async Task GetPendingEvents_EmptyEventTypes_ReturnsAllForStreamAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamId, perspectiveName);
     tracker.TrackEvent(typeof(TestEventB), Guid.NewGuid(), streamId, perspectiveName);
@@ -320,7 +320,7 @@ public class SyncEventTrackerTests {
   public async Task ThreadSafety_ConcurrentGetPendingAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     // Add some events first
     for (int i = 0; i < 100; i++) {
@@ -353,7 +353,7 @@ public class SyncEventTrackerTests {
     var tracker = new SyncEventTracker();
     var stream1 = Guid.NewGuid();
     var stream2 = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), stream1, perspectiveName);
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), stream2, perspectiveName);
@@ -681,7 +681,7 @@ public class SyncEventTrackerTests {
     using var cts = new CancellationTokenSource();
 
     // Start waiting
-    var waitTask = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5), cts.Token);
+    var waitTask = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5), cancellationToken: cts.Token);
 
     // Cancel
     cts.Cancel();
@@ -737,7 +737,7 @@ public class SyncEventTrackerTests {
     using var cts = new CancellationTokenSource();
 
     // Start waiting
-    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "TestPerspective", TimeSpan.FromSeconds(5), cts.Token);
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "TestPerspective", TimeSpan.FromSeconds(5), cancellationToken: cts.Token);
 
     // Cancel
     cts.Cancel();
@@ -779,7 +779,7 @@ public class SyncEventTrackerTests {
     using var cts = new CancellationTokenSource();
 
     // Start waiting
-    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5), cts.Token);
+    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5), cancellationToken: cts.Token);
 
     // Cancel
     cts.Cancel();
@@ -886,5 +886,353 @@ public class SyncEventTrackerTests {
 
     await Assert.That(pendingA.Count).IsEqualTo(1);
     await Assert.That(pendingB.Count).IsEqualTo(1);
+  }
+
+  // ==========================================================================
+  // UnregisterAwaiter tests
+  // ==========================================================================
+
+  [Test]
+  public async Task UnregisterAwaiter_RemovesAllTcsForAwaiterAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiterId);
+
+    // Unregister should cancel the TCS
+    tracker.UnregisterAwaiter(awaiterId);
+
+    var result = await task;
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task UnregisterAwaiter_CancelsTcsEntriesAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiterId);
+
+    tracker.UnregisterAwaiter(awaiterId);
+
+    // Task should complete with false (cancellation handled internally)
+    var result = await task;
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task UnregisterAwaiter_LeavesOtherAwaitersIntactAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiter1 = Guid.NewGuid();
+    var awaiter2 = Guid.NewGuid();
+
+    var task1 = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiter1);
+    var task2 = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiter2);
+
+    // Only unregister awaiter1
+    tracker.UnregisterAwaiter(awaiter1);
+
+    // Signal event
+    tracker.MarkProcessedByPerspective([eventId], "P1");
+
+    var result1 = await task1;
+    var result2 = await task2;
+
+    await Assert.That(result1).IsFalse().Because("Awaiter 1 was unregistered");
+    await Assert.That(result2).IsTrue().Because("Awaiter 2 should complete normally");
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_WithAwaiterId_RegistersCorrectlyAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiterId);
+
+    // Complete the event
+    tracker.MarkProcessedByPerspective([eventId], "P1");
+
+    var result = await task;
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_WithNullAwaiterId_AutoGeneratesIdAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // null awaiterId should still work
+    var task = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiterId: null);
+
+    tracker.MarkProcessedByPerspective([eventId], "P1");
+
+    var result = await task;
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForEventsAsync_WithAwaiterId_CanBeUnregisteredAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5), awaiterId);
+
+    tracker.UnregisterAwaiter(awaiterId);
+
+    var result = await task;
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_WithAwaiterId_CanBeUnregisteredAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5), awaiterId);
+
+    tracker.UnregisterAwaiter(awaiterId);
+
+    var result = await task;
+    await Assert.That(result).IsFalse();
+  }
+
+  // ==========================================================================
+  // TTL Cleanup tests
+  // ==========================================================================
+
+  [Test]
+  public async Task CleanupStaleEntries_RemovesEntriesOlderThanMaxAgeAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // Entry was just added — cleanup with 1-hour TTL should NOT remove it
+    var removedCount = tracker.CleanupStaleEntries(TimeSpan.FromHours(1));
+    await Assert.That(removedCount).IsEqualTo(0);
+
+    var pending = tracker.GetPendingEvents(streamId, "P1");
+    await Assert.That(pending).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task CleanupStaleEntries_WithZeroTTL_RemovesAllEntriesAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId1 = Guid.NewGuid();
+    var eventId2 = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId1, streamId, "P1");
+    tracker.TrackEvent(typeof(TestEventB), eventId2, streamId, "P1");
+
+    // Zero TTL means everything is "stale"
+    var removedCount = tracker.CleanupStaleEntries(TimeSpan.Zero);
+    await Assert.That(removedCount).IsGreaterThanOrEqualTo(2);
+
+    var allIds = tracker.GetAllTrackedEventIds();
+    await Assert.That(allIds).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CleanupStaleEntries_SignalsWaitersForRemovedEntriesAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // Start waiting on the event
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "P1", TimeSpan.FromSeconds(30));
+
+    // Cleanup with zero TTL — should remove the entry AND signal the waiter
+    tracker.CleanupStaleEntries(TimeSpan.Zero);
+
+    // The waiter should complete (signaled by cleanup) rather than waiting 30 seconds
+    _ = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(5)));
+    await Assert.That(waitTask.IsCompleted).IsTrue()
+      .Because("Cleanup should signal waiters so they don't hang");
+  }
+
+  // ==========================================================================
+  // Multi-perspective partial completion tests
+  // ==========================================================================
+
+  [Test]
+  public async Task MarkProcessedByPerspective_ThreePerspectives_MarkOne_OtherTwoStillPendingAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P2");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P3");
+
+    // Mark only P1 as processed
+    tracker.MarkProcessedByPerspective([eventId], "P1");
+
+    // P1 should be gone, P2 and P3 still pending
+    var pendingP1 = tracker.GetPendingEvents(streamId, "P1");
+    var pendingP2 = tracker.GetPendingEvents(streamId, "P2");
+    var pendingP3 = tracker.GetPendingEvents(streamId, "P3");
+
+    await Assert.That(pendingP1).Count().IsEqualTo(0);
+    await Assert.That(pendingP2).Count().IsEqualTo(1);
+    await Assert.That(pendingP3).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task MarkProcessedByPerspective_NeverTrackedPerspective_NoOpAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // Mark a perspective that was never tracked — should be a no-op
+    tracker.MarkProcessedByPerspective([eventId], "NeverTracked");
+
+    // P1 should still be pending
+    var pendingP1 = tracker.GetPendingEvents(streamId, "P1");
+    await Assert.That(pendingP1).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task MarkProcessedByPerspective_ConcurrentLastTwoPerspectives_AllWaitersSignaledOnceAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P2");
+
+    // Start waiting for all perspectives
+    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(10));
+
+    // Mark both perspectives concurrently
+    var barrier = new Barrier(2);
+    var t1 = Task.Run(() => {
+      barrier.SignalAndWait();
+      tracker.MarkProcessedByPerspective([eventId], "P1");
+    });
+    var t2 = Task.Run(() => {
+      barrier.SignalAndWait();
+      tracker.MarkProcessedByPerspective([eventId], "P2");
+    });
+
+    await Task.WhenAll(t1, t2);
+
+    // The all-perspectives waiter should complete
+    var result = await waitTask;
+    await Assert.That(result).IsTrue();
+  }
+
+  // ==========================================================================
+  // MarkPerspectiveStreamProcessed tests — belt-and-suspenders signal for
+  // perspective runs that complete without enumerating their processed events
+  // (e.g., already-applied / dedup / cooldown short-circuits). Production
+  // ChatService observed 30s sync-wait timeouts when subsequent waits on the
+  // same stream landed against events the runner had cleared the cursor past
+  // but never called MarkProcessedByPerspective for.
+  // ==========================================================================
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_RemovesAllTrackedEventsForPerspectiveStreamAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var e1 = Guid.NewGuid();
+    var e2 = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), e1, streamId, "P");
+    tracker.TrackEvent(typeof(TestEventB), e2, streamId, "P");
+
+    tracker.MarkPerspectiveStreamProcessed("P", streamId);
+
+    await Assert.That(tracker.GetPendingEvents(streamId, "P").Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_WakesPendingWaiterAsync() {
+    // Reproduces the chat bug: the runner advances the cursor without invoking
+    // MarkProcessedByPerspective (because it short-circuited / had no receptor
+    // invoker / filtered all events as already-applied), and a separate
+    // request-scope WaitForPerspectiveEventsAsync caller would otherwise wait
+    // 30s for nothing. With MarkPerspectiveStreamProcessed called at completion,
+    // the waiter resolves immediately.
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P");
+
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "P", TimeSpan.FromSeconds(5));
+
+    tracker.MarkPerspectiveStreamProcessed("P", streamId);
+
+    var result = await waitTask;
+    await Assert.That(result).IsTrue()
+      .Because("the stream-level sweep MUST wake any waiter registered against events the runner short-circuited past");
+  }
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_DoesNotAffectOtherPerspectivesAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P2");
+
+    tracker.MarkPerspectiveStreamProcessed("P1", streamId);
+
+    await Assert.That(tracker.GetPendingEvents(streamId, "P1").Count).IsEqualTo(0);
+    await Assert.That(tracker.GetPendingEvents(streamId, "P2").Count).IsEqualTo(1)
+      .Because("the sweep is scoped to a single perspective — events tracked for sibling perspectives must remain pending");
+  }
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_DoesNotAffectOtherStreamsAsync() {
+    var tracker = new SyncEventTracker();
+    var streamA = Guid.NewGuid();
+    var streamB = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamA, "P");
+    tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamB, "P");
+
+    tracker.MarkPerspectiveStreamProcessed("P", streamA);
+
+    await Assert.That(tracker.GetPendingEvents(streamA, "P").Count).IsEqualTo(0);
+    await Assert.That(tracker.GetPendingEvents(streamB, "P").Count).IsEqualTo(1)
+      .Because("the sweep is scoped to a single stream — events for other streams under the same perspective must remain pending");
+  }
+
+  [Test]
+  public async Task MarkPerspectiveStreamProcessed_NoTrackedEvents_NoOpAsync() {
+    var tracker = new SyncEventTracker();
+    tracker.MarkPerspectiveStreamProcessed("P", Guid.NewGuid());
+    await Assert.That(tracker.GetAllTrackedEventIds().Count).IsEqualTo(0);
   }
 }

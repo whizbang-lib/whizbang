@@ -7,29 +7,23 @@ namespace Whizbang.Core.Security;
 /// Provides additional metadata about when and how the context was established.
 /// </summary>
 /// <remarks>
-/// This class wraps an extracted security context and adds:
+/// <para>This class wraps an extracted security context and adds:
 /// - Immutability guarantees (once established, cannot be changed)
 /// - Source tracking (which extractor created it)
 /// - Timestamp (when it was established)
-/// - Propagation flag (whether to include in outgoing messages)
+/// - Propagation flag (whether to include in outgoing messages)</para>
 ///
-/// The wrapper delegates all IScopeContext methods to the inner context.
+/// <para>The wrapper delegates all IScopeContext methods to the inner context.</para>
 /// </remarks>
-/// <docs>core-concepts/message-security#immutable-context</docs>
+/// <docs>fundamentals/security/message-security#immutable-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs</tests>
-public sealed class ImmutableScopeContext : IScopeContext {
-  private readonly SecurityExtraction _extraction;
-
-  /// <summary>
-  /// Creates an immutable scope context from an extraction result.
-  /// </summary>
-  /// <param name="extraction">The security extraction to wrap</param>
-  /// <param name="shouldPropagate">Whether to propagate to outgoing messages</param>
-  public ImmutableScopeContext(SecurityExtraction extraction, bool shouldPropagate) {
-    _extraction = extraction ?? throw new ArgumentNullException(nameof(extraction));
-    ShouldPropagate = shouldPropagate;
-    EstablishedAt = DateTimeOffset.UtcNow;
-  }
+/// <remarks>
+/// Creates an immutable scope context from an extraction result.
+/// </remarks>
+/// <param name="extraction">The security extraction to wrap</param>
+/// <param name="shouldPropagate">Whether to propagate to outgoing messages</param>
+public sealed class ImmutableScopeContext(SecurityExtraction extraction, bool shouldPropagate) : IScopeContext {
+  private readonly SecurityExtraction _extraction = extraction ?? throw new ArgumentNullException(nameof(extraction));
 
   /// <summary>
   /// Identifies the source of this context (which extractor created it).
@@ -39,12 +33,36 @@ public sealed class ImmutableScopeContext : IScopeContext {
   /// <summary>
   /// When this context was established.
   /// </summary>
-  public DateTimeOffset EstablishedAt { get; }
+  public DateTimeOffset EstablishedAt { get; } = DateTimeOffset.UtcNow;
 
   /// <summary>
   /// Whether this context should be propagated to outgoing messages.
   /// </summary>
-  public bool ShouldPropagate { get; }
+  public bool ShouldPropagate { get; } = shouldPropagate;
+
+  /// <summary>
+  /// Wraps an existing <see cref="IScopeContext"/> as a propagating (<c>ShouldPropagate = true</c>)
+  /// <see cref="ImmutableScopeContext"/> by shallow-copying all nine scope dimensions. The ONE place the
+  /// "promote a scope to propagating" shape lives — shared by every establishment/extraction site
+  /// (ReceptorInvoker, SecurityContextHelper, PerspectiveWorker, EnvelopeContextExtractor) so the field set
+  /// can't drift between them. Callers keep their own accessor-set + <c>ISecurityContextCallback</c> ordering.
+  /// </summary>
+  public static ImmutableScopeContext PromoteToPropagating(IScopeContext source, string sourceLabel = "EnvelopeHop") {
+    ArgumentNullException.ThrowIfNull(source);
+    return new ImmutableScopeContext(
+      new SecurityExtraction {
+        Scope = source.Scope,
+        Roles = source.Roles,
+        Permissions = source.Permissions,
+        SecurityPrincipals = source.SecurityPrincipals,
+        Claims = source.Claims,
+        ActualPrincipal = source.ActualPrincipal,
+        EffectivePrincipal = source.EffectivePrincipal,
+        ContextType = source.ContextType,
+        Source = sourceLabel
+      },
+      shouldPropagate: true);
+  }
 
   // === IScopeContext implementation ===
 
@@ -74,35 +92,17 @@ public sealed class ImmutableScopeContext : IScopeContext {
 
   /// <inheritdoc />
   public bool HasPermission(Permission permission) {
-    foreach (var p in Permissions) {
-      if (p.Matches(permission)) {
-        return true;
-      }
-    }
-
-    return false;
+    return Permissions.Any(p => p.Matches(permission));
   }
 
   /// <inheritdoc />
   public bool HasAnyPermission(params Permission[] permissions) {
-    foreach (var required in permissions) {
-      if (HasPermission(required)) {
-        return true;
-      }
-    }
-
-    return false;
+    return permissions.Any(HasPermission);
   }
 
   /// <inheritdoc />
   public bool HasAllPermissions(params Permission[] permissions) {
-    foreach (var required in permissions) {
-      if (!HasPermission(required)) {
-        return false;
-      }
-    }
-
-    return true;
+    return permissions.All(HasPermission);
   }
 
   /// <inheritdoc />
@@ -112,34 +112,16 @@ public sealed class ImmutableScopeContext : IScopeContext {
 
   /// <inheritdoc />
   public bool HasAnyRole(params string[] roleNames) {
-    foreach (var role in roleNames) {
-      if (Roles.Contains(role)) {
-        return true;
-      }
-    }
-
-    return false;
+    return roleNames.Any(Roles.Contains);
   }
 
   /// <inheritdoc />
   public bool IsMemberOfAny(params SecurityPrincipalId[] principals) {
-    foreach (var principal in principals) {
-      if (SecurityPrincipals.Contains(principal)) {
-        return true;
-      }
-    }
-
-    return false;
+    return principals.Any(SecurityPrincipals.Contains);
   }
 
   /// <inheritdoc />
   public bool IsMemberOfAll(params SecurityPrincipalId[] principals) {
-    foreach (var principal in principals) {
-      if (!SecurityPrincipals.Contains(principal)) {
-        return false;
-      }
-    }
-
-    return true;
+    return principals.All(SecurityPrincipals.Contains);
   }
 }

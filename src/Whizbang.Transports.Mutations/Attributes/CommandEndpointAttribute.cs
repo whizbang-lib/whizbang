@@ -11,7 +11,7 @@ namespace Whizbang.Transports.Mutations;
 /// </summary>
 /// <typeparam name="TCommand">The command type that must implement <see cref="ICommand"/>.</typeparam>
 /// <typeparam name="TResult">The result type returned after command execution.</typeparam>
-/// <docs>mutations/command-endpoints</docs>
+/// <docs>apis/mutations/command-endpoints</docs>
 /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/CommandEndpointAttributeTests.cs</tests>
 /// <example>
 /// // Simple - command is the request
@@ -30,14 +30,16 @@ namespace Whizbang.Transports.Mutations;
 /// public class CreateOrderCommand : ICommand { }
 /// </example>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+#pragma warning disable S2326 // Type parameters carry type info for source generators — used at compile time, not runtime
 public sealed class CommandEndpointAttribute<TCommand, TResult> : Attribute
     where TCommand : ICommand {
+#pragma warning restore S2326
   /// <summary>
   /// The REST route for the FastEndpoints endpoint.
   /// If null, no REST endpoint is generated.
   /// Example: "/api/orders" or "/api/v1/orders/{id}"
   /// </summary>
-  /// <docs>mutations/command-endpoints#rest-route</docs>
+  /// <docs>apis/mutations/command-endpoints#rest-route</docs>
   public string? RestRoute { get; set; }
 
   /// <summary>
@@ -45,7 +47,7 @@ public sealed class CommandEndpointAttribute<TCommand, TResult> : Attribute
   /// If null, no GraphQL mutation is generated.
   /// Example: "createOrder" generates mutation { createOrder(...) { ... } }
   /// </summary>
-  /// <docs>mutations/command-endpoints#graphql-mutation</docs>
+  /// <docs>apis/mutations/command-endpoints#graphql-mutation</docs>
   public string? GraphQLMutation { get; set; }
 
   /// <summary>
@@ -54,6 +56,6 @@ public sealed class CommandEndpointAttribute<TCommand, TResult> : Attribute
   /// instead of the command directly. User must implement
   /// <c>MapRequestToCommandAsync</c> in their partial class.
   /// </summary>
-  /// <docs>mutations/custom-request-dto</docs>
+  /// <docs>apis/mutations/custom-request-dto</docs>
   public Type? RequestType { get; set; }
 }

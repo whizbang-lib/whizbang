@@ -83,10 +83,10 @@ public class SubscriptionResilienceOptionsTests {
   [Test]
   public async Task InitialRetryAttempts_SetValue_ReturnsSetValueAsync() {
     // Arrange
-    var options = new SubscriptionResilienceOptions();
-
-    // Act
-    options.InitialRetryAttempts = 10;
+    var options = new SubscriptionResilienceOptions {
+      // Act
+      InitialRetryAttempts = 10
+    };
 
     // Assert
     await Assert.That(options.InitialRetryAttempts).IsEqualTo(10);
@@ -121,10 +121,10 @@ public class SubscriptionResilienceOptionsTests {
   [Test]
   public async Task BackoffMultiplier_SetValue_ReturnsSetValueAsync() {
     // Arrange
-    var options = new SubscriptionResilienceOptions();
-
-    // Act
-    options.BackoffMultiplier = 1.5;
+    var options = new SubscriptionResilienceOptions {
+      // Act
+      BackoffMultiplier = 1.5
+    };
 
     // Assert
     await Assert.That(options.BackoffMultiplier).IsEqualTo(1.5);
@@ -133,10 +133,10 @@ public class SubscriptionResilienceOptionsTests {
   [Test]
   public async Task RetryIndefinitely_SetFalse_ReturnsFalseAsync() {
     // Arrange
-    var options = new SubscriptionResilienceOptions();
-
-    // Act
-    options.RetryIndefinitely = false;
+    var options = new SubscriptionResilienceOptions {
+      // Act
+      RetryIndefinitely = false
+    };
 
     // Assert
     await Assert.That(options.RetryIndefinitely).IsFalse();
@@ -158,10 +158,10 @@ public class SubscriptionResilienceOptionsTests {
   [Test]
   public async Task AllowPartialSubscriptions_SetFalse_ReturnsFalseAsync() {
     // Arrange
-    var options = new SubscriptionResilienceOptions();
-
-    // Act
-    options.AllowPartialSubscriptions = false;
+    var options = new SubscriptionResilienceOptions {
+      // Act
+      AllowPartialSubscriptions = false
+    };
 
     // Assert
     await Assert.That(options.AllowPartialSubscriptions).IsFalse();
@@ -174,10 +174,10 @@ public class SubscriptionResilienceOptionsTests {
   [Test]
   public async Task InitialRetryAttempts_SetToZero_AllowsSkippingInitialPhaseAsync() {
     // Arrange
-    var options = new SubscriptionResilienceOptions();
-
-    // Act - zero means skip initial warning phase
-    options.InitialRetryAttempts = 0;
+    var options = new SubscriptionResilienceOptions {
+      // Act - zero means skip initial warning phase
+      InitialRetryAttempts = 0
+    };
 
     // Assert
     await Assert.That(options.InitialRetryAttempts).IsEqualTo(0);
@@ -186,10 +186,10 @@ public class SubscriptionResilienceOptionsTests {
   [Test]
   public async Task InitialRetryDelay_SetToZero_AllowsImmediateRetryAsync() {
     // Arrange
-    var options = new SubscriptionResilienceOptions();
-
-    // Act
-    options.InitialRetryDelay = TimeSpan.Zero;
+    var options = new SubscriptionResilienceOptions {
+      // Act
+      InitialRetryDelay = TimeSpan.Zero
+    };
 
     // Assert
     await Assert.That(options.InitialRetryDelay).IsEqualTo(TimeSpan.Zero);
@@ -198,10 +198,10 @@ public class SubscriptionResilienceOptionsTests {
   [Test]
   public async Task BackoffMultiplier_SetToOne_DisablesExponentialBackoffAsync() {
     // Arrange
-    var options = new SubscriptionResilienceOptions();
-
-    // Act - multiplier of 1.0 means no growth (constant delay)
-    options.BackoffMultiplier = 1.0;
+    var options = new SubscriptionResilienceOptions {
+      // Act - multiplier of 1.0 means no growth (constant delay)
+      BackoffMultiplier = 1.0
+    };
 
     // Assert
     await Assert.That(options.BackoffMultiplier).IsEqualTo(1.0);

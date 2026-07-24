@@ -16,10 +16,13 @@
 
     <!-- Enable source generator output for debugging -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
 
     <!-- RabbitMQ transport compiler directive -->
     <DefineConstants>RABBITMQ</DefineConstants>
+
+    <!-- Don't capture test output so Console.WriteLine appears in terminal during diagnosis -->
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
   </PropertyGroup>
 
   <ItemGroup>

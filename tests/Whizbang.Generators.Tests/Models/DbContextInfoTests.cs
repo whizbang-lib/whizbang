@@ -77,7 +77,7 @@ public class DbContextInfoTests {
       ClassName: "MyDbContext",
       FullyQualifiedName: "global::MyApp.Data.MyDbContext",
       Namespace: "MyApp.Data",
-      ExistingPerspectives: ImmutableArray.Create("Perspective1"),
+      ExistingPerspectives: ["Perspective1"],
       Location: location
     );
 
@@ -85,7 +85,7 @@ public class DbContextInfoTests {
       ClassName: "MyDbContext",
       FullyQualifiedName: "global::MyApp.Data.MyDbContext",
       Namespace: "MyApp.Data",
-      ExistingPerspectives: ImmutableArray.Create("Perspective1", "Perspective2"),
+      ExistingPerspectives: ["Perspective1", "Perspective2"],
       Location: location
     );
 
@@ -124,7 +124,7 @@ public class DbContextInfoTests {
       ClassName: "MyDbContext",
       FullyQualifiedName: "global::MyApp.Data.MyDbContext",
       Namespace: "MyApp.Data",
-      ExistingPerspectives: ImmutableArray<string>.Empty,
+      ExistingPerspectives: [],
       Location: location
     );
 

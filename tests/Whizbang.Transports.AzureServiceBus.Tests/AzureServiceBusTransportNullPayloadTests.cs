@@ -3,6 +3,8 @@ using System.Text.Json.Serialization.Metadata;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
@@ -34,7 +36,7 @@ public class AzureServiceBusTransportNullPayloadTests {
   [Test]
   public async Task Deserialize_WithMissingPayloadField_ReturnsEnvelopeWithNullPayloadAsync() {
     // Arrange - JSON with all fields except "p" (Payload)
-    var jsonWithoutPayload = """
+    const string jsonWithoutPayload = """
       {
         "id": "01234567-89ab-cdef-0123-456789abcdef",
         "h": []
@@ -71,7 +73,7 @@ public class AzureServiceBusTransportNullPayloadTests {
   [Test]
   public async Task Deserialize_WithExplicitNullPayload_ReturnsEnvelopeWithNullPayloadAsync() {
     // Arrange - JSON with explicit null for "p" (Payload)
-    var jsonWithNullPayload = """
+    const string jsonWithNullPayload = """
       {
         "id": "01234567-89ab-cdef-0123-456789abcdef",
         "p": null,
@@ -108,6 +110,7 @@ public class AzureServiceBusTransportNullPayloadTests {
     var originalEnvelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test-content"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -179,6 +182,7 @@ public class AzureServiceBusTransportNullPayloadTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("valid-content"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 
@@ -211,14 +215,12 @@ public class AzureServiceBusTransportNullPayloadTests {
   /// <summary>
   /// Test envelope with null Payload to simulate deserialization edge case.
   /// </summary>
-  private sealed class TestEnvelopeWithNullPayload : IMessageEnvelope {
-    public MessageId MessageId { get; }
+  private sealed class TestEnvelopeWithNullPayload(MessageId messageId) : IMessageEnvelope {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
+    public MessageId MessageId { get; } = messageId;
     public object Payload => null!; // Simulates null payload from bad deserialization
     public List<MessageHop> Hops { get; } = [];
-
-    public TestEnvelopeWithNullPayload(MessageId messageId) {
-      MessageId = messageId;
-    }
 
     public CorrelationId? GetCorrelationId() => null;
     public MessageId? GetCausationId() => null;

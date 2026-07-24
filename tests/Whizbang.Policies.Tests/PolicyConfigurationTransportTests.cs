@@ -6,11 +6,11 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Policies.Tests;
 
 /// <summary>
-/// Tests for PolicyConfiguration transport routing features (publishing and subscribing).
-/// Following TDD: These tests are written BEFORE implementing transport routing features.
+/// <para>Tests for PolicyConfiguration transport routing features (publishing and subscribing).
+/// Following TDD: These tests are written BEFORE implementing transport routing features.</para>
 ///
-/// Phase 1: Transport target records and enums
-/// Phase 2: Publishing and subscribing methods on PolicyConfiguration
+/// <para>Phase 1: Transport target records and enums
+/// Phase 2: Publishing and subscribing methods on PolicyConfiguration</para>
 /// </summary>
 public class PolicyConfigurationTransportTests {
   // ========================================

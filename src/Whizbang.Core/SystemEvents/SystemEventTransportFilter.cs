@@ -43,17 +43,13 @@ namespace Whizbang.Core.SystemEvents;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/system-events#transport-filtering</docs>
-public sealed class SystemEventTransportFilter : ITransportPublishFilter {
-  private readonly SystemEventOptions _options;
-
-  /// <summary>
-  /// Creates a new transport filter with the specified options.
-  /// </summary>
-  /// <param name="options">System event configuration options.</param>
-  public SystemEventTransportFilter(IOptions<SystemEventOptions> options) {
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  }
+/// <docs>fundamentals/events/system-events#transport-filtering</docs>
+/// <remarks>
+/// Creates a new transport filter with the specified options.
+/// </remarks>
+/// <param name="options">System event configuration options.</param>
+public sealed class SystemEventTransportFilter(IOptions<SystemEventOptions> options) : ITransportPublishFilter {
+  private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
   /// <inheritdoc />
   public bool ShouldPublishToTransport(object message) {

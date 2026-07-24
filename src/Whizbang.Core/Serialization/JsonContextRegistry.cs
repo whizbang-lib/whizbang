@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Serialization;
@@ -22,11 +24,24 @@ namespace Whizbang.Core.Serialization;
 /// (MessageHop, MessageEnvelope) from Core take precedence over application types.
 /// </remarks>
 public static class JsonContextRegistry {
+  /// <summary>Monotonic registration sequence — breaks priority ties in registration order (FIFO).</summary>
+  private static long _registrationSeq;
+
   /// <summary>
-  /// Thread-safe collection of registered resolvers.
+  /// A registered type-info provider with its ranking metadata. <paramref name="Profile"/> of
+  /// <c>null</c> means the provider applies to every <see cref="SerializationProfile"/>; a specific value
+  /// scopes it to that profile only. Higher <paramref name="Priority"/> is consulted first; equal
+  /// priorities preserve registration order via <paramref name="Seq"/>.
+  /// </summary>
+  private readonly record struct _resolverEntry(IJsonTypeInfoResolver Resolver, int Priority, SerializationProfile? Profile, long Seq);
+
+  private readonly record struct _converterEntry(JsonConverter Converter, int Priority, SerializationProfile? Profile, long Seq);
+
+  /// <summary>
+  /// Thread-safe collection of registered resolvers with priority + profile.
   /// Populated via [ModuleInitializer] methods in each assembly.
   /// </summary>
-  private static readonly ConcurrentBag<IJsonTypeInfoResolver> _resolvers = [];
+  private static readonly ConcurrentQueue<_resolverEntry> _resolvers = new();
 
   /// <summary>
   /// Thread-safe collection of converter instances to add to JsonSerializerOptions.
@@ -34,7 +49,10 @@ public static class JsonContextRegistry {
   /// Needed for WhizbangId converters due to STJ source generation limitations.
   /// Converters are instantiated at compile-time by source generators for AOT compatibility.
   /// </summary>
-  private static readonly ConcurrentBag<JsonConverter> _converters = [];
+  private static readonly ConcurrentQueue<_converterEntry> _converters = new();
+
+  private static bool _appliesTo(SerializationProfile? entryProfile, SerializationProfile requested)
+    => entryProfile is null || entryProfile.Value == requested;
 
   /// <summary>
   /// Thread-safe dictionary mapping normalized type names to (Type, Resolver) tuples.
@@ -49,10 +67,22 @@ public static class JsonContextRegistry {
   /// Called from [ModuleInitializer] methods - runs before Main().
   /// </summary>
   /// <param name="resolver">Source-generated JsonSerializerContext to register</param>
-  public static void RegisterContext(IJsonTypeInfoResolver resolver) {
+  public static void RegisterContext(IJsonTypeInfoResolver resolver) =>
+    RegisterContext(resolver, priority: 0, profile: null);
+
+  /// <summary>
+  /// Registers a JsonSerializerContext resolver with an explicit priority and optional profile scope.
+  /// Higher-priority resolvers are consulted first when <see cref="CreateCombinedOptions(SerializationProfile)"/>
+  /// builds the combined chain, so the winning <c>JsonTypeInfo</c> for a type is deterministic and
+  /// independent of assembly-load order. A <paramref name="profile"/> of <c>null</c> applies to every profile.
+  /// </summary>
+  /// <param name="resolver">Source-generated JsonSerializerContext to register.</param>
+  /// <param name="priority">Higher is consulted first; ties break in registration order.</param>
+  /// <param name="profile">Profile to scope this resolver to, or <c>null</c> for all profiles.</param>
+  public static void RegisterContext(IJsonTypeInfoResolver resolver, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(resolver);
 
-    _resolvers.Add(resolver);
+    _resolvers.Enqueue(new _resolverEntry(resolver, priority, profile, Interlocked.Increment(ref _registrationSeq)));
   }
 
   /// <summary>
@@ -64,10 +94,22 @@ public static class JsonContextRegistry {
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithNull_ThrowsArgumentNullExceptionAsync</tests>
   /// <param name="converter">The JsonConverter instance to register (instantiated at compile-time by source generators for AOT compatibility)</param>
-  public static void RegisterConverter(JsonConverter converter) {
+  public static void RegisterConverter(JsonConverter converter) =>
+    RegisterConverter(converter, priority: 0, profile: null);
+
+  /// <summary>
+  /// Registers a JsonConverter with an explicit priority and optional profile scope. A
+  /// <paramref name="profile"/> of <c>null</c> applies to every profile; scoping a converter to
+  /// <see cref="SerializationProfile.Default"/> keeps it out of the Persistence options (e.g. the scalar
+  /// WhizbangId converters, which the persistence profile replaces with object-mode resolvers).
+  /// </summary>
+  /// <param name="converter">The JsonConverter instance (instantiated at compile-time by source generators).</param>
+  /// <param name="priority">Higher is added first; ties break in registration order.</param>
+  /// <param name="profile">Profile to scope this converter to, or <c>null</c> for all profiles.</param>
+  public static void RegisterConverter(JsonConverter converter, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(converter);
 
-    _converters.Add(converter);
+    _converters.Enqueue(new _converterEntry(converter, priority, profile, Interlocked.Increment(ref _registrationSeq)));
   }
 
   /// <summary>
@@ -79,16 +121,58 @@ public static class JsonContextRegistry {
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:CreateCombinedOptions_IsAOTCompatible_NoReflectionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisteredConverters_AreInstantiatedAtCompileTime_NotRuntimeAsync</tests>
   /// <returns>JsonSerializerOptions with all registered contexts</returns>
-  public static JsonSerializerOptions CreateCombinedOptions() {
+  public static JsonSerializerOptions CreateCombinedOptions() =>
+    CreateCombinedOptions(SerializationProfile.Default);
+
+  /// <summary>
+  /// Creates JsonSerializerOptions for a specific <see cref="SerializationProfile"/>. Providers registered
+  /// for that profile (or for all profiles) are included, ordered by priority (highest first) so the winning
+  /// <c>JsonTypeInfo</c> for any type is deterministic and independent of assembly-load order. The
+  /// <see cref="SerializationProfile.Persistence"/> profile excludes Default-scoped providers (e.g. the
+  /// scalar WhizbangId converters), letting object-mode persistence resolvers win.
+  ///
+  /// <para>The returned options set <see cref="JsonSerializerOptions.AllowOutOfOrderMetadataProperties"/>
+  /// so polymorphic payloads survive a PostgreSQL <c>jsonb</c> round-trip, which reorders object keys and
+  /// would otherwise push the <c>$type</c> discriminator out of the first position STJ requires.</para>
+  /// </summary>
+  /// <tests>Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
+  /// <tests>Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
+  /// <tests>Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
+  public static JsonSerializerOptions CreateCombinedOptions(SerializationProfile profile) {
     if (_resolvers.IsEmpty) {
       throw new InvalidOperationException(
         "No JsonSerializerContext instances registered. " +
         "Ensure Whizbang.Core and application assemblies are loaded before calling CreateCombinedOptions().");
     }
 
+    // Highest priority first; registration order (Seq) breaks ties. JsonTypeInfoResolver.Combine is
+    // first-match-wins, so the ordered list makes the winning provider deterministic.
+    var orderedResolvers = _resolvers
+      .Where(e => _appliesTo(e.Profile, profile))
+      .OrderByDescending(e => e.Priority)
+      .ThenBy(e => e.Seq)
+      .Select(e => e.Resolver)
+      .ToArray();
+
+    // The polymorphic-base resolver goes FIRST so nested interface-typed members (e.g. a composite's
+    // inner-event IMessage list) resolve to a polymorphic typeinfo. Source-gen contexts never emit a
+    // typeinfo for the interface bases themselves, so without this any nested IMessage/IEvent/ICommand
+    // member fails to (de)serialize. The base resolvers handle every concrete type.
+    var combinedResolver = JsonTypeInfoResolver.Combine(
+      [new _polymorphicBaseTypeInfoResolver(), .. orderedResolvers]);
     var options = new JsonSerializerOptions {
-      TypeInfoResolver = JsonTypeInfoResolver.Combine(_resolvers.ToArray()),
-      DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+      TypeInfoResolver = combinedResolver,
+      DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+      // Postgres jsonb normalizes object key order (by length, then bytewise), so a stored value
+      // written with the STJ polymorphic discriminator ("$type") first comes back with "$type" NOT
+      // first whenever a nested polymorphic member has a direct sibling key shorter than "$type"
+      // (≤4 chars). STJ's polymorphic reader rejects an out-of-position discriminator unless this is
+      // set — without it, every read path that eagerly deserializes such a payload from a jsonb
+      // column throws NotSupportedException (silently swallowed on the drain path → 0 typed events →
+      // perspective completion stalls). This is the single choke point every consumer's options flow
+      // through, so enabling it here fixes the event store, perspective persistence, and every Dapper/
+      // EF Core read path at once.
+      AllowOutOfOrderMetadataProperties = true
     };
 
     // Register WhizbangId converters as runtime converters in addition to resolvers.
@@ -99,8 +183,13 @@ public static class JsonContextRegistry {
     // Converters are instantiated at compile-time by source generators (no reflection!)
     // and registered via RegisterConverter() from [ModuleInitializer] methods.
     // This includes ProductId, OrderId, CustomerId, etc. from all application assemblies.
-    foreach (var converter in _converters) {
-      options.Converters.Add(converter);
+    // Profile-scoped: the Persistence profile omits Default-only (scalar WhizbangId) converters so the
+    // object-mode resolvers win.
+    foreach (var entry in _converters
+        .Where(e => _appliesTo(e.Profile, profile))
+        .OrderByDescending(e => e.Priority)
+        .ThenBy(e => e.Seq)) {
+      options.Converters.Add(entry.Converter);
     }
 
     return options;
@@ -181,6 +270,14 @@ public static class JsonContextRegistry {
   private static readonly ConcurrentDictionary<(Type baseType, int optionsHash), object> _polymorphicTypeInfoCache = new();
 
   /// <summary>
+  /// Cache for the resolver-supplied (lazy, cycle-safe) polymorphic base typeinfos. Kept separate
+  /// from <see cref="_polymorphicTypeInfoCache"/> (which holds the eager/forcing typeinfos built by
+  /// the explicit <c>GetPolymorphic*TypeInfo</c> helpers) because the resolver path must NOT force
+  /// derived-type resolution — see <see cref="_createPolymorphicTypeInfoLazy{TBase}"/>.
+  /// </summary>
+  private static readonly ConcurrentDictionary<(Type baseType, int optionsHash), JsonTypeInfo> _resolverPolymorphicCache = new();
+
+  /// <summary>
   /// Registers a derived type for polymorphic serialization.
   /// Called from [ModuleInitializer] methods in each assembly to register concrete types
   /// that implement IEvent, ICommand, or IMessage interfaces.
@@ -190,7 +287,7 @@ public static class JsonContextRegistry {
   /// <param name="discriminator">Optional type discriminator for JSON serialization. Defaults to type name.</param>
   public static void RegisterDerivedType<TBase, TDerived>(string? discriminator = null)
     where TDerived : TBase {
-    var bag = _derivedTypes.GetOrAdd(typeof(TBase), _ => new ConcurrentBag<(Type, string)>());
+    var bag = _derivedTypes.GetOrAdd(typeof(TBase), _ => []);
     var actualDiscriminator = discriminator ?? typeof(TDerived).Name;
 
     // Avoid duplicate registrations
@@ -207,7 +304,7 @@ public static class JsonContextRegistry {
   /// <returns>Collection of registered derived types</returns>
   public static IEnumerable<Type> GetRegisteredDerivedTypes<TBase>() {
     if (_derivedTypes.TryGetValue(typeof(TBase), out var bag)) {
-      return bag.Select(x => x.derivedType).ToArray();
+      return [.. bag.Select(x => x.derivedType)];
     }
     return [];
   }
@@ -222,8 +319,8 @@ public static class JsonContextRegistry {
   public static string? GetDiscriminator<TBase, TDerived>()
     where TDerived : TBase {
     if (_derivedTypes.TryGetValue(typeof(TBase), out var bag)) {
-      var entry = bag.FirstOrDefault(x => x.derivedType == typeof(TDerived));
-      return entry.discriminator;
+      var (_, discriminator) = bag.FirstOrDefault(x => x.derivedType == typeof(TDerived));
+      return discriminator;
     }
     return null;
   }
@@ -268,7 +365,7 @@ public static class JsonContextRegistry {
       JsonMetadataServices.CreateListInfo<List<TBase>, TBase>(
         options,
         collectionInfo: new JsonCollectionInfoValues<List<TBase>> {
-          ObjectCreator = () => new List<TBase>(),
+          ObjectCreator = () => [],
           ElementInfo = elementTypeInfo
         }));
     return (JsonTypeInfo<List<TBase>>)cached;
@@ -351,6 +448,121 @@ public static class JsonContextRegistry {
     }
 
     return jsonTypeInfo;
+  }
+
+  /// <summary>
+  /// Resolver that supplies a polymorphic <see cref="JsonTypeInfo"/> for the registered base
+  /// interfaces (<c>IMessage</c>, <c>IEvent</c>, <c>ICommand</c>) through the options' resolver chain,
+  /// so that NESTED interface-typed members round-trip — e.g. a composite event's inner-event
+  /// <c>IMessage</c> list (<c>InnerEvents</c>), not only the explicit envelope payload handled by
+  /// <see cref="GetPolymorphicEnvelopeTypeInfo{TBase}"/>.
+  ///
+  /// <para>Cycle-safe: the typeinfo is built WITHOUT forcing derived-type resolution
+  /// (<see cref="_createPolymorphicTypeInfoLazy{TBase}"/>). The eager/forcing builder recurses on
+  /// composites — a composite is itself an <c>IMessage</c> that contains <c>IMessage</c>, so forcing
+  /// the composite's properties re-enters base resolution before the base typeinfo finishes building.
+  /// The lazy builder adds derived types as <see cref="JsonDerivedType"/> without resolving them; STJ
+  /// resolves each lazily at serialize time against the already-cached base typeinfo.</para>
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync</tests>
+  private sealed class _polymorphicBaseTypeInfoResolver : IJsonTypeInfoResolver {
+    public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
+      // Explicit generic dispatch over the three known polymorphic base interfaces keeps this
+      // AOT-safe (no MakeGenericMethod / reflection).
+      if (type == typeof(global::Whizbang.Core.IMessage)) {
+        return _getLazyPolymorphicTypeInfo<global::Whizbang.Core.IMessage>(options);
+      }
+      if (type == typeof(global::Whizbang.Core.IEvent)) {
+        return _getLazyPolymorphicTypeInfo<global::Whizbang.Core.IEvent>(options);
+      }
+      if (type == typeof(global::Whizbang.Core.ICommand)) {
+        return _getLazyPolymorphicTypeInfo<global::Whizbang.Core.ICommand>(options);
+      }
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Gets (cached) the lazy, cycle-safe polymorphic typeinfo for a registered base interface, or null
+  /// if nothing is registered for it.
+  /// </summary>
+  private static JsonTypeInfo? _getLazyPolymorphicTypeInfo<TBase>(JsonSerializerOptions options)
+    where TBase : notnull {
+    if (!_derivedTypes.TryGetValue(typeof(TBase), out var bag) || bag.IsEmpty) {
+      return null;
+    }
+    var cacheKey = (typeof(TBase), options.GetHashCode());
+    return _resolverPolymorphicCache.GetOrAdd(cacheKey, _ => _createPolymorphicTypeInfoLazy<TBase>(options, bag));
+  }
+
+  /// <summary>
+  /// Builds a polymorphic typeinfo for an interface base WITHOUT forcing derived-type resolution.
+  /// This is the cycle-safe counterpart to <see cref="_createPolymorphicTypeInfo{TBase}"/>: it does
+  /// not call <c>options.GetTypeInfo(derivedType)</c> / <c>MakeReadOnly</c> / <c>Properties</c> during
+  /// construction, so building the base typeinfo never re-enters resolution for a nested member of the
+  /// same base (the composite-contains-IMessage cycle). STJ resolves each derived type lazily when it
+  /// first encounters that discriminator. AOT-safe — pure metadata, no reflection.
+  /// </summary>
+  private static JsonTypeInfo<TBase> _createPolymorphicTypeInfoLazy<TBase>(
+    JsonSerializerOptions options,
+    ConcurrentBag<(Type derivedType, string discriminator)> derivedTypes)
+    where TBase : notnull {
+    var objectInfo = new JsonObjectInfoValues<TBase> {
+      ObjectCreator = null,
+      ObjectWithParameterizedConstructorCreator = null,
+      PropertyMetadataInitializer = _ => [],
+      SerializeHandler = null
+    };
+
+    var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo<TBase>(options, objectInfo);
+    jsonTypeInfo.PolymorphismOptions = new JsonPolymorphismOptions {
+      TypeDiscriminatorPropertyName = "$type",
+      UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FallBackToNearestAncestor,
+      IgnoreUnrecognizedTypeDiscriminators = true
+    };
+
+    var seenDiscriminators = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var (derivedType, discriminator) in derivedTypes.Distinct()) {
+      if (!seenDiscriminators.Add(discriminator)) {
+        continue;
+      }
+      // Skip derived types that no registered context can provide a JsonTypeInfo for. STJ finalizes a
+      // polymorphic typeinfo by resolving ALL its derived types, so an unresolvable one would throw
+      // NotSupportedException for the whole base (not just that type). This mirrors the forcing
+      // builder's skip — but the check is RESOLUTION-FREE: it asks each source-gen context for the
+      // type's pre-built metadata, which does NOT resolve the type's nested members, so it never
+      // recurses into a same-base member (the composite-contains-IMessage cycle) and never makes the
+      // in-progress base typeinfo read-only.
+      if (!_isResolvableByRegisteredContext(derivedType, options)) {
+        continue;
+      }
+      // No forcing here — adding a JsonDerivedType does not resolve the derived type's typeinfo, so
+      // this cannot recurse into nested same-base members. STJ resolves it lazily on first use.
+      jsonTypeInfo.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(derivedType, discriminator));
+    }
+
+    return jsonTypeInfo;
+  }
+
+  /// <summary>
+  /// Returns true if THIS options' resolver chain provides a <see cref="JsonTypeInfo"/> for
+  /// <paramref name="type"/>. Checks <c>options.TypeInfoResolver</c> (the snapshot the options was
+  /// built with) rather than the live <c>_resolvers</c> queue — they can diverge under concurrent
+  /// registration, and a type "resolvable" only in the live queue (but absent from this options'
+  /// snapshot) would be added and then throw when STJ finalizes the polymorphic typeinfo.
+  ///
+  /// <para>Resolution-free with respect to the type's members: for a concrete derived type the base
+  /// resolver returns null immediately and the source-gen context returns the pre-built metadata
+  /// object without resolving nested property typeinfos — so this never re-enters the polymorphic
+  /// base resolver (no recursion) and never finalizes the in-progress base typeinfo (no read-only
+  /// races).</para>
+  /// </summary>
+  private static bool _isResolvableByRegisteredContext(Type type, JsonSerializerOptions options) {
+    try {
+      return options.TypeInfoResolver?.GetTypeInfo(type, options) is not null;
+    } catch (NotSupportedException) {
+      return false;
+    }
   }
 
   /// <summary>

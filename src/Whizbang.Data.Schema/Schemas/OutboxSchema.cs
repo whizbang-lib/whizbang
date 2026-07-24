@@ -23,27 +23,27 @@ public static class OutboxSchema {
       new ColumnDefinition(
         Name: "message_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "destination",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: true  // Events don't have destinations, only outbound commands/messages do
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "message_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "envelope_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: true
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "event_data",
         DataType: WhizbangDataType.JSON,
@@ -128,45 +128,51 @@ public static class OutboxSchema {
         Name: "processed_at",
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
+      ),
+      new ColumnDefinition(
+        Name: Columns.FLAGS,
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: false,
+        DefaultValue: DefaultValue.Integer(0)
       )
     ),
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_outbox_status_created_at",
-        Columns: ImmutableArray.Create(Columns.STATUS, Columns.CREATED_AT)
+        Columns: [Columns.STATUS, Columns.CREATED_AT]
       ),
       new IndexDefinition(
         Name: "idx_outbox_published_at",
-        Columns: ImmutableArray.Create(Columns.PUBLISHED_AT)
+        Columns: [Columns.PUBLISHED_AT]
       ),
       new IndexDefinition(
         Name: "idx_outbox_lease_expiry",
-        Columns: ImmutableArray.Create(Columns.LEASE_EXPIRY),
+        Columns: [Columns.LEASE_EXPIRY],
         WhereClause: "lease_expiry IS NOT NULL"
       ),
       new IndexDefinition(
         Name: "idx_outbox_status_lease",
-        Columns: ImmutableArray.Create(Columns.STATUS, Columns.LEASE_EXPIRY),
+        Columns: [Columns.STATUS, Columns.LEASE_EXPIRY],
         WhereClause: "(status & 32768) = 0 AND (status & 4) != 4"
       ),
       new IndexDefinition(
         Name: "idx_outbox_failure_reason",
-        Columns: ImmutableArray.Create(Columns.FAILURE_REASON),
+        Columns: [Columns.FAILURE_REASON],
         WhereClause: "(status & 32768) = 32768"
       ),
       new IndexDefinition(
         Name: "idx_outbox_scheduled_for",
-        Columns: ImmutableArray.Create(Columns.STREAM_ID, Columns.SCHEDULED_FOR, Columns.CREATED_AT),
+        Columns: [Columns.STREAM_ID, Columns.SCHEDULED_FOR, Columns.CREATED_AT],
         WhereClause: "scheduled_for IS NOT NULL"
       ),
       new IndexDefinition(
         Name: "idx_outbox_partition_claiming",
-        Columns: ImmutableArray.Create(Columns.PARTITION_NUMBER, Columns.SCHEDULED_FOR, Columns.CREATED_AT),
+        Columns: [Columns.PARTITION_NUMBER, Columns.SCHEDULED_FOR, Columns.CREATED_AT],
         WhereClause: "(status & 4) != 4 AND (status & 32768) = 0"
       ),
       new IndexDefinition(
         Name: "idx_outbox_instance_lease",
-        Columns: ImmutableArray.Create(Columns.INSTANCE_ID, Columns.LEASE_EXPIRY),
+        Columns: [Columns.INSTANCE_ID, Columns.LEASE_EXPIRY],
         WhereClause: "instance_id IS NOT NULL AND lease_expiry IS NOT NULL"
       )
     )
@@ -197,5 +203,15 @@ public static class OutboxSchema {
     public const string CREATED_AT = "created_at";
     public const string PUBLISHED_AT = "published_at";
     public const string PROCESSED_AT = "processed_at";
+    /// <summary>
+    /// Event-categorization bitmask (Slice 2'). Stores
+    /// <c>Whizbang.Core.Messaging.EventFlags</c> as an INTEGER, mirroring
+    /// the existing producer-stamps-consumer-preserves pattern from
+    /// W3 slice 9. The dispatcher sets the matching flag bits on the
+    /// outbox row when the payload implements
+    /// <c>ICollectiveEvent</c> / <c>ICompositeEvent</c>; the transport
+    /// consumer (Slice 3') preserves the value onto the inbox row.
+    /// </summary>
+    public const string FLAGS = "flags";
   }
 }

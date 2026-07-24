@@ -21,7 +21,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#type-registry</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#type-registry</docs>
 public interface ITrackedEventTypeRegistry {
   /// <summary>
   /// Check if the given event type should be tracked for perspective sync.

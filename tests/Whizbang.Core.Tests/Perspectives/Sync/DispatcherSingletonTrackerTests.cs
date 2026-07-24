@@ -8,15 +8,15 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// Tests that verify the singleton ISyncEventTracker and ITrackedEventTypeRegistry
-/// work together for cross-scope perspective sync.
+/// <para>Tests that verify the singleton ISyncEventTracker and ITrackedEventTypeRegistry
+/// work together for cross-scope perspective sync.</para>
 ///
-/// The scenario:
+/// <para>The scenario:
 /// 1. Request 1: Handler returns Route.Local(event) - event gets tracked
 /// 2. Singleton tracker persists across requests
 /// 3. Request 2: Different handler with [AwaitPerspectiveSync]
 /// 4. WaitForStreamAsync checks singleton tracker and finds the event
-/// 5. Handler waits until event is processed
+/// 5. Handler waits until event is processed</para>
 /// </summary>
 /// <remarks>
 /// These tests use shared SyncEventTracker instances, so they must run
@@ -35,7 +35,7 @@ public class DispatcherSingletonTrackerTests {
     // Arrange - Shared singleton tracker (simulates DI singleton)
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
-    var perspectiveName = "MyApp.Perspectives.ActivityProjection";
+    const string perspectiveName = "MyApp.Perspectives.ActivityProjection";
     var eventType = typeof(SingletonTestStartedEvent);
 
     var singletonTracker = new SyncEventTracker();
@@ -84,8 +84,7 @@ public class DispatcherSingletonTrackerTests {
       mockCoordinator,
       clock,
       logger,
-      tracker: null,  // No scoped tracker
-      syncEventTracker: singletonTracker  // <-- KEY: Uses singleton tracker
+      singletonTracker  // <-- KEY: Uses singleton tracker
     );
 
     // Act - wait for event (will timeout since MarkProcessed is not called)
@@ -135,8 +134,7 @@ public class DispatcherSingletonTrackerTests {
       mockCoordinator,
       clock,
       logger,
-      tracker: null,
-      syncEventTracker: singletonTracker
+      singletonTracker
     );
 
     // Simulate perspective worker calling MarkProcessedByPerspective after a delay
@@ -172,7 +170,7 @@ public class DispatcherSingletonTrackerTests {
     SyncInquiry? capturedInquiry = null;
 
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      capturedInquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      capturedInquiry = (request.Count > 0 ? request[0] : null);
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -192,29 +190,26 @@ public class DispatcherSingletonTrackerTests {
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
 
-    // Create awaiter WITHOUT singleton tracker (simulates missing DI registration)
+    // Create awaiter with empty SyncEventTracker (no events tracked)
     var awaiter = new PerspectiveSyncAwaiter(
       mockCoordinator,
       clock,
       logger,
-      tracker: null,
-      syncEventTracker: null  // <-- No singleton tracker
+      new SyncEventTracker()  // Empty tracker - no events tracked
     );
 
     // Act
-    await awaiter.WaitForStreamAsync(
+    var result = await awaiter.WaitForStreamAsync(
       typeof(SingletonTestProjection),
       streamId,
       [typeof(SingletonTestStartedEvent)],
       timeout: TimeSpan.FromMilliseconds(100)
     );
 
-    // Assert - Should fall through to database discovery
-    await Assert.That(capturedInquiry).IsNotNull();
-    await Assert.That(capturedInquiry!.DiscoverPendingFromOutbox).IsTrue()
-      .Because("Without singleton tracker, should discover from database");
-    await Assert.That(capturedInquiry.EventIds).IsNull()
-      .Because("No explicit event IDs - using discovery mode");
+    // Assert - With empty SyncEventTracker and no tracked events, returns NoPendingEvents
+    // No more DB fallback - empty tracker means nothing to wait for
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
   }
 
   /// <summary>
@@ -224,8 +219,8 @@ public class DispatcherSingletonTrackerTests {
   [Test]
   public async Task TrackedEventTypeRegistry_GetPerspectiveNames_ReturnsCorrectPerspectivesAsync() {
     // Arrange
-    var perspective1 = "MyApp.Perspectives.ActivityProjection";
-    var perspective2 = "MyApp.Perspectives.ReportingProjection";
+    const string perspective1 = "MyApp.Perspectives.ActivityProjection";
+    const string perspective2 = "MyApp.Perspectives.ReportingProjection";
 
     var registry = new TrackedEventTypeRegistry(new Dictionary<Type, string[]> {
       { typeof(SingletonTestStartedEvent), [perspective1, perspective2] },  // Same event, two perspectives

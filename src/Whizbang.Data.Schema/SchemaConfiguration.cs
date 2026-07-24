@@ -1,7 +1,7 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
-/// <docs>extensibility/database-schema-framework</docs>
+/// <docs>extending/extensibility/database-schema-framework</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_WithoutParameters_UsesDefaultsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_WithCustomInfrastructurePrefix_SetsValueAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_WithCustomPerspectivePrefix_SetsValueAsync</tests>

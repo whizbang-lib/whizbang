@@ -31,9 +31,13 @@ public partial class MessageJsonContext : JsonSerializerContext, IJsonTypeInfoRe
   /// </summary>
   public static MessageJsonContext Default { get; } = new();
 
+  /// <summary>Initializes a new instance of the <see cref="MessageJsonContext"/> class.</summary>
   public MessageJsonContext() : base(null) { }
+  /// <summary>Initializes a new instance of the <see cref="MessageJsonContext"/> class with the specified options.</summary>
+  /// <param name="options">The JSON serializer options to use.</param>
   public MessageJsonContext(JsonSerializerOptions options) : base(options) { }
 
+  /// <inheritdoc/>
   protected override JsonSerializerOptions? GeneratedSerializerOptions => null;
 
   #region LAZY_FIELDS

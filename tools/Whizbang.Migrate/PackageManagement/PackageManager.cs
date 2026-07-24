@@ -7,7 +7,7 @@ namespace Whizbang.Migrate.PackageManagement;
 /// Handles both Central Package Management (Directory.Packages.props) and traditional PackageReference.
 /// </summary>
 /// <docs>migration-guide/automated-migration</docs>
-public sealed class PackageManager {
+public static class PackageManager {
   /// <summary>
   /// Package mappings from old Marten/Wolverine packages to Whizbang equivalents.
   /// </summary>
@@ -79,10 +79,11 @@ public sealed class PackageManager {
     var directoryPackagesProps = _findDirectoryPackagesProps(solutionRoot);
     var usesCpm = directoryPackagesProps != null;
 
-    if (usesCpm && directoryPackagesProps != null) {
+    // usesCpm is derived from directoryPackagesProps != null, so the null check is redundant
+    if (usesCpm) {
       // Update Directory.Packages.props with version entries
       var cpmChanges = await _updateDirectoryPackagesPropsAsync(
-          directoryPackagesProps,
+          directoryPackagesProps!,
           settings,
           ct);
       changes.AddRange(cpmChanges);

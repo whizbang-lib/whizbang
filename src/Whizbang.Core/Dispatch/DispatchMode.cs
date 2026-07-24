@@ -6,7 +6,7 @@ namespace Whizbang.Core.Dispatch;
 /// <remarks>
 /// <para>
 /// When a receptor returns messages (events or commands), the dispatcher needs to know
-/// where to send them. DispatchMode is a flags enum that allows specifying routing behavior:
+/// where to send them. DispatchModes is a flags enum that allows specifying routing behavior:
 /// </para>
 /// <list type="bullet">
 ///   <item><b>Local</b>: Dispatch to in-process receptors AND persist to event store</item>
@@ -34,10 +34,11 @@ namespace Whizbang.Core.Dispatch;
 /// return Route.EventStoreOnly(new AuditEvent { Action = "login" });
 /// </code>
 /// </example>
-/// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchModeTests.cs</tests>
 [Flags]
-public enum DispatchMode {
+#pragma warning disable RCS1154 // Members are intentionally grouped by semantic category rather than alphabetically.
+public enum DispatchModes {
   /// <summary>
   /// No routing - message is not dispatched.
   /// </summary>
@@ -89,3 +90,4 @@ public enum DispatchMode {
   /// </summary>
   EventStoreOnly = EventStore
 }
+#pragma warning restore RCS1154

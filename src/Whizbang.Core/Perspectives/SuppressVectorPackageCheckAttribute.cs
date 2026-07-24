@@ -23,4 +23,4 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = false)]
-public sealed class SuppressVectorPackageCheckAttribute : Attribute { }
+public sealed class SuppressVectorPackageCheckAttribute : Attribute;

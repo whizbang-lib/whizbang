@@ -62,8 +62,16 @@ public enum TransportCapabilities {
   ExactlyOnce = 1 << 5,
 
   /// <summary>
+  /// Supports publishing multiple messages in a single transport operation.
+  /// Transports with this capability can batch messages to reduce network round-trips.
+  /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_HasBulkPublishAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_BulkPublish_CanCombineWithOtherFlagsAsync</tests>
+  BulkPublish = 1 << 6,
+
+  /// <summary>
   /// All capabilities combined.
   /// </summary>
   /// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_AllFlag_ContainsAllCapabilitiesAsync</tests>
-  All = RequestResponse | PublishSubscribe | Streaming | Reliable | Ordered | ExactlyOnce
+  All = RequestResponse | PublishSubscribe | Streaming | Reliable | Ordered | ExactlyOnce | BulkPublish
 }

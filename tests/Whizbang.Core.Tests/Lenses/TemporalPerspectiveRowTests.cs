@@ -103,7 +103,7 @@ public class TemporalPerspectiveRowTests {
     var recordedTime = new DateTime(2026, 1, 15, 14, 35, 0, DateTimeKind.Utc); // 5 min later
 
     // Act
-    var row = _createRow(validTime: businessTime, periodStart: recordedTime);
+    var row = _createRow(periodStart: recordedTime, validTime: businessTime);
 
     // Assert - ValidTime from event, PeriodStart from database
     await Assert.That(row.ValidTime).IsEqualTo(businessTime);

@@ -20,7 +20,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// dispatched or received, based on attribute decorations on message properties.
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/MessageEnvelopeAutoPopulateExtensionsTests.cs</tests>
 public static class MessageEnvelopeAutoPopulateExtensions {
   /// <summary>

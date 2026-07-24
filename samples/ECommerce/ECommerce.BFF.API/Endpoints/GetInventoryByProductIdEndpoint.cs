@@ -8,7 +8,6 @@ namespace ECommerce.BFF.API.Endpoints;
 /// Get inventory levels for a specific product
 /// </summary>
 public class GetInventoryByProductIdEndpoint(IInventoryLevelsLens lens) : EndpointWithoutRequest<InventoryLevelDto> {
-  private readonly IInventoryLevelsLens _lens = lens;
 
   public override void Configure() {
     Get("/inventory/{productId}");
@@ -22,7 +21,7 @@ public class GetInventoryByProductIdEndpoint(IInventoryLevelsLens lens) : Endpoi
       return;
     }
 
-    var inventory = await _lens.GetByProductIdAsync(productId, ct);
+    var inventory = await lens.GetByProductIdAsync(productId, ct);
 
     if (inventory == null) {
       HttpContext.Response.StatusCode = 404;

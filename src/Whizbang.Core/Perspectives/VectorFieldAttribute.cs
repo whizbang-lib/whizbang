@@ -14,7 +14,7 @@ namespace Whizbang.Core.Perspectives;
 /// HNSW provides better recall but uses more memory; IVFFlat is faster to build.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/vector-fields</docs>
+/// <docs>fundamentals/perspectives/vector-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/VectorFieldAttributeTests.cs</tests>
 /// <example>
 /// <code>

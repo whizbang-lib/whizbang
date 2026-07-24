@@ -11,10 +11,10 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// tracking events within a single request or operation scope.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs</tests>
 public sealed class ScopedEventTracker : IScopedEventTracker {
-  private readonly ConcurrentBag<TrackedEvent> _trackedEvents = new();
+  private readonly ConcurrentBag<TrackedEvent> _trackedEvents = [];
 
   /// <inheritdoc />
   public void TrackEmittedEvent(Guid streamId, Type eventType, Guid eventId) {
@@ -24,7 +24,7 @@ public sealed class ScopedEventTracker : IScopedEventTracker {
 
   /// <inheritdoc />
   public IReadOnlyList<TrackedEvent> GetEmittedEvents() {
-    return _trackedEvents.ToArray();
+    return [.. _trackedEvents];
   }
 
   /// <inheritdoc />
@@ -32,7 +32,7 @@ public sealed class ScopedEventTracker : IScopedEventTracker {
     ArgumentNullException.ThrowIfNull(filter);
 
     var allEvents = _trackedEvents.ToArray();
-    return allEvents.Where(e => _matchesFilter(e, filter)).ToArray();
+    return [.. allEvents.Where(e => _matchesFilter(e, filter))];
   }
 
   /// <inheritdoc />

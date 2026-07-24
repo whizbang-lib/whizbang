@@ -6,13 +6,15 @@ coverage:
 
 comment:
   layout: "reach,diff,flags,tree"
-  behavior: default
+  behavior: new
   require_changes: false
 
 ignore:
   - "**/*.Generated.cs"
-  - "**/.whizbang-generated/**"
+  - "**/.whizbang/cache/**"
   - "samples/**"
   - "benchmarks/**"
   - "test-diagnostics/**"
   - "src/Whizbang.Testing/Containers/**"
+  - "tests/**"
+  - "tools/**"

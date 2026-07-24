@@ -36,7 +36,7 @@ public class WhizbangIdAttributeTests {
   [Test]
   public async Task WhizbangIdAttribute_ConstructorWithNamespace_SetsNamespacePropertyAsync() {
     // Arrange
-    var expectedNamespace = "MyApp.Messages";
+    const string expectedNamespace = "MyApp.Messages";
 
     // Act
     var attribute = new WhizbangIdAttribute(expectedNamespace);
@@ -49,7 +49,7 @@ public class WhizbangIdAttributeTests {
   public async Task WhizbangIdAttribute_NamespaceProperty_CanBeSetAsync() {
     // Arrange
     var attribute = new WhizbangIdAttribute();
-    var expectedNamespace = "MyApp.Domain";
+    const string expectedNamespace = "MyApp.Domain";
 
     // Act
     attribute.Namespace = expectedNamespace;

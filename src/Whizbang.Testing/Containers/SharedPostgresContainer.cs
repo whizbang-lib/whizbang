@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Npgsql;
+using TUnit.Core.Exceptions;
 
 namespace Whizbang.Testing.Containers;
 
@@ -35,12 +36,15 @@ public static class SharedPostgresContainer {
   private const string PASSWORD = "whizbang_pass";
   private const string DATABASE = "whizbang_test";
   private const int CONTAINER_PORT = 5432;
+  private const string BANNER_LINE = "================================================================================";
 
   private static readonly SemaphoreSlim _initLock = new(1, 1);
   private static string? _connectionString;
   private static bool _initialized;
   private static bool _initializationFailed;
+#pragma warning disable S4487 // Written for diagnostics; available in debugger during test failures
   private static Exception? _lastInitializationError;
+#pragma warning restore S4487
 
   /// <summary>
   /// Gets the shared PostgreSQL connection string (base database).
@@ -56,6 +60,51 @@ public static class SharedPostgresContainer {
   public static bool IsInitialized => _initialized;
 
   /// <summary>
+  /// Attempts to initialize the shared PostgreSQL container.
+  /// Returns true if initialization succeeds, false if Docker or PostgreSQL is not available.
+  /// Unlike <see cref="InitializeAsync"/>, this method does not throw on infrastructure unavailability.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True if the container is ready; false if Docker/PostgreSQL is unavailable.</returns>
+  public static async Task<bool> TryInitializeAsync(CancellationToken cancellationToken = default) {
+    // Check BOTH flags. Without `_connectionString is not null`, this method can return
+    // true after observing _initialized==true but a concurrent DisposeAsync() may have
+    // already nulled _connectionString — leaving the caller to throw on the very next
+    // ConnectionString read. Reading both fields here closes the race window for the
+    // common "lifecycle-test mutates state, downstream test reads state" pattern.
+    if (_initialized && _connectionString is not null) {
+      return true;
+    }
+
+    if (!await SharedRabbitMqContainer.IsDockerAvailableAsync(cancellationToken)) {
+      Console.WriteLine("[SharedPostgresContainer] Docker is not available - skipping container initialization");
+      return false;
+    }
+
+    try {
+      await InitializeAsync(cancellationToken);
+      return true;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      Console.WriteLine($"[SharedPostgresContainer] Container initialization failed: {ex.Message}");
+      return false;
+    }
+  }
+
+  /// <summary>
+  /// Initializes the shared PostgreSQL container, or skips the test if Docker/PostgreSQL is not available.
+  /// Use this in <c>[Before(Test)]</c> methods for integration tests that require PostgreSQL.
+  /// Throws <see cref="SkipTestException"/> when infrastructure is unavailable, causing TUnit to
+  /// report the test as skipped rather than failed.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <exception cref="SkipTestException">Thrown when Docker or PostgreSQL is not available.</exception>
+  public static async Task InitializeOrSkipAsync(CancellationToken cancellationToken = default) {
+    if (!await TryInitializeAsync(cancellationToken)) {
+      throw new SkipTestException("PostgreSQL container is not available (Docker may not be running)");
+    }
+  }
+
+  /// <summary>
   /// Initializes the shared PostgreSQL container.
   /// Safe to call multiple times - will only initialize once.
   /// Reuses existing container if one is already running.
@@ -63,7 +112,12 @@ public static class SharedPostgresContainer {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <exception cref="InvalidOperationException">Thrown if initialization fails or has previously failed.</exception>
   public static async Task InitializeAsync(CancellationToken cancellationToken = default) {
-    // If already initialized successfully, verify the connection is still valid
+    // If already initialized successfully, verify the connection is still valid.
+    // Don't null out _connectionString on health-check failure — other threads reading
+    // the getter concurrently would throw "not initialized" even though a valid (if
+    // temporarily stale) connection string still exists. Only flip _initialized so the
+    // locked block below performs the full reinit, and let the new connection string
+    // replace the old one atomically on success.
     if (_initialized) {
       try {
         // Quick health check - verify we can still connect
@@ -73,10 +127,8 @@ public static class SharedPostgresContainer {
         return; // Connection still works, we're good
       } catch {
         // Connection failed - container may have been removed
-        // Reset state and reinitialize
         Console.WriteLine("[SharedPostgresContainer] Existing connection failed, reinitializing...");
         _initialized = false;
-        _connectionString = null;
       }
     }
 
@@ -99,9 +151,9 @@ public static class SharedPostgresContainer {
         return;
       }
 
-      Console.WriteLine("================================================================================");
+      Console.WriteLine(BANNER_LINE);
       Console.WriteLine("[SharedPostgresContainer] Initializing shared PostgreSQL container...");
-      Console.WriteLine("================================================================================");
+      Console.WriteLine(BANNER_LINE);
 
       try {
         // Retry loop to handle race conditions with parallel test processes
@@ -116,10 +168,10 @@ public static class SharedPostgresContainer {
             // Verify connection works
             await _verifyConnectionAsync(ct);
 
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             Console.WriteLine("[SharedPostgresContainer] Reusing existing PostgreSQL container!");
             Console.WriteLine($"[SharedPostgresContainer] Connection: {_connectionString}");
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             break;
           }
 
@@ -133,10 +185,10 @@ public static class SharedPostgresContainer {
             // Verify connection works
             await _verifyConnectionAsync(ct);
 
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             Console.WriteLine("[SharedPostgresContainer] PostgreSQL container ready!");
             Console.WriteLine($"[SharedPostgresContainer] Connection: {_connectionString}");
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             break;
           } catch (Exception ex) when (attempt < MAX_RETRIES && ex.Message.Contains("Conflict")) {
             // Another process created the container - wait and retry detection
@@ -151,9 +203,9 @@ public static class SharedPostgresContainer {
         _initializationFailed = true;
         _lastInitializationError = ex;
 
-        Console.WriteLine("================================================================================");
+        Console.WriteLine(BANNER_LINE);
         Console.WriteLine($"[SharedPostgresContainer] Initialization FAILED: {ex.Message}");
-        Console.WriteLine("================================================================================");
+        Console.WriteLine(BANNER_LINE);
 
         throw new InvalidOperationException(
           "Failed to initialize shared PostgreSQL container. " +
@@ -174,7 +226,7 @@ public static class SharedPostgresContainer {
   private static async Task<int> _createContainerWithDockerAsync(CancellationToken ct) {
     // Use docker run with --detach and --publish to create a persistent container
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"run --detach --name {CONTAINER_NAME} " +
                   $"-e POSTGRES_USER={USERNAME} " +
                   $"-e POSTGRES_PASSWORD={PASSWORD} " +
@@ -270,7 +322,7 @@ public static class SharedPostgresContainer {
 
   private static async Task<string?> _getContainerStateAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"inspect --format={{{{.State.Status}}}} {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -295,7 +347,7 @@ public static class SharedPostgresContainer {
 
   private static async Task _startContainerAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"start {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -311,7 +363,7 @@ public static class SharedPostgresContainer {
 
   private static async Task<int?> _getPortAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"port {CONTAINER_NAME} {CONTAINER_PORT}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -381,9 +433,15 @@ public static class SharedPostgresContainer {
     // The container persists until explicitly removed: docker rm -f whizbang-test-postgres
     Console.WriteLine("[SharedPostgresContainer] Keeping container running for reuse");
 
-    // Reset state to allow reinitialization if needed
-    _connectionString = null;
+    // Reset state to allow reinitialization if needed.
+    // Order matters: clear _initialized FIRST so any concurrent TryInitializeAsync()
+    // observes the disposed state and re-initializes via InitializeAsync() (which
+    // takes _initLock and atomically rebuilds both fields). Nulling _connectionString
+    // first would leave a window where _initialized==true but _connectionString==null,
+    // causing TryInitializeAsync() to return true while the downstream ConnectionString
+    // read throws.
     _initialized = false;
+    _connectionString = null;
     _initializationFailed = false;
     _lastInitializationError = null;
 

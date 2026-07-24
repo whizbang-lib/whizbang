@@ -1,5 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
+using Whizbang.Core;
+using Whizbang.Core.Async;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Testing.Transport;
 
@@ -75,7 +79,7 @@ public static class SubscriptionWarmup {
     );
 
     // Combined handler that dispatches to both awaiters
-    Func<IMessageEnvelope, string?, CancellationToken, Task> combinedHandler = async (envelope, envelopeType, ct) => {
+    async Task combinedHandler(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
       // Check for warmup message
       if (envelope is IMessageEnvelope<TPayload> typed) {
         var content = contentSelector(typed.Payload);
@@ -86,7 +90,7 @@ public static class SubscriptionWarmup {
 
       // Also check for test message
       await testAwaiter.Handler(envelope, envelopeType, ct);
-    };
+    }
 
     return (warmupAwaiter, testAwaiter, combinedHandler);
   }
@@ -104,6 +108,7 @@ public static class SubscriptionWarmup {
   /// <param name="initialDelay">Delay before first publish attempt.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <exception cref="TimeoutException">Thrown if warmup doesn't complete within timeout.</exception>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public testing API surface — changing the signature is a source break for downstream test suites. Each parameter is a distinct warmup concern (transport, destination, envelope factory, signal, three independent timing knobs, cancellation).")]
   public static async Task WarmupAsync<TEnvelope>(
     ITransport transport,
     TransportDestination destination,
@@ -147,9 +152,11 @@ public static class SubscriptionWarmup {
 /// A simple signal awaiter that completes when signaled once.
 /// Thread-safe and uses RunContinuationsAsynchronously to prevent deadlocks.
 /// </summary>
-public sealed class SignalAwaiter {
+public sealed class SignalAwaiter : IAwaiterIdentity {
   private readonly TaskCompletionSource<bool> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
   /// <summary>
   /// Gets whether the signal has been received.
@@ -168,13 +175,7 @@ public sealed class SignalAwaiter {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <exception cref="TimeoutException">Thrown if not signaled within timeout.</exception>
   public async Task WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
-    try {
-      await _tcs.Task.WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      throw new TimeoutException($"Signal not received within {timeout}");
-    }
+    await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+        _tcs.Task, timeout, $"Signal not received within {timeout}", cancellationToken);
   }
 }

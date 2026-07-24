@@ -5,7 +5,7 @@ namespace Whizbang.Transports.FastEndpoints;
 /// <summary>
 /// Extension methods for registering Whizbang FastEndpoints services.
 /// </summary>
-/// <docs>rest/setup</docs>
+/// <docs>apis/rest/setup</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/ServiceRegistrationTests.cs</tests>
 public static class FastEndpointsWhizbangExtensions {
   /// <summary>

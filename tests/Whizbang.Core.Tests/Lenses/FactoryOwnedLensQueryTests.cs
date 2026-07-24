@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -241,13 +242,101 @@ public class FactoryOwnedLensQueryTests {
 
   #endregion
 
+  #region Delegation Tests (Scope / ScopeOverride / DefaultScope)
+
+  [Test]
+  public async Task Scope_DelegatesToInnerWithSameArgAsync() {
+    var factory = new MockLensQueryFactory();
+    var mockQuery = new MockLensQuery<TestModel>();
+    factory.SetQuery(mockQuery);
+    var wrapper = new FactoryOwnedLensQuery<TestModel>(factory);
+    var queryScope = QueryScope.User;
+
+    var result = wrapper.Scope(queryScope);
+
+    await Assert.That(mockQuery.LastScopeArg).IsEqualTo(queryScope);
+    await Assert.That(result).IsSameReferenceAs(mockQuery.ScopeReturn);
+  }
+
+  [Test]
+  public async Task ScopeOverride_DelegatesToInnerWithBothArgsAsync() {
+    var factory = new MockLensQueryFactory();
+    var mockQuery = new MockLensQuery<TestModel>();
+    factory.SetQuery(mockQuery);
+    var wrapper = new FactoryOwnedLensQuery<TestModel>(factory);
+    var queryScope = QueryScope.Organization;
+    var overrideArgs = new ScopeFilterOverride { TenantId = "override-tenant" };
+
+    var result = wrapper.ScopeOverride(queryScope, overrideArgs);
+
+    await Assert.That(mockQuery.LastScopeArg).IsEqualTo(queryScope);
+    await Assert.That(mockQuery.LastScopeOverrideArgs).IsEqualTo(overrideArgs);
+    await Assert.That(result).IsSameReferenceAs(mockQuery.ScopeOverrideReturn);
+  }
+
+  [Test]
+  public async Task DefaultScope_DelegatesToInnerPropertyAsync() {
+    var factory = new MockLensQueryFactory();
+    var mockQuery = new MockLensQuery<TestModel>();
+    factory.SetQuery(mockQuery);
+    var wrapper = new FactoryOwnedLensQuery<TestModel>(factory);
+
+    var result = wrapper.DefaultScope;
+
+    await Assert.That(result).IsSameReferenceAs(mockQuery.DefaultScopeReturn);
+  }
+
+  #endregion
+
+  #region Synchronous Dispose Tests
+
+  [Test]
+  public async Task Dispose_DisposesFactoryOnceAsync() {
+    var factory = new MockLensQueryFactory();
+    factory.SetQuery(new MockLensQuery<TestModel>());
+    var wrapper = new FactoryOwnedLensQuery<TestModel>(factory);
+
+    wrapper.Dispose();
+
+    await Assert.That(factory.DisposeCallCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Dispose_IsIdempotentAsync() {
+    var factory = new MockLensQueryFactory();
+    factory.SetQuery(new MockLensQuery<TestModel>());
+    var wrapper = new FactoryOwnedLensQuery<TestModel>(factory);
+
+    wrapper.Dispose();
+    wrapper.Dispose();
+    wrapper.Dispose();
+
+    await Assert.That(factory.DisposeCallCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Dispose_AfterDisposeAsync_DoesNotDoubleDisposeAsync() {
+    // The two dispose flavors share the _disposed flag — calling sync after
+    // async (or vice-versa) must not double-dispose the factory.
+    var factory = new MockLensQueryFactory();
+    factory.SetQuery(new MockLensQuery<TestModel>());
+    var wrapper = new FactoryOwnedLensQuery<TestModel>(factory);
+
+    await wrapper.DisposeAsync();
+    wrapper.Dispose();
+
+    await Assert.That(factory.DisposeCallCount).IsEqualTo(1);
+  }
+
+  #endregion
+
   #region Helper Classes
 
   /// <summary>
   /// Mock ILensQueryFactory for testing.
   /// </summary>
   private sealed class MockLensQueryFactory : ILensQueryFactory {
-    private readonly Dictionary<Type, object> _queries = new();
+    private readonly Dictionary<Type, object> _queries = [];
     public int GetQueryCallCount { get; private set; }
     public int DisposeCallCount { get; private set; }
 
@@ -308,6 +397,30 @@ public class FactoryOwnedLensQueryTests {
       LastCancellationToken = cancellationToken;
       return Task.FromResult(_models.FirstOrDefault());
     }
+
+    // Delegation targets for Scope/ScopeOverride/DefaultScope tests.
+    public QueryScope? LastScopeArg { get; private set; }
+    public ScopeFilterOverride? LastScopeOverrideArgs { get; private set; }
+    public IScopedLensAccess<TModel> ScopeReturn { get; set; } = new MockScopedAccess<TModel>();
+    public IScopedLensAccess<TModel> ScopeOverrideReturn { get; set; } = new MockScopedAccess<TModel>();
+    public IScopedLensAccess<TModel> DefaultScopeReturn { get; set; } = new MockScopedAccess<TModel>();
+
+    public IScopedLensAccess<TModel> Scope(QueryScope scope) {
+      LastScopeArg = scope;
+      return ScopeReturn;
+    }
+    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) {
+      LastScopeArg = scope;
+      LastScopeOverrideArgs = overrideValues;
+      return ScopeOverrideReturn;
+    }
+    public IScopedLensAccess<TModel> DefaultScope => DefaultScopeReturn;
+  }
+
+  /// <summary>Minimal stub used as the return value of delegated scope methods.</summary>
+  private sealed class MockScopedAccess<TModel> : IScopedLensAccess<TModel> where TModel : class {
+    public IQueryable<PerspectiveRow<TModel>> Query => Array.Empty<PerspectiveRow<TModel>>().AsQueryable();
+    public Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<TModel?>(null);
   }
 
   #endregion

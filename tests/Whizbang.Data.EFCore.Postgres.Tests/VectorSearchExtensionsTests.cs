@@ -34,10 +34,16 @@ public class VectorSearchExtensionsTests {
     public float[]? TitleEmbedding { get; init; }
   }
 
-  private sealed class VectorTestDbContext : DbContext {
-    public VectorTestDbContext(DbContextOptions<VectorTestDbContext> options)
-        : base(options) { }
+  /// <summary>
+  /// Model whose vector property is NON-nullable. A selector <c>m => m.RequiredEmbedding</c>
+  /// against the <c>Func&lt;TModel, float[]?&gt;</c> parameter forces the C# compiler to insert a
+  /// Convert (UnaryExpression) around the member access, exercising the UnaryExpression selector arm.
+  /// </summary>
+  public class NonNullableEmbeddingModel {
+    public float[] RequiredEmbedding { get; init; } = [];
+  }
 
+  private sealed class VectorTestDbContext(DbContextOptions<VectorSearchExtensionsTests.VectorTestDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
 
@@ -48,7 +54,7 @@ public class VectorSearchExtensionsTests {
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
-        entity.OwnsOne(e => e.Data, data => { data.ToJson("data"); });
+        entity.OwnsOne(e => e.Data, data => data.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata).ToJson("metadata");
         entity.ComplexProperty(e => e.Scope).ToJson("scope");
       });
@@ -72,7 +78,7 @@ public class VectorSearchExtensionsTests {
   [Test]
   public async Task VectorSearchResult_Construction_SetsAllPropertiesAsync() {
     // Arrange
-    var context = _createInMemoryDbContext();
+    _ = _createInMemoryDbContext();
     var testId = _idProvider.NewGuid();
     var model = new EmbeddingTestModel { Name = "Test" };
     var row = new PerspectiveRow<EmbeddingTestModel> {
@@ -833,5 +839,195 @@ public class VectorSearchExtensionsTests {
     // Assert
     await Assert.That(filteredQuery).IsNotNull();
     await Assert.That(filteredQuery.Expression).IsNotNull();
+  }
+
+  // ========================================
+  // Category 8: WhereHasVector
+  // ========================================
+
+  /// <summary>
+  /// Test 41: WhereHasVector builds a valid IS NOT NULL filter expression via
+  /// _buildEfPropertyAccessForNullCheck (EF.Property&lt;object?&gt; shadow access).
+  /// </summary>
+  [Test]
+  public async Task WhereHasVector_BuildsValidExpressionTreeAsync() {
+    // Arrange
+    var context = _createInMemoryDbContext();
+    var query = context.Set<PerspectiveRow<EmbeddingTestModel>>().AsQueryable();
+
+    // Act
+    var filteredQuery = query.WhereHasVector(m => m.ContentEmbedding);
+
+    // Assert
+    await Assert.That(filteredQuery).IsNotNull();
+    await Assert.That(filteredQuery.Expression).IsNotNull();
+  }
+
+  /// <summary>
+  /// Test 42: WhereHasVector throws on a null selector.
+  /// </summary>
+  [Test]
+  public async Task WhereHasVector_NullSelector_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var context = _createInMemoryDbContext();
+    var query = context.Set<PerspectiveRow<EmbeddingTestModel>>().AsQueryable();
+
+    // Act & Assert
+    await Assert.That(() => query.WhereHasVector((Expression<Func<EmbeddingTestModel, float[]?>>)null!))
+        .Throws<ArgumentNullException>();
+  }
+
+  // ========================================
+  // Category 9: Generic Cross-Table Build (non-null path)
+  // ========================================
+
+  /// <summary>
+  /// Test 43: Generic (cross-table) OrderByCosineDistance builds a valid expression tree from a
+  /// joined/projected queryable — exercising _buildCrossTableDistanceExpression + _extractPropertyPath.
+  /// </summary>
+  [Test]
+  public async Task OrderByCosineDistance_Generic_BuildsValidExpressionTreeAsync() {
+    // Arrange — an anonymous-projected queryable so the T-based generic overload is selected.
+    var query = Enumerable.Empty<PerspectiveRow<EmbeddingTestModel>>()
+        .AsQueryable()
+        .Select(r => new JoinRow { Row = r });
+
+    // Act — both selectors navigate .Row.Data.<vector>, hitting the Data-skip path in _extractPropertyPath.
+    var ordered = query.OrderByCosineDistance(
+        x => x.Row.Data.ContentEmbedding,
+        x => x.Row.Data.TitleEmbedding);
+
+    // Assert
+    await Assert.That(ordered).IsNotNull();
+    await Assert.That(ordered.Expression).IsNotNull();
+  }
+
+  /// <summary>
+  /// Test 44: Generic (cross-table) OrderByL2Distance builds a valid expression tree — covers the
+  /// generic L2 build path (query.OrderBy on the cross-table distance expression).
+  /// </summary>
+  [Test]
+  public async Task OrderByL2Distance_Generic_BuildsValidExpressionTreeAsync() {
+    // Arrange
+    var query = Enumerable.Empty<PerspectiveRow<EmbeddingTestModel>>()
+        .AsQueryable()
+        .Select(r => new JoinRow { Row = r });
+
+    // Act
+    var ordered = query.OrderByL2Distance(
+        x => x.Row.Data.ContentEmbedding,
+        x => x.Row.Data.TitleEmbedding);
+
+    // Assert
+    await Assert.That(ordered).IsNotNull();
+    await Assert.That(ordered.Expression).IsNotNull();
+  }
+
+  /// <summary>
+  /// Test 45: Generic (cross-table) WithinCosineDistance builds a valid filter expression tree.
+  /// </summary>
+  [Test]
+  public async Task WithinCosineDistance_Generic_BuildsValidExpressionTreeAsync() {
+    // Arrange
+    var query = Enumerable.Empty<PerspectiveRow<EmbeddingTestModel>>()
+        .AsQueryable()
+        .Select(r => new JoinRow { Row = r });
+
+    // Act
+    var filtered = query.WithinCosineDistance(
+        x => x.Row.Data.ContentEmbedding,
+        x => x.Row.Data.TitleEmbedding,
+        threshold: 0.5);
+
+    // Assert
+    await Assert.That(filtered).IsNotNull();
+    await Assert.That(filtered.Expression).IsNotNull();
+  }
+
+  /// <summary>
+  /// Test 46: Generic cross-table selector that is NOT a property path throws ArgumentException —
+  /// the members.Count == 0 guard in _extractPropertyPath.
+  /// </summary>
+  [Test]
+  public async Task OrderByCosineDistance_Generic_NonPropertySelector_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var query = Enumerable.Empty<PerspectiveRow<EmbeddingTestModel>>()
+        .AsQueryable()
+        .Select(r => new JoinRow { Row = r });
+
+    // Act & Assert — a constructed array (not a member path) trips the empty-members guard.
+    await Assert.That(() => query.OrderByCosineDistance(
+        x => new float[] { 1, 0, 0 },
+        x => x.Row.Data.TitleEmbedding))
+        .Throws<ArgumentException>();
+  }
+
+  // ========================================
+  // Category 10: UnaryExpression selector unwrapping
+  // ========================================
+
+  /// <summary>
+  /// Test 47: A selector containing an explicit numeric-array element access built through a
+  /// boxing/casting projection produces a UnaryExpression (Convert) node in the constant-vector
+  /// overload, exercising the UnaryExpression arm of _getPropertyNameFromSelector.
+  /// </summary>
+  /// <remarks>
+  /// The Convert node is produced by projecting through <c>object</c> and casting back, which the C#
+  /// compiler cannot fold away for the array element type.
+  /// </remarks>
+  [Test]
+  public async Task OrderByCosineDistance_ConvertingSelector_UnwrapsUnaryExpressionAsync() {
+    // Arrange — an explicit Convert of the member forces a UnaryExpression wrapper.
+    var query = Enumerable.Empty<PerspectiveRow<NonNullableEmbeddingModel>>().AsQueryable();
+    var searchVector = new float[] { 1.0f, 0.0f, 0.0f };
+    var param = Expression.Parameter(typeof(NonNullableEmbeddingModel), "m");
+    var selector = Expression.Lambda<Func<NonNullableEmbeddingModel, float[]?>>(
+        Expression.Convert(
+            Expression.Property(param, nameof(NonNullableEmbeddingModel.RequiredEmbedding)),
+            typeof(float[])),
+        param);
+
+    // Act — the selector's Convert must be unwrapped to the underlying member "RequiredEmbedding".
+    var ordered = query.OrderByCosineDistance(selector, searchVector);
+
+    // Assert
+    await Assert.That(ordered).IsNotNull();
+    await Assert.That(ordered.Expression).IsNotNull();
+  }
+
+  /// <summary>
+  /// Test 48: Generic cross-table selector wrapped in a Convert node is unwrapped by the
+  /// UnaryExpression branch of _extractPropertyPath.
+  /// </summary>
+  [Test]
+  public async Task OrderByCosineDistance_Generic_ConvertingSelector_UnwrapsUnaryAsync() {
+    // Arrange
+    var query = Enumerable.Empty<PerspectiveRow<EmbeddingTestModel>>()
+        .AsQueryable()
+        .Select(r => new JoinRow { Row = r });
+
+    var param = Expression.Parameter(typeof(JoinRow), "x");
+    // x.Row.Data.ContentEmbedding wrapped in an explicit Convert to float[].
+    var memberAccess = Expression.Property(
+        Expression.Property(
+            Expression.Property(param, nameof(JoinRow.Row)),
+            nameof(PerspectiveRow<EmbeddingTestModel>.Data)),
+        nameof(EmbeddingTestModel.ContentEmbedding));
+    var convertingSelector = Expression.Lambda<Func<JoinRow, float[]?>>(
+        Expression.Convert(memberAccess, typeof(float[])), param);
+
+    // Act — Convert around the property path must be unwrapped in _extractPropertyPath.
+    var ordered = query.OrderByCosineDistance(
+        convertingSelector,
+        x => x.Row.Data.TitleEmbedding);
+
+    // Assert
+    await Assert.That(ordered).IsNotNull();
+    await Assert.That(ordered.Expression).IsNotNull();
+  }
+
+  /// <summary>Projection shape used to select the generic cross-table overloads.</summary>
+  private sealed class JoinRow {
+    public PerspectiveRow<EmbeddingTestModel> Row { get; init; } = null!;
   }
 }

@@ -10,7 +10,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// - Cannot contain: #, *, /, \, ,
 /// - Should be lowercase for consistency
 /// </remarks>
-/// <docs>components/transports/azure-service-bus#subscription-naming</docs>
+/// <docs>messaging/transports/azure-service-bus#subscription-naming</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs</tests>
 public static class ServiceBusSubscriptionNameHelper {
   private const int MAX_SUBSCRIPTION_NAME_LENGTH = 50;
@@ -26,8 +26,8 @@ public static class ServiceBusSubscriptionNameHelper {
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs:GenerateSubscriptionNameWithWildcardSanitizesCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs:GenerateSubscriptionNameExceedsMaxLengthTruncatesTo50CharsAsync</tests>
   public static string GenerateSubscriptionName(string subscriberName, string topicName) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(subscriberName, nameof(subscriberName));
-    ArgumentException.ThrowIfNullOrWhiteSpace(topicName, nameof(topicName));
+    ArgumentException.ThrowIfNullOrWhiteSpace(subscriberName);
+    ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
 
     // Combine names with hyphen separator
     var rawName = $"{subscriberName}-{topicName}";

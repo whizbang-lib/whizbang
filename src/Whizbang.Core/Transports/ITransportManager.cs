@@ -10,7 +10,7 @@ namespace Whizbang.Core.Transports;
 /// Enables policy-based routing where messages can be published to multiple transports
 /// and subscriptions can be created from multiple sources.
 /// </summary>
-/// <docs>components/transports</docs>
+/// <docs>messaging/transports/transports</docs>
 /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs</tests>

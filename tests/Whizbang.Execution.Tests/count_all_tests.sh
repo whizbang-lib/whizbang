@@ -27,7 +27,7 @@ for project in "${projects[@]}"; do
   count=$(echo "$output" | grep -E "^  total:" | awk '{print $2}')
   succeeded=$(echo "$output" | grep -E "^  succeeded:" | awk '{print $2}')
   
-  if [ -n "$count" ]; then
+  if [[ -n "$count" ]]; then
     echo "  Total: $count, Succeeded: $succeeded"
     total=$((total + count))
   else

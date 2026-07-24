@@ -7,7 +7,7 @@ namespace Whizbang.Generators.Shared.Models;
 /// </summary>
 /// <param name="StripSuffixes">Whether to strip common suffixes from model names (default: true)</param>
 /// <param name="SuffixesToStrip">Array of suffixes to strip (default: Model, Projection, ReadModel, Dto, View)</param>
-/// <docs>perspectives/table-naming</docs>
+/// <docs>fundamentals/perspectives/table-naming</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:StripConfigurableSuffixes_WhenEnabled_StripsMatchingSuffixAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:GenerateTableName_WithProjection_GeneratesCorrectTableNameAsync</tests>
 public sealed record TableNameConfig(
@@ -19,7 +19,7 @@ public sealed record TableNameConfig(
   /// </summary>
   public static TableNameConfig Default { get; } = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "ReadModel", "Model", "Projection", "Dto", "View" }
+      SuffixesToStrip: ["ReadModel", "Model", "Projection", "Dto", "View"]
   );
 
   /// <summary>
@@ -27,6 +27,6 @@ public sealed record TableNameConfig(
   /// </summary>
   public static TableNameConfig NoStripping { get; } = new(
       StripSuffixes: false,
-      SuffixesToStrip: Array.Empty<string>()
+      SuffixesToStrip: []
   );
 }

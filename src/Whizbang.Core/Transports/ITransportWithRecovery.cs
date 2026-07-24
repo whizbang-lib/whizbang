@@ -18,7 +18,7 @@ namespace Whizbang.Core.Transports;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+/// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Tests/Transports/ITransportWithRecoveryTests.cs</tests>
 public interface ITransportWithRecovery {
   /// <summary>

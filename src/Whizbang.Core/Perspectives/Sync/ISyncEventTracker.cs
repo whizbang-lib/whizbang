@@ -14,8 +14,14 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// The implementation must be thread-safe for concurrent access from multiple
 /// request scopes simultaneously.
 /// </para>
+/// <para>
+/// Wait methods accept an optional <c>awaiterId</c> parameter that keys waiter
+/// registrations. This enables precise cleanup via <see cref="UnregisterAwaiter"/>
+/// when an awaiter is cancelled — without affecting other awaiters waiting on
+/// the same events.
+/// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#event-tracking</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#event-tracking</docs>
 public interface ISyncEventTracker {
   /// <summary>
   /// Track an event that needs to be awaited for perspective sync.
@@ -57,9 +63,14 @@ public interface ISyncEventTracker {
   /// </summary>
   /// <param name="eventIds">The event IDs to wait for.</param>
   /// <param name="timeout">Maximum time to wait.</param>
+  /// <param name="awaiterId">Optional awaiter ID for per-awaiter cleanup. Auto-generated if null.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True if all events were processed within timeout, false otherwise.</returns>
-  Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken cancellationToken = default);
+  Task<bool> WaitForEventsAsync(
+      IReadOnlyList<Guid> eventIds,
+      TimeSpan timeout,
+      Guid? awaiterId = null,
+      CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Mark events as processed by a specific perspective.
@@ -87,6 +98,7 @@ public interface ISyncEventTracker {
   /// <param name="eventIds">The event IDs to wait for.</param>
   /// <param name="perspectiveName">The perspective to wait for.</param>
   /// <param name="timeout">Maximum time to wait.</param>
+  /// <param name="awaiterId">Optional awaiter ID for per-awaiter cleanup. Auto-generated if null.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True if the perspective processed all events within timeout, false otherwise.</returns>
   /// <remarks>
@@ -97,6 +109,7 @@ public interface ISyncEventTracker {
       IReadOnlyList<Guid> eventIds,
       string perspectiveName,
       TimeSpan timeout,
+      Guid? awaiterId = null,
       CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -105,6 +118,7 @@ public interface ISyncEventTracker {
   /// </summary>
   /// <param name="eventIds">The event IDs to wait for.</param>
   /// <param name="timeout">Maximum time to wait.</param>
+  /// <param name="awaiterId">Optional awaiter ID for per-awaiter cleanup. Auto-generated if null.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True if all perspectives processed all events within timeout, false otherwise.</returns>
   /// <remarks>
@@ -114,5 +128,44 @@ public interface ISyncEventTracker {
   Task<bool> WaitForAllPerspectivesAsync(
       IReadOnlyList<Guid> eventIds,
       TimeSpan timeout,
+      Guid? awaiterId = null,
       CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Unregisters all waiter entries for a specific awaiter, cancelling any pending TCS.
+  /// Called when an awaiter is cancelled or disposed to prevent stale TCS accumulation.
+  /// </summary>
+  /// <param name="awaiterId">The awaiter ID whose entries should be removed and cancelled.</param>
+  void UnregisterAwaiter(Guid awaiterId);
+
+  /// <summary>
+  /// Removes tracked events older than <paramref name="maxAge"/> and signals any waiters
+  /// registered for the removed entries. Prevents unbounded memory growth when events are
+  /// never processed (e.g., perspective failures, unregistered types).
+  /// </summary>
+  /// <param name="maxAge">Maximum age for tracked events. Entries older than this are removed.</param>
+  /// <returns>The number of entries removed.</returns>
+  int CleanupStaleEntries(TimeSpan maxAge);
+
+  /// <summary>
+  /// Belt-and-suspenders sweep for perspective runs that completed without enumerating every
+  /// event they processed. Marks ALL events currently tracked for
+  /// (<paramref name="perspectiveName"/>, <paramref name="streamId"/>) as processed and signals
+  /// any pending waiters. Called from <c>PerspectiveWorker</c> at the completion seam in
+  /// addition to the per-event <see cref="MarkProcessedByPerspective"/> path so short-circuit
+  /// flows (already-applied / dedup / cooldown / no-receptor-invoker) still wake waiters.
+  /// </summary>
+  /// <param name="perspectiveName">The perspective whose tracked entries should be swept.</param>
+  /// <param name="streamId">The stream whose tracked entries should be swept.</param>
+  /// <remarks>
+  /// Production motivation: ChatService observed 30s sync-wait timeouts when a
+  /// perspective drained a stream whose runner short-circuited every event (eg the
+  /// recently-processed-event cooldown filtered the whole batch). The per-event
+  /// <see cref="MarkProcessedByPerspective"/> call was gated on a non-empty
+  /// "processedEvents" list and therefore never fired, leaving prior-emit
+  /// <see cref="WaitForPerspectiveEventsAsync"/> callers stuck on their TCS until the
+  /// 30s timeout. This stream-level sweep closes that gap without changing the per-event
+  /// happy path.
+  /// </remarks>
+  void MarkPerspectiveStreamProcessed(string perspectiveName, Guid streamId);
 }

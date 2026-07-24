@@ -11,7 +11,7 @@ namespace Whizbang.Transports.FastEndpoints;
 /// </summary>
 /// <typeparam name="TCommand">The command type that implements <see cref="ICommand"/>.</typeparam>
 /// <typeparam name="TResult">The result type returned after command execution.</typeparam>
-/// <docs>rest/mutations</docs>
+/// <docs>apis/rest/mutations</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/RestMutationEndpointBaseTests.cs</tests>
 /// <example>
 /// // Generated endpoint (partial, user can extend):
@@ -39,5 +39,4 @@ namespace Whizbang.Transports.FastEndpoints;
 /// </example>
 public abstract class RestMutationEndpointBase<TCommand, TResult>
     : MutationEndpointBase<TCommand, TResult>
-    where TCommand : ICommand {
-}
+    where TCommand : ICommand;

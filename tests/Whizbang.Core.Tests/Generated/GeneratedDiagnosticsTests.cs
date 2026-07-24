@@ -13,7 +13,7 @@ public partial class GeneratedDiagnosticsTests : DiagnosticTestBase {
   public async Task Diagnostics_ShouldCollectReceptorDiscoveryInfoAsync() {
     // Arrange & Act
     var output = WhizbangDiagnostics.Diagnostics(
-      categories: DiagnosticCategory.ReceptorDiscovery,
+      categories: DiagnosticCategories.ReceptorDiscovery,
       printToConsole: false
     );
 
@@ -32,7 +32,7 @@ public partial class GeneratedDiagnosticsTests : DiagnosticTestBase {
   public async Task Diagnostics_ShouldCaptureTimestampAsync() {
     // Arrange & Act
     var output = WhizbangDiagnostics.Diagnostics(
-      categories: DiagnosticCategory.ReceptorDiscovery,
+      categories: DiagnosticCategories.ReceptorDiscovery,
       printToConsole: false
     );
 
@@ -45,7 +45,7 @@ public partial class GeneratedDiagnosticsTests : DiagnosticTestBase {
   public async Task Diagnostics_ShouldDisplayFormattedOutputAsync() {
     // Arrange & Act
     var output = WhizbangDiagnostics.Diagnostics(
-      categories: DiagnosticCategory.ReceptorDiscovery,
+      categories: DiagnosticCategories.ReceptorDiscovery,
       printToConsole: false
     );
     var lines = output.Split(Environment.NewLine);
@@ -60,11 +60,11 @@ public partial class GeneratedDiagnosticsTests : DiagnosticTestBase {
   public async Task Diagnostics_ShouldFilterByCategoryAsync() {
     // Arrange & Act
     var allOutput = WhizbangDiagnostics.Diagnostics(
-      categories: DiagnosticCategory.All,
+      categories: DiagnosticCategories.All,
       printToConsole: false
     );
     var receptorOnly = WhizbangDiagnostics.Diagnostics(
-      categories: DiagnosticCategory.ReceptorDiscovery,
+      categories: DiagnosticCategories.ReceptorDiscovery,
       printToConsole: false
     );
 

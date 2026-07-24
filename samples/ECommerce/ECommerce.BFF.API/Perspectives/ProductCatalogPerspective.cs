@@ -1,5 +1,6 @@
 using ECommerce.Contracts.Events;
 using ECommerce.Contracts.Lenses;
+using Whizbang.Core.Attributes;
 using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Perspectives;
@@ -10,6 +11,7 @@ namespace ECommerce.BFF.API.Perspectives;
 /// Pure functions - no I/O, no side effects, deterministic.
 /// NOTE: SignalR notifications removed - perspectives must be pure functions.
 /// </summary>
+[PinnedId("110b1f6d-1908-485c-b199-c57caac967a4")]
 public class ProductCatalogPerspective :
   IPerspectiveFor<ProductDto, ProductCreatedEvent, ProductUpdatedEvent, ProductDeletedEvent> {
 

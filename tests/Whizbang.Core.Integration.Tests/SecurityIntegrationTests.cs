@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
@@ -76,7 +77,7 @@ public class SecurityIntegrationTests {
     await Assert.That(context.IsMemberOfAny(SecurityPrincipalId.Group("sales-team"))).IsFalse();
   }
 
-  // === ScopeFilter Integration ===
+  // === ScopeFilters Integration ===
 
   [Test]
   public async Task ScopeFilterBuilder_WithScopeContext_BuildsCorrectFiltersAsync() {
@@ -99,11 +100,11 @@ public class SecurityIntegrationTests {
     };
 
     // Act - Build various filter combinations
-    var tenantFilter = ScopeFilterBuilder.Build(ScopeFilter.Tenant, context);
-    var userFilter = ScopeFilterBuilder.Build(ScopeFilter.Tenant | ScopeFilter.User, context);
-    var principalFilter = ScopeFilterBuilder.Build(ScopeFilter.Tenant | ScopeFilter.Principal, context);
+    var tenantFilter = ScopeFilterBuilder.Build(ScopeFilters.Tenant, context);
+    var userFilter = ScopeFilterBuilder.Build(ScopeFilters.Tenant | ScopeFilters.User, context);
+    var principalFilter = ScopeFilterBuilder.Build(ScopeFilters.Tenant | ScopeFilters.Principal, context);
     var myOrSharedFilter = ScopeFilterBuilder.Build(
-      ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal, context);
+      ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal, context);
 
     // Assert
     await Assert.That(tenantFilter.TenantId).IsEqualTo("tenant-123");
@@ -242,7 +243,7 @@ public class SecurityIntegrationTests {
       ResourceType = "Order",
       ResourceId = "order-123",
       UsedPermission = Permission.Read("orders"),
-      AccessFilter = ScopeFilter.Tenant | ScopeFilter.User,
+      AccessFilter = ScopeFilters.Tenant | ScopeFilters.User,
       Scope = new PerspectiveScope { TenantId = "tenant-1", UserId = "user-1" },
       Timestamp = DateTimeOffset.UtcNow
     };
@@ -251,8 +252,8 @@ public class SecurityIntegrationTests {
     await Assert.That(accessGranted.ResourceType).IsEqualTo("Order");
     await Assert.That(accessGranted.ResourceId).IsEqualTo("order-123");
     await Assert.That(accessGranted.UsedPermission.Value).IsEqualTo("orders:read");
-    await Assert.That(accessGranted.AccessFilter.HasFlag(ScopeFilter.Tenant)).IsTrue();
-    await Assert.That(accessGranted.AccessFilter.HasFlag(ScopeFilter.User)).IsTrue();
+    await Assert.That(accessGranted.AccessFilter.HasFlag(ScopeFilters.Tenant)).IsTrue();
+    await Assert.That(accessGranted.AccessFilter.HasFlag(ScopeFilters.User)).IsTrue();
     await Assert.That(accessGranted.Scope.TenantId).IsEqualTo("tenant-1");
   }
 
@@ -264,9 +265,9 @@ public class SecurityIntegrationTests {
 
     // Arrange
     var permission = Permission.Admin("system");
-    var resourceType = "Configuration";
-    var resourceId = "global-settings";
-    var reason = AccessDenialReason.PolicyRejected;
+    const string resourceType = "Configuration";
+    const string resourceId = "global-settings";
+    const AccessDenialReason reason = AccessDenialReason.PolicyRejected;
 
     // Act
     var exception = new AccessDeniedException(permission, resourceType, resourceId, reason);
@@ -367,11 +368,11 @@ public class SecurityIntegrationTests {
     var stringMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(string)]);
     await Assert.That(stringMethod).IsNotNull();
 
-    // ScopeFilter-based methods
-    var filterMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter)]);
+    // ScopeFilters-based methods
+    var filterMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilters)]);
     await Assert.That(filterMethod).IsNotNull();
 
-    var permissionMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter), typeof(Permission)]);
+    var permissionMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilters), typeof(Permission)]);
     await Assert.That(permissionMethod).IsNotNull();
 
     // Convenience methods
@@ -392,13 +393,13 @@ public class SecurityIntegrationTests {
   /// InitiatingContext.
   /// </summary>
   /// <remarks>
-  /// This test reproduces the core issue from a consumer application where cascaded events from
+  /// <para>This test reproduces the core issue from a consumer application where cascaded events from
   /// ReseedSystemEvent were throwing SecurityContextRequiredException because
-  /// the user's InitiatingContext was being used instead of the explicit SYSTEM context.
+  /// the user's InitiatingContext was being used instead of the explicit SYSTEM context.</para>
   ///
-  /// The fix clears CurrentInitiatingContext in DispatcherSecurityBuilder so that
+  /// <para>The fix clears CurrentInitiatingContext in DispatcherSecurityBuilder so that
   /// CurrentContext (the explicit SYSTEM context) takes precedence when
-  /// GetSecurityFromAmbient() is called during outbox message creation.
+  /// GetSecurityFromAmbient() is called during outbox message creation.</para>
   /// </remarks>
   /// <tests>src/Whizbang.Core/Dispatch/DispatcherSecurityBuilder.cs:PublishAsync</tests>
   /// <tests>src/Whizbang.Core/Observability/CascadeContext.cs:GetSecurityFromAmbient</tests>
@@ -427,7 +428,7 @@ public class SecurityIntegrationTests {
       // 3. CLEAR CurrentInitiatingContext (this is the fix)
       var systemExtraction = new SecurityExtraction {
         Scope = new PerspectiveScope {
-          UserId = SecurityContextType.System.ToString(),
+          UserId = nameof(SecurityContextType.System),
           TenantId = null
         },
         Roles = new HashSet<string>(),
@@ -437,7 +438,7 @@ public class SecurityIntegrationTests {
         Source = "Explicit:System",
         ContextType = SecurityContextType.System,
         ActualPrincipal = null,
-        EffectivePrincipal = SecurityContextType.System.ToString()
+        EffectivePrincipal = nameof(SecurityContextType.System)
       };
       var explicitSystemContext = new ImmutableScopeContext(systemExtraction, shouldPropagate: true);
 
@@ -452,7 +453,7 @@ public class SecurityIntegrationTests {
       await Assert.That(ambientSecurity).IsNotNull()
         .Because("GetSecurityFromAmbient should return the explicit SYSTEM context");
 
-      await Assert.That(ambientSecurity!.UserId).IsEqualTo(SecurityContextType.System.ToString())
+      await Assert.That(ambientSecurity!.UserId).IsEqualTo(nameof(SecurityContextType.System))
         .Because("UserId should be 'System' from the explicit context, not 'user-123'");
 
       await Assert.That(ambientSecurity.UserId).IsNotEqualTo("user-123")
@@ -490,7 +491,7 @@ public class SecurityIntegrationTests {
       // Set CurrentContext but DON'T clear CurrentInitiatingContext
       var systemExtraction = new SecurityExtraction {
         Scope = new PerspectiveScope {
-          UserId = SecurityContextType.System.ToString(),
+          UserId = nameof(SecurityContextType.System),
           TenantId = null
         },
         Roles = new HashSet<string>(),
@@ -500,7 +501,7 @@ public class SecurityIntegrationTests {
         Source = "Explicit:System",
         ContextType = SecurityContextType.System,
         ActualPrincipal = null,
-        EffectivePrincipal = SecurityContextType.System.ToString()
+        EffectivePrincipal = nameof(SecurityContextType.System)
       };
       var explicitSystemContext = new ImmutableScopeContext(systemExtraction, shouldPropagate: true);
 
@@ -519,7 +520,7 @@ public class SecurityIntegrationTests {
 
       // Note: This test verifies the getter behavior, but GetSecurityFromAmbient
       // specifically casts to ImmutableScopeContext. Let's check what happens:
-      var ambientSecurity = CascadeContext.GetSecurityFromAmbient();
+      _ = CascadeContext.GetSecurityFromAmbient();
 
       // GetSecurityFromAmbient only returns security if CurrentContext is ImmutableScopeContext
       // with ShouldPropagate=true. MessageContext.ScopeContext may or may not be ImmutableScopeContext.
@@ -528,7 +529,7 @@ public class SecurityIntegrationTests {
       // The behavior depends on implementation details. Let's document what we observe:
       if (currentContext is ImmutableScopeContext immutable && immutable.ShouldPropagate) {
         // If we got the explicit context, the bug is not present for this scenario
-        await Assert.That(immutable.Scope.UserId).IsEqualTo(SecurityContextType.System.ToString());
+        await Assert.That(immutable.Scope.UserId).IsEqualTo(nameof(SecurityContextType.System));
       } else if (userContext.ScopeContext is ImmutableScopeContext userImmutable) {
         // If we got the user's context, the bug IS present
         await Assert.That(userImmutable.Scope.UserId).IsEqualTo("user-123");
@@ -543,20 +544,20 @@ public class SecurityIntegrationTests {
     }
   }
 
-  // === PostPerspectiveAsync Security Context Propagation ===
+  // === PostPerspectiveDetached Security Context Propagation ===
 
   /// <summary>
   /// Integration test verifying that when PerspectiveWorker processes events with scope in hops
   /// but extraction fails (no extractor succeeds), the scope is still available to lifecycle handlers.
-  /// This validates the fix for TenantContext being null in [FireAt(LifecycleStage.PostPerspectiveAsync)] handlers.
+  /// This validates the fix for TenantContext being null in [FireAt(LifecycleStage.PostPerspectiveDetached)] handlers.
   /// </summary>
   /// <remarks>
-  /// Root cause: When extraction fails, envelope.GetCurrentScope() returns a ScopeContext that is NOT
+  /// <para>Root cause: When extraction fails, envelope.GetCurrentScope() returns a ScopeContext that is NOT
   /// an ImmutableScopeContext. CascadeContext.GetSecurityFromAmbient() only returns security when
-  /// CurrentContext is ImmutableScopeContext with ShouldPropagate=true.
+  /// CurrentContext is ImmutableScopeContext with ShouldPropagate=true.</para>
   ///
-  /// Fix: PerspectiveWorker now wraps envelope scope in ImmutableScopeContext with shouldPropagate=true
-  /// and invokes callbacks so that lifecycle handlers can access TenantContext.
+  /// <para>Fix: PerspectiveWorker now wraps envelope scope in ImmutableScopeContext with shouldPropagate=true
+  /// and invokes callbacks so that lifecycle handlers can access TenantContext.</para>
   /// </remarks>
   /// <docs>core-concepts/security-context#perspective-worker-propagation</docs>
   /// <tests>src/Whizbang.Core/Workers/PerspectiveWorker.cs:_establishSecurityContextAsync</tests>
@@ -588,13 +589,14 @@ public class SecurityIntegrationTests {
       };
 
       // Create envelope with scope embedded in hops
-      var envelope = new Observability.MessageEnvelope<TestPerspectiveEvent> {
+      var envelope = new MessageEnvelope<TestPerspectiveEvent> {
         MessageId = ValueObjects.MessageId.New(),
         Payload = new TestPerspectiveEvent(Guid.NewGuid()),
+        DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Local, Source = Messaging.MessageSource.Local },
         Hops = [
-          new Observability.MessageHop {
-            Type = Observability.HopType.Current,
-            ServiceInstance = new Observability.ServiceInstanceInfo {
+          new MessageHop {
+            Type = HopType.Current,
+            ServiceInstance = new global::Whizbang.Core.Observability.ServiceInstanceInfo {
               ServiceName = "TestService",
               HostName = "TestHost",
               ProcessId = Environment.ProcessId,
@@ -755,13 +757,14 @@ public class SecurityIntegrationTests {
         Claims = new Dictionary<string, string>()
       };
 
-      var envelope = new Observability.MessageEnvelope<TestPerspectiveEvent> {
+      var envelope = new MessageEnvelope<TestPerspectiveEvent> {
         MessageId = ValueObjects.MessageId.New(),
         Payload = new TestPerspectiveEvent(Guid.NewGuid()),
+        DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Local, Source = Messaging.MessageSource.Local },
         Hops = [
-          new Observability.MessageHop {
-            Type = Observability.HopType.Current,
-            ServiceInstance = new Observability.ServiceInstanceInfo {
+          new MessageHop {
+            Type = HopType.Current,
+            ServiceInstance = new global::Whizbang.Core.Observability.ServiceInstanceInfo {
               ServiceName = "TestService",
               HostName = "TestHost",
               ProcessId = Environment.ProcessId,
@@ -880,7 +883,8 @@ public class SecurityIntegrationTests {
         },
         Timestamp = DateTimeOffset.UtcNow,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // DIAGNOSTIC: Verify envelope.GetCurrentScope() returns non-null
@@ -946,7 +950,7 @@ public class SecurityIntegrationTests {
     await Assert.That(scopeInsideCallback).IsNotNull()
       .Because("ScopeContextAccessor.CurrentContext should be set INSIDE the callback execution");
     await Assert.That(messageInsideCallback).IsNotNull()
-      .Because($"MessageContextAccessor.CurrentContext should be set INSIDE the callback. " +
+      .Because("MessageContextAccessor.CurrentContext should be set INSIDE the callback. " +
                $"scopeInside={scopeInsideCallback is not null}");
 
     // Verify the CAPTURED values inside callback have correct scope data
@@ -997,7 +1001,8 @@ public class SecurityIntegrationTests {
         },
         Timestamp = DateTimeOffset.UtcNow,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Setup callback to capture the context
@@ -1117,13 +1122,13 @@ public class SecurityIntegrationTests {
     await Task.Delay(1).ConfigureAwait(false);
   }
 
-  // Test helper types for PostPerspectiveAsync tests
+  // Test helper types for PostPerspectiveDetached tests
   public record TestPerspectiveEvent(Guid StreamId);
 
   private sealed class TestSecurityContextCallback(Action<IScopeContext> onContextEstablished) : ISecurityContextCallback {
     public ValueTask OnContextEstablishedAsync(
       IScopeContext context,
-      Observability.IMessageEnvelope envelope,
+      IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
       CancellationToken cancellationToken = default) {
       onContextEstablished(context);
@@ -1144,7 +1149,7 @@ public class SecurityIntegrationTests {
     // {"Hops": [{"md": {...}, "sc": {"v": {"Scope": {"t": "c0ffee00-cafe-f00d-face-feed12345678", "u": "925321d2-9635-49e5-abd8-87b43dcf7e19"}}}, ...}], ...}
 
     // Arrange: The exact JSON from the database
-    var metadataJson = """
+    const string metadataJson = """
       {
         "Hops": [{
           "md": {"AggregateId": "019cd3a4-19dc-7548-aed6-e24ab97f8dc8"},
@@ -1159,7 +1164,7 @@ public class SecurityIntegrationTests {
       """;
 
     // Act: Deserialize using the same JSON options as EFCoreEventStore
-    var options = new System.Text.Json.JsonSerializerOptions {
+    _ = new System.Text.Json.JsonSerializerOptions {
       PropertyNameCaseInsensitive = true,
       Converters = { new Whizbang.Core.ValueObjects.MessageIdJsonConverter() }
     };
@@ -1205,8 +1210,8 @@ public class SecurityIntegrationTests {
     // with scope in hops, and GetCurrentScope() should return the scope.
 
     // Arrange: Create envelope with ScopeDelta in hops (matching database structure)
-    var tenantId = "c0ffee00-cafe-f00d-face-feed12345678";
-    var userId = "925321d2-9635-49e5-abd8-87b43dcf7e19";
+    const string tenantId = "c0ffee00-cafe-f00d-face-feed12345678";
+    const string userId = "925321d2-9635-49e5-abd8-87b43dcf7e19";
 
     // Create a ScopeDelta that matches the database structure
     var scopeDelta = new ScopeDelta {
@@ -1231,7 +1236,8 @@ public class SecurityIntegrationTests {
         Timestamp = DateTimeOffset.UtcNow,
         Topic = "a consumer.contracts.job",
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1250,7 +1256,7 @@ public class SecurityIntegrationTests {
 
   [Test]
   [Category("a consumer applicationScenario")]
-  public async Task PostPerspectiveAsync_WithScopeInEnvelopeHops_SetsMessageContextScopeContextAsync() {
+  public async Task PostPerspectiveDetached_WithScopeInEnvelopeHops_SetsMessageContextScopeContextAsync() {
     // This test replicates the FULL a consumer application scenario:
     // 1. Event is read from database with scope in hops
     // 2. Generated runner establishes security context
@@ -1277,7 +1283,8 @@ public class SecurityIntegrationTests {
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Timestamp = DateTimeOffset.UtcNow,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Verify envelope.GetCurrentScope() works

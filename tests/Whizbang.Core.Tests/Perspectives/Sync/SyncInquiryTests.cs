@@ -53,7 +53,7 @@ public class SyncInquiryTests {
   [Test]
   public async Task SyncInquiry_RequiredProperties_MustBeSetAsync() {
     var streamId = Guid.NewGuid();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     var inquiry = new SyncInquiry {
       StreamId = streamId,

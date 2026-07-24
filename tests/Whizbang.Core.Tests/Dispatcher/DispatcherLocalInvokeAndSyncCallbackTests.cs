@@ -1,4 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+
+// W4 — these tests cover legacy timeout-shaped LocalInvokeAndSyncAsync overloads now marked [Obsolete].
+// Suppression is intentional: lock-in regression coverage for the deprecated API until it's removed in the next major.
+#pragma warning disable CS0618
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
@@ -287,6 +291,8 @@ public sealed class DispatcherLocalInvokeAndSyncCallbackTests {
 
   // Fake implementations
   private sealed class FakeEventCompletionAwaiter(bool completesImmediately) : IEventCompletionAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
+
     public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken cancellationToken = default) {
       return Task.FromResult(completesImmediately);
     }

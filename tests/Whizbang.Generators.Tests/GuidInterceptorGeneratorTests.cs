@@ -36,7 +36,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GuidNewGuid_GeneratesInterceptorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -54,7 +54,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert - Should generate an interceptor file
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
     await Assert.That(generatedSource).Contains("TrackedGuid");
   }
 
@@ -65,7 +65,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GuidCreateVersion7_GeneratesInterceptorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -83,7 +83,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert - Should generate an interceptor file
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
     await Assert.That(generatedSource).Contains("TrackedGuid");
     await Assert.That(generatedSource).Contains("Version7");
   }
@@ -95,7 +95,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_MultipleGuidCalls_GeneratesMultipleInterceptorsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -132,7 +132,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_SuppressOnMethod_NoInterceptionAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -166,7 +166,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_SuppressOnClass_NoInterceptionAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -206,7 +206,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesFullyQualifiedNamesAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -226,9 +226,9 @@ public class GuidInterceptorGeneratorTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should use global:: for all type references
-    await Assert.That(generatedSource!).Contains("global::System.Guid");
+    await Assert.That(generatedSource).Contains("global::System.Guid");
     await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.TrackedGuid");
-    await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.GuidMetadata");
+    await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.GuidMetadatas");
   }
 
   /// <summary>
@@ -238,7 +238,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_NewGuid_IncludesV4MetadataAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -256,7 +256,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("Version4");
+    await Assert.That(generatedSource).Contains("Version4");
     await Assert.That(generatedSource).Contains("SourceMicrosoft");
   }
 
@@ -267,7 +267,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_CreateVersion7_IncludesV7MetadataAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -285,7 +285,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("Version7");
+    await Assert.That(generatedSource).Contains("Version7");
     await Assert.That(generatedSource).Contains("SourceMicrosoft");
   }
 
@@ -300,7 +300,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_InterceptedCall_ReportsWHIZ058DiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -328,7 +328,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_SuppressedCall_ReportsWHIZ059DiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -362,7 +362,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GuidEmpty_NotInterceptedAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -391,7 +391,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GuidParse_NotInterceptedAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -421,7 +421,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_NestedClass_InterceptsCorrectlyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -441,7 +441,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
   }
 
   /// <summary>
@@ -451,7 +451,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_LambdaExpression_InterceptsCorrectlyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
 
@@ -472,7 +472,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
   }
 
   /// <summary>
@@ -482,7 +482,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_AsyncMethod_InterceptsCorrectlyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading.Tasks;
 
@@ -502,7 +502,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
   }
 
   // ========================================
@@ -516,7 +516,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_EmptySource_NoOutputAsync() {
     // Arrange
-    var source = """
+    const string source = """
             namespace TestApp;
 
             public class MyService {
@@ -533,5 +533,369 @@ public class GuidInterceptorGeneratorTests {
     if (generatedSource != null) {
       await Assert.That(generatedSource).DoesNotContain("InterceptsLocation");
     }
+  }
+
+  // ========================================
+  // Interception Disabled (MSBuild Property)
+  // ========================================
+
+  /// <summary>
+  /// Test that with interception disabled (default), diagnostics are still reported
+  /// but no interceptor code is generated.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_InterceptionDisabled_ReportsDiagnosticWithoutGeneratingCodeAsync() {
+    // Arrange
+    const string source = """
+            using System;
+
+            namespace TestApp;
+
+            public class MyService {
+              public Guid CreateId() {
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    // Act - run WITHOUT the WhizbangGuidInterceptionEnabled option
+    var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(source);
+
+    // Assert - WHIZ058 still reported even when disabled
+    var diagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ058").ToList();
+    await Assert.That(diagnostics).Count().IsEqualTo(1);
+
+    // But no interceptor source is generated
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNull();
+  }
+
+  // ========================================
+  // Pragma Suppression Tests
+  // ========================================
+
+  /// <summary>
+  /// Test that #pragma warning disable WHIZ055 suppresses interception entirely
+  /// (no interceptor, no diagnostics).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_PragmaDisableWhiz055_SuppressesInterceptionAsync() {
+    // Arrange
+    const string source = """
+            using System;
+
+            namespace TestApp;
+
+            public class MyService {
+              public Guid CreateId() {
+            #pragma warning disable WHIZ055
+                return Guid.NewGuid();
+            #pragma warning restore WHIZ055
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert - pragma short-circuits before diagnostics or generation
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNull();
+
+    var interceptedDiagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ058").ToList();
+    await Assert.That(interceptedDiagnostics).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test that #pragma warning disable WHIZ056 also suppresses interception.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_PragmaDisableWhiz056_SuppressesInterceptionAsync() {
+    // Arrange
+    const string source = """
+            using System;
+
+            namespace TestApp;
+
+            public class MyService {
+              public Guid CreateId() {
+            #pragma warning disable WHIZ056
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNull();
+  }
+
+  /// <summary>
+  /// Test that a disable followed by a restore of the same code re-enables interception
+  /// for calls after the restore.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_PragmaDisableThenRestore_InterceptsAfterRestoreAsync() {
+    // Arrange - the Guid call comes AFTER the restore
+    const string source = """
+            using System;
+
+            namespace TestApp;
+
+            public class MyService {
+            #pragma warning disable WHIZ055
+              public Guid Placeholder => Guid.Empty;
+            #pragma warning restore WHIZ055
+
+              public Guid CreateId() {
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert - restored region means interception applies again
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
+  }
+
+  /// <summary>
+  /// Test that a blanket #pragma warning restore (no codes) also re-enables interception.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_PragmaBlanketRestore_InterceptsAfterRestoreAsync() {
+    // Arrange
+    const string source = """
+            using System;
+
+            namespace TestApp;
+
+            public class MyService {
+            #pragma warning disable WHIZ055
+              public Guid Placeholder => Guid.Empty;
+            #pragma warning restore
+
+              public Guid CreateId() {
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
+  }
+
+  /// <summary>
+  /// Test that restoring an unrelated code does NOT re-enable interception -
+  /// the WHIZ055 disable stays active.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_PragmaRestoreUnrelatedCode_StaysSuppressedAsync() {
+    // Arrange - restore CS0219 does not match the WHIZ055 disable
+    const string source = """
+            using System;
+
+            namespace TestApp;
+
+            public class MyService {
+            #pragma warning disable WHIZ055
+              public Guid Placeholder => Guid.Empty;
+            #pragma warning restore CS0219
+
+              public Guid CreateId() {
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert - still suppressed
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNull();
+  }
+
+  /// <summary>
+  /// Test that disabling an unrelated warning code does not suppress interception.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_PragmaDisableUnrelatedCode_StillInterceptsAsync() {
+    // Arrange
+    const string source = """
+            using System;
+
+            namespace TestApp;
+
+            public class MyService {
+              public Guid CreateId() {
+            #pragma warning disable CS0219
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert - unrelated pragma does not suppress
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
+  }
+
+  // ========================================
+  // Additional Suppression Scopes
+  // ========================================
+
+  /// <summary>
+  /// Test that [SuppressGuidInterception] on a local function prevents interception
+  /// and reports the local-function suppression source.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_SuppressOnLocalFunction_NoInterceptionAsync() {
+    // Arrange
+    const string source = """
+            using System;
+            using Whizbang.Core;
+
+            namespace TestApp;
+
+            public class MyService {
+              public Guid CreateId() {
+                [SuppressGuidInterception]
+                Guid Create() {
+                  return Guid.NewGuid();
+                }
+                return Create();
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert - suppressed, with local-function suppression source in the WHIZ059 message
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNull();
+
+    var diagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ059").ToList();
+    await Assert.That(diagnostics).Count().IsEqualTo(1);
+    var message = diagnostics[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("local function");
+  }
+
+  /// <summary>
+  /// Test that an assembly-level [SuppressGuidInterception] suppresses interception
+  /// everywhere in the compilation.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_AssemblyLevelSuppress_NoInterceptionAsync() {
+    // Arrange
+    const string source = """
+            using System;
+            using Whizbang.Core;
+
+            [assembly: SuppressGuidInterception]
+
+            namespace TestApp;
+
+            public class MyService {
+              public Guid CreateId() {
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert - suppressed at assembly level
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNull();
+
+    var diagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ059").ToList();
+    await Assert.That(diagnostics).Count().IsEqualTo(1);
+    var message = diagnostics[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("assembly");
+  }
+
+  // ========================================
+  // Caller Filtering
+  // ========================================
+
+  /// <summary>
+  /// Test that calls made from types inside a Whizbang.* namespace are skipped entirely
+  /// (library-internal code does not need interception).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_CallerInWhizbangNamespace_NotInterceptedAsync() {
+    // Arrange
+    const string source = """
+            using System;
+
+            namespace Whizbang.Internal;
+
+            public class LibraryService {
+              public Guid CreateId() {
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert - skipped before any diagnostics or generation
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNull();
+
+    var interceptedDiagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ058").ToList();
+    await Assert.That(interceptedDiagnostics).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test that a call outside any type declaration (top-level statements) is intercepted -
+  /// covers the null containing-type-symbol path.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_TopLevelStatement_InterceptsAsync() {
+    // Arrange - top-level statements have no enclosing TypeDeclarationSyntax
+    const string source = """
+            using System;
+
+            var id = Guid.NewGuid();
+            System.Console.WriteLine(id);
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
   }
 }

@@ -9,16 +9,16 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// VERIFICATION TESTS: These tests verify the complete tracking chain works correctly.
+/// <para>VERIFICATION TESTS: These tests verify the complete tracking chain works correctly.</para>
 ///
-/// The chain is:
+/// <para>The chain is:
 /// 1. Source generator generates module initializer that calls SyncEventTypeRegistrations.Register()
 /// 2. TrackedEventTypeRegistry (default constructor) reads from SyncEventTypeRegistrations
 /// 3. Dispatcher checks _trackedEventTypeRegistry.GetPerspectiveNames(eventType)
 /// 4. If perspectives are returned, Dispatcher tracks in _syncEventTracker
-/// 5. PerspectiveSyncAwaiter reads from _syncEventTracker
+/// 5. PerspectiveSyncAwaiter reads from _syncEventTracker</para>
 ///
-/// If any step fails, events won't be tracked and sync will fall through to DB discovery.
+/// <para>If any step fails, events won't be tracked and sync will fall through to DB discovery.</para>
 /// </summary>
 /// <remarks>
 /// These tests use the shared static SyncEventTypeRegistrations, so they must run
@@ -37,7 +37,7 @@ public class DispatcherSyncTrackingVerificationTests {
     SyncEventTypeRegistrations.Clear();
 
     var eventType = typeof(VerificationTestEventB);
-    var perspectiveName = "MyApp.Perspectives.TestPerspectiveC";
+    const string perspectiveName = "MyApp.Perspectives.TestPerspectiveC";
 
     // Act - simulate module initializer
     SyncEventTypeRegistrations.Register(eventType, perspectiveName);
@@ -296,11 +296,11 @@ public class DispatcherSyncTrackingVerificationTests {
   }
 
   /// <summary>
-  /// BUG DEMONSTRATION: This test shows that the generated code ignores the sync result.
+  /// <para>BUG DEMONSTRATION: This test shows that the generated code ignores the sync result.
   /// When WaitForStreamAsync returns TimedOut, the receptor should NOT fire (default behavior).
-  /// But the current generated code ignores the result and fires anyway!
+  /// But the current generated code ignores the result and fires anyway!</para>
   ///
-  /// This test demonstrates WHAT SHOULD HAPPEN - it will FAIL against the current generated code.
+  /// <para>This test demonstrates WHAT SHOULD HAPPEN - it will FAIL against the current generated code.</para>
   /// </summary>
   [Test]
   public async Task WaitForStreamAsync_WhenTimedOut_ShouldPreventReceptorFromFiringAsync() {
@@ -312,13 +312,12 @@ public class DispatcherSyncTrackingVerificationTests {
     // Create a mock work coordinator that returns PendingCount > 0 (never synced)
     var mockCoordinator = MockWorkCoordinator.WithSyncResults(pendingCount: 1);
 
-    // Create awaiter with very short timeout
+    // Create awaiter with empty SyncEventTracker
     var awaiter = new PerspectiveSyncAwaiter(
       mockCoordinator,
       new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
       NullLogger<PerspectiveSyncAwaiter>.Instance,
-      tracker: null,
-      syncEventTracker: null);
+      syncEventTracker: new SyncEventTracker());
 
     // Act - call WaitForStreamAsync with a very short timeout
     var result = await awaiter.WaitForStreamAsync(
@@ -328,9 +327,10 @@ public class DispatcherSyncTrackingVerificationTests {
       timeout: TimeSpan.FromMilliseconds(50) // Very short timeout
     );
 
-    // Assert - sync should timeout (since mock returns pending)
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut)
-      .Because("With pending events and short timeout, sync should timeout");
+    // Assert - with empty SyncEventTracker and no tracked events, returns NoPendingEvents
+    // No more DB fallback - empty tracker means nothing to wait for
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
 
     // CRITICAL: The generated code currently ignores this result!
     // The receptor would still fire even though sync timed out.

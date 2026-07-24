@@ -8,7 +8,7 @@ namespace Whizbang.Data.Postgres.Schema;
 /// Builds Postgres DDL (Data Definition Language) from database-agnostic schema definitions.
 /// Generates CREATE TABLE and CREATE INDEX statements with proper Postgres syntax.
 /// </summary>
-/// <docs>data-access/schema-generation-pattern</docs>
+/// <docs>data/schema-generation-pattern</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithMultipleColumns_GeneratesAllColumnsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>
@@ -24,6 +24,8 @@ namespace Whizbang.Data.Postgres.Schema;
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_EventStoreTable_HasUniqueConstraintAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_CustomPrefix_UsesCustomPrefixAsync</tests>
 public class PostgresSchemaBuilder : ISchemaBuilder {
+  private const string DEFAULT_SCHEMA = "public";
+
   /// <inheritdoc />
   public string DatabaseEngine => "Postgres";
 
@@ -55,7 +57,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     var tableName = $"{prefix}{table.Name}";
     // "public" is the default Postgres schema - no qualification needed
     // Quote schema names to handle PostgreSQL reserved keywords (e.g., "user")
-    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? tableName : $"{_quoteIdentifier(schema)}.{tableName}";
+    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA ? tableName : $"{_quoteIdentifier(schema)}.{tableName}";
 
     sb.AppendLine($"CREATE TABLE IF NOT EXISTS {qualifiedTableName} (");
 
@@ -74,7 +76,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     // Add composite primary key constraint after columns
     if (hasCompositePrimaryKey) {
       var pkColumns = string.Join(", ", primaryKeyColumns);
-      sb.AppendLine($",");
+      sb.AppendLine(",");
       sb.AppendLine($"  CONSTRAINT pk_{table.Name} PRIMARY KEY ({pkColumns})");
     }
 
@@ -82,12 +84,28 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     if (table.UniqueConstraints.Length > 0) {
       foreach (var constraint in table.UniqueConstraints) {
         var columns = string.Join(", ", constraint.Columns);
-        sb.AppendLine($",");
+        sb.AppendLine(",");
         sb.AppendLine($"  CONSTRAINT {constraint.Name} UNIQUE ({columns})");
       }
     }
 
     sb.AppendLine(");");
+
+    // Backfill missing columns on existing tables. CREATE TABLE IF NOT EXISTS is a
+    // no-op when the table is already there, so any columns added to the schema
+    // after the table's original deployment wouldn't otherwise exist. Emitting
+    // ALTER TABLE ADD COLUMN IF NOT EXISTS for every column keeps the schema build
+    // idempotent: fresh databases get the columns from CREATE TABLE; existing ones
+    // get added columns here. Index creation that follows can safely reference any
+    // column the schema declares.
+    foreach (var column in table.Columns) {
+      // Inline PRIMARY KEY is part of CREATE TABLE only; ADD COLUMN that re-asserts
+      // PRIMARY KEY against an existing table would error. The composite PK branch
+      // already suppresses inline PRIMARY KEY for the CREATE; this is the same
+      // pattern for the backfill path.
+      var addColumnDef = _buildColumnDefinition(column, suppressInlinePrimaryKey: true);
+      sb.AppendLine($"ALTER TABLE {qualifiedTableName} ADD COLUMN IF NOT EXISTS {addColumnDef};");
+    }
 
     return sb.ToString();
   }
@@ -141,7 +159,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     var fullTableName = $"{prefix}{tableName}";
     // "public" is the default Postgres schema - no qualification needed
     // Quote schema names to handle PostgreSQL reserved keywords (e.g., "user")
-    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? fullTableName : $"{_quoteIdentifier(schema)}.{fullTableName}";
+    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA ? fullTableName : $"{_quoteIdentifier(schema)}.{fullTableName}";
     var unique = index.Unique ? "UNIQUE " : "";
     var columns = string.Join(", ", index.Columns);
     var whereClause = index.WhereClause != null ? $" WHERE {index.WhereClause}" : "";
@@ -160,7 +178,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     var sequenceName = $"{prefix}{sequence.Name}";
     // "public" is the default Postgres schema - no qualification needed
     // Quote schema names to handle PostgreSQL reserved keywords (e.g., "user")
-    var qualifiedSequenceName = string.IsNullOrEmpty(schema) || schema == "public" ? sequenceName : $"{_quoteIdentifier(schema)}.{sequenceName}";
+    var qualifiedSequenceName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA ? sequenceName : $"{_quoteIdentifier(schema)}.{sequenceName}";
     return $"CREATE SEQUENCE IF NOT EXISTS {qualifiedSequenceName} START WITH {sequence.StartValue} INCREMENT BY {sequence.IncrementBy};";
   }
 
@@ -188,8 +206,8 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
 
     // Create schema if not using default "public" schema
     // Quote schema name to handle PostgreSQL reserved keywords (e.g., "user")
-    if (!string.IsNullOrEmpty(config.SchemaName) && config.SchemaName != "public") {
-      sb.AppendLine($"-- Create schema for service isolation");
+    if (!string.IsNullOrEmpty(config.SchemaName) && config.SchemaName != DEFAULT_SCHEMA) {
+      sb.AppendLine("-- Create schema for service isolation");
       sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {_quoteIdentifier(config.SchemaName)};");
       sb.AppendLine();
     }
@@ -205,9 +223,12 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       (EventStoreSchema.Table, "Event Store - Event sourcing and audit trail"),
       (ReceptorProcessingSchema.Table, "Receptor Processing - Event handler tracking (log-style)"),
       // NOTE: PerspectiveEventsSchema.Table is created by migration 009, not by base schema
-      (PerspectiveCheckpointsSchema.Table, "Perspective Checkpoints - Read model projection tracking (checkpoint-style)"),
+      (PerspectiveCursorsSchema.Table, "Perspective Cursors - Read model projection tracking (cursor-style)"),
+      // NOTE: LifecycleCompletionsSchema.Table is created by migration 035, not by base schema
+      (PerspectiveSnapshotsSchema.Table, "Perspective Snapshots - Periodic state snapshots for efficient rewind"),
       (MessageAssociationsSchema.Table, "Message Associations - Message type to consumer mappings"),
       (PerspectiveRegistrySchema.Table, "Perspective Registry - CLR type to table name mappings with schema JSON"),
+      (MessageTypeRegistrySchema.Table, "Message Type Registry - Universal catalog of registered message/perspective types with optional [PinnedId] metadata"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),
       (SequencesSchema.Table, "Sequences - Distributed sequence generation")
     };

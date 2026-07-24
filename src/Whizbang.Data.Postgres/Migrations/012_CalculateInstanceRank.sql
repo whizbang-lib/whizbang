@@ -4,6 +4,8 @@
 --              Returns instance rank and active count for use in claim_orphaned_* functions.
 -- Dependencies: 001-011 (requires wh_service_instances table)
 
+SELECT __SCHEMA__.drop_all_overloads('calculate_instance_rank');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.calculate_instance_rank(
   p_instance_id UUID,
   p_stale_cutoff TIMESTAMPTZ
@@ -18,7 +20,7 @@ BEGIN
       si.instance_id,
       (ROW_NUMBER() OVER (ORDER BY si.instance_id) - 1)::INTEGER as rank,
       COUNT(*) OVER ()::INTEGER as total_count
-    FROM wh_service_instances si
+    FROM __SCHEMA__.wh_service_instances si
     WHERE si.last_heartbeat_at >= p_stale_cutoff
   )
   SELECT

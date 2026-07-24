@@ -11,13 +11,13 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Tests for ServiceBusConsumerWorker polling mode configuration.
+/// <para>Tests for ServiceBusConsumerWorker polling mode configuration.
 /// Note: Full end-to-end polling behavior is tested in integration tests
-/// since ExecuteAsync is protected.
+/// since ExecuteAsync is protected.</para>
 ///
-/// FUTURE: These tests are currently commented out because polling mode has not been implemented yet.
+/// <para>FUTURE: These tests are currently commented out because polling mode has not been implemented yet.
 /// ServiceBusConsumerOptions needs Mode, PollingInterval properties and SubscriptionMode enum.
-/// Uncomment and implement when polling mode feature is added.
+/// Uncomment and implement when polling mode feature is added.</para>
 /// </summary>
 public class ServiceBusConsumerWorkerPollingTests {
 
@@ -156,8 +156,18 @@ internal sealed class TestPollingTransport : ITransport {
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
+    ReadOnlyMemory<byte>? preSerializedBytes = null,
     CancellationToken cancellationToken = default) {
     return Task.CompletedTask;
+  }
+
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) {
+    SubscribeCallCount++;
+    return Task.FromResult<ISubscription>(new PollingTestSubscription());
   }
 
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(

@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
@@ -38,7 +39,8 @@ public static class ServiceBusConsumerWorkerTests {
     var envelope = new MessageEnvelope<ServiceBusWorkerTestEvent> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return envelope;
@@ -87,8 +89,17 @@ internal sealed class TestTransport : ITransport {
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
+    ReadOnlyMemory<byte>? preSerializedBytes = null,
     CancellationToken cancellationToken = default) {
     return Task.CompletedTask;
+  }
+
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) {
+    return Task.FromResult<ISubscription>(new TestSubscription());
   }
 
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
@@ -134,12 +145,8 @@ internal sealed class TestSubscription : ISubscription {
 /// <summary>
 /// Test double for IWorkCoordinatorStrategy
 /// </summary>
-internal sealed class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-  private readonly Func<WorkBatch> _flushFunc;
-
-  public TestWorkCoordinatorStrategy(Func<WorkBatch> flushFunc) {
-    _flushFunc = flushFunc;
-  }
+internal sealed class TestWorkCoordinatorStrategy(Func<WorkBatch> flushFunc) : IWorkCoordinatorStrategy {
+  private readonly Func<WorkBatch> _flushFunc = flushFunc;
 
   public void QueueOutboxMessage(OutboxMessage message) { }
   public void QueueInboxMessage(InboxMessage message) { }
@@ -148,7 +155,11 @@ internal sealed class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
 
-  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+  public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    return FlushAndGetBatchAsync(flags, ct);
+  }
+
+  public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     return Task.FromResult(_flushFunc());
   }
 }

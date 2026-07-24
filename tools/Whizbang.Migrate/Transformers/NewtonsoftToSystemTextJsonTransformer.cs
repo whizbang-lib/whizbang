@@ -9,25 +9,19 @@ namespace Whizbang.Migrate.Transformers;
 /// This is an optional migration - controlled by decision file.
 /// </summary>
 /// <docs>migration-guide/json-migration</docs>
-public sealed class NewtonsoftToSystemTextJsonTransformer : ICodeTransformer {
-  private readonly bool _enabled;
-  private readonly bool _removeDeadImports;
-  private readonly bool _addTodoForUnsupported;
-
-  /// <summary>
-  /// Creates a new Newtonsoft to System.Text.Json transformer.
-  /// </summary>
-  /// <param name="enabled">Whether to perform transformations (false = only remove dead imports).</param>
-  /// <param name="removeDeadImports">Whether to remove unused Newtonsoft imports.</param>
-  /// <param name="addTodoForUnsupported">Whether to add TODO comments for unsupported patterns.</param>
-  public NewtonsoftToSystemTextJsonTransformer(
-      bool enabled = true,
-      bool removeDeadImports = true,
-      bool addTodoForUnsupported = true) {
-    _enabled = enabled;
-    _removeDeadImports = removeDeadImports;
-    _addTodoForUnsupported = addTodoForUnsupported;
-  }
+/// <remarks>
+/// Creates a new Newtonsoft to System.Text.Json transformer.
+/// </remarks>
+/// <param name="enabled">Whether to perform transformations (false = only remove dead imports).</param>
+/// <param name="removeDeadImports">Whether to remove unused Newtonsoft imports.</param>
+/// <param name="addTodoForUnsupported">Whether to add action-needed comments for unsupported patterns.</param>
+public sealed class NewtonsoftToSystemTextJsonTransformer(
+    bool enabled = true,
+    bool removeDeadImports = true,
+    bool addTodoForUnsupported = true) : ICodeTransformer {
+  private readonly bool _enabled = enabled;
+  private readonly bool _removeDeadImports = removeDeadImports;
+  private readonly bool _addTodoForUnsupported = addTodoForUnsupported;
 
   /// <inheritdoc />
   public Task<TransformationResult> TransformAsync(
@@ -253,7 +247,7 @@ public sealed class NewtonsoftToSystemTextJsonTransformer : ICodeTransformer {
 
         case "Newtonsoft.Json.Linq":
           // JObject/JArray/JToken - needs manual review
-          warnings.Add($"JObject/JArray/JToken from Newtonsoft.Json.Linq requires manual migration to JsonDocument/JsonElement");
+          warnings.Add("JObject/JArray/JToken from Newtonsoft.Json.Linq requires manual migration to JsonDocument/JsonElement");
           // Remove the using
           changes.Add(new CodeChange(
               usingDirective.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
@@ -305,21 +299,15 @@ public sealed class NewtonsoftToSystemTextJsonTransformer : ICodeTransformer {
   /// <summary>
   /// Syntax rewriter that transforms Newtonsoft patterns to System.Text.Json.
   /// </summary>
-  private sealed class NewtonsoftRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
-    private readonly bool _addTodoForUnsupported;
+  private sealed class NewtonsoftRewriter(
+      List<CodeChange> changes,
+      List<string> warnings,
+      bool addTodoForUnsupported) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
+    private readonly bool _addTodoForUnsupported = addTodoForUnsupported;
 
     public bool NeedsSerializationUsing { get; private set; }
-
-    public NewtonsoftRewriter(
-        List<CodeChange> changes,
-        List<string> warnings,
-        bool addTodoForUnsupported) {
-      _changes = changes;
-      _warnings = warnings;
-      _addTodoForUnsupported = addTodoForUnsupported;
-    }
 
     public override SyntaxNode? VisitAttribute(AttributeSyntax node) {
       var name = _getAttributeName(node);

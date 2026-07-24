@@ -5,17 +5,17 @@ namespace Whizbang.Core.Transports;
 /// Implementations can check connectivity, health, or other readiness criteria.
 /// </summary>
 /// <remarks>
-/// This interface is used by the WorkCoordinatorPublisherWorker to determine if messages
+/// <para>This interface is used by the WorkCoordinatorPublisherWorker to determine if messages
 /// should be published or buffered. When a transport is not ready, messages are kept in
-/// the outbox with renewed leases until the transport becomes available.
+/// the outbox with renewed leases until the transport becomes available.</para>
 ///
-/// Examples of readiness checks:
+/// <para>Examples of readiness checks:
 /// - Azure Service Bus: Check if namespace is accessible
 /// - RabbitMQ: Check if connection is established
 /// - Kafka: Check if brokers are reachable
-/// - HTTP: Check if endpoint is responding
+/// - HTTP: Check if endpoint is responding</para>
 /// </remarks>
-/// <docs>components/transports</docs>
+/// <docs>messaging/transports/transports</docs>
 public interface ITransportReadinessCheck {
   /// <summary>
   /// Checks if the transport is ready to accept messages.

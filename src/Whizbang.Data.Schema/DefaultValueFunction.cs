@@ -1,7 +1,7 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
-/// <docs>extensibility/database-schema-framework</docs>
+/// <docs>extending/extensibility/database-schema-framework</docs>
 /// Enum for database function-based default values.
 /// Pure enum-based approach ensures type safety and no string matching in implementations.
 /// </summary>

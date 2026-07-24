@@ -47,7 +47,7 @@ public abstract class PartitionRouterContractTests {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();
-    var partitionCount = 10;
+    const int partitionCount = 10;
 
     // Act & Assert - Test multiple stream keys
     for (int i = 0; i < 100; i++) {
@@ -64,8 +64,8 @@ public abstract class PartitionRouterContractTests {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();
-    var streamKey = "order-12345";
-    var partitionCount = 10;
+    const string streamKey = "order-12345";
+    const int partitionCount = 10;
 
     // Act - Call multiple times with same stream key
     var partition1 = router.SelectPartition(streamKey, partitionCount, context);
@@ -82,8 +82,8 @@ public abstract class PartitionRouterContractTests {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();
-    var partitionCount = 4;
-    var streamCount = 1000;
+    const int partitionCount = 4;
+    const int streamCount = 1000;
     var partitionCounts = new int[partitionCount];
 
     // Act - Route 1000 different streams
@@ -106,7 +106,7 @@ public abstract class PartitionRouterContractTests {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();
-    var partitionCount = 2;
+    const int partitionCount = 2;
     var partition0Used = false;
     var partition1Used = false;
 
@@ -160,7 +160,7 @@ public abstract class PartitionRouterContractTests {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();
-    var partitionCount = 1000;
+    const int partitionCount = 1000;
 
     // Act
     var partition = router.SelectPartition("test-stream", partitionCount, context);

@@ -16,7 +16,7 @@ namespace Whizbang.Core.Resilience;
 /// that caps the exponential backoff.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+/// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionResilienceOptionsTests.cs</tests>
 public class SubscriptionResilienceOptions {
   /// <summary>
@@ -26,14 +26,14 @@ public class SubscriptionResilienceOptions {
   /// Set to 0 to skip initial warning phase and go directly to indefinite retry.
   /// </summary>
   /// <value>Default: 5 (matches RabbitMQOptions)</value>
-  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   public int InitialRetryAttempts { get; set; } = 5;
 
   /// <summary>
   /// Initial delay before the first retry attempt.
   /// </summary>
   /// <value>Default: 1 second (matches RabbitMQOptions)</value>
-  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   public TimeSpan InitialRetryDelay { get; set; } = TimeSpan.FromSeconds(1);
 
   /// <summary>
@@ -41,7 +41,7 @@ public class SubscriptionResilienceOptions {
   /// Once this delay is reached, retries continue at this interval indefinitely.
   /// </summary>
   /// <value>Default: 120 seconds (matches RabbitMQOptions)</value>
-  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   public TimeSpan MaxRetryDelay { get; set; } = TimeSpan.FromSeconds(120);
 
   /// <summary>
@@ -50,7 +50,7 @@ public class SubscriptionResilienceOptions {
   /// Set to 1.0 to disable exponential backoff (constant delay).
   /// </summary>
   /// <value>Default: 2.0 (matches RabbitMQOptions)</value>
-  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   public double BackoffMultiplier { get; set; } = 2.0;
 
   /// <summary>
@@ -58,7 +58,7 @@ public class SubscriptionResilienceOptions {
   /// If false, mark subscription as failed after <see cref="InitialRetryAttempts"/>.
   /// </summary>
   /// <value>Default: true (critical infrastructure - always retry)</value>
-  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   public bool RetryIndefinitely { get; set; } = true;
 
   /// <summary>
@@ -67,7 +67,7 @@ public class SubscriptionResilienceOptions {
   /// attempts to re-establish them.
   /// </summary>
   /// <value>Default: 1 minute</value>
-  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   public TimeSpan HealthCheckInterval { get; set; } = TimeSpan.FromMinutes(1);
 
   /// <summary>
@@ -77,6 +77,6 @@ public class SubscriptionResilienceOptions {
   /// If false, the worker will not start message processing until all subscriptions succeed.
   /// </summary>
   /// <value>Default: true (continue with partial subscriptions)</value>
-  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   public bool AllowPartialSubscriptions { get; set; } = true;
 }

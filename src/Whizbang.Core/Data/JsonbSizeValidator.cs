@@ -66,8 +66,8 @@ public partial class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger) {
       // Optionally throw exception
       if (policy?.ThrowOnSizeExceeded == true) {
         var message = $"{typeName} data size ({dataSize:N0} bytes) exceeds TOAST externalization threshold ({threshold:N0} bytes). " +
-                      $"This will cause 5-10× performance degradation. " +
-                      $"Consider splitting data or using fixed columns for frequently-queried fields.";
+                      "This will cause 5-10× performance degradation. " +
+                      "Consider splitting data or using fixed columns for frequently-queried fields.";
         throw new InvalidOperationException(message);
       }
     }

@@ -19,7 +19,7 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_EmptyString_ReturnsKnownSha256HashAsync() {
     // Arrange
-    var input = "";
+    const string input = "";
     // SHA-256 of empty string is known: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
     // Act
@@ -35,7 +35,7 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_AnyInput_ReturnsLowercaseHex64CharactersAsync() {
     // Arrange
-    var input = "test";
+    const string input = "test";
 
     // Act
     var hash = SchemaHashUtilities.ComputeHash(input);
@@ -51,7 +51,7 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_SameInput_ReturnsSameHashAsync() {
     // Arrange
-    var input = "{\"columns\":[{\"name\":\"id\",\"type\":\"uuid\"}]}";
+    const string input = "{\"columns\":[{\"name\":\"id\",\"type\":\"uuid\"}]}";
 
     // Act
     var hash1 = SchemaHashUtilities.ComputeHash(input);
@@ -67,8 +67,8 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_DifferentInputs_ReturnsDifferentHashesAsync() {
     // Arrange
-    var input1 = "{\"columns\":[{\"name\":\"id\"}]}";
-    var input2 = "{\"columns\":[{\"name\":\"data\"}]}";
+    const string input1 = "{\"columns\":[{\"name\":\"id\"}]}";
+    const string input2 = "{\"columns\":[{\"name\":\"data\"}]}";
 
     // Act
     var hash1 = SchemaHashUtilities.ComputeHash(input1);
@@ -84,7 +84,7 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_Utf8Input_ReturnsValidHashAsync() {
     // Arrange - Japanese characters for "hello"
-    var input = "こんにちは";
+    const string input = "こんにちは";
 
     // Act
     var hash = SchemaHashUtilities.ComputeHash(input);
@@ -281,8 +281,8 @@ public class SchemaHashUtilitiesTests {
       new("id", "uuid", false, true, false, null)
     };
     var indexes = new List<IndexSchema> {
-      new("idx_order_created_at", new List<string> { "created_at" }, "btree", false),
-      new("idx_order_data_gin", new List<string> { "data" }, "gin", false)
+      new("idx_order_created_at", ["created_at"], "btree", false),
+      new("idx_order_data_gin", ["data"], "gin", false)
     };
     var schema = new PerspectiveTableSchema(columns, indexes);
 
@@ -312,8 +312,8 @@ public class SchemaHashUtilitiesTests {
       new("id", "uuid", false, true, false, null)
     };
 
-    var schema1 = new PerspectiveTableSchema(columns1, new List<IndexSchema>());
-    var schema2 = new PerspectiveTableSchema(columns2, new List<IndexSchema>());
+    var schema1 = new PerspectiveTableSchema(columns1, []);
+    var schema2 = new PerspectiveTableSchema(columns2, []);
 
     // Act
     var json1 = SchemaHashUtilities.ToCanonicalJson(schema1);
@@ -339,7 +339,7 @@ public class SchemaHashUtilitiesTests {
       new("created_at", "timestamptz", false, false, false, null)
     };
     var indexes = new List<IndexSchema> {
-      new("idx_created_at", new List<string> { "created_at" }, "btree", false)
+      new("idx_created_at", ["created_at"], "btree", false)
     };
     var schema1 = new PerspectiveTableSchema(columns, indexes);
     var schema2 = new PerspectiveTableSchema(columns, indexes);
@@ -367,8 +367,8 @@ public class SchemaHashUtilitiesTests {
       new("id", "uuid", false, true, false, null)
     };
 
-    var schema1 = new PerspectiveTableSchema(columns1, new List<IndexSchema>());
-    var schema2 = new PerspectiveTableSchema(columns2, new List<IndexSchema>());
+    var schema1 = new PerspectiveTableSchema(columns1, []);
+    var schema2 = new PerspectiveTableSchema(columns2, []);
 
     // Act
     var hash1 = SchemaHashUtilities.ComputeSchemaHash(schema1);
@@ -392,8 +392,8 @@ public class SchemaHashUtilitiesTests {
       new("data", "jsonb", false, false, false, null)
     };
 
-    var schema1 = new PerspectiveTableSchema(columns1, new List<IndexSchema>());
-    var schema2 = new PerspectiveTableSchema(columns2, new List<IndexSchema>());
+    var schema1 = new PerspectiveTableSchema(columns1, []);
+    var schema2 = new PerspectiveTableSchema(columns2, []);
 
     // Act
     var hash1 = SchemaHashUtilities.ComputeSchemaHash(schema1);

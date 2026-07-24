@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -135,9 +136,7 @@ public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
     await Assert.That(result).IsEqualTo(2);
 
     // Verify scope was disposed by running another query (should create new scope)
-    var result2 = await scopedQuery.ExecuteAsync(async (query, ct) => {
-      return await query.Query.CountAsync(ct);
-    });
+    var result2 = await scopedQuery.ExecuteAsync(async (query, ct) => await query.Query.CountAsync(ct));
 
     await Assert.That(result2).IsEqualTo(3);
   }

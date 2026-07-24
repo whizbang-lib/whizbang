@@ -6,7 +6,7 @@ namespace Whizbang.Core.Security;
 /// Type-safe permission identifier using resource:action pattern.
 /// Supports wildcard matching for flexible permission hierarchies.
 /// </summary>
-/// <docs>core-concepts/security#permissions</docs>
+/// <docs>fundamentals/security/security#permissions</docs>
 /// <tests>Whizbang.Core.Tests/Security/PermissionTests.cs</tests>
 /// <example>
 /// // Create specific permissions

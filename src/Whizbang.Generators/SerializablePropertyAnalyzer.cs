@@ -15,7 +15,7 @@ namespace Whizbang.Generators;
 /// Ensures AOT compatibility by flagging object, dynamic, and non-generic interface properties.
 /// Recursively checks nested child types to ensure entire object graph is serializable.
 /// </summary>
-/// <docs>diagnostics/serializable-property-analyzer</docs>
+/// <docs>operations/diagnostics/serializable-property-analyzer</docs>
 /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
@@ -23,13 +23,17 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
   private const string I_EVENT = "Whizbang.Core.IEvent";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
 
-  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
-      DiagnosticDescriptors.NonSerializablePropertyObject,
-      DiagnosticDescriptors.NonSerializablePropertyDynamic,
-      DiagnosticDescriptors.NonSerializablePropertyInterface,
-      DiagnosticDescriptors.NonSerializableNestedProperty
-  );
+  /// <inheritdoc/>
+  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
+  [
+    DiagnosticDescriptors.NonSerializablePropertyObject,
+    DiagnosticDescriptors.NonSerializablePropertyDynamic,
+    DiagnosticDescriptors.NonSerializablePropertyInterface,
+    DiagnosticDescriptors.NonSerializableNestedProperty
+,
+  ];
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
@@ -218,7 +222,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
         // For dictionaries or multi-type-argument generics, we'd need to check all type args
         // For simplicity, return the first type argument (usually the element type)
         // Dictionary<K,V> -> check V (the value type)
-        var lastTypeArg = namedType.TypeArguments[namedType.TypeArguments.Length - 1];
+        var lastTypeArg = namedType.TypeArguments[^1];
         return lastTypeArg;
       }
     }

@@ -24,7 +24,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// </summary>
 /// <docs>core-concepts/message-security#automatic-security-propagation</docs>
 /// <remarks>
-/// This is critical for lifecycle receptors (PostPerspectiveAsync) that need
+/// This is critical for lifecycle receptors (PostPerspectiveDetached) that need
 /// access to TenantId from the original dispatch context.
 /// </remarks>
 [Category("Security")]
@@ -45,7 +45,7 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// Event returned from command handler - will be cascaded.
   /// Uses [DefaultRouting(Outbox)] to go through outbox storage path.
   /// </summary>
-  [DefaultRouting(DispatchMode.Outbox)]
+  [DefaultRouting(DispatchModes.Outbox)]
   public record CascadeTestEvent([property: StreamId] Guid StreamId, string ProcessedData) : IEvent;
 
   /// <summary>
@@ -79,12 +79,8 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// Command handler that returns an event to be cascaded.
   /// Captures the scope context during execution.
   /// </summary>
-  public class CascadeTestCommandReceptor : IReceptor<CascadeTestCommand, (CascadeTestResult, CascadeTestEvent)> {
-    private readonly IScopeContextAccessor _scopeContextAccessor;
-
-    public CascadeTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) {
-      _scopeContextAccessor = scopeContextAccessor;
-    }
+  public class CascadeTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<CascadeTestCommand, (CascadeTestResult, CascadeTestEvent)> {
+    private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
     public ValueTask<(CascadeTestResult, CascadeTestEvent)> HandleAsync(
       CascadeTestCommand message,
@@ -105,7 +101,7 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// <summary>
   /// When a command is dispatched with WithTenant() and the handler returns events,
   /// the cascaded events should have SecurityContext.TenantId in their envelope hops.
-  /// This is critical for PostPerspectiveAsync handlers that need TenantId.
+  /// This is critical for PostPerspectiveDetached handlers that need TenantId.
   /// </summary>
   [Test]
   public async Task WithTenant_CascadedEvents_HaveTenantIdInSecurityContextAsync() {
@@ -185,8 +181,9 @@ public class DispatcherCascadeSecurityPropagationTests {
   public async Task NoSecurityContext_CascadedEvents_HaveNullScopeAsync() {
     // Arrange
     CascadeSecurityTracker.Reset();
-    var scopeContextAccessor = new ScopeContextAccessor();
-    scopeContextAccessor.Current = null; // No security context
+    var scopeContextAccessor = new ScopeContextAccessor {
+      Current = null // No security context
+    };
     var outboxCapture = new OutboxMessageCapture();
     var (dispatcher, _) = _createDispatcherWithOutboxCapture(scopeContextAccessor, outboxCapture);
 
@@ -255,12 +252,12 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// </summary>
   public class OutboxMessageCapture : IWorkCoordinatorStrategy {
     private readonly List<OutboxMessage> _capturedMessages = [];
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public IReadOnlyList<OutboxMessage> CapturedMessages {
       get {
         lock (_lock) {
-          return _capturedMessages.ToList();
+          return [.. _capturedMessages];
         }
       }
     }
@@ -291,7 +288,11 @@ public class DispatcherCascadeSecurityPropagationTests {
       // Not needed for these tests
     }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      return FlushAndGetBatchAsync(flags, ct);
+    }
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       // Return empty work batch - we just want to capture the messages
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     }

@@ -9,7 +9,7 @@ namespace Whizbang.Core.Diagnostics;
 /// when execution is paused (e.g., at a breakpoint) to prevent false timeouts.
 /// </para>
 /// </remarks>
-/// <docs>features/debugger-aware-clock</docs>
+/// <docs>extending/features/debugger-aware-clock</docs>
 /// <tests>Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
 public enum DebuggerDetectionMode {
   /// <summary>

@@ -31,6 +31,14 @@ public static class InboxSchema {
     public const string FAILURE_REASON = "failure_reason";
     public const string SCHEDULED_FOR = "scheduled_for";
     public const string PROCESSED_AT = "processed_at";
+    /// <summary>
+    /// Event-categorization bitmask (Slice 2'). Consumer side of the
+    /// producer stamp on <c>OutboxSchema</c> — preserved by the transport
+    /// consumer worker (Slice 3') so the projection runner can branch on
+    /// individual flag bits without re-deserializing the payload.
+    /// Stores <c>Whizbang.Core.Messaging.EventFlags</c> as an INTEGER.
+    /// </summary>
+    public const string FLAGS = "flags";
     public const string RECEIVED_AT = "received_at";
   }
 
@@ -48,21 +56,21 @@ public static class InboxSchema {
       new ColumnDefinition(
         Name: "message_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "handler_name",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "message_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "event_data",
         DataType: WhizbangDataType.JSON,
@@ -142,45 +150,51 @@ public static class InboxSchema {
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      new ColumnDefinition(
+        Name: Columns.FLAGS,
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: false,
+        DefaultValue: DefaultValue.Integer(0)
       )
     ),
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_inbox_processed_at",
-        Columns: ImmutableArray.Create(Columns.PROCESSED_AT)
+        Columns: [Columns.PROCESSED_AT]
       ),
       new IndexDefinition(
         Name: "idx_inbox_received_at",
-        Columns: ImmutableArray.Create(Columns.RECEIVED_AT)
+        Columns: [Columns.RECEIVED_AT]
       ),
       new IndexDefinition(
         Name: "idx_inbox_lease_expiry",
-        Columns: ImmutableArray.Create(Columns.LEASE_EXPIRY),
+        Columns: [Columns.LEASE_EXPIRY],
         WhereClause: "lease_expiry IS NOT NULL"
       ),
       new IndexDefinition(
         Name: "idx_inbox_status_lease",
-        Columns: ImmutableArray.Create(Columns.STATUS, Columns.LEASE_EXPIRY),
+        Columns: [Columns.STATUS, Columns.LEASE_EXPIRY],
         WhereClause: "(status & 32768) = 0 AND (status & 2) != 2"
       ),
       new IndexDefinition(
         Name: "idx_inbox_failure_reason",
-        Columns: ImmutableArray.Create(Columns.FAILURE_REASON),
+        Columns: [Columns.FAILURE_REASON],
         WhereClause: "(status & 32768) = 32768"
       ),
       new IndexDefinition(
         Name: "idx_inbox_scheduled_for",
-        Columns: ImmutableArray.Create(Columns.STREAM_ID, Columns.SCHEDULED_FOR, Columns.RECEIVED_AT),
+        Columns: [Columns.STREAM_ID, Columns.SCHEDULED_FOR, Columns.RECEIVED_AT],
         WhereClause: "scheduled_for IS NOT NULL"
       ),
       new IndexDefinition(
         Name: "idx_inbox_partition_claiming",
-        Columns: ImmutableArray.Create(Columns.PARTITION_NUMBER, Columns.SCHEDULED_FOR, Columns.RECEIVED_AT),
+        Columns: [Columns.PARTITION_NUMBER, Columns.SCHEDULED_FOR, Columns.RECEIVED_AT],
         WhereClause: "(status & 2) != 2 AND (status & 32768) = 0"
       ),
       new IndexDefinition(
         Name: "idx_inbox_instance_lease",
-        Columns: ImmutableArray.Create(Columns.INSTANCE_ID, Columns.LEASE_EXPIRY),
+        Columns: [Columns.INSTANCE_ID, Columns.LEASE_EXPIRY],
         WhereClause: "instance_id IS NOT NULL AND lease_expiry IS NOT NULL"
       )
     )

@@ -71,6 +71,7 @@ public record ServiceInstanceInfo {
 /// Long names (legacy format): ServiceName, InstanceId, HostName, ProcessId
 /// </summary>
 public sealed class ServiceInstanceInfoConverter : JsonConverter<ServiceInstanceInfo> {
+  /// <inheritdoc/>
   public override ServiceInstanceInfo? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     if (reader.TokenType != JsonTokenType.StartObject) {
       throw new JsonException("Expected start of object for ServiceInstanceInfo");
@@ -124,6 +125,7 @@ public sealed class ServiceInstanceInfoConverter : JsonConverter<ServiceInstance
     };
   }
 
+  /// <inheritdoc/>
   public override void Write(Utf8JsonWriter writer, ServiceInstanceInfo value, JsonSerializerOptions options) {
     // Always write with short property names
     writer.WriteStartObject();

@@ -8,7 +8,7 @@ namespace Whizbang.Core.Observability;
 /// - Lease management (outbox/inbox processing)
 /// Each service instance (process) has a unique ID generated at startup.
 /// </summary>
-/// <docs>core-concepts/observability</docs>
+/// <docs>fundamentals/persistence/observability</docs>
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>

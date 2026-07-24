@@ -35,7 +35,7 @@ namespace Whizbang.Generators.Analyzers;
 ///     IPerspectiveWithActionsFor&lt;ProductView, ProductDeleted&gt;  // Different model ✗
 /// </code>
 /// </remarks>
-/// <docs>diagnostics/whiz300</docs>
+/// <docs>operations/diagnostics/whiz300</docs>
 /// <tests>Whizbang.Generators.Tests/Analyzers/PerspectiveModelConsistencyAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
@@ -56,9 +56,11 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
                    "they must all use the same TModel type. Different model types would cause the perspective runner to fail."
   );
 
+  /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-      ImmutableArray.Create(InconsistentModelTypes);
+      [InconsistentModelTypes];
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
@@ -69,7 +71,7 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeClass(SyntaxNodeAnalysisContext context) {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
-    var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration);
+    var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, context.CancellationToken);
 
     if (classSymbol is null) {
       return;

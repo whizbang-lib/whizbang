@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -56,7 +57,8 @@ public class ReceptorInvokerServiceRegistrationTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = message,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -64,12 +66,8 @@ public class ReceptorInvokerServiceRegistrationTests {
   /// Creates a test registry that resolves a scoped dependency during invocation.
   /// This simulates real receptor behavior where dependencies are resolved from the provider.
   /// </summary>
-  private sealed class ScopedDependencyRegistry : IReceptorRegistry {
-    private readonly Action<ScopedDependency> _onScopedDependencyResolved;
-
-    public ScopedDependencyRegistry(Action<ScopedDependency> onScopedDependencyResolved) {
-      _onScopedDependencyResolved = onScopedDependencyResolved;
-    }
+  private sealed class ScopedDependencyRegistry(Action<ReceptorInvokerServiceRegistrationTests.ScopedDependency> onScopedDependencyResolved) : IReceptorRegistry {
+    private readonly Action<ScopedDependency> _onScopedDependencyResolved = onScopedDependencyResolved;
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       if (messageType != typeof(TestMessage) || stage != LifecycleStage.PostInboxInline) {
@@ -80,7 +78,7 @@ public class ReceptorInvokerServiceRegistrationTests {
         new ReceptorInfo(
           MessageType: typeof(TestMessage),
           ReceptorId: "ScopedDependencyReceptor",
-          InvokeAsync: (sp, msg, ct) => {
+          InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
             // This is the critical part: resolve a scoped dependency from the provider
             // If the provider is the root provider, this will throw for scoped services
             var scopedDep = sp.GetRequiredService<ScopedDependency>();
@@ -91,6 +89,11 @@ public class ReceptorInvokerServiceRegistrationTests {
         )
       ];
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   /// <summary>
@@ -304,5 +307,10 @@ public class ReceptorInvokerServiceRegistrationTests {
   /// </summary>
   private sealed class EmptyReceptorRegistry : IReceptorRegistry {
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 }

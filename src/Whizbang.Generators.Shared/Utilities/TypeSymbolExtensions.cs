@@ -13,7 +13,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// All methods are AOT-compatible (no reflection). Uses Roslyn's Symbol APIs only.
 /// Properties and methods are deduplicated by name/signature, with derived class members taking precedence.
 /// </remarks>
-/// <docs>source-generators/type-symbol-extensions</docs>
+/// <docs>extending/source-generators/type-symbol-extensions</docs>
 /// <tests>Whizbang.Generators.Tests/Utilities/TypeSymbolExtensionsTests.cs</tests>
 public static class TypeSymbolExtensions {
   /// <summary>
@@ -58,7 +58,7 @@ public static class TypeSymbolExtensions {
   /// <param name="typeSymbol">The type to analyze</param>
   /// <returns>Array of property names</returns>
   public static string[] GetAllPublicPropertyNames(this INamedTypeSymbol typeSymbol) {
-    return typeSymbol.GetAllProperties().Select(p => p.Name).ToArray();
+    return [.. typeSymbol.GetAllProperties().Select(p => p.Name)];
   }
 
   /// <summary>

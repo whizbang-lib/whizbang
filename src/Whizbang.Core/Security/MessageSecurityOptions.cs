@@ -9,7 +9,7 @@ namespace Whizbang.Core.Security;
 /// - ValidateCredentials is true by default
 /// - PropagateToOutgoingMessages is true by default
 /// </remarks>
-/// <docs>core-concepts/message-security#configuration</docs>
+/// <docs>fundamentals/security/message-security#configuration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityOptionsTests.cs</tests>
 /// <example>
 /// services.AddWhizbangMessageSecurity(options => {
@@ -30,12 +30,12 @@ public sealed class MessageSecurityOptions {
   /// DEFAULT: FALSE (least privilege - must explicitly enable).
   /// </summary>
   /// <remarks>
-  /// Setting this to true allows messages through even when no extractor
+  /// <para>Setting this to true allows messages through even when no extractor
   /// can establish a security context. The IScopeContextAccessor.Current
-  /// will be null or contain an empty context.
+  /// will be null or contain an empty context.</para>
   ///
-  /// Consider using ExemptMessageTypes instead for specific message types
-  /// that don't require security (e.g., health checks).
+  /// <para>Consider using ExemptMessageTypes instead for specific message types
+  /// that don't require security (e.g., health checks).</para>
   /// </remarks>
   public bool AllowAnonymous { get; set; }
 

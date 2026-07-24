@@ -11,8 +11,9 @@ namespace Whizbang.Core;
 /// using bitwise OR operations. Composite presets are provided for common combinations.
 /// Each flag instructs the matcher to ignore a specific aspect of the type name during comparison.
 /// </remarks>
-/// <docs>core-concepts/fuzzy-matching</docs>
+/// <docs>fundamentals/identity/fuzzy-matching</docs>
 [Flags]
+#pragma warning disable RCS1154 // Members are intentionally grouped: base flags first, then composite presets.
 public enum MatchStrictness {
   /// <summary>
   /// Exact matching required - all components must match exactly.
@@ -88,3 +89,4 @@ public enum MatchStrictness {
   /// </summary>
   SimpleNameCaseInsensitive = SimpleName | IgnoreCase
 }
+#pragma warning restore RCS1154

@@ -29,6 +29,5 @@ namespace Whizbang.Core.SystemEvents;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/system-events</docs>
-public interface ISystemEvent : IEvent {
-}
+/// <docs>fundamentals/events/system-events</docs>
+public interface ISystemEvent : IEvent;

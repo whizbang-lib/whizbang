@@ -19,7 +19,7 @@ public class ReceptorDiscoveryGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithReceptor_GeneratesDispatcherAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -49,7 +49,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("namespace TestAssembly.Generated");
+    await Assert.That(dispatcher).Contains("namespace TestAssembly.Generated");
     await Assert.That(dispatcher).Contains("class GeneratedDispatcher");
     await Assert.That(dispatcher).Contains("CreateOrder");
     await Assert.That(dispatcher).Contains("OrderCreated");
@@ -59,7 +59,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithVoidReceptor_GeneratesDispatcherAsync() {
     // Arrange - Tests IReceptor<TMessage> (void receptor pattern)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -85,14 +85,14 @@ public class LogReceptor : IReceptor<LogMessage> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("LogMessage");
+    await Assert.That(dispatcher).Contains("LogMessage");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleReceptors_GeneratesAllRoutesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -123,7 +123,7 @@ public class UpdateReceptor : IReceptor<UpdateOrder, OrderUpdated> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("CreateOrder");
+    await Assert.That(dispatcher).Contains("CreateOrder");
     await Assert.That(dispatcher).Contains("UpdateOrder");
   }
 
@@ -131,7 +131,7 @@ public class UpdateReceptor : IReceptor<UpdateOrder, OrderUpdated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNoReceptors_GeneratesInfoAsync() {
     // Arrange - Tests WHIZ002 diagnostic when no receptors or perspectives found
-    var source = @"
+    const string source = @"
 namespace MyApp;
 
 public class SomeClass {
@@ -155,7 +155,7 @@ public class SomeClass {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPerspectiveButNoReceptor_DoesNotWarnAsync() {
     // Arrange - Tests that IPerspectiveFor suppresses WHIZ002 warning
-    var source = @"
+    const string source = @"
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -187,9 +187,45 @@ public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_WithPerspectiveWithActionsForButNoReceptor_DoesNotWarnAsync() {
+    // IPerspectiveWithActionsFor must suppress WHIZ002 the same way IPerspectiveFor
+    // does; otherwise an event handled only by a WithActionsFor perspective is
+    // incorrectly flagged as "no IReceptor handles this event".
+    const string source = @"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace MyApp.Perspectives;
+
+public record TestEvent : IEvent;
+
+public record TestModel {
+  public Guid Id { get; set; }
+}
+
+public class TestActionsPerspective : IPerspectiveWithActionsFor<TestModel, TestEvent> {
+  public ApplyResult<TestModel> Apply(TestModel? currentData, TestEvent @event) {
+    return ApplyResult<TestModel>.Update(currentData ?? new());
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should not report WHIZ002 when WithActionsFor perspective exists
+    var warnings = result.Diagnostics.Where(d => d.Id == "WHIZ002").ToArray();
+    await Assert.That(warnings).IsEmpty();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesDispatcherRegistrationsAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -213,7 +249,7 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
 
     var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
     await Assert.That(registrations).IsNotNull();
-    await Assert.That(registrations!).Contains("AddWhizbangDispatcher");
+    await Assert.That(registrations).Contains("AddWhizbangDispatcher");
     await Assert.That(registrations).Contains("TestReceptor");
   }
 
@@ -221,7 +257,7 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithClassNoBaseList_SkipsAsync() {
     // Arrange - Tests syntactic predicate filtering
-    var source = @"
+    const string source = @"
 namespace MyApp;
 
 public class NoBaseClass {
@@ -240,7 +276,7 @@ public class NoBaseClass {
   [RequiresAssemblyFiles()]
   public async Task Generator_ReportsDiscoveredReceptorsAsync() {
     // Arrange - Tests WHIZ001 diagnostic reporting
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -272,7 +308,7 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithAbstractReceptor_GeneratesAsync() {
     // Arrange - Tests abstract receptor classes
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -295,14 +331,14 @@ public abstract class BaseReceptor : IReceptor<TestCommand, TestResponse> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("TestCommand");
+    await Assert.That(dispatcher).Contains("TestCommand");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleReceptorInterfaces_GeneratesForFirstAsync() {
     // Arrange - Tests class implementing multiple IReceptor interfaces
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -331,14 +367,14 @@ public class MultiReceptor : IReceptor<CommandA, ResponseA>, IReceptor<CommandB,
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("CommandA");
+    await Assert.That(dispatcher).Contains("CommandA");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithTypeInGlobalNamespace_HandlesCorrectlyAsync() {
     // Arrange - Tests GetSimpleName with no dots (lastDot < 0)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -360,14 +396,14 @@ public class GlobalReceptor : IReceptor<GlobalCommand, GlobalResponse> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("GlobalCommand");
+    await Assert.That(dispatcher).Contains("GlobalCommand");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesReceptorDiscoveryDiagnosticsAsync() {
     // Arrange - Tests ReceptorDiscoveryDiagnostics.g.cs generation
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -391,14 +427,14 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
 
     var diagnostics = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorDiscoveryDiagnostics.g.cs");
     await Assert.That(diagnostics).IsNotNull();
-    await Assert.That(diagnostics!).Contains("namespace TestAssembly.Generated");
+    await Assert.That(diagnostics).Contains("namespace TestAssembly.Generated");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithVoidReceptor_ReportsVoidResponseAsync() {
     // Arrange - Tests IsVoid branch in diagnostic reporting
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -427,7 +463,7 @@ public class LogReceptor : IReceptor<LogCommand> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithClassWithoutReceptorInterface_SkipsAsync() {
     // Arrange - Tests that classes without IReceptor are skipped
-    var source = @"
+    const string source = @"
 using System.Threading.Tasks;
 using Whizbang.Core;
 
@@ -452,7 +488,7 @@ public class NotAReceptor {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithTupleResponseType_SimplifiesInDiagnosticAsync() {
     // Arrange - Tests GetSimpleName with tuple response types
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -486,7 +522,7 @@ public class OrderReceptor : IReceptor<GetOrderDetails, (OrderSummary, CustomerI
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("GetOrderDetails");
+    await Assert.That(dispatcher).Contains("GetOrderDetails");
 
     // Verify diagnostic message simplified tuple type name
     var infoDiagnostics = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
@@ -500,7 +536,7 @@ public class OrderReceptor : IReceptor<GetOrderDetails, (OrderSummary, CustomerI
   [RequiresAssemblyFiles()]
   public async Task Generator_WithArrayResponseType_SimplifiesInDiagnosticAsync() {
     // Arrange - Tests GetSimpleName with array response types
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -524,7 +560,7 @@ public class OrderReceptor : IReceptor<GetOrders, OrderCreated[]> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("GetOrders");
+    await Assert.That(dispatcher).Contains("GetOrders");
 
     // Verify diagnostic message simplified array type name
     var infoDiagnostics = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
@@ -538,7 +574,7 @@ public class OrderReceptor : IReceptor<GetOrders, OrderCreated[]> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNestedTupleResponseType_SimplifiesInDiagnosticAsync() {
     // Arrange - Tests SplitTupleParts with nested tuples
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -564,7 +600,7 @@ public class OrderReceptor : IReceptor<GetComplexOrder, (OrderSummary, (Customer
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("GetComplexOrder");
+    await Assert.That(dispatcher).Contains("GetComplexOrder");
 
     // Verify diagnostic message simplified nested tuple type name
     var infoDiagnostics = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
@@ -583,7 +619,7 @@ public class OrderReceptor : IReceptor<GetComplexOrder, (OrderSummary, (Customer
   public async Task Generator_ZeroReceptors_WithPerspective_GeneratesEmptyDispatcherAsync() {
     // Arrange - BFF.API scenario: 0 receptors, but has perspectives
     // Should generate empty dispatcher for outbox fallback support
-    var source = @"
+    const string source = @"
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -613,7 +649,7 @@ public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCr
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("class GeneratedDispatcher");
+    await Assert.That(dispatcher).Contains("class GeneratedDispatcher");
     await Assert.That(dispatcher).Contains("return null"); // All lookups return null
   }
 
@@ -621,7 +657,7 @@ public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCr
   [RequiresAssemblyFiles()]
   public async Task Generator_ZeroReceptors_WithPerspective_GeneratesAddReceptorsAsync() {
     // Arrange - Should generate AddReceptors() extension even with 0 receptors
-    var source = @"
+    const string source = @"
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -651,7 +687,7 @@ public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCr
 
     var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
     await Assert.That(registrations).IsNotNull();
-    await Assert.That(registrations!).Contains("AddReceptors");
+    await Assert.That(registrations).Contains("AddReceptors");
     await Assert.That(registrations).Contains("AddWhizbangDispatcher");
   }
 
@@ -659,7 +695,7 @@ public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCr
   [RequiresAssemblyFiles()]
   public async Task Generator_ZeroReceptors_WithPerspective_GeneratedCodeCompilesAsync() {
     // Arrange - Verify generated code compiles successfully
-    var source = @"
+    const string source = @"
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -703,7 +739,7 @@ public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCr
   [RequiresAssemblyFiles()]
   public async Task Generator_WithWhizbangTraceAttribute_GeneratesTracingCodeAsync() {
     // Arrange - Tests [WhizbangTrace] attribute detection
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -737,7 +773,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     await Assert.That(registry).IsNotNull();
 
     // The traced snippet should include ITracer calls
-    await Assert.That(registry!).Contains("ITracer");
+    await Assert.That(registry).Contains("ITracer");
     await Assert.That(registry).Contains("BeginHandlerTrace");
     await Assert.That(registry).Contains("EndHandlerTrace");
     await Assert.That(registry).Contains("IDebuggerAwareClock");
@@ -747,7 +783,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithoutWhizbangTraceAttribute_DoesNotGenerateTracingCodeAsync() {
     // Arrange - Tests that tracing code is NOT generated for non-traced receptors
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -779,7 +815,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     await Assert.That(registry).IsNotNull();
 
     // The normal snippet should NOT include ITracer calls
-    await Assert.That(registry!).DoesNotContain("ITracer");
+    await Assert.That(registry).DoesNotContain("ITracer");
     await Assert.That(registry).DoesNotContain("BeginHandlerTrace");
   }
 
@@ -789,7 +825,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithSyncReceptor_GeneratesDispatcherAsync() {
     // Arrange - Tests ISyncReceptor<TMessage, TResponse> discovery
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Receptors;
@@ -817,7 +853,7 @@ public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("namespace TestAssembly.Generated");
+    await Assert.That(dispatcher).Contains("namespace TestAssembly.Generated");
     await Assert.That(dispatcher).Contains("class GeneratedDispatcher");
     await Assert.That(dispatcher).Contains("CreateOrder");
     await Assert.That(dispatcher).Contains("GetSyncReceptorInvoker");
@@ -827,7 +863,7 @@ public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithVoidSyncReceptor_GeneratesDispatcherAsync() {
     // Arrange - Tests ISyncReceptor<TMessage> (void sync receptor pattern)
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Receptors;
@@ -851,7 +887,7 @@ public class SyncLogReceptor : ISyncReceptor<LogMessage> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("LogMessage");
+    await Assert.That(dispatcher).Contains("LogMessage");
     await Assert.That(dispatcher).Contains("GetVoidSyncReceptorInvoker");
   }
 
@@ -859,7 +895,7 @@ public class SyncLogReceptor : ISyncReceptor<LogMessage> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithSyncReceptor_GeneratesRegistrationAsync() {
     // Arrange - Tests ISyncReceptor registration generation
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Receptors;
@@ -880,7 +916,7 @@ public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
 
     var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
     await Assert.That(registrations).IsNotNull();
-    await Assert.That(registrations!).Contains("ISyncReceptor<");
+    await Assert.That(registrations).Contains("ISyncReceptor<");
     await Assert.That(registrations).Contains("SyncOrderReceptor");
   }
 
@@ -888,7 +924,7 @@ public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithBothSyncAndAsyncReceptors_GeneratesBothRoutesAsync() {
     // Arrange - Tests mixed sync and async receptor discovery
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -920,14 +956,14 @@ public class SyncUpdateReceptor : ISyncReceptor<UpdateOrder, OrderUpdated> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("CreateOrder"); // Async
+    await Assert.That(dispatcher).Contains("CreateOrder"); // Async
     await Assert.That(dispatcher).Contains("UpdateOrder"); // Sync
     await Assert.That(dispatcher).Contains("GetReceptorInvoker"); // Async routing
     await Assert.That(dispatcher).Contains("GetSyncReceptorInvoker"); // Sync routing
 
     var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
     await Assert.That(registrations).IsNotNull();
-    await Assert.That(registrations!).Contains("IReceptor<"); // Async registration
+    await Assert.That(registrations).Contains("IReceptor<"); // Async registration
     await Assert.That(registrations).Contains("ISyncReceptor<"); // Sync registration
   }
 
@@ -935,7 +971,7 @@ public class SyncUpdateReceptor : ISyncReceptor<UpdateOrder, OrderUpdated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithSyncReceptor_ReportsDiagnosticAsync() {
     // Arrange - Tests that sync receptors are reported in diagnostics
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Receptors;
@@ -964,7 +1000,7 @@ public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithReceptor_GeneratesReceptorRegistryAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -988,7 +1024,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("class GeneratedReceptorRegistry");
+    await Assert.That(registry).Contains("class GeneratedReceptorRegistry");
     await Assert.That(registry).Contains("IReceptorRegistry");
     await Assert.That(registry).Contains("GetReceptorsFor");
   }
@@ -997,7 +1033,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ReceptorWithoutFireAt_RegisteredAtDefaultStagesAsync() {
     // Arrange - Receptor without [FireAt] attribute should be registered at 3 default stages
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1016,19 +1052,19 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     // Act
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    // Assert - Should register at LocalImmediateInline, PreOutboxInline, PostInboxInline
+    // Assert - Should register at LocalImmediateDetached + PostInboxDetached (default stages)
+    // PreOutbox removed from defaults — opt-in via [FireAt(PreOutboxDetached)]
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("LifecycleStage.LocalImmediateInline");
-    await Assert.That(registry).Contains("LifecycleStage.PreOutboxInline");
-    await Assert.That(registry).Contains("LifecycleStage.PostInboxInline");
+    await Assert.That(registry).Contains("LifecycleStage.LocalImmediateDetached");
+    await Assert.That(registry).Contains("LifecycleStage.PostInboxDetached");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ReceptorWithFireAt_RegisteredOnlyAtSpecifiedStageAsync() {
     // Arrange - Receptor with [FireAt(PostInboxInline)] should only be registered at PostInboxInline
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1062,11 +1098,111 @@ public class AuditLogger : IReceptor<AuditEvent> {
     await Assert.That(auditEventCount).IsGreaterThan(0);
   }
 
+  /// <summary>
+  /// Pins the [FireAt] double-fire fix: PublishToReceptors (PublishAsync path) must NOT
+  /// emit explicit-stage receptors. They fire only at their declared lifecycle stage via
+  /// ReceptorInvoker. Prevents regression of the engineer-reported double-fire bug where
+  /// _dispatcher.PublishAsync(evt) inside a handler fired the [FireAt] receptor twice.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PublishToReceptors_OmitsFireAtReceptorsAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record SomeEvent : IEvent;
+
+// Default-stage void receptor — MUST be emitted in PublishToReceptors.
+public class DefaultStageReceptor : IReceptor<SomeEvent> {
+  public ValueTask HandleAsync(SomeEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+
+// Explicit [FireAt] void receptor — MUST NOT be emitted in PublishToReceptors; it
+// fires at its declared stage via ReceptorInvoker, not synchronously during publish.
+[FireAt(LifecycleStage.PostAllPerspectivesDetached)]
+public class FireAtReceptor : IReceptor<SomeEvent> {
+  public ValueTask HandleAsync(SomeEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Carve out just the PublishToReceptors block — we care about what's emitted for the
+    // PublishAsync path, not the cascade/untyped publish path.
+    var content = dispatcher!;
+    var publishStart = content.IndexOf("async Task PublishToReceptors(TEvent evt)", StringComparison.Ordinal);
+    await Assert.That(publishStart).IsGreaterThan(-1);
+    var publishEnd = content.IndexOf("return PublishToReceptors;", publishStart, StringComparison.Ordinal);
+    await Assert.That(publishEnd).IsGreaterThan(publishStart);
+    var publishBody = content[publishStart..publishEnd];
+
+    await Assert.That(publishBody).Contains("DefaultStageReceptor")
+      .Because("default-stage void receptors must still fire from PublishAsync");
+    await Assert.That(publishBody).DoesNotContain("FireAtReceptor")
+      .Because("[FireAt] receptors must be deferred to their declared stage, never emitted in PublishToReceptors");
+    await Assert.That(publishBody).DoesNotContain("if (!isDefaultDispatch)")
+      .Because("PublishAsync has no sourceEnvelope — no runtime gate needed when the [FireAt] block is omitted entirely");
+  }
+
+  /// <summary>
+  /// Symmetric guard: the cascade path (PublishToReceptorsUntyped) MUST still emit
+  /// [FireAt] receptors inside an `if (!isDefaultDispatch)` block. That path is shared
+  /// with code that invokes receptors with a non-default envelope; removing it would
+  /// silently break other callers.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PublishToReceptorsUntyped_KeepsFireAtGuardedByIsDefaultDispatchAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record SomeEvent : IEvent;
+
+[FireAt(LifecycleStage.PostAllPerspectivesDetached)]
+public class FireAtReceptor : IReceptor<SomeEvent> {
+  public ValueTask HandleAsync(SomeEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    var content = dispatcher!;
+    var untypedStart = content.IndexOf("async Task PublishToReceptorsUntyped", StringComparison.Ordinal);
+    await Assert.That(untypedStart).IsGreaterThan(-1);
+    var untypedEnd = content.IndexOf("return PublishToReceptorsUntyped;", untypedStart, StringComparison.Ordinal);
+    await Assert.That(untypedEnd).IsGreaterThan(untypedStart);
+    var untypedBody = content[untypedStart..untypedEnd];
+
+    await Assert.That(untypedBody).Contains("isDefaultDispatch")
+      .Because("cascade path still declares isDefaultDispatch from sourceEnvelope");
+    await Assert.That(untypedBody).Contains("if (!isDefaultDispatch)")
+      .Because("cascade path still gates [FireAt] receptors behind the isDefaultDispatch flag");
+    await Assert.That(untypedBody).Contains("FireAtReceptor")
+      .Because("[FireAt] receptor must still be present in the cascade path — just behind the runtime guard");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ReceptorRegistry_HasCorrectStructureAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1088,22 +1224,22 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
     // Assert - Verify structure of generated ReceptorRegistry
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("sealed class GeneratedReceptorRegistry");
+    await Assert.That(registry).Contains("sealed class GeneratedReceptorRegistry");
     // NOTE: GeneratedReceptorRegistry no longer has IServiceProvider field.
-    // Instead, the InvokeAsync delegate accepts (sp, msg, ct) where sp is the scoped provider.
+    // Instead, the InvokeAsync delegate accepts (sp, msg, envelope, callerInfo, ct) where sp is the scoped provider.
     await Assert.That(registry).Contains("GetReceptorsFor(Type messageType, LifecycleStage stage)");
     await Assert.That(registry).Contains("ReceptorInfo[]");
     await Assert.That(registry).Contains("ReceptorId:");
     await Assert.That(registry).Contains("InvokeAsync:");
-    // Verify the delegate signature accepts IServiceProvider as first parameter (sp)
-    await Assert.That(registry).Contains("(sp, msg, ct)");
+    // Verify the delegate signature accepts IServiceProvider, message, envelope, callerInfo, and cancellation token
+    await Assert.That(registry).Contains("(sp, msg, envelope, callerInfo, ct)");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_DispatcherRegistrations_IncludesAddWhizbangReceptorRegistryAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1125,7 +1261,7 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
     // Assert - DispatcherRegistrations should include AddWhizbangReceptorRegistry extension method
     var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
     await Assert.That(registrations).IsNotNull();
-    await Assert.That(registrations!).Contains("AddWhizbangReceptorRegistry");
+    await Assert.That(registrations).Contains("AddWhizbangReceptorRegistry");
     await Assert.That(registrations).Contains("IReceptorRegistry, GeneratedReceptorRegistry");
     await Assert.That(registrations).Contains("IReceptorInvoker, ReceptorInvoker");
   }
@@ -1134,7 +1270,7 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ZeroReceptors_GeneratesEmptyReceptorRegistryAsync() {
     // Arrange - Project with perspective but no receptors
-    var source = @"
+    const string source = @"
 using System;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
@@ -1162,8 +1298,8 @@ public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEv
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("class GeneratedReceptorRegistry");
-    await Assert.That(registry).Contains("return _emptyList");
+    await Assert.That(registry).Contains("class GeneratedReceptorRegistry");
+    await Assert.That(registry).Contains("_emptyList");
   }
 
   #region Multiple Handler Validation Tests
@@ -1178,7 +1314,7 @@ public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEv
   public async Task Generator_WithMultipleRpcHandlers_NoWarningWhenDisabledAsync() {
     // Arrange - Two handlers for the same message type with response (RPC pattern)
     // WHIZ080 diagnostic is disabled by default, so no warning should be emitted
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1222,7 +1358,7 @@ public class AnotherOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleVoidHandlers_NoErrorAsync() {
     // Arrange - Two void handlers for the same message type (event handling pattern)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1260,7 +1396,7 @@ public class SmsNotificationHandler : IReceptor<OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleSyncHandlers_NoErrorAsync() {
     // Arrange - Two sync handlers for the same message type with response
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Receptors;
@@ -1300,8 +1436,8 @@ public class SecondValidator : ISyncReceptor<ValidateOrder, ValidationResult> {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithDefaultRoutingAttribute_GeneratesRoutingLookupAsync() {
-    // Arrange - Receptor with [DefaultRouting(DispatchMode.Local)]
-    var source = @"
+    // Arrange - Receptor with [DefaultRouting(DispatchModes.Local)]
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1317,7 +1453,7 @@ public record CacheCreated : IEvent {
   public string Key { get; init; } = string.Empty;
 }
 
-[DefaultRouting(DispatchMode.Local)]
+[DefaultRouting(DispatchModes.Local)]
 public class CacheReceptor : IReceptor<CreateCache, CacheCreated> {
   public ValueTask<CacheCreated> HandleAsync(CreateCache message, CancellationToken ct = default) {
     return ValueTask.FromResult(new CacheCreated { Key = message.Key });
@@ -1333,9 +1469,9 @@ public class CacheReceptor : IReceptor<CreateCache, CacheCreated> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("GetReceptorDefaultRouting");
+    await Assert.That(dispatcher).Contains("GetReceptorDefaultRouting");
     await Assert.That(dispatcher).Contains("CreateCache");
-    await Assert.That(dispatcher).Contains("DispatchMode.Local");
+    await Assert.That(dispatcher).Contains("DispatchModes.Local");
   }
 
   /// <summary>
@@ -1345,7 +1481,7 @@ public class CacheReceptor : IReceptor<CreateCache, CacheCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithoutDefaultRoutingAttribute_ReturnsNullAsync() {
     // Arrange - Receptor WITHOUT [DefaultRouting]
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1375,7 +1511,7 @@ public class OrderReceptor : IReceptor<ProcessOrder, OrderProcessed> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("GetReceptorDefaultRouting");
+    await Assert.That(dispatcher).Contains("GetReceptorDefaultRouting");
     await Assert.That(dispatcher).Contains("return null");
   }
 
@@ -1386,7 +1522,7 @@ public class OrderReceptor : IReceptor<ProcessOrder, OrderProcessed> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMixedRoutingAttributes_GeneratesCorrectLookupsAsync() {
     // Arrange - Multiple receptors with different routing
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1406,21 +1542,21 @@ public record BothEvent : IEvent { }
 public record DefaultCommand : ICommand { }
 public record DefaultEvent : IEvent { }
 
-[DefaultRouting(DispatchMode.Local)]
+[DefaultRouting(DispatchModes.Local)]
 public class LocalReceptor : IReceptor<CacheCommand, CacheEvent> {
   public ValueTask<CacheEvent> HandleAsync(CacheCommand message, CancellationToken ct = default) {
     return ValueTask.FromResult(new CacheEvent());
   }
 }
 
-[DefaultRouting(DispatchMode.Outbox)]
+[DefaultRouting(DispatchModes.Outbox)]
 public class OutboxReceptor : IReceptor<OutboxCommand, OutboxEvent> {
   public ValueTask<OutboxEvent> HandleAsync(OutboxCommand message, CancellationToken ct = default) {
     return ValueTask.FromResult(new OutboxEvent());
   }
 }
 
-[DefaultRouting(DispatchMode.Both)]
+[DefaultRouting(DispatchModes.Both)]
 public class BothReceptor : IReceptor<BothCommand, BothEvent> {
   public ValueTask<BothEvent> HandleAsync(BothCommand message, CancellationToken ct = default) {
     return ValueTask.FromResult(new BothEvent());
@@ -1442,13 +1578,13 @@ public class DefaultReceptor : IReceptor<DefaultCommand, DefaultEvent> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("GetReceptorDefaultRouting");
+    await Assert.That(dispatcher).Contains("GetReceptorDefaultRouting");
     await Assert.That(dispatcher).Contains("CacheCommand");
-    await Assert.That(dispatcher).Contains("DispatchMode.Local");
+    await Assert.That(dispatcher).Contains("DispatchModes.Local");
     await Assert.That(dispatcher).Contains("OutboxCommand");
-    await Assert.That(dispatcher).Contains("DispatchMode.Outbox");
+    await Assert.That(dispatcher).Contains("DispatchModes.Outbox");
     await Assert.That(dispatcher).Contains("BothCommand");
-    await Assert.That(dispatcher).Contains("DispatchMode.Both");
+    await Assert.That(dispatcher).Contains("DispatchModes.Both");
   }
 
   #endregion
@@ -1463,7 +1599,7 @@ public class DefaultReceptor : IReceptor<DefaultCommand, DefaultEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync() {
     // Arrange - Receptor that returns an event (should generate cascade code)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1493,7 +1629,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("CascadeToOutboxAsync");
     await Assert.That(dispatcher).Contains("OrderCreated");
     await Assert.That(dispatcher).Contains("PublishToOutboxAsync");
   }
@@ -1505,7 +1641,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleEventTypes_GeneratesTypeSwitchAsync() {
     // Arrange - Multiple receptors returning different event types
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1543,7 +1679,7 @@ public class DeleteOrderReceptor : IReceptor<DeleteOrder, OrderDeleted> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("CascadeToOutboxAsync");
     await Assert.That(dispatcher).Contains("OrderCreated");
     await Assert.That(dispatcher).Contains("OrderUpdated");
     await Assert.That(dispatcher).Contains("OrderDeleted");
@@ -1556,7 +1692,7 @@ public class DeleteOrderReceptor : IReceptor<DeleteOrder, OrderDeleted> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithVoidReceptorOnly_GeneratesEmptyCascadeAsync() {
     // Arrange - Void receptor (no event return)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1582,7 +1718,7 @@ public class LogReceptor : IReceptor<LogMessage> {
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
     // With no events to cascade, should call base or return completed task
-    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("CascadeToOutboxAsync");
   }
 
   /// <summary>
@@ -1592,7 +1728,7 @@ public class LogReceptor : IReceptor<LogMessage> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithTupleResponse_ExtractsEventsForCascadeAsync() {
     // Arrange - Receptor returning tuple with events
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1617,7 +1753,7 @@ public class OrderReceptor : IReceptor<CreateOrder, (OrderCreated, NotificationS
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("CascadeToOutboxAsync");
     await Assert.That(dispatcher).Contains("OrderCreated");
     await Assert.That(dispatcher).Contains("NotificationSent");
   }
@@ -1629,7 +1765,7 @@ public class OrderReceptor : IReceptor<CreateOrder, (OrderCreated, NotificationS
   [RequiresAssemblyFiles()]
   public async Task Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1653,7 +1789,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("PublishToOutboxAsync");
+    await Assert.That(dispatcher).Contains("PublishToOutboxAsync");
     await Assert.That(dispatcher).Contains("MessageId.New()");
   }
 
@@ -1664,7 +1800,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithArrayResponse_IncludesEventTypeInCascadeAsync() {
     // Arrange - Receptor returning array of events
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1688,7 +1824,7 @@ public class BatchReceptor : IReceptor<ProcessBatch, ItemProcessed[]> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("CascadeToOutboxAsync");
     await Assert.That(dispatcher).Contains("ItemProcessed");
   }
 
@@ -1704,7 +1840,7 @@ public class BatchReceptor : IReceptor<ProcessBatch, ItemProcessed[]> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithRoutedResponse_ExtractsInnerTypeForCascadeAsync() {
     // Arrange - Receptor returning Routed<T> wrapper
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1735,7 +1871,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, Routed<ProcessedEvent>>
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("CascadeToOutboxAsync");
     // Should contain ProcessedEvent (the inner type) in cascade
     await Assert.That(dispatcher).Contains("ProcessedEvent");
 
@@ -1745,7 +1881,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, Routed<ProcessedEvent>>
     if (cascadeEnd < 0) {
       cascadeEnd = dispatcher.Length;
     }
-    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+    var cascadeSection = dispatcher[cascadeStart..cascadeEnd];
 
     // Cascade should NOT contain Routed<> wrapper type - only the inner type
     await Assert.That(cascadeSection).DoesNotContain("Routed<");
@@ -1760,7 +1896,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, Routed<ProcessedEvent>>
   [RequiresAssemblyFiles()]
   public async Task Generator_WithRoutedNoneResponse_DoesNotGenerateCascadeAsync() {
     // Arrange - Receptor returning RoutedNone (no events to cascade)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1794,7 +1930,7 @@ public class ValidateReceptor : IReceptor<ValidateCommand, RoutedNone> {
     if (cascadeEnd < 0) {
       cascadeEnd = dispatcher.Length;
     }
-    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+    var cascadeSection = dispatcher[cascadeStart..cascadeEnd];
 
     // Cascade section should NOT contain RoutedNone (nothing to cascade)
     await Assert.That(cascadeSection).DoesNotContain("RoutedNone");
@@ -1810,7 +1946,7 @@ public class ValidateReceptor : IReceptor<ValidateCommand, RoutedNone> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithRoutedResponse_ReportsReceptorInDiagnosticAsync() {
     // Arrange - Receptor returning Routed<T>
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1851,7 +1987,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, Routed<ProcessedEvent>>
   [RequiresAssemblyFiles()]
   public async Task Generator_WithTupleOfRoutedResponses_ExtractsInnerTypesAsync() {
     // Arrange - Receptor returning tuple with Routed wrappers (discriminated union pattern)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -1867,7 +2003,7 @@ public record FailureEvent : IEvent;
 public class ProcessReceptor : IReceptor<ProcessCommand, (Routed<SuccessEvent>, Routed<FailureEvent>)> {
   public ValueTask<(Routed<SuccessEvent>, Routed<FailureEvent>)> HandleAsync(ProcessCommand message, CancellationToken ct = default) {
     // Success path - returns success event, empty failure
-    return ValueTask.FromResult((Route.Outbox(new SuccessEvent()), new Routed<FailureEvent>(default!, DispatchMode.None)));
+    return ValueTask.FromResult((Route.Outbox(new SuccessEvent()), new Routed<FailureEvent>(default!, DispatchModes.None)));
   }
 }
 ";
@@ -1887,7 +2023,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, (Routed<SuccessEvent>, 
     if (cascadeEnd < 0) {
       cascadeEnd = dispatcher.Length;
     }
-    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+    var cascadeSection = dispatcher[cascadeStart..cascadeEnd];
 
     // Cascade should contain both inner event types (unwrapped from Routed<>)
     await Assert.That(cascadeSection).Contains("SuccessEvent");
@@ -1901,7 +2037,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, (Routed<SuccessEvent>, 
   public async Task Generator_WithNullableTupleElement_PreservesNullabilityAsync() {
     // Arrange - Tests that nullable tuple elements preserve the '?' annotation
     // This is the exact scenario from a consumer application where (List<IEvent>, FailedEvent?) was losing the ?
-    var source = @"
+    const string source = @"
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -1940,7 +2076,7 @@ public class BatchReceptor : IReceptor<ProcessBatch, (List<SuccessEvent>, Failur
 
     // The key assertion: the FailureEvent should have the ? preserved
     // The generated code should contain the nullable type annotation
-    await Assert.That(registrations!).Contains("FailureEvent?");
+    await Assert.That(registrations).Contains("FailureEvent?");
   }
 
   [Test]
@@ -1948,7 +2084,7 @@ public class BatchReceptor : IReceptor<ProcessBatch, (List<SuccessEvent>, Failur
   public async Task Generator_WithNullableTupleElement_StripsNullabilityInTypeofAsync() {
     // Arrange - Tests that nullable tuple elements have the '?' stripped in typeof() contexts
     // This prevents CS8639: The typeof operator cannot be used on a nullable reference type
-    var source = @"
+    const string source = @"
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -1987,10 +2123,10 @@ public class BatchReceptor : IReceptor<ProcessBatch, (List<SuccessEvent>, Failur
 
     // The key assertion: typeof() calls must NOT include the nullable annotation
     // typeof(FailureEvent?) would cause CS8639, so we must have typeof(FailureEvent) instead
-    await Assert.That(dispatcher!).DoesNotContain("typeof(global::MyApp.Receptors.FailureEvent?)");
+    await Assert.That(dispatcher).DoesNotContain("typeof(global::MyApp.Receptors.FailureEvent?)");
 
     // Verify the non-nullable typeof() IS present (for outbox cascade)
-    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
+    await Assert.That(dispatcher).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
   }
 
   [Test]
@@ -1998,7 +2134,7 @@ public class BatchReceptor : IReceptor<ProcessBatch, (List<SuccessEvent>, Failur
   public async Task Generator_WithListInTuple_ExtractsElementTypeForCascadeAsync() {
     // Arrange - Tests that List<T> inside a tuple extracts the element type for cascade
     // This is the exact scenario from a consumer application where (List<IEvent>, FailedEvent?) was not cascading
-    var source = @"
+    const string source = @"
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -2037,18 +2173,18 @@ public class BatchReceptor : IReceptor<ProcessBatchCommand, (List<BatchEvent>, F
 
     // The key assertion: cascade should include typeof(BatchEvent), NOT typeof(List<BatchEvent>)
     // List<T> element types should be extracted for cascade
-    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.BatchEvent)");
-    await Assert.That(dispatcher!).DoesNotContain("typeof(global::System.Collections.Generic.List<global::MyApp.Receptors.BatchEvent>)");
+    await Assert.That(dispatcher).Contains("typeof(global::MyApp.Receptors.BatchEvent)");
+    await Assert.That(dispatcher).DoesNotContain("typeof(global::System.Collections.Generic.List<global::MyApp.Receptors.BatchEvent>)");
 
     // Also verify FailureEvent is extracted (without the nullable annotation)
-    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
+    await Assert.That(dispatcher).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListResponseType_ExtractsElementTypeForCascadeAsync() {
     // Arrange - Tests that List<T> as a direct response type extracts the element type for cascade
-    var source = @"
+    const string source = @"
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -2082,8 +2218,8 @@ public class EventsReceptor : IReceptor<GetEventsCommand, List<MyEvent>> {
     await Assert.That(dispatcher).IsNotNull();
 
     // The key assertion: cascade should include typeof(MyEvent), NOT typeof(List<MyEvent>)
-    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.MyEvent)");
-    await Assert.That(dispatcher!).DoesNotContain("typeof(global::System.Collections.Generic.List<global::MyApp.Receptors.MyEvent>)");
+    await Assert.That(dispatcher).Contains("typeof(global::MyApp.Receptors.MyEvent)");
+    await Assert.That(dispatcher).DoesNotContain("typeof(global::System.Collections.Generic.List<global::MyApp.Receptors.MyEvent>)");
   }
 
   [Test]
@@ -2092,7 +2228,7 @@ public class EventsReceptor : IReceptor<GetEventsCommand, List<MyEvent>> {
     // Arrange - Tests that List<IEvent> uses 'is IEvent' pattern matching instead of 'typeof(IEvent)'
     // This is critical for the a consumer application scenario where (List<IEvent>, FailedEvent?) returns concrete types
     // At runtime, the message is typeof(ConcreteEvent), not typeof(IEvent), so exact matching fails
-    var source = @"
+    const string source = @"
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -2127,19 +2263,19 @@ public class BatchReceptor : IReceptor<ProcessBatchCommand, (List<IEvent>, Failu
 
     // Key assertion: Interface types use pattern matching 'is IEvent' instead of 'typeof(IEvent)'
     // This allows concrete types that implement IEvent to match at runtime
-    await Assert.That(dispatcher!).Contains("message is global::Whizbang.Core.IEvent");
+    await Assert.That(dispatcher).Contains("message is global::Whizbang.Core.IEvent");
 
     // Should NOT use exact typeof() matching for IEvent (which would never match concrete types)
-    await Assert.That(dispatcher!).DoesNotContain("messageType == typeof(global::Whizbang.Core.IEvent)");
+    await Assert.That(dispatcher).DoesNotContain("messageType == typeof(global::Whizbang.Core.IEvent)");
 
     // Interface types use PublishToOutboxDynamicAsync (serializes using runtime type, not interface)
-    await Assert.That(dispatcher!).Contains("PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope)");
+    await Assert.That(dispatcher).Contains("PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope)");
 
     // Concrete types like FailureEvent should still use exact typeof() matching
-    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
+    await Assert.That(dispatcher).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
 
     // Concrete types use regular PublishToOutboxAsync
-    await Assert.That(dispatcher!).Contains("PublishToOutboxAsync((global::MyApp.Receptors.FailureEvent)message");
+    await Assert.That(dispatcher).Contains("PublishToOutboxAsync((global::MyApp.Receptors.FailureEvent)message");
   }
 
   #endregion
@@ -2154,7 +2290,7 @@ public class BatchReceptor : IReceptor<ProcessBatchCommand, (List<IEvent>, Failu
   [RequiresAssemblyFiles()]
   public async Task Generator_ProducesUntypedPublisher_WithEnvelopeParameterAsync() {
     // Arrange - Receptor returning event (requires cascade support)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2186,7 +2322,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify the signature includes IMessageEnvelope? parameter
-    await Assert.That(dispatcher!).Contains("global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope");
+    await Assert.That(dispatcher).Contains("global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope");
   }
 
   /// <summary>
@@ -2197,7 +2333,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ProducesUntypedPublisher_WithCancellationTokenParameterAsync() {
     // Arrange - Receptor returning event (requires cascade support)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2223,7 +2359,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify the signature includes CancellationToken parameter
-    await Assert.That(dispatcher!).Contains("global::System.Threading.CancellationToken cancellationToken");
+    await Assert.That(dispatcher).Contains("global::System.Threading.CancellationToken cancellationToken");
   }
 
   /// <summary>
@@ -2234,7 +2370,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ProducesUntypedPublisher_CallsEstablishFullContextAsync() {
     // Arrange - Receptor returning event (requires cascade with security context)
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2260,7 +2396,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, ProcessedEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify EstablishFullContextAsync is called
-    await Assert.That(dispatcher!).Contains("await global::Whizbang.Core.Security.SecurityContextHelper.EstablishFullContextAsync");
+    await Assert.That(dispatcher).Contains("await global::Whizbang.Core.Security.SecurityContextHelper.EstablishFullContextAsync");
     await Assert.That(dispatcher).Contains("sourceEnvelope");
     await Assert.That(dispatcher).Contains("scope.ServiceProvider");
   }
@@ -2273,7 +2409,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, ProcessedEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ProducesUntypedPublisher_PassesCancellationToHandleAsync() {
     // Arrange - Receptor that should receive cancellation token
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2298,8 +2434,8 @@ public class ExecuteReceptor : IReceptor<ExecuteCommand, ExecutedEvent> {
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
 
-    // Verify cancellationToken is passed to HandleAsync
-    await Assert.That(dispatcher!).Contains("await receptor.HandleAsync(typedEvt, cancellationToken)");
+    // Verify cancellationToken is passed to HandleAsync (per-receptor keyed invocation)
+    await Assert.That(dispatcher).Contains("await r.HandleAsync(typedEvt, cancellationToken)");
   }
 
   /// <summary>
@@ -2310,7 +2446,7 @@ public class ExecuteReceptor : IReceptor<ExecuteCommand, ExecutedEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ProducesUntypedPublisher_UsesFullyQualifiedNamesAsync() {
     // Arrange - Simple receptor to test generated code quality
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2336,7 +2472,7 @@ public class TestReceptor : IReceptor<TestCommand, TestEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify fully qualified names are used (global:: prefix)
-    await Assert.That(dispatcher!).Contains("global::Whizbang.Core.Observability.IMessageEnvelope?");
+    await Assert.That(dispatcher).Contains("global::Whizbang.Core.Observability.IMessageEnvelope?");
     await Assert.That(dispatcher).Contains("global::System.Threading.CancellationToken");
     await Assert.That(dispatcher).Contains("global::Whizbang.Core.Security.SecurityContextHelper");
   }
@@ -2349,7 +2485,7 @@ public class TestReceptor : IReceptor<TestCommand, TestEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ProducesUntypedPublisher_ChecksNullEnvelopeAsync() {
     // Arrange - Receptor that should handle null envelope gracefully
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2375,7 +2511,7 @@ public class ValidationReceptor : IReceptor<ValidateCommand, ValidationResult> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify null check before establishing context
-    await Assert.That(dispatcher!).Contains("if (sourceEnvelope is not null)");
+    await Assert.That(dispatcher).Contains("if (sourceEnvelope is not null)");
   }
 
   /// <summary>
@@ -2386,7 +2522,7 @@ public class ValidationReceptor : IReceptor<ValidateCommand, ValidationResult> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ProducesUntypedPublisher_DisposesScope_InFinallyAsync() {
     // Arrange - Receptor that requires proper scope disposal
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2412,7 +2548,7 @@ public class CleanupReceptor : IReceptor<CleanupCommand, CleanupEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify try-finally pattern with scope disposal
-    await Assert.That(dispatcher!).Contains("try");
+    await Assert.That(dispatcher).Contains("try");
     await Assert.That(dispatcher).Contains("finally");
     // Scope disposal should be in finally block (either Dispose or DisposeAsync)
     var finallyIndex = dispatcher.IndexOf("finally", StringComparison.Ordinal);
@@ -2421,7 +2557,7 @@ public class CleanupReceptor : IReceptor<CleanupCommand, CleanupEvent> {
       endIndex = dispatcher.Length;
     }
 
-    var finallySection = dispatcher.Substring(finallyIndex, endIndex - finallyIndex);
+    var finallySection = dispatcher[finallyIndex..endIndex];
     await Assert.That(finallySection).Contains("scope");
   }
 
@@ -2433,7 +2569,7 @@ public class CleanupReceptor : IReceptor<CleanupCommand, CleanupEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ProducesUntypedPublisher_HandlesAsyncDisposable_CorrectlyAsync() {
     // Arrange - Receptor that requires async disposal handling
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2459,7 +2595,7 @@ public class AsyncReceptor : IReceptor<AsyncCommand, AsyncEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify IAsyncDisposable check and DisposeAsync call
-    await Assert.That(dispatcher!).Contains("if (scope is IAsyncDisposable asyncDisposable)");
+    await Assert.That(dispatcher).Contains("if (scope is IAsyncDisposable asyncDisposable)");
     await Assert.That(dispatcher).Contains("await asyncDisposable.DisposeAsync()");
     // Fallback to Dispose for non-async disposable scopes
     await Assert.That(dispatcher).Contains("scope.Dispose()");
@@ -2473,7 +2609,7 @@ public class AsyncReceptor : IReceptor<AsyncCommand, AsyncEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNullEnvelope_CallsEstablishMessageContextForCascadeAsync() {
     // Arrange - Receptor that requires security context in cascade
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2499,7 +2635,7 @@ public class CascadeReceptor : IReceptor<CascadeCommand, CascadeEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify else branch exists and calls EstablishMessageContextForCascade
-    await Assert.That(dispatcher!).Contains("} else {");
+    await Assert.That(dispatcher).Contains("} else {");
     await Assert.That(dispatcher).Contains("EstablishMessageContextForCascade(scope.ServiceProvider)");
   }
 
@@ -2511,7 +2647,7 @@ public class CascadeReceptor : IReceptor<CascadeCommand, CascadeEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ProducesElseBranch_AfterNullCheckAsync() {
     // Arrange - Simple receptor to verify control flow structure
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2552,7 +2688,7 @@ public class FlowReceptor : IReceptor<FlowCommand, FlowEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ElseBranch_CallsCorrectMethodAsync() {
     // Arrange - Receptor requiring correct cascade context establishment
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2578,7 +2714,7 @@ public class MethodReceptor : IReceptor<MethodCommand, MethodEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify exact method name is used (with scope.ServiceProvider parameter)
-    await Assert.That(dispatcher!).Contains("EstablishMessageContextForCascade(scope.ServiceProvider)");
+    await Assert.That(dispatcher).Contains("EstablishMessageContextForCascade(scope.ServiceProvider)");
     // Should NOT have sourceEnvelope parameter
     await Assert.That(dispatcher).DoesNotContain("EstablishMessageContextForCascade(sourceEnvelope");
   }
@@ -2591,7 +2727,7 @@ public class MethodReceptor : IReceptor<MethodCommand, MethodEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ElseBranch_UsesFullyQualifiedNameAsync() {
     // Arrange - Receptor requiring AOT-compatible code generation
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2617,7 +2753,7 @@ public class QualifiedReceptor : IReceptor<QualifiedCommand, QualifiedEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify fully qualified name with global:: prefix
-    await Assert.That(dispatcher!).Contains("global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider)");
+    await Assert.That(dispatcher).Contains("global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider)");
   }
 
   /// <summary>
@@ -2628,7 +2764,7 @@ public class QualifiedReceptor : IReceptor<QualifiedCommand, QualifiedEvent> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ElseBranch_IncludesCommentAsync() {
     // Arrange - Receptor requiring well-documented generated code
-    var source = @"
+    const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -2654,12 +2790,373 @@ public class CommentReceptor : IReceptor<CommentCommand, CommentEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Debug: Write generated code to see what we're actually getting
-    System.IO.File.WriteAllText("/tmp/test-dispatcher.g.cs", dispatcher!);
+    System.IO.File.WriteAllText("/tmp/test-dispatcher.g.cs", dispatcher);
 
     // Verify the dispatcher contains the else branch with cascade security context establishment
     await Assert.That(dispatcher!.Contains("} else {", StringComparison.Ordinal)).IsTrue();
     await Assert.That(dispatcher.Contains("EstablishMessageContextForCascade", StringComparison.Ordinal)).IsTrue();
   }
+
+  #endregion
+
+  // ==================== Polymorphic Receptor Expansion Tests ====================
+
+  #region Polymorphic Receptor Expansion Tests
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInterfaceReceptor_ExpandsToConcreteTypes_InRegistryAsync() {
+    // Arrange - Interface with two concrete implementations, receptor for the interface
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+
+public record ConcreteEventA : IEvent, IMyMarker;
+public record ConcreteEventB : IEvent, IMyMarker;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - ReceptorRegistry should have entries for both concrete types
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.ConcreteEventA)");
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.ConcreteEventB)");
+    await Assert.That(registry).Contains("LifecycleStage.PrePerspectiveInline");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInterfaceReceptor_PreservesOriginalInterfaceEntry_InRegistryAsync() {
+    // Arrange - Same as above; verify the original interface entry is also generated
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+
+public record ConcreteEventA : IEvent, IMyMarker;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Original interface entry should also exist for direct dispatch
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.IMyMarker)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithBaseClassReceptor_ExpandsToConcreteTypes_InRegistryAsync() {
+    // Arrange - Base class with two concrete derived classes, receptor for the base
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public record MyBaseEvent : IEvent;
+public record DerivedEventA : MyBaseEvent;
+public record DerivedEventB : MyBaseEvent;
+
+[FireAt(LifecycleStage.PostPerspectiveDetached)]
+public class BaseReceptor : IReceptor<MyBaseEvent> {
+  public ValueTask HandleAsync(MyBaseEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - ReceptorRegistry should have entries for both derived types
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.DerivedEventA)");
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.DerivedEventB)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithSealedClassReceptor_DoesNotExpandAsync() {
+    // Arrange - Sealed class cannot have subtypes, no expansion
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public sealed record MySealedEvent : IEvent;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class SealedReceptor : IReceptor<MySealedEvent> {
+  public ValueTask HandleAsync(MySealedEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Only the sealed type entry exists
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.MySealedEvent)");
+
+    // Count if-condition occurrences - should appear only once (no expansion added extra entries)
+    // The pattern "messageType == typeof(...)" appears in the if-condition only
+    var ifConditionMatches = registry.Split("messageType == typeof(global::MyApp.Events.MySealedEvent)").Length - 1;
+    await Assert.That(ifConditionMatches).IsEqualTo(1);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPolymorphicReceptor_SkipsAbstractDerivedTypesAsync() {
+    // Arrange - Interface → abstract class → concrete class; only concrete gets expanded
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+
+public abstract record AbstractMiddle : IEvent, IMyMarker;
+public record ConcreteLeaf : AbstractMiddle;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Only the concrete class gets an expanded entry, not the abstract one
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.ConcreteLeaf)");
+    await Assert.That(registry).DoesNotContain("typeof(global::MyApp.Events.AbstractMiddle)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPolymorphicReceptor_MergesWithExistingEntriesAsync() {
+    // Arrange - ConcreteEvent implements IMyMarker. One receptor for ConcreteEvent AND one for IMyMarker
+    // at the same stage. Both should appear in a SINGLE array for typeof(ConcreteEvent).
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+public record ConcreteEvent : IEvent, IMyMarker;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class DirectReceptor : IReceptor<ConcreteEvent> {
+  public ValueTask HandleAsync(ConcreteEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Both receptors should be in the same array for typeof(ConcreteEvent)
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+
+    // The ConcreteEvent entry should contain both receptor IDs
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.ConcreteEvent)");
+    await Assert.That(registry).Contains("DirectReceptor");
+    await Assert.That(registry).Contains("MarkerReceptor");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPolymorphicReceptor_NoImplementors_GeneratesOnlyInterfaceEntryAsync() {
+    // Arrange - Interface with NO implementing concrete types
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IEmptyMarker { }
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class EmptyReceptor : IReceptor<IEmptyMarker> {
+  public ValueTask HandleAsync(IEmptyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Only the interface entry exists (no expansion because no implementors)
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.IEmptyMarker)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInterfaceReceptor_ExpandsNestedConcreteTypes_InRegistryAsync() {
+    // Arrange - Concrete types nested inside a static contracts class (real-world pattern)
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+
+public static class MyContracts {
+  public record NestedEventA : IEvent, IMyMarker;
+  public record NestedEventB : IEvent, IMyMarker;
+}
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Nested concrete types should be expanded
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("MyApp.Events.MyContracts.NestedEventA");
+    await Assert.That(registry).Contains("MyApp.Events.MyContracts.NestedEventB");
+  }
+
+  // Persistence-completeness fallback: the generated cascade type-switch (CascadeToOutboxAsync /
+  // CascadeToEventStoreOnlyAsync) must always end with an IEvent catch-all so an event with no concrete arm —
+  // e.g. a composite inner event whose type no receptor produces — is never silently dropped from the event store.
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_CascadeSwitch_EmitsIEventFallbackForPersistenceCompletenessAsync() {
+    // Arrange - an ordinary command→event receptor (concrete response type, no bare-interface response).
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateThing : ICommand { public string Id { get; init; } = string.Empty; }
+public record ThingCreated : IEvent { public string Id { get; init; } = string.Empty; }
+
+public class ThingReceptor : IReceptor<CreateThing, ThingCreated> {
+  public ValueTask<ThingCreated> HandleAsync(CreateThing message, CancellationToken ct = default)
+    => ValueTask.FromResult(new ThingCreated { Id = message.Id });
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - the cascade switch ends with the IEvent catch-all routing via runtime-typed dispatch, and it is
+    // present on the event-store-only path (composite fan-out persists inner events with no concrete arm).
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher).Contains("if (message is global::Whizbang.Core.IEvent) {")
+      .Because("every cascade switch must end with an IEvent catch-all so no event is silently dropped.");
+    await Assert.That(dispatcher).Contains("PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly: true)")
+      .Because("the event-store-only cascade fallback persists an unmatched inner event via runtime-typed dispatch.");
+    // Exactly one catch-all per cascade method (CascadeToOutboxAsync + CascadeToEventStoreOnlyAsync) → 2 total.
+    await Assert.That(_countOccurrences(dispatcher!, "if (message is global::Whizbang.Core.IEvent) {")).IsEqualTo(2)
+      .Because("the fallback is emitted once per cascade method (outbox + event-store-only).");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_CascadeSwitch_SkipsRedundantIEventFallback_WhenReceptorReturnsBareInterfaceAsync() {
+    // Arrange - a receptor whose RESPONSE type is the bare IEvent interface. That already emits an
+    // `if (message is IEvent)` interface arm in each cascade method, so the persistence-completeness fallback
+    // must be skipped (adding a second identical catch-all would be dead code).
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateThing : ICommand { public string Id { get; init; } = string.Empty; }
+public record ThingCreated : IEvent { public string Id { get; init; } = string.Empty; }
+
+public class ThingReceptor : IReceptor<CreateThing, IEvent> {
+  public ValueTask<IEvent> HandleAsync(CreateThing message, CancellationToken ct = default)
+    => ValueTask.FromResult<IEvent>(new ThingCreated { Id = message.Id });
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - the IEvent arm appears exactly twice (one interface arm per cascade method), NOT four times: the
+    // fallback was deduped against the existing bare-IEvent interface arm.
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(_countOccurrences(dispatcher!, "if (message is global::Whizbang.Core.IEvent) {")).IsEqualTo(2)
+      .Because("a bare-IEvent receptor response already emits the interface catch-all per cascade method; the fallback must dedup against it rather than emit a redundant second arm.");
+  }
+
+  private static int _countOccurrences(string haystack, string needle) =>
+    (haystack.Length - haystack.Replace(needle, "", StringComparison.Ordinal).Length) / needle.Length;
 
   #endregion
 }

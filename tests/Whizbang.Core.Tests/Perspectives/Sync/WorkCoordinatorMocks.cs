@@ -8,12 +8,25 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// Provides configurable behavior for sync testing.
 /// </summary>
 internal sealed class MockWorkCoordinator : IWorkCoordinator {
-  private readonly Func<ProcessWorkBatchRequest, CancellationToken, Task<WorkBatch>>? _processHandler;
+  private readonly Func<IReadOnlyList<SyncInquiry>, CancellationToken, Task<WorkBatch>>? _processHandler;
 
   public MockWorkCoordinator() { }
 
-  public MockWorkCoordinator(Func<ProcessWorkBatchRequest, CancellationToken, Task<WorkBatch>> processHandler) {
+  public MockWorkCoordinator(Func<IReadOnlyList<SyncInquiry>, CancellationToken, Task<WorkBatch>> processHandler) {
     _processHandler = processHandler;
+  }
+
+  public async Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+    IReadOnlyList<SyncInquiry> inquiries,
+    CancellationToken cancellationToken = default) {
+    // PerspectiveSyncAwaiter's only coordinator call for sync. Tests express the desired
+    // sync result via a WorkBatch.SyncInquiryResults handler; route the live inquiries
+    // through it so a handler can echo back inquiry ids when it needs to.
+    if (_processHandler is null) {
+      return [];
+    }
+    var probe = await _processHandler(inquiries, cancellationToken).ConfigureAwait(false);
+    return probe.SyncInquiryResults ?? [];
   }
 
   /// <summary>
@@ -33,27 +46,21 @@ internal sealed class MockWorkCoordinator : IWorkCoordinator {
     }));
   }
 
-  public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
-    if (_processHandler != null) {
-      return _processHandler(request, ct);
-    }
-    return Task.FromResult(new WorkBatch {
-      OutboxWork = [],
-      InboxWork = [],
-      PerspectiveWork = [],
-      SyncInquiryResults = null
-    });
-  }
-
-  public Task ReportPerspectiveCompletionAsync(PerspectiveCheckpointCompletion completion, CancellationToken ct = default) {
+  public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
     return Task.CompletedTask;
   }
 
-  public Task ReportPerspectiveFailureAsync(PerspectiveCheckpointFailure failure, CancellationToken ct = default) {
+  public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
     return Task.CompletedTask;
   }
 
-  public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
-    return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+  public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+  public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    return Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 }

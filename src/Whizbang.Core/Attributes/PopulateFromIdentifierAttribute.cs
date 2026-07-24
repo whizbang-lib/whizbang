@@ -26,7 +26,7 @@ namespace Whizbang.Core.Attributes;
 /// ) : IEvent;
 /// </code>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromIdentifierAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
 public sealed class PopulateFromIdentifierAttribute(IdentifierKind kind) : Attribute {

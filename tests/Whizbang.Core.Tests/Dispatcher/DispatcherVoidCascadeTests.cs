@@ -34,7 +34,7 @@ public class DispatcherVoidCascadeTests {
   /// Uses [DefaultRouting(Local)] to ensure local cascade for test verification.
   /// (Default system routing is Outbox for cross-service delivery)
   /// </summary>
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record OrderProcessedEvent([property: StreamId] Guid OrderId, Guid CustomerId) : IEvent;
 
   /// <summary>
@@ -51,7 +51,7 @@ public class DispatcherVoidCascadeTests {
   /// </summary>
   public static class VoidCascadeEventTracker {
     private static readonly List<IEvent> _publishedEvents = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {
@@ -67,7 +67,7 @@ public class DispatcherVoidCascadeTests {
 
     public static IReadOnlyList<IEvent> GetPublishedEvents() {
       lock (_lock) {
-        return _publishedEvents.ToList();
+        return [.. _publishedEvents];
       }
     }
 

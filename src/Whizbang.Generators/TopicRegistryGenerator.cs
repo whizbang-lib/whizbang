@@ -14,6 +14,7 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class TopicRegistryGenerator : IIncrementalGenerator {
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover event/command types with [Topic] attribute or convention-based routing
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
@@ -46,74 +47,67 @@ public class TopicRegistryGenerator : IIncrementalGenerator {
   private static TopicInfo? _extractTopicInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
     // Get type symbol
-    var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (typeSymbol is null || typeSymbol.IsAbstract) {
-      return null;  // Early exit - Roslyn returned null or abstract type
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol || typeSymbol.IsAbstract) {
+      return null;
     }
 
-    // Skip non-public types (private, internal, etc.)
     if (typeSymbol.DeclaredAccessibility != Microsoft.CodeAnalysis.Accessibility.Public) {
-      return null;  // Early exit - not public
+      return null;
     }
 
-    // Check if implements IEvent or ICommand
     var isEvent = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_EVENT);
     var isCommand = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND);
 
     if (!isEvent && !isCommand) {
-      return null;  // Early exit - not a message type
+      return null;
     }
 
-    // Get fully qualified type name
     var fullTypeName = TypeNameHelper.GetFullyQualifiedName(typeSymbol);
-
-    // Check for [Topic] attribute
-    var topicAttribute = typeSymbol.GetAttributes()
-        .FirstOrDefault(attr =>
-            attr.AttributeClass is not null &&
-            TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.TOPIC_ATTRIBUTE);
-
-    string? baseTopic = null;
-
-    if (topicAttribute is not null) {
-      // Extract topic name from attribute
-      if (topicAttribute.ConstructorArguments.Length > 0) {
-        var topicNameArg = topicAttribute.ConstructorArguments[0];
-        if (topicNameArg.Value is string topicName) {
-          baseTopic = topicName;
-        }
-      }
-    } else {
-      // Fall back to convention-based routing
-      var typeName = typeSymbol.Name;
-      if (typeName.StartsWith("Product", System.StringComparison.Ordinal)) {
-        baseTopic = "products";
-      } else if (typeName.StartsWith("Inventory", System.StringComparison.Ordinal)) {
-        baseTopic = "inventory";
-      } else if (typeName.StartsWith("Order", System.StringComparison.Ordinal)) {
-        baseTopic = "orders";
-      } else {
-        // Default: remove "Event"/"Command" suffix and lowercase
-        baseTopic = typeName
-            .Replace("Event", "")
-            .Replace("Command", "")
-            .ToLowerInvariant();
-      }
-    }
+    var baseTopic = _resolveBaseTopic(typeSymbol);
 
     if (baseTopic is null) {
-      return null;  // Couldn't determine topic
+      return null;
     }
 
     return new TopicInfo(
         TypeName: fullTypeName,
         BaseTopic: baseTopic
     );
+  }
+
+  private static string? _resolveBaseTopic(INamedTypeSymbol typeSymbol) {
+    var topicAttribute = typeSymbol.GetAttributes()
+        .FirstOrDefault(attr =>
+            attr.AttributeClass is not null &&
+            TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.TOPIC_ATTRIBUTE);
+
+    if (topicAttribute is not null) {
+      if (topicAttribute.ConstructorArguments.Length > 0 &&
+          topicAttribute.ConstructorArguments[0].Value is string topicName) {
+        return topicName;
+      }
+      return null;
+    }
+
+    // Fall back to convention-based routing
+    var typeName = typeSymbol.Name;
+    if (typeName.StartsWith("Product", System.StringComparison.Ordinal)) {
+      return "products";
+    }
+    if (typeName.StartsWith("Inventory", System.StringComparison.Ordinal)) {
+      return "inventory";
+    }
+    if (typeName.StartsWith("Order", System.StringComparison.Ordinal)) {
+      return "orders";
+    }
+    return typeName
+        .Replace("Event", "")
+        .Replace("Command", "")
+        .ToLowerInvariant();
   }
 
   /// <summary>

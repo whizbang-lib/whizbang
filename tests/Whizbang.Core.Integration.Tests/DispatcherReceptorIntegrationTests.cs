@@ -322,7 +322,7 @@ public class DispatcherReceptorIntegrationTests {
     var provider = services.BuildServiceProvider();
     var dispatcher = provider.GetRequiredService<IDispatcher>();
 
-    var email = "user@example.com";
+    const string email = "user@example.com";
 
     // Act - Step 1: Create user
     var userCreated = await dispatcher.LocalInvokeAsync<UserCreated>(
@@ -469,7 +469,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act
-    var result = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
+    _ = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
 
     // Assert - Verify envelope was created and stored
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);
@@ -509,7 +509,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act - Note: The line number below should be captured!
-    var result = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
+    _ = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
 
     // Assert
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);
@@ -540,14 +540,13 @@ public class DispatcherReceptorIntegrationTests {
     var context = MessageContext.Create(Whizbang.Core.ValueObjects.CorrelationId.New());
 
     // Act - Send two messages
-    var result1 = await dispatcher.LocalInvokeAsync<OrderPlaced>(
+    _ = await dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(Guid.NewGuid(), [new OrderItem("SKU-001", 1, 10.00m)]),
         context
     );
 
     await Task.Delay(10); // Small delay to ensure different timestamps
-
-    var result2 = await dispatcher.LocalInvokeAsync<OrderPlaced>(
+    _ = await dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(Guid.NewGuid(), [new OrderItem("SKU-002", 2, 20.00m)]),
         context
     );
@@ -594,7 +593,7 @@ public class DispatcherReceptorIntegrationTests {
     var orderPlacedEnvelopeId = envelopes1[0].MessageId;
 
     var context2 = MessageContext.Create(correlationId, orderPlacedEnvelopeId);
-    var orderShipped = await dispatcher.LocalInvokeAsync<OrderShipped>(
+    _ = await dispatcher.LocalInvokeAsync<OrderShipped>(
         new ShipOrder(orderPlaced.OrderId, "123 Main St"),
         context2
     );
@@ -635,7 +634,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act
-    var result = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
+    _ = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
 
     // Assert - Verify envelope was created (security context will be added in future)
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);

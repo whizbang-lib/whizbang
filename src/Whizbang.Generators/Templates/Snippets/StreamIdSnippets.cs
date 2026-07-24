@@ -81,6 +81,20 @@ public class StreamIdSnippets {
   }
 
   /// <summary>
+  /// Example method showing snippet structure for the object-typed (other-types) dispatch routing.
+  /// Used for composites — IMessage-not-IEvent types that carry [StreamId].
+  /// </summary>
+  public Guid? OtherTryDispatchExample(object message) {
+    #region OTHER_TRY_DISPATCH_CASE
+    if (message is __EVENT_TYPE__ o__INDEX__) {
+      return TryExtractAsGuid(o__INDEX__);
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
   /// Example method showing snippet structure for TryExtractAsGuid method for Guid properties.
   /// </summary>
   public Guid? TryExtractorGuidExample() {
@@ -181,6 +195,47 @@ public class StreamIdSnippets {
     #endregion
 
     return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for generation policy dispatch routing.
+  /// </summary>
+  public (bool, bool) GenerationPolicyExample() {
+    #region GENERATION_POLICY_CASE
+    if (message is __EVENT_TYPE__) {
+      return (__SHOULD_GENERATE__, __ONLY_IF_EMPTY__);
+    }
+    #endregion
+
+    return (false, false);
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for SetStreamId dispatch routing for events.
+  /// </summary>
+  public bool SetStreamIdEventExample() {
+    #region SET_STREAM_ID_EVENT_CASE
+    if (message is __EVENT_TYPE__ setE__INDEX__) {
+      setE__INDEX__.__PROPERTY_NAME__ = streamId;
+      return true;
+    }
+    #endregion
+
+    return false;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for SetStreamId dispatch routing for commands.
+  /// </summary>
+  public bool SetStreamIdCommandExample() {
+    #region SET_STREAM_ID_COMMAND_CASE
+    if (message is __COMMAND_TYPE__ setC__INDEX__) {
+      setC__INDEX__.__PROPERTY_NAME__ = streamId;
+      return true;
+    }
+    #endregion
+
+    return false;
   }
 
   // ========================================

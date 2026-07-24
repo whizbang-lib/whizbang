@@ -21,7 +21,7 @@ namespace Whizbang.Migrate.Wizard;
 [JsonSerializable(typeof(UnknownInterfaceDecisions))]
 [JsonSerializable(typeof(PackageDecisions))]
 [JsonSerializable(typeof(JsonMigrationDecisions))]
-internal sealed partial class DecisionFileJsonContext : JsonSerializerContext { }
+internal sealed partial class DecisionFileJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Represents a migration decision file that stores all migration choices and state.
@@ -657,7 +657,7 @@ public enum DecisionChoice {
   Skip,
 
   /// <summary>
-  /// Convert but add a warning/TODO comment.
+  /// Convert but add a warning comment indicating manual review is needed.
   /// </summary>
   ConvertWithWarning,
 
@@ -920,7 +920,7 @@ public enum CustomBaseClassStrategy {
   /// <summary>
   /// Keep the base class inheritance and add Whizbang interface implementation.
   /// The user is expected to manually adapt the base class to work with Whizbang.
-  /// Generates a TODO comment reminding the user to update the base class.
+  /// Generates a review-needed comment reminding the user to update the base class.
   /// </summary>
   KeepInheritance,
 
@@ -1027,7 +1027,7 @@ public sealed class JsonMigrationDecisions {
   public bool RemoveDeadImports { get; set; } = true;
 
   /// <summary>
-  /// Whether to add TODO comments for unsupported patterns. Default: true.
+  /// Whether to add action-needed comments for unsupported patterns. Default: true.
   /// </summary>
   public bool AddTodoForUnsupported { get; set; } = true;
 

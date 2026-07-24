@@ -4,9 +4,9 @@ namespace Whizbang.Core.ValueObjects;
 /// Metadata flags for tracking UUID generation provenance.
 /// Tracks both the version (v4 vs v7) and the source of the UUID.
 /// </summary>
-/// <docs>core-concepts/whizbang-ids#guid-metadata</docs>
+/// <docs>fundamentals/identity/whizbang-ids#guid-metadata</docs>
 [Flags]
-public enum GuidMetadata : ushort {
+public enum GuidMetadatas : ushort {
   /// <summary>No metadata set.</summary>
   None = 0,
 
@@ -73,13 +73,13 @@ public enum GuidMetadata : ushort {
 /// Internal helper constants for common metadata combinations.
 /// </summary>
 internal static class GuidMetadataExtensions {
-  internal const GuidMetadata MEDO_V7 = GuidMetadata.Version7 | GuidMetadata.SourceMedo;
-  internal const GuidMetadata MICROSOFT_V7 = GuidMetadata.Version7 | GuidMetadata.SourceMicrosoft;
-  internal const GuidMetadata MICROSOFT_V4 = GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft;
-  internal const GuidMetadata EXTERNAL_V7 = GuidMetadata.Version7 | GuidMetadata.SourceExternal;
-  internal const GuidMetadata EXTERNAL_V4 = GuidMetadata.Version4 | GuidMetadata.SourceExternal;
-  internal const GuidMetadata PARSED_V7 = GuidMetadata.Version7 | GuidMetadata.SourceParsed;
-  internal const GuidMetadata PARSED_V4 = GuidMetadata.Version4 | GuidMetadata.SourceParsed;
-  internal const GuidMetadata UNKNOWN_V7 = GuidMetadata.Version7 | GuidMetadata.SourceUnknown;
-  internal const GuidMetadata UNKNOWN_V4 = GuidMetadata.Version4 | GuidMetadata.SourceUnknown;
+  internal const GuidMetadatas MEDO_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceMedo;
+  internal const GuidMetadatas MICROSOFT_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceMicrosoft;
+  internal const GuidMetadatas MICROSOFT_V4 = GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft;
+  internal const GuidMetadatas EXTERNAL_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceExternal;
+  internal const GuidMetadatas EXTERNAL_V4 = GuidMetadatas.Version4 | GuidMetadatas.SourceExternal;
+  internal const GuidMetadatas PARSED_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceParsed;
+  internal const GuidMetadatas PARSED_V4 = GuidMetadatas.Version4 | GuidMetadatas.SourceParsed;
+  internal const GuidMetadatas UNKNOWN_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceUnknown;
+  internal const GuidMetadatas UNKNOWN_V4 = GuidMetadatas.Version4 | GuidMetadatas.SourceUnknown;
 }

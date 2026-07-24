@@ -93,12 +93,6 @@ public sealed class GitWorktreeService : IGitWorktreeService {
       return null;
     }
 
-    // Get current stash count
-    var stashListBefore = await _runGitAsync(repositoryPath, "stash list", ct);
-    var stashCountBefore = string.IsNullOrEmpty(stashListBefore.Trim())
-        ? 0
-        : stashListBefore.Trim().Split('\n').Length;
-
     // Create stash with untracked files
     await _runGitAsync(repositoryPath, "stash push --include-untracked", ct);
 
@@ -167,7 +161,7 @@ public sealed class GitWorktreeService : IGitWorktreeService {
       CancellationToken ct = default) {
     using var process = new Process();
     process.StartInfo = new ProcessStartInfo {
-      FileName = "git",
+      FileName = GitExecutable.PathOrThrow,
       Arguments = arguments,
       WorkingDirectory = workingDirectory,
       RedirectStandardOutput = true,

@@ -9,7 +9,7 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for AdjustInventoryCommand
 /// </summary>
 public class AdjustInventoryCommandTests {
-  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private static readonly Uuid7IdProvider _idProvider = new();
   [Test]
   public async Task AdjustInventoryCommand_WithPositiveChange_InitializesSuccessfullyAsync() {
     // Arrange & Act

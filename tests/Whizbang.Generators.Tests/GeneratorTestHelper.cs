@@ -4,6 +4,7 @@ using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Whizbang.Generators.Tests;
 
@@ -17,9 +18,12 @@ public static class GeneratorTestHelper {
   /// </summary>
   /// <typeparam name="TGenerator">The type of generator to run</typeparam>
   /// <param name="source">The C# source code to compile</param>
+  /// <param name="additionalFiles">Optional (path, content) pairs surfaced to the generator as AdditionalFiles
+  /// (e.g. a .whizbang/pinned-type-ledger.json consumed via AdditionalTextsProvider). Null/empty means none.</param>
   /// <returns>The generator driver result containing generated sources and diagnostics</returns>
   [RequiresAssemblyFiles()]
-  public static GeneratorDriverRunResult RunGenerator<TGenerator>(string source)
+  public static GeneratorDriverRunResult RunGenerator<TGenerator>(
+      string source, (string path, string content)[]? additionalFiles = null)
       where TGenerator : IIncrementalGenerator, new() {
 
     // Parse the source code
@@ -100,7 +104,7 @@ public static class GeneratorTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -108,14 +112,27 @@ public static class GeneratorTestHelper {
     // Create generator instance
     var generator = new TGenerator();
 
-    // Create generator driver
-    var driver = CSharpGeneratorDriver.Create(generator);
+    // Create generator driver, surfacing any AdditionalFiles (e.g. the pinned-type ledger) to the generator.
+    var driver = additionalFiles is { Length: > 0 }
+        ? CSharpGeneratorDriver.Create(
+            generators: [generator.AsSourceGenerator()],
+            additionalTexts: additionalFiles
+                .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
+                .ToImmutableArray())
+        : CSharpGeneratorDriver.Create(generator);
 
     // Run the generator
     driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
 
     // Get the results
     return driver.GetRunResult();
+  }
+
+  /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>
+  private sealed class TestAdditionalText(string path, string content) : AdditionalText {
+    public override string Path { get; } = path;
+    public override SourceText GetText(System.Threading.CancellationToken cancellationToken = default)
+      => SourceText.From(content);
   }
 
   /// <summary>
@@ -165,7 +182,7 @@ public static class GeneratorTestHelper {
     // Create compilation
     return CSharpCompilation.Create(
         assemblyName: assemblyName,
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -218,7 +235,7 @@ public static class GeneratorTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -231,7 +248,7 @@ public static class GeneratorTestHelper {
 
     // Create generator driver with options provider
     var driver = CSharpGeneratorDriver.Create(
-        generators: new ISourceGenerator[] { generator.AsSourceGenerator() },
+        generators: [generator.AsSourceGenerator()],
         optionsProvider: optionsProvider
     );
 
@@ -243,14 +260,78 @@ public static class GeneratorTestHelper {
   }
 
   /// <summary>
+  /// Runs a source generator and returns the ERROR diagnostics of the resulting compilation
+  /// (original source + every generated tree). Unlike <see cref="GeneratorDriverRunResult.Diagnostics"/>,
+  /// which only carries the generator's own diagnostics, this surfaces downstream compile errors in the
+  /// GENERATED code — e.g. a populator that assigns a <c>Guid?</c> value to a <c>string?</c> property.
+  /// References the full shared-framework assembly set (plus Whizbang.Core) so a clean baseline compiles
+  /// and the only remaining errors come from the generated output.
+  /// </summary>
+  [RequiresAssemblyFiles()]
+  public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors<TGenerator>(
+      string source, (string path, string content)[]? additionalFiles = null)
+      where TGenerator : IIncrementalGenerator, new() {
+
+    var syntaxTree = CSharpSyntaxTree.ParseText(source);
+    var compilation = CSharpCompilation.Create(
+        assemblyName: "TestAssembly",
+        syntaxTrees: [syntaxTree],
+        references: _fullFrameworkReferences(),
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+    );
+
+    var generator = new TGenerator();
+    var driver = additionalFiles is { Length: > 0 }
+        ? CSharpGeneratorDriver.Create(
+            generators: [generator.AsSourceGenerator()],
+            additionalTexts: additionalFiles
+                .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
+                .ToImmutableArray())
+        : CSharpGeneratorDriver.Create(generator);
+    _ = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out _);
+
+    return outputCompilation.GetDiagnostics()
+        .Where(d => d.Severity == DiagnosticSeverity.Error)
+        .ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Builds a reference set covering the entire shared framework (via the trusted-platform-assemblies list)
+  /// plus Whizbang.Core, so a snippet + its generated code can be compiled without hunting facade assemblies.
+  /// </summary>
+  private static List<MetadataReference> _fullFrameworkReferences() {
+    var references = new List<MetadataReference>();
+
+    var trustedAssemblies = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty;
+    foreach (var path in trustedAssemblies.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)) {
+      if (File.Exists(path)) {
+        references.Add(MetadataReference.CreateFromFile(path));
+      }
+    }
+
+    // Whizbang.Core is a project reference (not a platform assembly) — add it explicitly for the
+    // message/attribute types the generated populator and registry reference.
+    try {
+      var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
+      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
+    } catch {
+      var coreAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Core.dll"
+      );
+      if (File.Exists(coreAssemblyPath)) {
+        references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
+      }
+    }
+
+    return references;
+  }
+
+  /// <summary>
   /// Test implementation of AnalyzerConfigOptionsProvider for passing MSBuild properties to generators.
   /// </summary>
-  private sealed class TestAnalyzerConfigOptionsProvider : AnalyzerConfigOptionsProvider {
-    private readonly Dictionary<string, string> _globalOptions;
-
-    public TestAnalyzerConfigOptionsProvider(Dictionary<string, string> globalOptions) {
-      _globalOptions = globalOptions;
-    }
+  private sealed class TestAnalyzerConfigOptionsProvider(Dictionary<string, string> globalOptions) : AnalyzerConfigOptionsProvider {
+    private readonly Dictionary<string, string> _globalOptions = globalOptions;
 
     public override AnalyzerConfigOptions GlobalOptions =>
         new TestAnalyzerConfigOptions(_globalOptions);
@@ -265,15 +346,11 @@ public static class GeneratorTestHelper {
   /// <summary>
   /// Test implementation of AnalyzerConfigOptions.
   /// </summary>
-  private sealed class TestAnalyzerConfigOptions : AnalyzerConfigOptions {
-    private readonly Dictionary<string, string> _options;
+  private sealed class TestAnalyzerConfigOptions(Dictionary<string, string> options) : AnalyzerConfigOptions {
+    private readonly Dictionary<string, string> _options = options;
 
     public static readonly TestAnalyzerConfigOptions Empty =
-        new(new Dictionary<string, string>());
-
-    public TestAnalyzerConfigOptions(Dictionary<string, string> options) {
-      _options = options;
-    }
+        new([]);
 
     public override bool TryGetValue(string key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? value) {
       return _options.TryGetValue(key, out value!);

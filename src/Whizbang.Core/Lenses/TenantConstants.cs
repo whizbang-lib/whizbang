@@ -3,7 +3,7 @@ namespace Whizbang.Core.Lenses;
 /// <summary>
 /// Constants for tenant identification in multi-tenant scenarios.
 /// </summary>
-/// <docs>core-concepts/multi-tenancy</docs>
+/// <docs>fundamentals/security/multi-tenancy</docs>
 /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
 public static class TenantConstants {
   /// <summary>

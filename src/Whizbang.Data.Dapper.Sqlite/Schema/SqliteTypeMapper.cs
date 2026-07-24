@@ -3,7 +3,7 @@ using System.Globalization;
 namespace Whizbang.Data.Dapper.Sqlite.Schema;
 
 /// <summary>
-/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Uuid_ReturnsTextAsync</tests>
+/// <para><tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Uuid_ReturnsTextAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_String_ReturnsTextAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_StringWithMaxLength_ReturnsTextAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_TimestampTz_ReturnsTextAsync</tests>
@@ -23,14 +23,14 @@ namespace Whizbang.Data.Dapper.Sqlite.Schema;
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_BooleanFalse_Returns0Async</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_Null_ReturnsNullAsync</tests>
 /// Maps database-agnostic Whizbang types to SQLite-specific SQL types and expressions.
-/// Uses pure enum-based pattern matching with zero string comparisons.
+/// Uses pure enum-based pattern matching with zero string comparisons.</para>
 ///
-/// SQLite Type System Notes:
+/// <para>SQLite Type System Notes:
 /// - SQLite uses dynamic typing with type affinity (TEXT, INTEGER, REAL, BLOB, NULL)
 /// - UUIDs stored as TEXT (hex format) since SQLite has no native UUID type
 /// - JSON stored as TEXT (SQLite has JSON1 extension for querying)
 /// - Timestamps stored as TEXT in ISO8601 format
-/// - Booleans stored as INTEGER (0 = false, 1 = true)
+/// - Booleans stored as INTEGER (0 = false, 1 = true)</para>
 /// </summary>
 public static class SqliteTypeMapper {
   private const string SQLITE_TYPE_INTEGER = "INTEGER";
@@ -49,6 +49,7 @@ public static class SqliteTypeMapper {
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_BigInt_ReturnsIntegerAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Integer_ReturnsIntegerAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Boolean_ReturnsIntegerAsync</tests>
+#pragma warning disable RCS1163, IDE0060 // Sqlite has no length enforcement; parameter kept for API parity with PostgresTypeMapper.MapDataType
   public static string MapDataType(Whizbang.Data.Schema.WhizbangDataType dataType, int? maxLength = null) {
     return dataType switch {
       Whizbang.Data.Schema.WhizbangDataType.UUID => "TEXT",        // Stored as hex string
@@ -62,6 +63,7 @@ public static class SqliteTypeMapper {
       _ => throw new ArgumentOutOfRangeException(nameof(dataType), dataType, "Unknown data type")
     };
   }
+#pragma warning restore RCS1163, IDE0060
 
   /// <summary>
   /// Maps DefaultValue to SQLite default value expression.

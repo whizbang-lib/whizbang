@@ -3,9 +3,11 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
@@ -43,6 +45,140 @@ public static class ServiceCollectionExtensions {
   }
 
   /// <summary>
+  /// Registers all Whizbang PostgreSQL stores with per-perspective hash tracking.
+  /// Uses PerspectiveSchemas.Entries for individual perspective change detection.
+  /// </summary>
+  /// <param name="services">The service collection to register services with.</param>
+  /// <param name="connectionString">The PostgreSQL connection string.</param>
+  /// <param name="jsonOptions">The JSON serializer options configured with the application's WhizbangJsonContext.</param>
+  /// <param name="initializeSchema">Whether to automatically initialize the Whizbang schema on startup.</param>
+  /// <param name="perspectiveEntries">Per-perspective SQL entries from PerspectiveSchemas.Entries for individual hash tracking.</param>
+  /// <returns>The service collection for chaining.</returns>
+  public static IServiceCollection AddWhizbangPostgres(
+    this IServiceCollection services,
+    string connectionString,
+    JsonSerializerOptions jsonOptions,
+    bool initializeSchema,
+    KeyValuePair<string, string>[] perspectiveEntries) {
+    return AddWhizbangPostgres(services, connectionString, jsonOptions, initializeSchema, perspectiveEntries, configureOptions: null);
+  }
+
+  /// <summary>
+  /// Registers all Whizbang PostgreSQL stores with per-perspective hash tracking and configurable options.
+  /// </summary>
+  [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
+  public static IServiceCollection AddWhizbangPostgres(
+    this IServiceCollection services,
+    string connectionString,
+    JsonSerializerOptions jsonOptions,
+    bool initializeSchema,
+    KeyValuePair<string, string>[] perspectiveEntries,
+    Action<PostgresOptions>? configureOptions) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    ArgumentNullException.ThrowIfNull(jsonOptions);
+    ArgumentNullException.ThrowIfNull(perspectiveEntries);
+
+    // Configure options
+    var options = new PostgresOptions();
+    configureOptions?.Invoke(options);
+
+    // Logger left at NullLogger — we deliberately do NOT call
+    // services.BuildServiceProvider() here. Doing so leaks a parallel singleton
+    // universe (and, worse, when combined with `using` further down, disposes
+    // the host's shared ConfigurationManager — see Bijan Camp's 2026-06-12
+    // report). Startup connection-retry diagnostics surface via the host's
+    // normal logging once MessageTypeRegistryReconciliationHostedService runs
+    // and via any failure thrown out of WaitForConnectionAsync below.
+    ILogger<PostgresConnectionRetry> logger = NullLogger<PostgresConnectionRetry>.Instance;
+
+    var connectionRetry = new PostgresConnectionRetry(options, logger);
+    connectionRetry.WaitForConnectionAsync(connectionString).GetAwaiter().GetResult();
+
+    // Initialize schema with per-perspective hash tracking
+    if (initializeSchema) {
+      var initializer = new PostgresSchemaInitializer(connectionString, perspectiveEntries);
+      initializer.InitializeSchema();
+      connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
+    }
+
+    // Register database infrastructure
+    services.AddSingleton<IDbConnectionFactory>(_ =>
+      new PostgresConnectionFactory(connectionString));
+    services.AddSingleton<IDbExecutor, DapperDbExecutor>();
+
+    services.AddSingleton(options);
+    services.AddSingleton(jsonOptions);
+
+    services.TryAddSingleton<IPolicyEngine, PolicyEngine>();
+
+    services.AddSingleton<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>, EventEnvelopeJsonbAdapter>();
+    services.AddSingleton<JsonbSizeValidator>();
+
+    services.AddScoped<IEventStore, DapperPostgresEventStore>();
+    services.AddSingleton<IWorkCoordinator>(sp =>
+      new DapperWorkCoordinator(
+        connectionString,
+        jsonOptions,
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        options.CommandTimeoutSeconds));
+    services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
+    services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
+
+    // Register perspective snapshot and rewind options
+    services.AddOptions<PerspectiveSnapshotOptions>();
+    services.AddOptions<PerspectiveRewindOptions>();
+
+    // Register perspective snapshot store and stream locker
+    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+      new DapperPerspectiveSnapshotStore(
+        connectionString,
+        sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
+    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+      new DapperPerspectiveStreamLocker(
+        connectionString,
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
+        sp.GetService<ILogger<DapperPerspectiveStreamLocker>>()));
+
+    services.DecorateEventStoreWithSyncTracking();
+
+    // Message type registry populator — reconciles wh_message_type_registry at startup
+    // using IMessageTypeCatalog (auto-registered by AddWhizbang via a module initializer).
+    services.TryAddSingleton<IMessageTypeRegistryPopulator, DapperMessageTypeRegistryPopulator>();
+
+    // Event-type rename tool — detects pinned-id drift and rewrites stored CLR type names.
+    // Resolved explicitly (admin command / migration), not run automatically.
+    services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
+
+    // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
+    // still update projection tables but wh_perspective_cursors would stay at whatever live
+    // processing last wrote. See IPerspectiveCheckpointCompleter.
+    services.TryAddSingleton<IPerspectiveCheckpointCompleter>(sp =>
+      new DapperPostgresPerspectiveCheckpointCompleter(
+        connectionString,
+        sp.GetService<ILogger<DapperPostgresPerspectiveCheckpointCompleter>>()));
+
+    // v0.502 DLQ — register IDeadLetterStore so InboxDispatchWorker can move failed
+    // rows into wh_dead_letters. The store is singleton-safe (only stashes the
+    // connection string at construction; opens connections on demand).
+    _addDeadLetterStore(services, connectionString);
+
+    // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
+    // Runs only when the schema was just initialized here (we know the table exists) and
+    // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
+    //
+    // 2026-06-12: replaced the prior `using var populatorProvider = services.BuildServiceProvider();`
+    // pattern with an IHostedService that runs at host startup using the REAL provider —
+    // no temp container, no shared-ConfigurationManager disposal trap. The hosted service
+    // gracefully no-ops when IMessageTypeCatalog isn't registered (matches the prior null-
+    // catalog log line).
+    if (initializeSchema) {
+      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
+    }
+
+    return services;
+  }
+
+  /// <summary>
   /// Registers all Whizbang PostgreSQL stores with configurable connection retry options.
   /// Waits for database connection and schema to be ready before completing registration.
   /// </summary>
@@ -68,35 +204,21 @@ public static class ServiceCollectionExtensions {
     var options = new PostgresOptions();
     configureOptions?.Invoke(options);
 
-    // Build a temporary service provider to get logger (if logging is configured)
-    var tempProvider = services.BuildServiceProvider();
-    var logger = tempProvider.GetService<ILogger<PostgresConnectionRetry>>();
+    // See the first overload for the rationale on NullLogger / no temp provider.
+    ILogger<PostgresConnectionRetry> logger = NullLogger<PostgresConnectionRetry>.Instance;
 
-    // Wait for database connection with retry
-    if (logger?.IsEnabled(LogLevel.Information) == true) {
-      var initialRetryAttempts = options.InitialRetryAttempts;
-      var retryIndefinitely = options.RetryIndefinitely;
-      logger.LogInformation("Waiting for PostgreSQL connection (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", initialRetryAttempts, retryIndefinitely);
-    }
     var connectionRetry = new PostgresConnectionRetry(options, logger);
     connectionRetry.WaitForConnectionAsync(connectionString).GetAwaiter().GetResult();
 
     // Initialize schema if requested
     if (initializeSchema) {
-      logger?.LogInformation("Initializing PostgreSQL schema...");
       var initializer = new PostgresSchemaInitializer(connectionString, perspectiveSchemaSql);
       initializer.InitializeSchema();
-      logger?.LogInformation("PostgreSQL schema initialized");
-
-      // Wait for schema to be ready (tables and functions exist)
-      // This ensures workers don't start until schema is fully initialized
-      logger?.LogInformation("Waiting for PostgreSQL schema to be ready...");
       connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
-      logger?.LogInformation("PostgreSQL database ready");
     }
 
     // Register database infrastructure
-    services.AddSingleton<IDbConnectionFactory>(sp =>
+    services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -113,24 +235,65 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>, EventEnvelopeJsonbAdapter>();
     services.AddSingleton<JsonbSizeValidator>();
 
-    // Register database readiness check - CRITICAL for worker startup
-    // This prevents workers from starting before schema is initialized
-    services.AddSingleton<IDatabaseReadinessCheck>(sp => {
-      var readinessLogger = sp.GetService<ILogger<PostgresDatabaseReadinessCheck>>();
-      return new PostgresDatabaseReadinessCheck(connectionString, readinessLogger!);
-    });
-
     // Register Whizbang stores
     // IEventStore is registered as Scoped to allow injection of scoped IPerspectiveInvoker
     services.AddScoped<IEventStore, DapperPostgresEventStore>();
-    services.AddSingleton<IWorkCoordinator, DapperWorkCoordinator>();
+    services.AddSingleton<IWorkCoordinator>(sp =>
+      new DapperWorkCoordinator(
+        connectionString,
+        jsonOptions,
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        options.CommandTimeoutSeconds));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
+
+    // Register perspective snapshot and rewind options
+    services.AddOptions<PerspectiveSnapshotOptions>();
+    services.AddOptions<PerspectiveRewindOptions>();
+
+    // Register perspective snapshot store and stream locker
+    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+      new DapperPerspectiveSnapshotStore(
+        connectionString,
+        sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
+    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+      new DapperPerspectiveStreamLocker(
+        connectionString,
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
+        sp.GetService<ILogger<DapperPerspectiveStreamLocker>>()));
 
     // TURNKEY: Wrap IEventStore with sync tracking decorator
     // This enables perspective synchronization by tracking emitted events
     // before they reach the database (cross-scope sync support)
     services.DecorateEventStoreWithSyncTracking();
+
+    // Message type registry populator — reconciles wh_message_type_registry at startup
+    // using IMessageTypeCatalog (auto-registered by AddWhizbang via a module initializer).
+    services.TryAddSingleton<IMessageTypeRegistryPopulator, DapperMessageTypeRegistryPopulator>();
+
+    // Event-type rename tool — detects pinned-id drift and rewrites stored CLR type names.
+    // Resolved explicitly (admin command / migration), not run automatically.
+    services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
+
+    // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
+    // still update projection tables but wh_perspective_cursors would stay at whatever live
+    // processing last wrote. See IPerspectiveCheckpointCompleter.
+    services.TryAddSingleton<IPerspectiveCheckpointCompleter>(sp =>
+      new DapperPostgresPerspectiveCheckpointCompleter(
+        connectionString,
+        sp.GetService<ILogger<DapperPostgresPerspectiveCheckpointCompleter>>()));
+
+    // v0.502 DLQ — register IDeadLetterStore so InboxDispatchWorker can move failed
+    // rows into wh_dead_letters. The store is singleton-safe (only stashes the
+    // connection string at construction; opens connections on demand).
+    _addDeadLetterStore(services, connectionString);
+
+    // See the first overload for the rationale: the prior `services.BuildServiceProvider()`
+    // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer
+    // the populator run to host startup via an IHostedService that uses the REAL provider.
+    if (initializeSchema) {
+      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
+    }
 
     return services;
   }
@@ -147,5 +310,23 @@ public static class ServiceCollectionExtensions {
       .AddCheck<PostgresHealthCheck>("whizbang_postgres");
 
     return services;
+  }
+
+  /// <summary>
+  /// Registers <see cref="IDeadLetterStore"/> with the Dapper implementation. Called
+  /// from each <c>AddWhizbangPostgres</c> overload so the dispatch worker (a singleton
+  /// consumer of <see cref="IDeadLetterStore"/>) can move failed inbox rows into
+  /// <c>wh_dead_letters</c>. <see cref="DapperDeadLetterStore"/> is singleton-safe:
+  /// it only stashes the connection string at construction and opens a fresh
+  /// <see cref="Npgsql.NpgsqlConnection"/> per <c>MoveAsync</c> call.
+  /// </summary>
+  /// <tests>Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_DeadLetterRegistrationTests.cs:AddDeadLetterStore_RegistersDeadLetterStoreAsSingletonAsync</tests>
+  internal static void _addDeadLetterStore(IServiceCollection services, string connectionString) {
+    services.TryAddSingleton<IDeadLetterStore>(sp =>
+      new DapperDeadLetterStore(
+        connectionString,
+        sp.GetService<ILogger<DapperDeadLetterStore>>()
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DapperDeadLetterStore>.Instance,
+        sp.GetService<WorkCoordinatorGate>()));
   }
 }

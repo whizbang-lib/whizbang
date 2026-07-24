@@ -9,8 +9,7 @@ namespace Whizbang.Core.Observability;
 
 /// <summary>
 /// Extracts context (both tracing and security) from message envelopes.
-/// Consolidates duplicate code from RuntimeLifecycleInvoker, LifecycleInvocationHelper,
-/// ReceptorInvoker, and LifecycleInvokerTemplate.
+/// Consolidates duplicate code from ReceptorInvoker and LifecycleInvokerTemplate.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -25,7 +24,7 @@ namespace Whizbang.Core.Observability;
 /// duplicating the extraction logic.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-context-extraction</docs>
+/// <docs>fundamentals/messages/message-context-extraction</docs>
 /// <tests>Whizbang.Core.Tests/Observability/EnvelopeContextExtractorTests.cs</tests>
 public static class EnvelopeContextExtractor {
   /// <summary>
@@ -104,20 +103,8 @@ public static class EnvelopeContextExtractor {
       return null;
     }
 
-    // Wrap in ImmutableScopeContext for use
-    return new ImmutableScopeContext(
-        new SecurityExtraction {
-          Scope = mergedScope.Scope,
-          Roles = mergedScope.Roles,
-          Permissions = mergedScope.Permissions,
-          SecurityPrincipals = mergedScope.SecurityPrincipals,
-          Claims = mergedScope.Claims,
-          ActualPrincipal = mergedScope.ActualPrincipal,
-          EffectivePrincipal = mergedScope.EffectivePrincipal,
-          ContextType = mergedScope.ContextType,
-          Source = "EnvelopeHops"
-        },
-        shouldPropagate: true);
+    // Wrap in a propagating ImmutableScopeContext via the shared promotion (one field-copy shape everywhere).
+    return ImmutableScopeContext.PromoteToPropagating(mergedScope, "EnvelopeHops");
   }
 
   /// <summary>

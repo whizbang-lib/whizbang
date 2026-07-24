@@ -11,7 +11,7 @@ namespace Whizbang.Data.Tests;
 /// Sets up an in-memory SQLite database with the Whizbang schema.
 /// </summary>
 public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
-  private static bool _typeHandlersRegistered;
+  private static int _typeHandlersRegistered;
 
   public SqliteConnection Connection { get; private set; } = null!;
   public DapperDbExecutor Executor { get; private set; } = null!;
@@ -19,11 +19,10 @@ public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
 
   [Before(Test)]
   public async Task SetupAsync() {
-    // Register Dapper type handlers once per assembly
-    if (!_typeHandlersRegistered) {
+    // Register Dapper type handlers once per assembly (atomic check via Interlocked)
+    if (Interlocked.CompareExchange(ref _typeHandlersRegistered, 1, 0) == 0) {
       SqliteDateTimeOffsetHandler.Register();
       SqliteGuidHandler.Register();
-      _typeHandlersRegistered = true;
     }
     // Create a new in-memory SQLite connection
     Connection = new SqliteConnection("Data Source=:memory:");
@@ -65,7 +64,7 @@ public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
 
   private async Task _initializeDatabaseAsync() {
     // Read and execute SQLite migration script
-    var schema = @"
+    const string schema = @"
 -- Inbox table for message ingestion staging (receives from remote outbox)
 -- Uses JSONB pattern with separate columns for message_type, event_data, metadata, scope
 CREATE TABLE IF NOT EXISTS whizbang_inbox (

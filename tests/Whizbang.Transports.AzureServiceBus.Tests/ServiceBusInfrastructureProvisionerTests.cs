@@ -4,6 +4,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 
+#pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
+
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
@@ -146,6 +148,88 @@ public class ServiceBusInfrastructureProvisionerTests {
   }
 
   // ========================================
+  // EnsureTopicExistsAsync Tests
+  // ========================================
+
+  /// <summary>
+  /// When topic does not exist, should create it.
+  /// </summary>
+  [Test]
+  public async Task EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync() {
+    // Arrange
+    var adminClient = new TrackingAdminClient();
+    var provisioner = new ServiceBusInfrastructureProvisioner(
+      adminClient,
+      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
+
+    // Act
+    await provisioner.EnsureTopicExistsAsync("myapp.orders");
+
+    // Assert
+    await Assert.That(adminClient.CreatedTopics.Count).IsEqualTo(1);
+    await Assert.That(adminClient.CreatedTopics).Contains("myapp.orders");
+  }
+
+  /// <summary>
+  /// When topic already exists, should not attempt to create it.
+  /// </summary>
+  [Test]
+  public async Task EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync() {
+    // Arrange
+    var adminClient = new TrackingAdminClient {
+      ExistingTopics = { "myapp.orders" }
+    };
+    var provisioner = new ServiceBusInfrastructureProvisioner(
+      adminClient,
+      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
+
+    // Act
+    await provisioner.EnsureTopicExistsAsync("myapp.orders");
+
+    // Assert
+    await Assert.That(adminClient.CreatedTopics).IsEmpty();
+  }
+
+  /// <summary>
+  /// When a race condition occurs (409), should handle gracefully.
+  /// </summary>
+  [Test]
+  public async Task EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync() {
+    // Arrange
+    var adminClient = new TrackingAdminClient {
+      SimulateRaceConditionForTopic = "myapp.orders"
+    };
+    var provisioner = new ServiceBusInfrastructureProvisioner(
+      adminClient,
+      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
+
+    // Act - should not throw
+    await provisioner.EnsureTopicExistsAsync("myapp.orders");
+
+    // Assert - no topics created (race condition swallowed)
+    await Assert.That(adminClient.CreatedTopics).IsEmpty();
+  }
+
+  /// <summary>
+  /// Topic name should be lowercased for consistency.
+  /// </summary>
+  [Test]
+  public async Task EnsureTopicExistsAsync_LowercasesTopicNameAsync() {
+    // Arrange
+    var adminClient = new TrackingAdminClient();
+    var provisioner = new ServiceBusInfrastructureProvisioner(
+      adminClient,
+      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
+
+    // Act
+    await provisioner.EnsureTopicExistsAsync("MyApp.Orders");
+
+    // Assert
+    await Assert.That(adminClient.CreatedTopics.Count).IsEqualTo(1);
+    await Assert.That(adminClient.CreatedTopics).Contains("myapp.orders");
+  }
+
+  // ========================================
   // TEST DOUBLES
   // ========================================
 
@@ -184,7 +268,19 @@ public class ServiceBusInfrastructureProvisionerTests {
       throw new NotImplementedException();
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task<SubscriptionProperties> GetSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task DeleteSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();
     }
 

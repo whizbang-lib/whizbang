@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "types": [
+    {
+      "pinnedId": "b6f3c2a1-7d84-4e59-9c0b-2a1f8e6d3b70",
+      "clrTypeName": "Whizbang.Core.Archival.ScheduledStreamClose",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "5b8636e8-5c28-4520-8013-bf1e95b7f783",
+      "clrTypeName": "Whizbang.Core.Commands.System.CancelPerspectiveRebuildCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "db190b57-50ca-4748-9929-0f090dba9e28",
+      "clrTypeName": "Whizbang.Core.Commands.System.ClearCacheCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "48bd69ed-628a-4a04-b9fc-5fa6ecd13899",
+      "clrTypeName": "Whizbang.Core.Commands.System.DiagnosticsCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "7475daa0-8b26-40fe-af25-215ac42e2526",
+      "clrTypeName": "Whizbang.Core.Commands.System.PauseProcessingCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "69430ea4-edbe-4a5f-890d-cd25cfe66766",
+      "clrTypeName": "Whizbang.Core.Commands.System.RebuildPerspectiveCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "c50126f7-aa4f-4cb8-b46f-36f589e0c36b",
+      "clrTypeName": "Whizbang.Core.Commands.System.ResumeProcessingCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "ee969fd8-45c3-48cf-ae1e-44ff5987efce",
+      "clrTypeName": "Whizbang.Core.Events.System.MigrationBatchCompleted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "8a3c0619-a6f9-4e1f-8c73-b9bde323ad01",
+      "clrTypeName": "Whizbang.Core.Events.System.MigrationBatchStarted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "e93fe788-bc47-482b-b88c-d7cefe7e278d",
+      "clrTypeName": "Whizbang.Core.Events.System.MigrationItemCompleted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "5d40437d-2955-493a-89ba-462bcf11fded",
+      "clrTypeName": "Whizbang.Core.Events.System.MigrationItemFailed",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "a8809ecd-7804-43c2-b534-54156fe21b7a",
+      "clrTypeName": "Whizbang.Core.Events.System.MigrationItemStarted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "5e3fb66f-286a-406f-9cf0-23e77bd96026",
+      "clrTypeName": "Whizbang.Core.Events.System.PerspectiveRebuildCompleted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "65600841-5460-4feb-879f-b6b527331184",
+      "clrTypeName": "Whizbang.Core.Events.System.PerspectiveRebuildFailed",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "9cc9d8da-dfde-4265-9dc1-add8ac12282a",
+      "clrTypeName": "Whizbang.Core.Events.System.PerspectiveRebuildProgress",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "47c7c500-b017-47dc-a523-d69e59a6b6d8",
+      "clrTypeName": "Whizbang.Core.Events.System.PerspectiveRebuildStarted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "56514b57-149d-47aa-9a10-afcb4e38539c",
+      "clrTypeName": "Whizbang.Core.Events.System.PerspectiveRewindCompleted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "7291e4ab-917e-4955-a78c-e41da5ee1af3",
+      "clrTypeName": "Whizbang.Core.Events.System.PerspectiveRewindStarted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "2a4f496c-acee-4dcf-b336-1b0ba1858238",
+      "clrTypeName": "Whizbang.Core.Events.System.StreamRewindCompleted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "e3accb0d-aecb-4b54-9bb5-945d5adf844b",
+      "clrTypeName": "Whizbang.Core.Events.System.StreamRewindStarted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "d4e8c1a6-9b03-4f27-8a5e-1c7b2d9e6f04",
+      "clrTypeName": "Whizbang.Core.Perspectives.Compacted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "9d574533-0ca6-4e83-a2ed-6519eab10257",
+      "clrTypeName": "Whizbang.Core.SystemEvents.CommandAudited",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "a917ce3a-52ce-4c20-92de-99ab649c2ebe",
+      "clrTypeName": "Whizbang.Core.SystemEvents.EventAudited",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "cbc33f2c-db1d-4554-8090-db41875e280f",
+      "clrTypeName": "Whizbang.Core.SystemEvents.Security.AccessDenied",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "030f98d2-5ca7-4a54-bd9b-9d8463a92c1e",
+      "clrTypeName": "Whizbang.Core.SystemEvents.Security.AccessGranted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "b7deb3af-385c-4167-be12-d525100f17bd",
+      "clrTypeName": "Whizbang.Core.SystemEvents.Security.PermissionChanged",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "8c5ce34e-8a74-4bb6-b56f-07e33fb8716c",
+      "clrTypeName": "Whizbang.Core.SystemEvents.Security.ScopeContextEstablished",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "493b898f-08ce-4dfd-b04e-339831565bdd",
+      "clrTypeName": "Whizbang.Core.UpdateStreamScopeCommand",
+      "kind": "command",
+      "formerNames": []
+    }
+  ]
+}

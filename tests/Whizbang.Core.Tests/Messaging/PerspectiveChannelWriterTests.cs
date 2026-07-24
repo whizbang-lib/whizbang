@@ -29,7 +29,7 @@ public class PerspectiveChannelWriterTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -51,7 +51,7 @@ public class PerspectiveChannelWriterTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -90,7 +90,7 @@ public class PerspectiveChannelWriterTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -110,7 +110,7 @@ public class PerspectiveChannelWriterTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
     var work2 = new PerspectiveWork {
       StreamId = Guid.NewGuid(),
@@ -118,7 +118,7 @@ public class PerspectiveChannelWriterTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     await writer.WriteAsync(work1);
@@ -146,7 +146,7 @@ public class PerspectiveChannelWriterTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
     var work2 = new PerspectiveWork {
       StreamId = Guid.NewGuid(),
@@ -154,7 +154,7 @@ public class PerspectiveChannelWriterTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act - two concurrent writers
@@ -167,7 +167,7 @@ public class PerspectiveChannelWriterTests {
     var readWork1 = await writer.Reader.ReadAsync();
     var readWork2 = await writer.Reader.ReadAsync();
 
-    await Assert.That(new[] { readWork1, readWork2 }).Contains(work1);
-    await Assert.That(new[] { readWork1, readWork2 }).Contains(work2);
+    await Assert.That([readWork1, readWork2]).Contains(work1);
+    await Assert.That([readWork1, readWork2]).Contains(work2);
   }
 }

@@ -13,7 +13,7 @@
 
     <!-- Emit generated files for inspection -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
 
     <!-- TUnit configuration -->
     <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
@@ -23,7 +23,7 @@
 
   <ItemGroup>
     <!-- Exclude generated files from compilation -->
-    <Compile Remove=".whizbang-generated/**/*.cs" />
+    <Compile Remove=".whizbang/cache/**/*.cs" />
   </ItemGroup>
 
   <ItemGroup>

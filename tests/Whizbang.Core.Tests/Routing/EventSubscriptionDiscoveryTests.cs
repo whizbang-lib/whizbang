@@ -15,7 +15,7 @@ public class EventSubscriptionDiscoveryTests {
   [Test]
   public async Task Constructor_WithNullRoutingOptions_ThrowsArgumentNullExceptionAsync() {
     // Arrange & Act
-    var action = () => new EventSubscriptionDiscovery(null!);
+    EventSubscriptionDiscovery action() => new(null!);
 
     // Assert
     await Assert.That(action).Throws<ArgumentNullException>()
@@ -66,6 +66,34 @@ public class EventSubscriptionDiscoveryTests {
     await Assert.That(namespaces.Count).IsEqualTo(2);
     await Assert.That(namespaces.Contains("myapp.orders.events")).IsTrue();
     await Assert.That(namespaces.Contains("myapp.payments.events")).IsTrue();
+  }
+
+  [Test]
+  public async Task DiscoverEventNamespaces_IncludesAbsorbedNamespaces_SoTheBindingIsCreatedAsync() {
+    // Absorbed namespaces must be subscribed so the transport binding exists and events actually arrive.
+    var routingOptions = new RoutingOptions();
+    routingOptions.AbsorbNamespaces("myapp.audit.events");
+    var options = Options.Create(routingOptions);
+    var discovery = new EventSubscriptionDiscovery(options, TestEventNamespaceRegistry.Create());
+
+    var namespaces = discovery.DiscoverEventNamespaces();
+
+    await Assert.That(namespaces.Contains("myapp.audit.events")).IsTrue();
+  }
+
+  [Test]
+  public async Task DiscoverEventNamespaces_AbsorbedNamespace_SurvivesOwnedDomainSubtractionAsync() {
+    // An absorbed namespace is intentional even if it collides with an owned command domain — the owned-domain
+    // subtraction must NOT strip it, or its binding is never created and absorbed events never arrive.
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("myapp.job");
+    routingOptions.AbsorbNamespaces("myapp.job");
+    var options = Options.Create(routingOptions);
+    var discovery = new EventSubscriptionDiscovery(options, TestEventNamespaceRegistry.Create());
+
+    var namespaces = discovery.DiscoverEventNamespaces();
+
+    await Assert.That(namespaces.Contains("myapp.job")).IsTrue();
   }
 
   [Test]

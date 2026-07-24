@@ -16,7 +16,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// is set based on <see cref="PopulateKind"/>.
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public sealed record AutoPopulateRegistration {
   /// <summary>
   /// The message type containing the property.
@@ -57,4 +57,9 @@ public sealed record AutoPopulateRegistration {
   /// The specific identifier kind when <see cref="PopulateKind"/> is <see cref="AutoPopulate.PopulateKind.Identifier"/>.
   /// </summary>
   public IdentifierKind? IdentifierKind { get; init; }
+
+  /// <summary>
+  /// The header / scope-extension key when <see cref="PopulateKind"/> is <see cref="AutoPopulate.PopulateKind.Header"/>.
+  /// </summary>
+  public string? HttpHeaderName { get; init; }
 }

@@ -63,6 +63,14 @@ dotnet format
 
 # Full cycle
 dotnet clean && dotnet build && dotnet test --max-parallel-test-modules 8 && dotnet format
+
+# PR readiness scripts (consistent -Mode, -OutputFormat, -LogFile params)
+pwsh scripts/Run-PR.ps1                          # Full send: prepare + create PR + monitor CI
+pwsh scripts/Run-PR.ps1 -Action Prepare -Mode Ai # Local checks only (sparse output)
+pwsh scripts/Run-PR.ps1 -Action Monitor           # Monitor existing PR CI checks
+pwsh scripts/Run-PR.ps1 -Action Create -Draft      # Create draft PR (gitflow-aware)
+pwsh scripts/Run-Sonar.ps1 -Mode Ai               # SonarCloud analysis with AI output
+pwsh scripts/Run-Tests.ps1 -Mode AiUnit -Coverage -OutputFormat Json  # JSON result + coverage
 ```
 
 📖 **Read**: `docs/TEST-FILTERING.md` for test filtering examples and syntax
@@ -112,6 +120,11 @@ Navigation hub with scenario-based guidance. **Read this first** when unsure whi
 - Starting new feature implementation
 - Writing tests for the first time
 - Need RED/GREEN/REFACTOR cycle guidance
+
+### 📖 **[mutation-testing.md](ai-docs/mutation-testing.md)**
+**Read when**: running or interpreting Stryker.NET mutation tests, or adding mutation
+testing to a project. Mutation testing verifies tests actually catch bugs (kills mutants),
+complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-mutation-tests.ps1.
 
 ### 📖 **[testing-tunit.md](ai-docs/testing-tunit.md)** - CRITICAL
 **Read when**:

@@ -227,10 +227,9 @@ public sealed class ApplyCommand {
     // If no patterns specified, return all files (except obj/bin by default)
     if ((includePatterns == null || includePatterns.Length == 0) &&
         (excludePatterns == null || excludePatterns.Length == 0)) {
-      return allFiles
+      return [.. allFiles
           .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") &&
-                      !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
-          .ToList();
+                      !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))];
     }
 
     var matcher = new Matcher();
@@ -256,9 +255,7 @@ public sealed class ApplyCommand {
     var result = matcher.Execute(new Microsoft.Extensions.FileSystemGlobbing.Abstractions.DirectoryInfoWrapper(
         new DirectoryInfo(basePath)));
 
-    return result.Files
-        .Select(f => Path.Combine(basePath, f.Path))
-        .ToList();
+    return [.. result.Files.Select(f => Path.Combine(basePath, f.Path))];
   }
 
   /// <summary>

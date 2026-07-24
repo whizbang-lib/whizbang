@@ -18,37 +18,37 @@ public class DefaultRoutingAttributeTests {
   [Test]
   public async Task Constructor_WithLocalMode_SetsModePropertyAsync() {
     // Arrange & Act
-    var attr = new DefaultRoutingAttribute(DispatchMode.Local);
+    var attr = new DefaultRoutingAttribute(DispatchModes.Local);
 
     // Assert
-    await Assert.That(attr.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(attr.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
   public async Task Constructor_WithOutboxMode_SetsModePropertyAsync() {
     // Arrange & Act
-    var attr = new DefaultRoutingAttribute(DispatchMode.Outbox);
+    var attr = new DefaultRoutingAttribute(DispatchModes.Outbox);
 
     // Assert
-    await Assert.That(attr.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(attr.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
   public async Task Constructor_WithBothMode_SetsModePropertyAsync() {
     // Arrange & Act
-    var attr = new DefaultRoutingAttribute(DispatchMode.Both);
+    var attr = new DefaultRoutingAttribute(DispatchModes.Both);
 
     // Assert
-    await Assert.That(attr.Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(attr.Mode).IsEqualTo(DispatchModes.Both);
   }
 
   [Test]
   public async Task Constructor_WithNoneMode_SetsModePropertyAsync() {
     // Arrange & Act
-    var attr = new DefaultRoutingAttribute(DispatchMode.None);
+    var attr = new DefaultRoutingAttribute(DispatchModes.None);
 
     // Assert
-    await Assert.That(attr.Mode).IsEqualTo(DispatchMode.None);
+    await Assert.That(attr.Mode).IsEqualTo(DispatchModes.None);
   }
 
   #endregion
@@ -65,7 +65,7 @@ public class DefaultRoutingAttributeTests {
 
     // Assert
     await Assert.That(attr).IsNotNull();
-    await Assert.That(attr!.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(attr!.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -78,7 +78,7 @@ public class DefaultRoutingAttributeTests {
 
     // Assert
     await Assert.That(attr).IsNotNull();
-    await Assert.That(attr!.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(attr!.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -91,7 +91,7 @@ public class DefaultRoutingAttributeTests {
 
     // Assert
     await Assert.That(attr).IsNotNull();
-    await Assert.That(attr!.Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(attr!.Mode).IsEqualTo(DispatchModes.Both);
   }
 
   [Test]
@@ -104,7 +104,7 @@ public class DefaultRoutingAttributeTests {
 
     // Assert
     await Assert.That(attr).IsNotNull();
-    await Assert.That(attr!.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(attr!.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -117,7 +117,7 @@ public class DefaultRoutingAttributeTests {
 
     // Assert
     await Assert.That(attr).IsNotNull();
-    await Assert.That(attr!.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(attr!.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   #endregion
@@ -158,19 +158,19 @@ public class DefaultRoutingAttributeTests {
 
   #region Test Types
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   private sealed class LocalRoutedEvent : IEvent { }
 
-  [DefaultRouting(DispatchMode.Outbox)]
+  [DefaultRouting(DispatchModes.Outbox)]
   private sealed class OutboxRoutedEvent : IEvent { }
 
-  [DefaultRouting(DispatchMode.Both)]
+  [DefaultRouting(DispatchModes.Both)]
   private sealed class BothRoutedEvent : IEvent { }
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   private struct LocalRoutedStructEvent : IEvent { }
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   private sealed record LocalRoutedRecordEvent : IEvent;
 
   private sealed class UnroutedEvent : IEvent { }

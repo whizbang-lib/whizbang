@@ -4,6 +4,8 @@
 --              Uses partition-based load balancing to distribute work across instances.
 -- Dependencies: 001-025 (requires wh_receptor_processing, wh_active_streams tables)
 
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_receptor_work');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_receptor_work(
   p_instance_id UUID,
   p_instance_rank INTEGER,
@@ -16,7 +18,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_receptor_work(
 ) AS $$
 BEGIN
   RETURN QUERY
-  UPDATE wh_receptor_processing rp
+  UPDATE __SCHEMA__.wh_receptor_processing rp
   SET instance_id = p_instance_id,
       lease_expiry = p_lease_expiry,
       claimed_at = p_now

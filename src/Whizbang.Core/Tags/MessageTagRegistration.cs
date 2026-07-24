@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tags;
 /// It provides pre-compiled payload builders for efficient runtime execution.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#registration</docs>
+/// <docs>fundamentals/messages/message-tags#registration</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagRegistrationTests.cs</tests>
 public sealed record MessageTagRegistration {
   /// <summary>
@@ -35,11 +35,6 @@ public sealed record MessageTagRegistration {
   /// Properties to extract from the message for the payload.
   /// </summary>
   public string[]? Properties { get; init; }
-
-  /// <summary>
-  /// Whether to include the full event under "__event" key.
-  /// </summary>
-  public bool IncludeEvent { get; init; }
 
   /// <summary>
   /// Extra JSON to merge into the payload.

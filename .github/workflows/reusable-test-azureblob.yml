@@ -1,0 +1,126 @@
+name: AzureBlob Integration Tests (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: 'Build artifact to download (enables -NoBuild with coverage)'
+        type: string
+        required: false
+
+jobs:
+  azureblob-tests:
+    name: AzureBlob Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download Build Artifacts
+        if: inputs.artifact-name != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ inputs.artifact-name }}
+
+      - name: Cache NuGet packages
+        if: inputs.artifact-name == ''
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore Dependencies
+        if: inputs.artifact-name == ''
+        run: dotnet restore
+
+      - name: Build Solution
+        if: inputs.artifact-name == ''
+        run: dotnet build --no-restore --configuration Release -maxcpucount:1
+
+      - name: Install dotnet-coverage
+        if: inputs.artifact-name != ''
+        run: dotnet tool install --global dotnet-coverage
+
+      # Instrument Whizbang DLLs in test output dirs (where tests load from)
+      - name: Instrument Whizbang Assemblies for Coverage
+        if: inputs.artifact-name != ''
+        run: |
+          SESSION_ID="coverage-${{ github.run_id }}-azureblob"
+          echo "SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"
+          echo "=== Instrumenting Whizbang assemblies for coverage ==="
+
+          find . -path "*/bin/Release/net10.0/Whizbang.*.dll" -type f | while read dll; do
+            if [[ "$dll" == *".resources.dll" ]] || [[ "$dll" == */ref/* ]] || [[ "$dll" == *".g.dll" ]]; then
+              continue
+            fi
+            echo "Instrumenting: $dll"
+            dotnet-coverage instrument "$dll" --session-id "$SESSION_ID" || echo "Warning: Could not instrument $dll"
+          done
+
+          echo "=== Instrumentation complete ==="
+
+      - name: Start Coverage Collection Server
+        if: inputs.artifact-name != ''
+        run: |
+          echo "Starting coverage collection server with session: $SESSION_ID"
+          mkdir -p TestResults
+          dotnet-coverage collect --session-id "$SESSION_ID" --server-mode --background \
+            -f cobertura -o TestResults/azureblob.cobertura.xml
+
+      - name: Run AzureBlob Integration Tests (with pre-built coverage)
+        if: inputs.artifact-name != ''
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag AzureBlob -NoBuild -ReportTrx
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: 'false'
+          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '5'
+
+      - name: Run AzureBlob Integration Tests (with dynamic coverage)
+        if: inputs.artifact-name == ''
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureBlob -ReportTrx
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: 'false'
+          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '5'
+
+      - name: Shutdown Coverage Collection
+        if: inputs.artifact-name != ''
+        run: |
+          echo "Shutting down coverage collection session: $SESSION_ID"
+          dotnet-coverage shutdown "$SESSION_ID" || true
+          echo "=== Coverage file contents ==="
+          ls -la TestResults/ || true
+
+      - name: Upload TRX Results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trx-azureblob
+          path: |
+            tests/**/TestResults/*.trx
+            samples/**/TestResults/*.trx
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload Coverage (pre-built)
+        if: success() && inputs.artifact-name != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-azureblob
+          path: TestResults/*.cobertura.xml
+          retention-days: 1
+
+      - name: Upload Coverage (dynamic)
+        if: success() && inputs.artifact-name == ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-azureblob
+          path: 'samples/ECommerce/tests/**/TestResults/*.cobertura.xml'
+          retention-days: 1

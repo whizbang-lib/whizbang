@@ -319,6 +319,7 @@ public class CommandAuditPipelineBehaviorTests {
 
     public string? TenantId => throw new NotImplementedException();
     public Core.Security.IScopeContext? ScopeContext => null;
+    public ICallerInfo? CallerInfo => null;
   }
 
   private sealed class MockSystemEventEmitter : ISystemEventEmitter {

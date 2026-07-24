@@ -11,7 +11,7 @@ namespace Whizbang.Core.Security;
 /// Identifies scope properties for delta storage on message hops.
 /// Uses byte-sized enum for minimal serialization.
 /// </summary>
-/// <docs>core-concepts/scope-propagation</docs>
+/// <docs>fundamentals/security/scope-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// Serializes with 2-character abbreviated names via <see cref="ScopePropJsonConverter"/>:
@@ -48,7 +48,7 @@ public enum ScopeProp : byte {
 /// Changes to a collection (roles, permissions, principals, claims).
 /// Supports Set (replace all), Add, and Remove operations.
 /// </summary>
-/// <docs>core-concepts/scope-propagation</docs>
+/// <docs>fundamentals/security/scope-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// Apply order: Set takes precedence, otherwise Remove first then Add.
@@ -87,7 +87,7 @@ public readonly struct CollectionChanges {
 /// Delta-based scope changes for message hops.
 /// Only stores what changed from previous hop to minimize wire size.
 /// </summary>
-/// <docs>core-concepts/scope-propagation</docs>
+/// <docs>fundamentals/security/scope-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// <para>
@@ -121,6 +121,30 @@ public sealed class ScopeDelta {
   /// </summary>
   [JsonIgnore]
   public bool HasChanges => (Values?.Count > 0) || (Collections?.Count > 0);
+
+  /// <summary>
+  /// Creates a ScopeDelta from a PerspectiveScope.
+  /// Used when restoring scope from the database scope column into envelope hops.
+  /// </summary>
+  /// <param name="scope">The PerspectiveScope to create a delta from.</param>
+  /// <returns>A ScopeDelta containing the scope, or null if the scope is null or entirely empty.</returns>
+  public static ScopeDelta? FromPerspectiveScope(PerspectiveScope? scope) {
+    if (scope == null) {
+      return null;
+    }
+
+    if (string.IsNullOrEmpty(scope.TenantId) && string.IsNullOrEmpty(scope.UserId)
+        && string.IsNullOrEmpty(scope.CustomerId) && string.IsNullOrEmpty(scope.OrganizationId)
+        && scope.Extensions.Count == 0) {
+      return null;
+    }
+
+    return new ScopeDelta {
+      Values = new Dictionary<ScopeProp, JsonElement> {
+        [ScopeProp.Scope] = _serializeScope(scope)
+      }
+    };
+  }
 
   /// <summary>
   /// Creates a ScopeDelta from the old SecurityContext type.
@@ -238,17 +262,28 @@ public sealed class ScopeDelta {
   /// <param name="previous">The previous scope context (can be null).</param>
   /// <returns>A new ScopeContext with delta changes applied.</returns>
   public ScopeContext ApplyTo(ScopeContext? previous) {
-    // Start with previous values or defaults
+    var (scope, actualPrincipal, effectivePrincipal, contextType) = _applyValueChanges(previous);
+    var (roles, permissions, principals, claims) = _applyCollectionChanges(previous);
+
+    return new ScopeContext {
+      Scope = scope,
+      Roles = roles,
+      Permissions = permissions,
+      SecurityPrincipals = principals,
+      Claims = claims,
+      ActualPrincipal = actualPrincipal,
+      EffectivePrincipal = effectivePrincipal,
+      ContextType = contextType
+    };
+  }
+
+  private (PerspectiveScope Scope, string? ActualPrincipal, string? EffectivePrincipal, SecurityContextType ContextType) _applyValueChanges(
+      ScopeContext? previous) {
     var scope = previous?.Scope ?? new PerspectiveScope();
-    var roles = previous?.Roles ?? new HashSet<string>();
-    var permissions = previous?.Permissions ?? new HashSet<Permission>();
-    var principals = previous?.SecurityPrincipals ?? new HashSet<SecurityPrincipalId>();
-    var claims = previous?.Claims ?? new Dictionary<string, string>();
     var actualPrincipal = previous?.ActualPrincipal;
     var effectivePrincipal = previous?.EffectivePrincipal;
     var contextType = previous?.ContextType ?? SecurityContextType.User;
 
-    // Apply value changes
     if (Values != null) {
       if (Values.TryGetValue(ScopeProp.Scope, out var scopeElement)) {
         scope = _deserializeScope(scopeElement);
@@ -264,7 +299,16 @@ public sealed class ScopeDelta {
       }
     }
 
-    // Apply collection changes
+    return (scope, actualPrincipal, effectivePrincipal, contextType);
+  }
+
+  private (IReadOnlySet<string> Roles, IReadOnlySet<Permission> Permissions, IReadOnlySet<SecurityPrincipalId> Principals, IReadOnlyDictionary<string, string> Claims) _applyCollectionChanges(
+      ScopeContext? previous) {
+    IReadOnlySet<string> roles = previous?.Roles ?? new HashSet<string>();
+    IReadOnlySet<Permission> permissions = previous?.Permissions ?? new HashSet<Permission>();
+    IReadOnlySet<SecurityPrincipalId> principals = previous?.SecurityPrincipals ?? new HashSet<SecurityPrincipalId>();
+    IReadOnlyDictionary<string, string> claims = previous?.Claims ?? new Dictionary<string, string>();
+
     if (Collections != null) {
       if (Collections.TryGetValue(ScopeProp.Roles, out var rolesChanges)) {
         roles = _applyChanges(roles, rolesChanges, s => s);
@@ -280,16 +324,7 @@ public sealed class ScopeDelta {
       }
     }
 
-    return new ScopeContext {
-      Scope = scope,
-      Roles = roles,
-      Permissions = permissions,
-      SecurityPrincipals = principals,
-      Claims = claims,
-      ActualPrincipal = actualPrincipal,
-      EffectivePrincipal = effectivePrincipal,
-      ContextType = contextType
-    };
+    return (roles, permissions, principals, claims);
   }
 
   private static string? _deserializeString(JsonElement element) =>
@@ -334,48 +369,69 @@ public sealed class ScopeDelta {
     sb.Append('{');
     var first = true;
 
-    if (scope.TenantId != null) {
-      sb.Append("\"t\":\"").Append(JsonEncodedText.Encode(scope.TenantId)).Append('"');
-      first = false;
-    }
-    if (scope.UserId != null) {
-      if (!first) {
-        sb.Append(',');
-      }
-      sb.Append("\"u\":\"").Append(JsonEncodedText.Encode(scope.UserId)).Append('"');
-      first = false;
-    }
-    if (scope.CustomerId != null) {
-      if (!first) {
-        sb.Append(',');
-      }
-      sb.Append("\"c\":\"").Append(JsonEncodedText.Encode(scope.CustomerId)).Append('"');
-      first = false;
-    }
-    if (scope.OrganizationId != null) {
-      if (!first) {
-        sb.Append(',');
-      }
-      sb.Append("\"o\":\"").Append(JsonEncodedText.Encode(scope.OrganizationId)).Append('"');
-      first = false;
-    }
-    if (scope.AllowedPrincipals.Count > 0) {
-      if (!first) {
-        sb.Append(',');
-      }
-      sb.Append("\"ap\":[");
-      for (var i = 0; i < scope.AllowedPrincipals.Count; i++) {
-        if (i > 0) {
-          sb.Append(',');
-        }
-        sb.Append('"').Append(JsonEncodedText.Encode(scope.AllowedPrincipals[i])).Append('"');
-      }
-      sb.Append(']');
-    }
+    _appendJsonStringProperty(sb, "t", scope.TenantId, ref first);
+    _appendJsonStringProperty(sb, "u", scope.UserId, ref first);
+    _appendJsonStringProperty(sb, "c", scope.CustomerId, ref first);
+    _appendJsonStringProperty(sb, "o", scope.OrganizationId, ref first);
+    _appendAllowedPrincipals(sb, scope.AllowedPrincipals, ref first);
+    _appendExtensions(sb, scope.Extensions, ref first);
 
     sb.Append('}');
     using var doc = JsonDocument.Parse(sb.ToString());
     return doc.RootElement.Clone();
+  }
+
+  private static void _appendJsonStringProperty(StringBuilder sb, string key, string? value, ref bool first) {
+    if (value == null) {
+      return;
+    }
+    if (!first) {
+      sb.Append(',');
+    }
+    sb.Append('"').Append(key).Append("\":\"").Append(JsonEncodedText.Encode(value)).Append('"');
+    first = false;
+  }
+
+  private static void _appendAllowedPrincipals(StringBuilder sb, List<string> principals, ref bool first) {
+    if (principals.Count == 0) {
+      return;
+    }
+    if (!first) {
+      sb.Append(',');
+    }
+    sb.Append("\"ap\":[");
+    for (var i = 0; i < principals.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append('"').Append(JsonEncodedText.Encode(principals[i])).Append('"');
+    }
+    sb.Append(']');
+  }
+
+  private static void _appendExtensions(StringBuilder sb, List<ScopeExtension> extensions, ref bool first) {
+    if (extensions.Count == 0) {
+      return;
+    }
+    if (!first) {
+      sb.Append(',');
+    }
+    sb.Append("\"ex\":[");
+    for (var i = 0; i < extensions.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append("{\"k\":\"").Append(JsonEncodedText.Encode(extensions[i].Key)).Append("\",\"v\":");
+      var value = extensions[i].Value;
+      if (value == null) {
+        sb.Append("null");
+      } else {
+        sb.Append('"').Append(JsonEncodedText.Encode(value)).Append('"');
+      }
+      sb.Append('}');
+    }
+    sb.Append(']');
+    first = false;
   }
 
   private static PerspectiveScope _deserializeScope(JsonElement element) {
@@ -399,6 +455,19 @@ public sealed class ScopeDelta {
         if (val != null) {
           scope.AllowedPrincipals.Add(val);
         }
+      }
+    }
+    if (element.TryGetProperty("ex", out var ex) && ex.ValueKind == JsonValueKind.Array) {
+      foreach (var item in ex.EnumerateArray()) {
+        if (item.ValueKind != JsonValueKind.Object
+            || !item.TryGetProperty("k", out var k)
+            || k.GetString() is not { Length: > 0 } key) {
+          continue;
+        }
+        var value = item.TryGetProperty("v", out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString()
+            : null;
+        scope.Extensions.Add(new ScopeExtension(key, value));
       }
     }
 
@@ -510,17 +579,16 @@ public sealed class ScopeDelta {
     var added = new Dictionary<string, string>();
     var removed = new List<string>();
 
+    // S3267: Loop has side effects (dictionary mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var kvp in current) {
       if (!previous.TryGetValue(kvp.Key, out var prevValue) || prevValue != kvp.Value) {
         added[kvp.Key] = kvp.Value;
       }
     }
+#pragma warning restore S3267
 
-    foreach (var key in previous.Keys) {
-      if (!current.ContainsKey(key)) {
-        removed.Add(key);
-      }
-    }
+    removed.AddRange(previous.Keys.Where(key => !current.ContainsKey(key)));
 
     if (added.Count == 0 && removed.Count == 0) {
       return default;

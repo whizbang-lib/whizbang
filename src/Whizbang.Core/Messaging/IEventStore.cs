@@ -43,6 +43,61 @@ public interface IEventStore {
   Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Appends a BATCH of envelopes to (potentially different) streams in a
+  /// single operation. The default implementation loops over
+  /// <see cref="AppendAsync{TMessage}"/> serially — backends MUST override
+  /// for bulk performance. Used by composite-event receivers (W3 slice 10
+  /// expansion) where a single wire message fans out into N inner events
+  /// that all need to land in the event store.
+  /// </summary>
+  /// <typeparam name="TMessage">The message payload type — must be the same for every entry. Heterogeneous batches need a separate overload.</typeparam>
+  /// <param name="entries">Stream-id + envelope pairs to append.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <remarks>
+  /// <para>
+  /// Semantics: ordered append (entries land in the supplied order). Backends
+  /// MAY use a single transaction for atomicity. The default loop implementation
+  /// makes NO atomicity guarantee across entries — a backend wanting all-or-nothing
+  /// composite append MUST override.
+  /// </para>
+  /// <para>
+  /// EFCore Postgres impl notes (for follow-up work): bulk INSERT via
+  /// <c>INSERT INTO wh_event_store ... SELECT FROM jsonb_array_elements(@payload)</c>
+  /// in a single transaction. One fsync per call regardless of entry count.
+  /// Composite expansion at 5K inner events: O(1) round-trip instead of O(N).
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreAppendBatchTests.cs</tests>
+  /// <docs>fundamentals/events/event-store#append-batch</docs>
+  Task AppendBatchAsync<TMessage>(
+      IReadOnlyList<(Guid streamId, MessageEnvelope<TMessage> envelope)> entries,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(entries);
+    return _appendBatchDefaultAsync(entries, cancellationToken);
+  }
+
+  private async Task _appendBatchDefaultAsync<TMessage>(
+      IReadOnlyList<(Guid streamId, MessageEnvelope<TMessage> envelope)> entries,
+      CancellationToken cancellationToken) {
+    foreach (var (streamId, envelope) in entries) {
+      cancellationToken.ThrowIfCancellationRequested();
+      await AppendAsync(streamId, envelope, cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// Slice 26.11 — resolves the <c>commit_sequence</c> stamped on a given event_id. Used by
+  /// runners at snapshot creation time to record the snapshot's commit_sequence anchor so
+  /// subsequent rewinds can locate the right snapshot deterministically. Returns null when
+  /// the row hasn't been stamped yet (stamper is async) or when the underlying store
+  /// doesn't track commit_sequence (in-memory test stores). Default impl returns null so
+  /// legacy event stores keep compiling.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
   /// Appends an event to the specified stream using a raw message (AOT-compatible).
   /// If the message was dispatched through IDispatcher, its envelope is automatically
   /// retrieved from IEnvelopeRegistry, preserving tracing context (hops, correlation, causation).
@@ -130,7 +185,7 @@ public interface IEventStore {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_MultipleEvents_ReturnsInUuidV7OrderAsync</tests>
-  /// <docs>core-concepts/lifecycle-receptors</docs>
+  /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
   Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -161,7 +216,7 @@ public interface IEventStore {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_UnknownEventType_ThrowsInvalidOperationExceptionAsync</tests>
-  /// <docs>core-concepts/lifecycle-receptors</docs>
+  /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
   Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -192,7 +247,7 @@ public interface IEventStore {
   /// </param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The result of the sync operation, including outcome and elapsed time.</returns>
-  /// <docs>core-concepts/event-store#append-and-wait</docs>
+  /// <docs>fundamentals/events/event-store#append-and-wait</docs>
   /// <tests>Whizbang.Core.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
   Task<SyncResult> AppendAndWaitAsync<TMessage, TPerspective>(
       Guid streamId,
@@ -231,7 +286,7 @@ public interface IEventStore {
   /// </param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The result of the sync operation, including outcome and elapsed time.</returns>
-  /// <docs>core-concepts/event-store#append-and-wait-all</docs>
+  /// <docs>fundamentals/events/event-store#append-and-wait-all</docs>
   Task<SyncResult> AppendAndWaitAsync<TMessage>(
       Guid streamId,
       TMessage message,
@@ -243,4 +298,16 @@ public interface IEventStore {
       => throw new NotSupportedException(
           "AppendAndWaitAsync requires the AppendAndWaitEventStoreDecorator to be registered. " +
           "Ensure AddWhizbang() is called with IEventCompletionAwaiter enabled.");
+
+  /// <summary>
+  /// Deserializes raw stream event data (from get_stream_events) into typed MessageEnvelope&lt;IEvent&gt;.
+  /// Used by drain mode to convert batch-fetched events into the format expected by RunWithEventsAsync.
+  /// AOT-compatible: uses the same type resolution and JsonSerializerOptions as ReadPolymorphicAsync.
+  /// </summary>
+  /// <param name="streamEvents">Raw event data from get_stream_events SQL function</param>
+  /// <param name="eventTypes">Known event types for type resolution</param>
+  /// <returns>List of deserialized message envelopes</returns>
+  List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
+    IReadOnlyList<StreamEventData> streamEvents,
+    IReadOnlyList<Type> eventTypes);
 }

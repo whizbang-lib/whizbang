@@ -2,7 +2,7 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Status flags for tracking perspective processing of events.
-/// Stored in wh_perspective_checkpoints table as checkpoints (per stream, per perspective).
+/// Stored in wh_perspective_cursors table as checkpoints (per stream, per perspective).
 /// Multiple flags can be combined using bitwise OR.
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PartialIndexes_ShouldExistForStatusQueriesAsync</tests>
@@ -35,7 +35,14 @@ public enum PerspectiveProcessingStatus {
   /// Perspective is catching up after being added or after falling behind.
   /// Indicates time-travel/replay scenario where old events are being processed.
   /// </summary>
-  CatchingUp = 1 << 3
+  CatchingUp = 1 << 3,
 
-  // Bits 4-15 reserved for future use
+  /// <summary>
+  /// A late-arriving event was detected (event_id older than cursor's last_event_id).
+  /// The perspective runner must rewind from a snapshot and replay events in order.
+  /// Set by SQL in store_perspective_events when out-of-order event is detected.
+  /// </summary>
+  RewindRequired = 1 << 5
+
+  // Bits 4, 6-15 reserved for future use
 }

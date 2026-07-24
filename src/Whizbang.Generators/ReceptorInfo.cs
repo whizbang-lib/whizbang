@@ -10,12 +10,15 @@ namespace Whizbang.Generators;
 /// <param name="ClassName">Fully qualified class name (e.g., "MyApp.Receptors.OrderReceptor")</param>
 /// <param name="MessageType">Fully qualified message type (e.g., "MyApp.Commands.CreateOrder")</param>
 /// <param name="ResponseType">Fully qualified response type (e.g., "MyApp.Events.OrderCreated"), or null for void receptors</param>
-/// <param name="LifecycleStages">Lifecycle stages at which this receptor should fire (from [FireAt] attributes). Empty if no [FireAt] attributes (defaults to ImmediateAsync).</param>
+/// <param name="LifecycleStages">Lifecycle stages at which this receptor should fire (from [FireAt] attributes). Empty if no [FireAt] attributes (defaults to ImmediateDetached).</param>
 /// <param name="IsSync">True if this is a sync receptor (ISyncReceptor), false for async receptor (IReceptor).</param>
 /// <param name="DefaultRouting">Default dispatch routing from [DefaultRouting] attribute on the receptor class. Null if no attribute.</param>
 /// <param name="SyncAttributes">Perspective sync attributes from [AwaitPerspectiveSync] attributes. Empty if no attributes.</param>
 /// <param name="HasTraceAttribute">True if receptor class has [WhizbangTrace] attribute for explicit tracing.</param>
 /// <param name="IsMessageAnEvent">True if the message type implements IEvent. Used to determine if perspective sync should be generated.</param>
+/// <param name="IsPolymorphicMessageType">True if the message type is an interface or non-sealed class, meaning concrete subtypes should be expanded at compile time.</param>
+/// <param name="HasFireDuringReplayAttribute">True if receptor class has [FireDuringReplay] attribute, indicating it should fire during replay/rebuild.</param>
+/// <param name="IsIdempotent">True if receptor class has [ReceptorIdempotent] (regardless of AlwaysFire value). The receptor is declaring that it is safe to re-invoke for the same event id, so the ReceptorInvoker guardrail should let it fire even when a prior invocation exists in the envelope.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
@@ -26,7 +29,10 @@ public sealed record ReceptorInfo(
     string? DefaultRouting = null,
     SyncAttributeInfo[]? SyncAttributes = null,
     bool HasTraceAttribute = false,
-    bool IsMessageAnEvent = false
+    bool IsMessageAnEvent = false,
+    bool IsPolymorphicMessageType = false,
+    bool HasFireDuringReplayAttribute = false,
+    bool IsIdempotent = false
 ) {
   /// <summary>
   /// True if this is a void receptor (IReceptor&lt;TMessage&gt; or ISyncReceptor&lt;TMessage&gt;), false if it returns a response.
@@ -34,7 +40,7 @@ public sealed record ReceptorInfo(
   public bool IsVoid => ResponseType is null;
 
   /// <summary>
-  /// True if receptor has no [FireAt] attributes (should default to ImmediateAsync).
+  /// True if receptor has no [FireAt] attributes (should default to ImmediateDetached).
   /// </summary>
   public bool HasDefaultStage => LifecycleStages.Length == 0;
 

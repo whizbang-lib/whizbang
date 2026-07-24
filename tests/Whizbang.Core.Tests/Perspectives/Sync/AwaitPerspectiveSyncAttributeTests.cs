@@ -32,6 +32,7 @@ public class SyncFireBehaviorTests {
 /// Tests for <see cref="AwaitPerspectiveSyncAttribute"/>.
 /// </summary>
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
+[NotInParallel("DefaultTimeoutMs")]
 public class AwaitPerspectiveSyncAttributeTests {
   // Dummy perspective type for testing
   private sealed class TestPerspective { }

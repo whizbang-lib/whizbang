@@ -29,7 +29,6 @@ internal static class StreamIdExtractorInitializer {
   [ModuleInitializer]
 #pragma warning restore CA2255
   internal static void Initialize() {
-    global::System.Console.WriteLine($"[StreamIdExtractorInitializer] ModuleInitializer running for assembly: {typeof(StreamIdExtractorInitializer).Assembly.GetName().Name}");
     #region MODULE_INITIALIZER_REGISTRATION
     // Conditional registration - only if this assembly has extractors
     // Generated code: StreamIdExtractorRegistry.Register(new GeneratedStreamIdExtractor(), priority: 100);
@@ -135,6 +134,35 @@ public static partial class StreamIdExtractors {
     return null;
   }
 
+  /// <summary>
+  /// Returns the generation policy for an event type based on [GenerateStreamId] attribute.
+  /// Used by the Dispatcher to determine if a StreamId should be auto-generated.
+  /// </summary>
+  /// <param name="message">The message to check for generation policy</param>
+  /// <returns>A tuple of (ShouldGenerate, OnlyIfEmpty) indicating the generation policy</returns>
+  public static (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
+    #region GENERATION_POLICY_DISPATCH
+    // Type-based dispatch to determine generation policy
+    #endregion
+
+    return (false, false);
+  }
+
+  /// <summary>
+  /// Sets the stream ID on a message using the [StreamId]-marked property.
+  /// Used by the Dispatcher for auto-generation without requiring IHasStreamId.
+  /// </summary>
+  /// <param name="message">The message to set the StreamId on</param>
+  /// <param name="streamId">The StreamId value to set</param>
+  /// <returns>True if the StreamId was set, false if the message type is not recognized</returns>
+  public static bool SetStreamId(object message, global::System.Guid streamId) {
+    #region SET_STREAM_ID_DISPATCH
+    // Type-based dispatch to set StreamId on the message
+    #endregion
+
+    return false;
+  }
+
   #region EVENT_EXTRACTORS
   // Individual extractor methods for each event type
   #endregion
@@ -175,6 +203,16 @@ internal sealed class GeneratedStreamIdExtractor : global::Whizbang.Core.IStream
 
     // For other message types (e.g., perspective DTOs)
     return StreamIdExtractors.TryResolveAsGuid(message);
+  }
+
+  /// <inheritdoc />
+  public (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
+    return StreamIdExtractors.GetGenerationPolicy(message);
+  }
+
+  /// <inheritdoc />
+  public bool SetStreamId(object message, global::System.Guid streamId) {
+    return StreamIdExtractors.SetStreamId(message, streamId);
   }
 }
 

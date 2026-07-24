@@ -1,0 +1,436 @@
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using TUnit.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Core.Tests.Perspectives;
+
+/// <summary>
+/// Tests for PerspectiveRebuilder — verifies all rebuild modes and error handling.
+/// </summary>
+public class PerspectiveRebuilderTests {
+  [Test]
+  public async Task RebuildInPlaceAsync_WithRegisteredPerspective_ProcessesAllStreamsAsync() {
+    // Arrange
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var eventStoreQuery = new FakeEventStoreQuery([Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(3);
+    await Assert.That(result.PerspectiveName).IsEqualTo("TestPerspective");
+    await Assert.That(runner.RunCount).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WithSpecificStreams_OnlyProcessesThoseAsync() {
+    // Arrange
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var eventStoreQuery = new FakeEventStoreQuery([]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+    var targetStreams = new[] { Guid.NewGuid(), Guid.NewGuid() };
+
+    // Act
+    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", targetStreams);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+    await Assert.That(runner.RunCount).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_SkipsEphemeralStreams_DoesNotReplayThemAsync() {
+    // Arrange — an ephemeral stream must never be replayed on rebuild: its events self-destruct and its
+    // bodies are reaped, so replaying it would corrupt the projection. The guard resolves IWorkCoordinator
+    // (optional) and refuses ephemeral streams up front.
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var sourced1 = Guid.NewGuid();
+    var ephemeral = Guid.NewGuid();
+    var sourced2 = Guid.NewGuid();
+    var eventStoreQuery = new FakeEventStoreQuery([]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    services.AddSingleton<IWorkCoordinator>(new FakeEphemeralCoordinator(ephemeral));
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", new[] { sourced1, ephemeral, sourced2 });
+
+    // Assert — the two Sourced streams rebuild; the ephemeral one is refused and never replayed.
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2).Because("Only the two Sourced streams are rebuilt.");
+    await Assert.That(runner.RunCount).IsEqualTo(2).Because("The ephemeral stream is never replayed — no corruption from reaped bodies.");
+  }
+
+  private sealed class FakeEphemeralCoordinator(Guid ephemeralStream) : IWorkCoordinator {
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyCollection<Guid>>([.. streamIds.Where(s => s == ephemeralStream)]);
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_WithUnknownPerspective_ReturnsFailureAsync() {
+    // Arrange
+    var registry = new FakePerspectiveRunnerRegistry(runner: null);
+    var eventStoreQuery = new FakeEventStoreQuery([]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("NonexistentPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).Contains("No runner found");
+  }
+
+  [Test]
+  public async Task GetRebuildStatusAsync_WithNoActiveRebuild_ReturnsNullAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new FakePerspectiveRunnerRegistry(null));
+    services.AddSingleton<IEventStoreQuery>(new FakeEventStoreQuery([]));
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var status = await rebuilder.GetRebuildStatusAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(status).IsNull();
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_WithFailingStream_ContinuesWithOtherStreamsAsync() {
+    // Arrange
+    var runner = new FakePerspectiveRunner { FailOnStreamIndex = 1 };
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var streams = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    var eventStoreQuery = new FakeEventStoreQuery(streams);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert — should still succeed overall, but only 2 streams processed
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+    await Assert.That(runner.RunCount).IsEqualTo(3); // All 3 attempted
+  }
+
+  [Test]
+  public async Task RebuildBlueGreenAsync_CompletesSuccessfullyAsync() {
+    // Arrange
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var eventStoreQuery = new FakeEventStoreQuery([Guid.NewGuid()]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildBlueGreenAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.Duration.TotalMilliseconds).IsGreaterThanOrEqualTo(0);
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_WithUnknownPerspective_ErrorIncludesRegisteredNamesAsync() {
+    // Arrange — covers line 60: detailed error message with registered perspectives
+    var registry = new FakePerspectiveRunnerRegistryWithInfo(runner: null, [
+      new PerspectiveRegistrationInfo("MyApp.OrderPerspective", "global::MyApp.OrderPerspective", "global::MyApp.OrderModel", []),
+      new PerspectiveRegistrationInfo("MyApp.InventoryPerspective", "global::MyApp.InventoryPerspective", "global::MyApp.InventoryModel", [])
+    ]);
+    var eventStoreQuery = new FakeEventStoreQuery([]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("NonexistentPerspective");
+
+    // Assert — error should include the registered perspective names
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).Contains("No runner found");
+    await Assert.That(result.Error).Contains("MyApp.OrderPerspective");
+    await Assert.That(result.Error).Contains("MyApp.InventoryPerspective");
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_WhenScopeCreationThrows_ReturnsFailureAsync() {
+    // Arrange — covers lines 103-106 (outer catch block)
+    var services = new ServiceCollection();
+    // Don't register IPerspectiveRunnerRegistry — GetRequiredService will throw
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).IsNotNull();
+    await Assert.That(result.PerspectiveName).IsEqualTo("TestPerspective");
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_CallsCompleter_WithSuccessfulCompletionsAsync() {
+    // Arrange — covers the cursor-persistence fix: rebuilder now captures RunAsync's
+    // PerspectiveCursorCompletion return value and flushes through IPerspectiveCheckpointCompleter.
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var streams = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    var eventStoreQuery = new FakeEventStoreQuery(streams);
+    var completer = new RecordingCheckpointCompleter();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    services.AddSingleton<IPerspectiveCheckpointCompleter>(completer);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(3);
+    await Assert.That(completer.CompletionsReceived.Count).IsEqualTo(3);
+    foreach (var completion in completer.CompletionsReceived) {
+      await Assert.That(completion.PerspectiveName).IsEqualTo("TestPerspective");
+      await Assert.That(completion.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    }
+    var receivedStreamIds = completer.CompletionsReceived.Select(c => c.StreamId).ToHashSet();
+    foreach (var s in streams) {
+      await Assert.That(receivedStreamIds.Contains(s)).IsTrue();
+    }
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_FailedStream_NotInCompletionsAsync() {
+    // Arrange — failed streams must not be forwarded to the completer.
+    var runner = new FakePerspectiveRunner { FailOnStreamIndex = 1 };
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var streams = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    var eventStoreQuery = new FakeEventStoreQuery(streams);
+    var completer = new RecordingCheckpointCompleter();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    services.AddSingleton<IPerspectiveCheckpointCompleter>(completer);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+    await Assert.That(completer.CompletionsReceived.Count).IsEqualTo(2);
+    await Assert.That(completer.CompletionsReceived.Any(c => c.StreamId == streams[1])).IsFalse();
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_WithoutCompleterRegistered_StillSucceedsAsync() {
+    // Arrange — backward-compatible fallback: if no IPerspectiveCheckpointCompleter is
+    // registered (e.g., caller pre-dates this feature), rebuild still updates projections.
+    // Cursors won't be persisted, but the rebuild itself must not fail.
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var eventStoreQuery = new FakeEventStoreQuery([Guid.NewGuid()]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    // NO IPerspectiveCheckpointCompleter registration.
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_WithSyncQueryable_UsesNonAsyncFallbackAsync() {
+    // Arrange — covers lines 136-138 (sync IQueryable fallback in ToListAsync)
+    // The default FakeEventStoreQuery returns a regular IQueryable (not IAsyncEnumerable),
+    // so it exercises the else branch in ToListAsync
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var streamIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
+    var eventStoreQuery = new FakeEventStoreQuery(streamIds);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act — FakeEventStoreQuery.Query returns a plain IQueryable (not IAsyncEnumerable),
+    // triggering the sync fallback path in QueryableExtensions.ToListAsync
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+  }
+
+  // --- Test Doubles ---
+
+  private sealed class FakePerspectiveRunnerRegistryWithInfo(
+      IPerspectiveRunner? runner,
+      IReadOnlyList<PerspectiveRegistrationInfo> registrations) : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => runner;
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => registrations;
+    public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
+  }
+
+  private sealed class FakePerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object); // Fake — no real perspective type
+    public int RunCount { get; private set; }
+    public int FailOnStreamIndex { get; init; } = -1;
+
+    public Task<PerspectiveCursorCompletion> RunAsync(
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      var index = RunCount;
+      RunCount++;
+
+      if (index == FailOnStreamIndex) {
+        throw new InvalidOperationException($"Simulated failure on stream index {index}");
+      }
+
+      return Task.FromResult(new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = Guid.NewGuid(),
+        Status = PerspectiveProcessingStatus.Completed
+      });
+    }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+  }
+
+  private sealed class FakePerspectiveRunnerRegistry(IPerspectiveRunner? runner) : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => runner;
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [];
+    public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
+  }
+
+  private sealed class RecordingCheckpointCompleter : IPerspectiveCheckpointCompleter {
+    public List<PerspectiveCursorCompletion> CompletionsReceived { get; } = [];
+    public int CallCount { get; private set; }
+
+    public Task CompleteAsync(IReadOnlyList<PerspectiveCursorCompletion> completions, CancellationToken cancellationToken = default) {
+      CallCount++;
+      CompletionsReceived.AddRange(completions);
+      return Task.CompletedTask;
+    }
+  }
+
+  private sealed class FakeEventStoreQuery(Guid[] streamIds) : IEventStoreQuery {
+    public IQueryable<EventStoreRecord> Query =>
+        streamIds.Select(id => new EventStoreRecord {
+          Id = Guid.NewGuid(),
+          StreamId = id,
+          AggregateId = id,
+          AggregateType = "Test",
+          Version = 1,
+          EventType = "TestEvent",
+          EventData = JsonDocument.Parse("{}").RootElement,
+          Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
+          CreatedAt = DateTime.UtcNow
+        }).AsQueryable();
+
+    public IQueryable<EventStoreRecord> GetStreamEvents(Guid streamId) =>
+        Query.Where(e => e.StreamId == streamId);
+
+    public IQueryable<EventStoreRecord> GetEventsByType(string eventType) =>
+        Query.Where(e => e.EventType == eventType);
+  }
+}

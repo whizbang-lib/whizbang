@@ -6,9 +6,9 @@ namespace Whizbang.Core.Tests.Common;
 /// </summary>
 public static class TestConstants {
   /// <summary>
-  /// Expected total receptor count across all test assemblies.
+  /// <para>Expected total receptor count across all test assemblies.</para>
   ///
-  /// Breakdown by source:
+  /// <para>Breakdown by source:
   /// - 3 receptors from DispatcherTests.cs (DispatcherTestOrderReceptor, LogReceptor, ProcessReceptor)
   /// - 7 receptors from VoidReceptorExamples.cs (LogUserActionReceptor, SendNotificationReceptor,
   ///     UpdateCacheReceptor, ProcessPaymentReceptor, AuditOrderReceptor, AnalyticsOrderReceptor, EmailOrderReceptor)
@@ -39,8 +39,45 @@ public static class TestConstants {
   /// - 2 receptors from DispatcherLocalInvokeAndSyncTimingTests.cs (TimedCommandReceptor, TimedCommandWithResultReceptor)
   /// - 6 receptors from new test files added during cascade security context implementation
   /// - 3 receptors added during ScopeDelta/unified scope propagation changes
+  /// - 6 receptors from DispatcherStreamIdGenerationTests.cs (GenerateStreamIdCommandReceptor,
+  ///     GenerateStreamIdOnlyIfEmptyCommandReceptor, NoGenerateStreamIdCommandReceptor, SimpleCommandReceptor,
+  ///     InheritedStreamIdCommandReceptor, InheritedOnlyIfEmptyCommandReceptor)</para>
   ///
-  /// Total: 74 receptors
+  /// <para>- 7 receptors from DispatcherNewCodeCoverageTests.cs (SyncOnlyCommandReceptor, PropagateStreamIdCommandReceptor,
+  ///     PropagatedStreamIdEventTrackerReceptor, VoidOptionsCommandReceptor, VoidOptionsEventTrackerReceptor,
+  ///     SyncOptionsCommandReceptor, EmptyStreamIdEventReceptor)
+  /// - 2 receptors from DispatcherInvokeWithReceiptTests.cs (ReceiptTestCommandReceptor, ReceiptTestVoidCommandReceptor)</para>
+  ///
+  /// <para>- 3 receptors from DispatcherOwnedDomainTests.cs + DispatcherCascadeFireCountTests.cs
+  ///     (CascadeTestCommandHandler, FireCountCommandHandler, FireCountEventReceptor)
+  /// - 3 receptors from DispatcherStageFireTests.cs
+  ///     (StageTestCommandHandler, DefaultStageTestReceptor, ExplicitPostAllPerspectivesReceptor)
+  /// - 2 receptors from DispatcherOwnedEventSelfEchoTests.cs
+  ///     (SelfEchoCommandHandler, SelfEchoEventReceptor)</para>
+  ///
+  /// <para>- 2 receptors from DispatcherConcurrentOutboxTests.cs
+  ///     (BlockingTestEventReceptor, ThrowingTestEventReceptor)</para>
+  ///
+  /// <para>- 1 receptor from DispatcherCascadeFlushTests.cs
+  ///     (CascadeFlushCommandHandler — pins that cascade uses fire-and-forget FlushAsync)</para>
+  ///
+  /// <para>- 2 receptors from OrphanInboxJanitorExtensionsTests.cs
+  ///     (FakeVoidReceptor, FakeResultReceptor — fixtures for janitor auto-wire test)</para>
+  ///
+  /// <para>- 1 receptor from DispatcherPublishOnceTests.cs
+  ///     (PublishOnceTestEventReceptor — verifies winning the claim proceeds to PublishAsync,
+  ///     which invokes the in-process receptor, in the saga-completion race fix lock-in)</para>
+  ///
+  /// <para>- 1 receptor from DispatcherScheduledForLocalReceptorTests.cs
+  ///     (ScheduledForCascadeProbeReceptor — proves PublishAsync(event, options.ScheduledFor)
+  ///     gates local-receptor invocation on scheduled time, fixing the production saga watchdog
+  ///     cascade-abandon)</para>
+  ///
+  /// <para>- 1 receptor from DispatcherErrorBranchTests.cs
+  ///     (ErrorBranchCommandReceptor — target for RoutedNone rejection and Routed&lt;T&gt;
+  ///     unwrap tests on the IMessageContext-taking dispatcher overloads)</para>
+  ///
+  /// <para>Total: 120 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 74;
+  public const int EXPECTED_RECEPTOR_COUNT = 120;
 }

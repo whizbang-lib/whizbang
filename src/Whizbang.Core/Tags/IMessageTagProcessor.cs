@@ -16,7 +16,7 @@ namespace Whizbang.Core.Tags;
 /// optionally modify the payload passed to subsequent hooks.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#processing</docs>
+/// <docs>fundamentals/messages/message-tags#processing</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
 public interface IMessageTagProcessor {
   /// <summary>

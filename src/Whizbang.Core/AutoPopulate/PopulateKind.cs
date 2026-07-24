@@ -14,7 +14,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public enum PopulateKind {
   /// <summary>
   /// Populate from lifecycle timestamps (SentAt, QueuedAt, DeliveredAt).
@@ -34,5 +34,10 @@ public enum PopulateKind {
   /// <summary>
   /// Populate from message identifiers (MessageId, CorrelationId, CausationId, StreamId).
   /// </summary>
-  Identifier = 3
+  Identifier = 3,
+
+  /// <summary>
+  /// Populate from an inbound HTTP header captured at the request edge (rides the scope extensions).
+  /// </summary>
+  Header = 4
 }

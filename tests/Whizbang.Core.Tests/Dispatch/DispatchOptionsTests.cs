@@ -120,10 +120,10 @@ public class DispatchOptionsTests {
   public async Task CancellationToken_PropertySetter_WorksAsync() {
     // Arrange
     using var cts = new CancellationTokenSource();
-    var options = new DispatchOptions();
-
-    // Act
-    options.CancellationToken = cts.Token;
+    var options = new DispatchOptions {
+      // Act
+      CancellationToken = cts.Token
+    };
 
     // Assert
     await Assert.That(options.CancellationToken).IsEqualTo(cts.Token);
@@ -133,10 +133,10 @@ public class DispatchOptionsTests {
   public async Task Timeout_PropertySetter_WorksAsync() {
     // Arrange
     var timeout = TimeSpan.FromSeconds(10);
-    var options = new DispatchOptions();
-
-    // Act
-    options.Timeout = timeout;
+    var options = new DispatchOptions {
+      // Act
+      Timeout = timeout
+    };
 
     // Assert
     await Assert.That(options.Timeout).IsEqualTo(timeout);
@@ -220,10 +220,10 @@ public class DispatchOptionsTests {
   [Test]
   public async Task WaitForPerspectives_PropertySetter_WorksAsync() {
     // Arrange
-    var options = new DispatchOptions();
-
-    // Act
-    options.WaitForPerspectives = true;
+    var options = new DispatchOptions {
+      // Act
+      WaitForPerspectives = true
+    };
 
     // Assert
     await Assert.That(options.WaitForPerspectives).IsTrue();
@@ -260,5 +260,76 @@ public class DispatchOptionsTests {
     await Assert.That(options.Timeout).IsEqualTo(timeout);
     await Assert.That(options.WaitForPerspectives).IsTrue();
     await Assert.That(options.PerspectiveWaitTimeout).IsEqualTo(perspectiveTimeout);
+  }
+
+  // ── RED-2: ScheduledFor forward-scheduling surface ───────────────────
+  //
+  // wh_outbox + wh_inbox already honor scheduled_for on the read side (migration 040
+  // FetchOutboxInboxBatch, migration 049 NotifyScheduledRetryDue). What's missing is the
+  // producer API: today only the retry-backoff SQL paths (017/018/019) set scheduled_for.
+  // Surface it on DispatchOptions so consumers (e.g., Whizbang.Sagas' completion watchdog)
+  // can request future-dated delivery without bypassing the dispatcher.
+
+  [Test]
+  public async Task ScheduledFor_PropertyExistsAsync() {
+    var prop = typeof(DispatchOptions).GetProperty("ScheduledFor",
+      System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+    await Assert.That(prop)
+      .IsNotNull()
+      .Because("Forward-scheduled delivery (watchdog ticks, deferred retries) needs an API surface on DispatchOptions. " +
+               "wh_outbox.scheduled_for is honored downstream already; producer can't set it without this property.");
+    await Assert.That(prop!.PropertyType)
+      .IsEqualTo(typeof(DateTimeOffset?))
+      .Because("Nullable DateTimeOffset mirrors OutboxRecord.ScheduledFor and lets callers omit (immediate dispatch) or set explicit UTC instant.");
+    await Assert.That(prop.CanRead && prop.CanWrite)
+      .IsTrue()
+      .Because("ScheduledFor must be settable on the options instance (consumers chain via fluent or assign directly).");
+  }
+
+  [Test]
+  public async Task ScheduledFor_DefaultIsNullAsync() {
+    var options = new DispatchOptions();
+    // Both REDs (this one and ScheduledFor_PropertyExistsAsync) fail until the property ships;
+    // surface the gap here too so the failure inventory is complete.
+    var prop = typeof(DispatchOptions).GetProperty("ScheduledFor",
+      System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+      ?? throw new InvalidOperationException("ScheduledFor property does not yet exist — see ScheduledFor_PropertyExistsAsync for the gap rationale.");
+    var value = prop.GetValue(options);
+    await Assert.That(value)
+      .IsNull()
+      .Because("Default DispatchOptions == immediate dispatch. Null carries that semantic and matches every other producer call site that didn't opt in.");
+  }
+
+  [Test]
+  public async Task WithScheduledFor_FluentMethodExistsAndChainsAsync() {
+    var method = typeof(DispatchOptions).GetMethod("WithScheduledFor",
+      System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+      binder: null,
+      types: [typeof(DateTimeOffset)],
+      modifiers: null);
+
+    await Assert.That(method)
+      .IsNotNull()
+      .Because("DispatchOptions exposes a WithCancellationToken / WithTimeout / WithPerspectiveWait fluent shape. " +
+               "WithScheduledFor(DateTimeOffset) is the matching producer API for the new scheduled-delivery surface.");
+    await Assert.That(method!.ReturnType)
+      .IsEqualTo(typeof(DispatchOptions))
+      .Because("Fluent chaining requires returning DispatchOptions (matches WithCancellationToken's shape).");
+
+    var options = new DispatchOptions();
+    var scheduled = DateTimeOffset.UtcNow.AddMinutes(5);
+    var returned = method.Invoke(options, [scheduled]);
+
+    await Assert.That(returned)
+      .IsSameReferenceAs(options)
+      .Because("WithScheduledFor must return the same instance for chaining.");
+
+    var prop = typeof(DispatchOptions).GetProperty("ScheduledFor",
+      System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+    var readBack = prop!.GetValue(options);
+    await Assert.That(readBack)
+      .IsEqualTo((DateTimeOffset?)scheduled)
+      .Because("WithScheduledFor must set the property to the supplied instant.");
   }
 }

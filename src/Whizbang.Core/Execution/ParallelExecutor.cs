@@ -30,6 +30,8 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
   private readonly Lock _stateLock = new();
   private bool _disposed;
 
+  /// <summary>Initializes a new instance of the <see cref="ParallelExecutor"/> class.</summary>
+  /// <param name="maxConcurrency">The maximum number of concurrent handler executions. Must be greater than zero.</param>
   public ParallelExecutor(int maxConcurrency = 10) {
     if (maxConcurrency <= 0) {
       throw new ArgumentOutOfRangeException(nameof(maxConcurrency), "Max concurrency must be greater than zero");
@@ -39,8 +41,11 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
     _semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
   }
 
+  /// <inheritdoc/>
   public string Name => $"Parallel(max:{_maxConcurrency})";
 
+  /// <inheritdoc/>
+#pragma warning disable RCS1229 // Fast-path uses sync semaphore acquire + sync-completed handler result; forcing async would defeat zero-allocation path.
   public ValueTask<TResult> ExecuteAsync<TResult>(
     IMessageEnvelope envelope,
     Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
@@ -81,6 +86,7 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
     // Slow path: async wait (allocates if we need to wait)
     return _slowPathAsync(envelope, handler, context, ct);
   }
+#pragma warning restore RCS1229
 
   private static async ValueTask<TResult> _awaitAndReleaseAsync<TResult>(
     ValueTask<TResult> task,
@@ -107,6 +113,7 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
     }
   }
 
+  /// <inheritdoc/>
   public Task StartAsync(CancellationToken ct = default) {
     lock (_stateLock) {
       if (_state == State.Running) {
@@ -123,6 +130,7 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
     return Task.CompletedTask;
   }
 
+  /// <inheritdoc/>
   public Task StopAsync(CancellationToken ct = default) {
     lock (_stateLock) {
       if (_state == State.Stopped) {
@@ -140,6 +148,7 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
     return Task.CompletedTask;
   }
 
+  /// <inheritdoc/>
   public async Task DrainAsync(CancellationToken ct = default) {
     lock (_stateLock) {
       if (_state != State.Running) {
@@ -156,6 +165,7 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
     _semaphore.Release(_maxConcurrency);
   }
 
+  /// <summary>Releases the semaphore and stops the executor if running.</summary>
   public async ValueTask DisposeAsync() {
     if (_disposed) {
       return;

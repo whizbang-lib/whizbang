@@ -18,7 +18,7 @@ public class VectorAutoConfigurationTests {
   [Test]
   public async Task ConfigureWhizbang_WithVectorField_GeneratesHasPostgresExtensionAsync() {
     // Arrange - Model with [VectorField] attribute
-    var source = @"
+    const string source = @"
       using System;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
@@ -59,7 +59,7 @@ public class VectorAutoConfigurationTests {
   [Test]
   public async Task ConfigureWhizbang_WithoutVectorField_DoesNotGenerateHasPostgresExtensionAsync() {
     // Arrange - Model without [VectorField] attribute
-    var source = @"
+    const string source = @"
       using System;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
@@ -97,7 +97,7 @@ public class VectorAutoConfigurationTests {
   [Test]
   public async Task ConfigureWhizbang_MultipleVectorFields_GeneratesSingleHasPostgresExtensionAsync() {
     // Arrange - Multiple models with [VectorField]
-    var source = @"
+    const string source = @"
       using System;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
@@ -151,7 +151,7 @@ public class VectorAutoConfigurationTests {
   [Test]
   public async Task ConfigureWhizbang_MixedModels_GeneratesHasPostgresExtensionAsync() {
     // Arrange - One model with [VectorField], one without
-    var source = @"
+    const string source = @"
       using System;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
@@ -201,7 +201,7 @@ public class VectorAutoConfigurationTests {
   [Test]
   public async Task ConfigureWhizbang_WithVectorField_HasPostgresExtensionCalledBeforeEntityConfigAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using System;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
@@ -244,7 +244,7 @@ public class VectorAutoConfigurationTests {
   [Test]
   public async Task TurnkeyExtension_WithVectorField_GeneratesAddDbContextMethodAsync() {
     // Arrange - Model with [VectorField] and DbContext
-    var source = @"
+    const string source = @"
       using System;
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;
@@ -296,7 +296,7 @@ public class VectorAutoConfigurationTests {
   [Test]
   public async Task TurnkeyExtension_WithoutVectorField_DoesNotIncludeUseVectorAsync() {
     // Arrange - Model without [VectorField] and DbContext
-    var source = @"
+    const string source = @"
       using System;
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;

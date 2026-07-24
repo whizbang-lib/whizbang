@@ -382,15 +382,12 @@ public sealed class DispatcherOptionsAndRoutingTests {
   }
 
   // Fake implementations
-  private sealed class FakeEventCompletionAwaiter : IEventCompletionAwaiter {
-    private readonly bool _completesImmediately;
+  private sealed class FakeEventCompletionAwaiter(bool completesImmediately) : IEventCompletionAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
+    private readonly bool _completesImmediately = completesImmediately;
 
     public bool WaitForEventsWasCalled { get; private set; }
     public IReadOnlyList<Guid>? LastEventIds { get; private set; }
-
-    public FakeEventCompletionAwaiter(bool completesImmediately) {
-      _completesImmediately = completesImmediately;
-    }
 
     public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken cancellationToken = default) {
       WaitForEventsWasCalled = true;

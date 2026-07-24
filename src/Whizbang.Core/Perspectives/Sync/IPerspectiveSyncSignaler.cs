@@ -1,7 +1,7 @@
 namespace Whizbang.Core.Perspectives.Sync;
 
 /// <summary>
-/// Provides low-latency signaling when perspective checkpoints are updated.
+/// Provides low-latency signaling when perspective cursors are updated.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,11 +15,11 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <item><see cref="LocalSyncSignaler"/> - In-process channel-based signaling</item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs</tests>
 public interface IPerspectiveSyncSignaler : IDisposable {
   /// <summary>
-  /// Signals that a perspective checkpoint has been updated.
+  /// Signals that a perspective cursor has been updated.
   /// </summary>
   /// <param name="perspectiveType">The type of the perspective.</param>
   /// <param name="streamId">The stream ID that was processed.</param>
@@ -35,5 +35,5 @@ public interface IPerspectiveSyncSignaler : IDisposable {
   /// <param name="perspectiveType">The perspective type to subscribe to.</param>
   /// <param name="onSignal">The handler called when a signal is received.</param>
   /// <returns>A disposable subscription that can be used to unsubscribe.</returns>
-  IDisposable Subscribe(Type perspectiveType, Action<PerspectiveCheckpointSignal> onSignal);
+  IDisposable Subscribe(Type perspectiveType, Action<PerspectiveCursorSignal> onSignal);
 }

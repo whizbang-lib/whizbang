@@ -37,11 +37,9 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var table = new TableDefinition(
       Name: "test_table",
-      Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)
-      )
+      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true)]
     );
-    var prefix = "wh_";
+    const string prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateTable(table, prefix);
@@ -58,13 +56,15 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var table = new TableDefinition(
       Name: "users",
-      Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
-        new ColumnDefinition("name", WhizbangDataType.STRING, MaxLength: 255, Nullable: false),
+      Columns:
+
+      [
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
+        new ColumnDefinition("name", WhizbangDataType.STRING, Nullable: false, MaxLength: 255),
         new ColumnDefinition("age", WhizbangDataType.INTEGER, Nullable: true)
-      )
-    );
-    var prefix = "wh_";
+,
+      ]);
+    const string prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateTable(table, prefix);
@@ -81,12 +81,14 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var table = new TableDefinition(
       Name: "test",
-      Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
+      Columns:
+
+      [
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
         new ColumnDefinition("optional_field", WhizbangDataType.STRING, Nullable: true)
-      )
-    );
-    var prefix = "wh_";
+,
+      ]);
+    const string prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateTable(table, prefix);
@@ -101,10 +103,10 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var index = new IndexDefinition(
       Name: "idx_users_email",
-      Columns: ImmutableArray.Create("email")
+      Columns: ["email"]
     );
-    var tableName = "users";
-    var prefix = "wh_";
+    const string tableName = "users";
+    const string prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateIndex(index, tableName, prefix);
@@ -121,10 +123,10 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var index = new IndexDefinition(
       Name: "idx_events_type_created",
-      Columns: ImmutableArray.Create("event_type", "created_at")
+      Columns: ["event_type", "created_at"]
     );
-    var tableName = "events";
-    var prefix = "wh_";
+    const string tableName = "events";
+    const string prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateIndex(index, tableName, prefix);
@@ -139,7 +141,7 @@ public abstract class ISchemaBuilderContractTests {
     // Arrange
     var builder = CreateBuilder();
     var sequence = new SequenceDefinition("event_sequence");
-    var prefix = "wh_";
+    const string prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateSequence(sequence, prefix);
@@ -167,7 +169,7 @@ public abstract class ISchemaBuilderContractTests {
     await Assert.That(sql).Contains("wh_partition_assignments");
     await Assert.That(sql).Contains("wh_message_deduplication");
     await Assert.That(sql).Contains("wh_receptor_processing");
-    await Assert.That(sql).Contains("wh_perspective_checkpoints");
+    await Assert.That(sql).Contains("wh_perspective_cursors");
     await Assert.That(sql).Contains("wh_message_associations");
     await Assert.That(sql).Contains("wh_perspective_registry");
     await Assert.That(sql).Contains("wh_request_response");
@@ -214,15 +216,17 @@ public abstract class ISchemaBuilderContractTests {
     var sql1 = builder.BuildInfrastructureSchema(config);
     var sql2 = builder.BuildInfrastructureSchema(config);
 
-    // Assert - Same config should produce identical SQL
-    await Assert.That(sql1).IsEqualTo(sql2);
+    // Assert - Same config should produce identical SQL (strip timestamp to avoid race across second boundary)
+    string Normalize(string sql) => string.Join('\n',
+      sql.Split('\n').Where(line => !line.StartsWith("-- Generated:", StringComparison.Ordinal)));
+    await Assert.That(Normalize(sql1)).IsEqualTo(Normalize(sql2));
   }
 
   [Test]
   public async Task BuildPerspectiveTable_GeneratesValidDDLAsync() {
     // Arrange
     var builder = CreateBuilder();
-    var tableName = "wh_per_product_dto";
+    const string tableName = "wh_per_product_dto";
 
     // Act
     var sql = builder.BuildPerspectiveTable(tableName);
@@ -236,7 +240,7 @@ public abstract class ISchemaBuilderContractTests {
   public async Task BuildPerspectiveTable_IncludesRequiredColumnsAsync() {
     // Arrange
     var builder = CreateBuilder();
-    var tableName = "wh_per_test";
+    const string tableName = "wh_per_test";
 
     // Act
     var sql = builder.BuildPerspectiveTable(tableName);

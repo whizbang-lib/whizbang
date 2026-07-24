@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
@@ -80,6 +81,7 @@ public class TransportConsumerWorkerNullHopsTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [] // Empty, not null
     };
 
@@ -100,10 +102,11 @@ public class TransportConsumerWorkerNullHopsTests {
   [Test]
   public async Task Hops_WithTraceParent_ReturnsTraceParentAsync() {
     // Arrange - Create an envelope with a hop containing TraceParent
-    var expectedTraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const string expectedTraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -188,17 +191,15 @@ public class TransportConsumerWorkerNullHopsTests {
   /// <summary>
   /// Test envelope that has null Hops to simulate deserialization edge case.
   /// </summary>
-  private sealed class TestEnvelopeWithNullHops : IMessageEnvelope {
-    public MessageId MessageId { get; }
+  private sealed class TestEnvelopeWithNullHops(MessageId messageId) : IMessageEnvelope {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox };
+    public MessageId MessageId { get; } = messageId;
     public object Payload => new { };
 
     // Hops is List<MessageHop> per interface, but we want to test null scenario
     // Return empty list and separately test with null IReadOnlyList
     public List<MessageHop> Hops { get; } = [];
-
-    public TestEnvelopeWithNullHops(MessageId messageId) {
-      MessageId = messageId;
-    }
 
     public CorrelationId? GetCorrelationId() => null;
     public MessageId? GetCausationId() => null;

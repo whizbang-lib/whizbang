@@ -76,21 +76,19 @@ jobs:
           dotnet-coverage collect --session-id "$SESSION_ID" --server-mode --background \
             -f cobertura -o TestResults/rabbitmq.cobertura.xml
 
-      # TEMPORARY: continue-on-error due to lifecycle tests being skipped for v0.8.5-beta.1
-      # TUnit returns exit code 8 when all tests are skipped, which we treat as success
       - name: Run RabbitMQ Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''
-        continue-on-error: true
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag RabbitMQ -NoBuild
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag RabbitMQ -NoBuild -ReportTrx
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
+          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '5'
 
       - name: Run RabbitMQ Integration Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
-        continue-on-error: true
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag RabbitMQ
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag RabbitMQ -ReportTrx
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
+          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '5'
 
       - name: Shutdown Coverage Collection
         if: inputs.artifact-name != ''
@@ -99,6 +97,17 @@ jobs:
           dotnet-coverage shutdown "$SESSION_ID" || true
           echo "=== Coverage file contents ==="
           ls -la TestResults/ || true
+
+      - name: Upload TRX Results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trx-rabbitmq
+          path: |
+            tests/**/TestResults/*.trx
+            samples/**/TestResults/*.trx
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Upload Coverage (pre-built)
         if: success() && inputs.artifact-name != ''

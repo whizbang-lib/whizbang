@@ -28,7 +28,7 @@ namespace Whizbang.Core.Tags;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#configuration</docs>
+/// <docs>fundamentals/messages/message-tags#configuration</docs>
 /// <tests>Whizbang.Core.Tests/Tags/TagOptionsTests.cs</tests>
 public sealed class TagOptions {
   private readonly List<TagHookRegistration> _hookRegistrations = [];
@@ -39,12 +39,33 @@ public sealed class TagOptions {
   public IReadOnlyList<TagHookRegistration> HookRegistrations => _hookRegistrations;
 
   /// <summary>
+  /// Size in bytes at which the tag processor logs a warning for a built payload.
+  /// Default is 8192 (8 KiB). Set to <c>null</c> to disable the warning.
+  /// </summary>
+  /// <remarks>
+  /// Measured against the raw JSON text length. Notification payloads are pushed
+  /// over real-time transports like SignalR — oversized payloads indicate the
+  /// author likely forgot to narrow <see cref="Attributes.MessageTagAttribute.Properties"/>.
+  /// </remarks>
+  public int? PayloadSizeWarningThresholdBytes { get; set; } = 8192;
+
+  /// <summary>
+  /// Size in bytes above which the tag processor throws an
+  /// <see cref="InvalidOperationException"/> instead of dispatching the payload.
+  /// Default is <c>null</c> (disabled). Set this in production to catch runaway payloads.
+  /// </summary>
+  /// <remarks>
+  /// Evaluated before hooks run; when tripped, no hook fires for the offending tag.
+  /// </remarks>
+  public int? PayloadSizeErrorThresholdBytes { get; set; }
+
+  /// <summary>
   /// Registers a hook for processing messages tagged with the specified attribute type.
   /// </summary>
   /// <typeparam name="TAttribute">The tag attribute type to handle.</typeparam>
   /// <typeparam name="THook">The hook implementation type.</typeparam>
   /// <param name="priority">Execution priority. Lower values execute first. Default is -100.</param>
-  /// <param name="fireAt">Lifecycle stage when this hook fires. Default is AfterReceptorCompletion.</param>
+  /// <param name="fireAt">Lifecycle stage when this hook fires. Null (default) means fire at all stages.</param>
   /// <returns>This options instance for chaining.</returns>
   /// <example>
   /// <code>
@@ -55,7 +76,7 @@ public sealed class TagOptions {
   /// </example>
   public TagOptions UseHook<TAttribute, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(
       int priority = -100,
-      LifecycleStage fireAt = LifecycleStage.AfterReceptorCompletion)
+      LifecycleStage? fireAt = null)
     where TAttribute : MessageTagAttribute
     where THook : class, IMessageTagHook<TAttribute> {
     var registration = new TagHookRegistration(
@@ -75,7 +96,7 @@ public sealed class TagOptions {
   /// </summary>
   /// <typeparam name="THook">The hook implementation type.</typeparam>
   /// <param name="priority">Execution priority. Lower values execute first. Default is -100.</param>
-  /// <param name="fireAt">Lifecycle stage when this hook fires. Default is AfterReceptorCompletion.</param>
+  /// <param name="fireAt">Lifecycle stage when this hook fires. Null (default) means fire at all stages.</param>
   /// <returns>This options instance for chaining.</returns>
   /// <example>
   /// <code>
@@ -85,7 +106,7 @@ public sealed class TagOptions {
   /// </example>
   public TagOptions UseUniversalHook<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(
       int priority = -100,
-      LifecycleStage fireAt = LifecycleStage.AfterReceptorCompletion)
+      LifecycleStage? fireAt = null)
     where THook : class, IMessageTagHook<MessageTagAttribute> {
     return UseHook<MessageTagAttribute, THook>(priority, fireAt);
   }
@@ -122,7 +143,7 @@ public sealed class TagOptions {
     where TAttribute : MessageTagAttribute {
     var targetType = typeof(TAttribute);
     return _hookRegistrations
-      .Where(r => (r.AttributeType == targetType || r.AttributeType == typeof(MessageTagAttribute)) && r.FireAt == stage)
+      .Where(r => (r.AttributeType == targetType || r.AttributeType == typeof(MessageTagAttribute)) && (r.FireAt is null || r.FireAt == stage))
       .OrderBy(r => r.Priority);
   }
 
@@ -147,7 +168,7 @@ public sealed class TagOptions {
   public IEnumerable<TagHookRegistration> GetHooksFor(Type attributeType, LifecycleStage stage) {
     ArgumentNullException.ThrowIfNull(attributeType);
     return _hookRegistrations
-      .Where(r => (r.AttributeType == attributeType || r.AttributeType == typeof(MessageTagAttribute)) && r.FireAt == stage)
+      .Where(r => (r.AttributeType == attributeType || r.AttributeType == typeof(MessageTagAttribute)) && (r.FireAt is null || r.FireAt == stage))
       .OrderBy(r => r.Priority);
   }
 

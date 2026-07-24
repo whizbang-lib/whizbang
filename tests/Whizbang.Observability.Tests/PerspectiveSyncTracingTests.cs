@@ -25,7 +25,7 @@ namespace Whizbang.Observability.Tests;
 [NotInParallel(Order = 2)]
 public class PerspectiveSyncTracingTests {
   // Dummy perspective type for testing
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   // ==========================================================================
   // WaitAsync tracing tests
@@ -91,13 +91,13 @@ public class PerspectiveSyncTracingTests {
     tracker.TrackEmittedEvent(streamId, typeof(string), eventId);
 
     // Mock coordinator that returns fully synced immediately
-    var coordinator = new MockWorkCoordinator((request, _) => Task.FromResult(new WorkBatch {
+    var coordinator = new MockWorkCoordinator((inquiries, _) => Task.FromResult(new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = [],
       SyncInquiryResults = [
         new SyncInquiryResult {
-          InquiryId = request.PerspectiveSyncInquiries?.FirstOrDefault()?.InquiryId ?? Guid.NewGuid(),
+          InquiryId = (inquiries.Count > 0 ? inquiries[0].InquiryId : Guid.NewGuid()),
           StreamId = streamId,
           PendingCount = 0,
           ProcessedCount = 1,
@@ -107,7 +107,7 @@ public class PerspectiveSyncTracingTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().WithTimeout(TimeSpan.FromSeconds(5)).Build();
 
     // Act
@@ -131,13 +131,13 @@ public class PerspectiveSyncTracingTests {
     tracker.TrackEmittedEvent(streamId, typeof(string), Guid.NewGuid());
 
     // Mock coordinator that returns fully synced
-    var coordinator = new MockWorkCoordinator((request, _) => Task.FromResult(new WorkBatch {
+    var coordinator = new MockWorkCoordinator((inquiries, _) => Task.FromResult(new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = [],
       SyncInquiryResults = [
         new SyncInquiryResult {
-          InquiryId = request.PerspectiveSyncInquiries?.FirstOrDefault()?.InquiryId ?? Guid.NewGuid(),
+          InquiryId = (inquiries.Count > 0 ? inquiries[0].InquiryId : Guid.NewGuid()),
           StreamId = streamId,
           PendingCount = 0,
           ProcessedCount = 3
@@ -146,7 +146,7 @@ public class PerspectiveSyncTracingTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().WithTimeout(TimeSpan.FromSeconds(5)).Build();
 
     // Act
@@ -291,18 +291,18 @@ public class PerspectiveSyncTracingTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    return new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    return new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
   }
 
   private static PerspectiveSyncAwaiter _createAwaiterWithSyncTracker() {
     var syncTracker = new SyncEventTracker();
-    var coordinator = new MockWorkCoordinator((request, _) => Task.FromResult(new WorkBatch {
+    var coordinator = new MockWorkCoordinator((inquiries, _) => Task.FromResult(new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = [],
       SyncInquiryResults = [
         new SyncInquiryResult {
-          InquiryId = request.PerspectiveSyncInquiries?.FirstOrDefault()?.InquiryId ?? Guid.NewGuid(),
+          InquiryId = (inquiries.Count > 0 ? inquiries[0].InquiryId : Guid.NewGuid()),
           PendingCount = 0,
           ProcessedCount = 0
         }
@@ -314,36 +314,42 @@ public class PerspectiveSyncTracingTests {
 
   // Mock work coordinator for testing
   private sealed class MockWorkCoordinator : IWorkCoordinator {
-    private readonly Func<ProcessWorkBatchRequest, CancellationToken, Task<WorkBatch>>? _processHandler;
+    private readonly Func<IReadOnlyList<SyncInquiry>, CancellationToken, Task<WorkBatch>>? _processHandler;
 
     public MockWorkCoordinator() { }
 
-    public MockWorkCoordinator(Func<ProcessWorkBatchRequest, CancellationToken, Task<WorkBatch>> processHandler) {
+    public MockWorkCoordinator(Func<IReadOnlyList<SyncInquiry>, CancellationToken, Task<WorkBatch>> processHandler) {
       _processHandler = processHandler;
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
-      if (_processHandler is not null) {
-        return _processHandler(request, ct);
+    public async Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+      IReadOnlyList<SyncInquiry> inquiries,
+      CancellationToken cancellationToken = default) {
+      // PerspectiveSyncAwaiter's only coordinator call for sync. Route the live inquiries
+      // through the test handler so it can echo back inquiry ids in its results.
+      if (_processHandler is null) {
+        return [];
       }
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        SyncInquiryResults = []
-      });
+      var probe = await _processHandler(inquiries, cancellationToken).ConfigureAwait(false);
+      return probe.SyncInquiryResults ?? [];
     }
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCheckpointCompletion completion, CancellationToken ct = default) {
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
       return Task.CompletedTask;
     }
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCheckpointFailure failure, CancellationToken ct = default) {
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 }

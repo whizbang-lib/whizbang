@@ -21,7 +21,7 @@ public class RoslynGuardsTests {
   [Test]
   public async Task GetClassSymbolOrThrow_WithValidClass_ReturnsSymbolAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       namespace TestNamespace {
         public class TestClass { }
       }
@@ -42,7 +42,7 @@ public class RoslynGuardsTests {
   [Test]
   public async Task GetRecordSymbolOrThrow_WithValidRecord_ReturnsSymbolAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       namespace TestNamespace {
         public record TestRecord(string Name);
       }
@@ -63,7 +63,7 @@ public class RoslynGuardsTests {
   [Test]
   public async Task GetTypeSymbolFromNode_WithClassDeclaration_ReturnsSymbolAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       namespace TestNamespace {
         public class TestClass { }
       }
@@ -84,7 +84,7 @@ public class RoslynGuardsTests {
   [Test]
   public async Task GetTypeSymbolFromNode_WithRecordDeclaration_ReturnsSymbolAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       namespace TestNamespace {
         public record TestRecord(string Name);
       }
@@ -105,7 +105,7 @@ public class RoslynGuardsTests {
   [Test]
   public async Task GetContainingClassOrThrow_WithNodeInClass_ReturnsClassAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       namespace TestNamespace {
         public class TestClass {
           public void TestMethod() { }
@@ -126,7 +126,7 @@ public class RoslynGuardsTests {
   [Test]
   public async Task IsNullableOfType_WithNullableGuid_ReturnsTrueAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using System;
       namespace TestNamespace {
         public class TestClass {
@@ -153,7 +153,7 @@ public class RoslynGuardsTests {
   [Test]
   public async Task IsNullableOfType_WithNonNullableGuid_ReturnsFalseAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using System;
       namespace TestNamespace {
         public class TestClass {

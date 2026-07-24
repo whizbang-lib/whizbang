@@ -11,6 +11,11 @@
     <PackageReference Include="Aspire.Hosting.Azure.ServiceBus" />
     <PackageReference Include="Azure.Messaging.ServiceBus" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <!-- Security pin: MessagePack arrives transitively via Aspire.Hosting -> StreamJsonRpc.
+         The transitive 2.5.192 has a known high-severity vulnerability (CVE-2026-48109,
+         GHSA-hv8m-jj95-wg3x). Referenced directly so Central Package Management forces the
+         patched 2.5.301. Remove once Aspire.Hosting/StreamJsonRpc flow a patched MessagePack. -->
+    <PackageReference Include="MessagePack" />
   </ItemGroup>
 
   <ItemGroup>

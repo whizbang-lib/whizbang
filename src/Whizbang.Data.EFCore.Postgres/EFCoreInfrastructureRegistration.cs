@@ -1,9 +1,14 @@
+#pragma warning disable S2436 // Fluent API with intentional generic type parameter overloads
+
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -23,11 +28,6 @@ public static class EFCoreInfrastructureRegistration {
   /// <param name="modelType">The perspective model type (e.g., typeof(OrderReadModel)).</param>
   /// <param name="tableName">The database table name for this perspective (e.g., "order_read_model").</param>
   /// <param name="upsertStrategy">The database-specific upsert strategy to use.</param>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_RegistersIPerspectiveStoreAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_RegistersILensQueryAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_WithMultipleModels_RegistersBothAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_CreatesCorrectStoreTypeAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_CreatesCorrectQueryTypeAsync</tests>
   public static void RegisterPerspectiveModel(
       IServiceCollection services,
       Type dbContextType,
@@ -48,8 +48,10 @@ public static class EFCoreInfrastructureRegistration {
     var queryInterfaceType = typeof(ILensQuery<>).MakeGenericType(modelType);
     services.AddScoped(queryInterfaceType, sp => {
       var context = (DbContext)sp.GetRequiredService(dbContextType);
+      var scopeContextAccessor = sp.GetRequiredService<IScopeContextAccessor>();
+      var whizbangOptions = sp.GetRequiredService<IOptions<WhizbangCoreOptions>>();
       var queryType = typeof(EFCorePostgresLensQuery<>).MakeGenericType(modelType);
-      return Activator.CreateInstance(queryType, context, tableName)
+      return Activator.CreateInstance(queryType, context, tableName, scopeContextAccessor, whizbangOptions)
           ?? throw new InvalidOperationException($"Failed to create {queryType.Name}");
     });
   }
@@ -58,19 +60,6 @@ public static class EFCoreInfrastructureRegistration {
   /// Registers ILensQuery&lt;T1, T2&gt; for multi-model queries with shared DbContext.
   /// Enables LINQ joins across multiple perspective types.
   /// </summary>
-  /// <remarks>
-  /// Registered as Transient - each injection gets its own DbContext from the factory.
-  /// This ensures thread-safety for HotChocolate parallel resolvers.
-  /// Requires IDbContextFactory&lt;TDbContext&gt; to be registered (via ScopedDbContextFactory or AddPooledDbContextFactory).
-  /// </remarks>
-  /// <typeparam name="TDbContext">The DbContext type</typeparam>
-  /// <typeparam name="T1">First perspective model type</typeparam>
-  /// <typeparam name="T2">Second perspective model type</typeparam>
-  /// <param name="services">The service collection to register services in.</param>
-  /// <param name="tableNames">Dictionary mapping model types to their table names.</param>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterMultiLensQuery_TwoGeneric_RegistersILensQueryAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterMultiLensQuery_TwoGeneric_IsTransient_ReturnsDifferentInstancesAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterMultiLensQuery_TwoGeneric_CreatesCorrectTypeAsync</tests>
   public static void RegisterMultiLensQuery<
       [DynamicallyAccessedMembers(
           DynamicallyAccessedMemberTypes.PublicConstructors |
@@ -85,12 +74,12 @@ public static class EFCoreInfrastructureRegistration {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(tableNames);
 
-    // Register as Transient - each injection gets its own DbContext from the factory
-    // This ensures thread-safety for HotChocolate parallel resolvers
     services.AddTransient<ILensQuery<T1, T2>>(sp => {
       var factory = sp.GetRequiredService<IDbContextFactory<TDbContext>>();
       var context = factory.CreateDbContext();
-      return new EFCorePostgresLensQuery<T1, T2>(context, tableNames);
+      var scopeContextAccessor = sp.GetRequiredService<IScopeContextAccessor>();
+      var whizbangOptions = sp.GetRequiredService<IOptions<WhizbangCoreOptions>>();
+      return new EFCorePostgresLensQuery<T1, T2>(context, tableNames, scopeContextAccessor, whizbangOptions);
     });
   }
 
@@ -98,19 +87,6 @@ public static class EFCoreInfrastructureRegistration {
   /// Registers ILensQuery&lt;T1, T2, T3&gt; for multi-model queries with shared DbContext.
   /// Enables LINQ joins across multiple perspective types.
   /// </summary>
-  /// <remarks>
-  /// Registered as Transient - each injection gets its own DbContext from the factory.
-  /// This ensures thread-safety for HotChocolate parallel resolvers.
-  /// Requires IDbContextFactory&lt;TDbContext&gt; to be registered (via ScopedDbContextFactory or AddPooledDbContextFactory).
-  /// </remarks>
-  /// <typeparam name="TDbContext">The DbContext type</typeparam>
-  /// <typeparam name="T1">First perspective model type</typeparam>
-  /// <typeparam name="T2">Second perspective model type</typeparam>
-  /// <typeparam name="T3">Third perspective model type</typeparam>
-  /// <param name="services">The service collection to register services in.</param>
-  /// <param name="tableNames">Dictionary mapping model types to their table names.</param>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterMultiLensQuery_ThreeGeneric_RegistersILensQueryAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterMultiLensQuery_ThreeGeneric_IsTransient_ReturnsDifferentInstancesAsync</tests>
   public static void RegisterMultiLensQuery<
       [DynamicallyAccessedMembers(
           DynamicallyAccessedMemberTypes.PublicConstructors |
@@ -126,12 +102,12 @@ public static class EFCoreInfrastructureRegistration {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(tableNames);
 
-    // Register as Transient - each injection gets its own DbContext from the factory
-    // This ensures thread-safety for HotChocolate parallel resolvers
     services.AddTransient<ILensQuery<T1, T2, T3>>(sp => {
       var factory = sp.GetRequiredService<IDbContextFactory<TDbContext>>();
       var context = factory.CreateDbContext();
-      return new EFCorePostgresLensQuery<T1, T2, T3>(context, tableNames);
+      var scopeContextAccessor = sp.GetRequiredService<IScopeContextAccessor>();
+      var whizbangOptions = sp.GetRequiredService<IOptions<WhizbangCoreOptions>>();
+      return new EFCorePostgresLensQuery<T1, T2, T3>(context, tableNames, scopeContextAccessor, whizbangOptions);
     });
   }
 }

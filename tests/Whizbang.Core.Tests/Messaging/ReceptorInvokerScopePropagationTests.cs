@@ -25,18 +25,18 @@ public class ReceptorInvokerScopePropagationTests {
   private sealed record TestEvent(string Data) : IEvent;
 
   /// <summary>
-  /// Verifies that when a receptor returns an event, the security context is available
-  /// via CascadeContext.GetSecurityFromAmbient() during cascading.
+  /// <para>Verifies that when a receptor returns an event, the security context is available
+  /// via CascadeContext.GetSecurityFromAmbient() during cascading.</para>
   ///
-  /// This test reproduces the bug where scope is not propagated to cascaded events
+  /// <para>This test reproduces the bug where scope is not propagated to cascaded events
   /// because ReceptorInvoker sets a non-ImmutableScopeContext on the accessor,
-  /// and GetSecurityFromAmbient() only works with ImmutableScopeContext.
+  /// and GetSecurityFromAmbient() only works with ImmutableScopeContext.</para>
   /// </summary>
   [Test]
   public async Task InvokeAsync_WhenReceptorReturnsEvent_GetSecurityFromAmbientShouldReturnScopeAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-123";
-    var expectedUserId = "test-user-456";
+    const string expectedTenantId = "test-tenant-123";
+    const string expectedUserId = "test-user-456";
 
     // Security context returned by provider - MUST be ImmutableScopeContext with ShouldPropagate=true
     // This matches what DefaultMessageSecurityContextProvider returns
@@ -68,7 +68,10 @@ public class ReceptorInvokerScopePropagationTests {
       () => new TestEvent("cascaded-data"));
 
     var invoker = new ReceptorInvoker(registry, scope.ServiceProvider, cascader);
-    var envelope = _createEnvelope(new TestCommand("test"));
+    // Use envelope WITH scope in hops - EnvelopeContextExtractor.ExtractFromHops produces an
+    // ImmutableScopeContext with ShouldPropagate=true that gets set on ScopeContextAccessor.CurrentContext
+    // directly in InvokeAsync (not inside a child async method), so it flows to the cascade context.
+    var envelope = _createEnvelopeWithScopeInHops(new TestCommand("test"), expectedTenantId, expectedUserId);
 
     // Act
     await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
@@ -81,18 +84,18 @@ public class ReceptorInvokerScopePropagationTests {
   }
 
   /// <summary>
-  /// Verifies that when the security provider returns NULL but the envelope has scope in hops,
-  /// the scope is STILL available via GetSecurityFromAmbient() during event cascading.
+  /// <para>Verifies that when the security provider returns NULL but the envelope has scope in hops,
+  /// the scope is STILL available via GetSecurityFromAmbient() during event cascading.</para>
   ///
-  /// This is the EXACT BUG SCENARIO: Events arrive from another service with scope in hops,
+  /// <para>This is the EXACT BUG SCENARIO: Events arrive from another service with scope in hops,
   /// but no JWT/token extraction happens (security provider returns null). The scope from
-  /// hops should still be wrapped in ImmutableScopeContext and propagated.
+  /// hops should still be wrapped in ImmutableScopeContext and propagated.</para>
   /// </summary>
   [Test]
   public async Task InvokeAsync_WhenSecurityProviderReturnsNull_ButEnvelopeHasScopeInHops_GetSecurityFromAmbientShouldReturnScopeAsync() {
     // Arrange
-    var expectedTenantId = "hop-tenant-from-bff";
-    var expectedUserId = "hop-user-from-bff";
+    const string expectedTenantId = "hop-tenant-from-bff";
+    const string expectedUserId = "hop-user-from-bff";
 
     // Security provider returns NULL - simulating no JWT/token extraction
     var securityProvider = new TestSecurityContextProvider(returns: null);
@@ -142,8 +145,8 @@ public class ReceptorInvokerScopePropagationTests {
   [Test]
   public async Task InvokeAsync_WhenSecurityProviderReturnsContext_MessageContextShouldHaveScopeContextAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-789";
-    var expectedUserId = "test-user-abc";
+    const string expectedTenantId = "test-tenant-789";
+    const string expectedUserId = "test-user-abc";
 
     // Security context returned by provider - matches DefaultMessageSecurityContextProvider
     var testScopeContext = new TestScopeContext(expectedTenantId, expectedUserId);
@@ -187,7 +190,8 @@ public class ReceptorInvokerScopePropagationTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = message,
-      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -199,7 +203,8 @@ public class ReceptorInvokerScopePropagationTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = null // Explicitly no scope in hops
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -218,16 +223,13 @@ public class ReceptorInvokerScopePropagationTests {
         ServiceInstance = ServiceInstanceInfo.Unknown,
         // Scope in hop - simulating event arriving from BffService with authenticated user
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
-  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly IScopeContext? _returns;
-
-    public TestSecurityContextProvider(IScopeContext? returns = null) {
-      _returns = returns;
-    }
+  private sealed class TestSecurityContextProvider(IScopeContext? returns = null) : IMessageSecurityContextProvider {
+    private readonly IScopeContext? _returns = returns;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -281,26 +283,18 @@ public class ReceptorInvokerScopePropagationTests {
     }
   }
 
-  private sealed class TestEventCascader : IEventCascader {
-    private readonly System.Action? _onCascade;
+  private sealed class TestEventCascader(System.Action? onCascade = null) : IEventCascader {
+    private readonly System.Action? _onCascade = onCascade;
 
-    public TestEventCascader(System.Action? onCascade = null) {
-      _onCascade = onCascade;
-    }
-
-    public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
+    public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchModes? receptorDefault = null, CancellationToken cancellationToken = default) {
       _onCascade?.Invoke();
       return Task.CompletedTask;
     }
   }
 
-  private sealed class TestMessageContextAccessor : IMessageContextAccessor {
-    private readonly System.Action<IMessageContext?>? _onSet;
+  private sealed class TestMessageContextAccessor(System.Action<IMessageContext?>? onSet = null) : IMessageContextAccessor {
+    private readonly System.Action<IMessageContext?>? _onSet = onSet;
     private IMessageContext? _current;
-
-    public TestMessageContextAccessor(System.Action<IMessageContext?>? onSet = null) {
-      _onSet = onSet;
-    }
 
     public IMessageContext? Current {
       get => _current;
@@ -324,13 +318,9 @@ public class ReceptorInvokerScopePropagationTests {
   /// <summary>
   /// Test receptor registry that allows registering receptors that return events.
   /// </summary>
-  private sealed class TestReceptorRegistry : IReceptorRegistry {
+  private sealed class TestReceptorRegistry(ReceptorInvokerScopePropagationTests.InvocationTracker tracker) : IReceptorRegistry {
     private readonly Dictionary<(System.Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
-    private readonly InvocationTracker _tracker;
-
-    public TestReceptorRegistry(InvocationTracker tracker) {
-      _tracker = tracker;
-    }
+    private readonly InvocationTracker _tracker = tracker;
 
     public void RegisterReceptor<TMessage>(string receptorId, LifecycleStage stage) where TMessage : notnull {
       var key = (typeof(TMessage), stage);
@@ -341,7 +331,7 @@ public class ReceptorInvokerScopePropagationTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, ct) => {
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null); // Return null (no cascade)
         }));
@@ -361,7 +351,7 @@ public class ReceptorInvokerScopePropagationTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TCommand),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, ct) => {
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(eventFactory()); // Return event for cascading
         }));
@@ -371,6 +361,11 @@ public class ReceptorInvokerScopePropagationTests {
       var key = (messageType, stage);
       return _receptors.TryGetValue(key, out var list) ? list : [];
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   #endregion

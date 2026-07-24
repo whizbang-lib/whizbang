@@ -5,7 +5,7 @@ namespace Whizbang.Core;
 /// <summary>
 /// Provides context and metadata for a message flowing through the system.
 /// </summary>
-/// <docs>core-concepts/message-context</docs>
+/// <docs>fundamentals/messages/message-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs</tests>
 public interface IMessageContext {
   /// <summary>
@@ -58,7 +58,7 @@ public interface IMessageContext {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// In lifecycle receptors (especially deferred stages like <c>PostPerspectiveAsync</c>),
+  /// In lifecycle receptors (especially deferred stages like <c>PostPerspectiveDetached</c>),
   /// use this property instead of HTTP-based tenant resolution since the original HTTP
   /// context is unavailable.
   /// </para>
@@ -91,6 +91,13 @@ public interface IMessageContext {
   /// AsyncLocal then reads FROM the initiating message context's ScopeContext.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/cascade-context#scope-context</docs>
+  /// <docs>fundamentals/messages/cascade-context#scope-context</docs>
   Security.IScopeContext? ScopeContext { get; }
+
+  /// <summary>
+  /// Caller information from the code that dispatched this message.
+  /// Null when caller info is unavailable (e.g., <see cref="MessageContext.New()"/> or test contexts).
+  /// </summary>
+  /// <docs>fundamentals/messages/message-context#caller-info</docs>
+  Observability.ICallerInfo? CallerInfo { get; }
 }

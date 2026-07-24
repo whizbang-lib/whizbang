@@ -11,7 +11,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_ConvertsIDocumentStoreToIEventStore_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -35,7 +35,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_UpdatesUsingDirectives_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
       using Marten.Events;
 
@@ -57,7 +57,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_RemovesSessionDeclarations_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -83,7 +83,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_RemovesSaveChangesAsync_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -108,7 +108,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_WarnsAboutStartStream_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -137,7 +137,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_WarnsAboutEventsAppend_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -164,7 +164,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_WarnsAboutFetchStreamAsync_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -189,7 +189,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_WarnsAboutAggregateStreamAsync_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -216,7 +216,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_TracksAllChanges_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -242,7 +242,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_NoMartenPatterns_ReturnsUnchanged_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public void Process() { }
       }
@@ -261,7 +261,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_PreservesNonMartenCode_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
       using Microsoft.Extensions.Logging;
 
@@ -293,7 +293,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_PreservesNamespace_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       namespace MyApp.Services;
@@ -314,7 +314,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_RenamesStoreParameterToEventStore_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -338,7 +338,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_WarnsAboutIDocumentSession_Async() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -359,7 +359,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_EventsAppend_EmitsWarningAboutDispatcherPatternAsync() {
     // Arrange
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -393,7 +393,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_E01_StartStreamWithGuid_TransformsToAppendAsyncAsync() {
     // Arrange - E01: StartStream with ID generation
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderHandler {
@@ -433,7 +433,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_E02_AppendToStream_TransformsToAppendAsyncAsync() {
     // Arrange - E02: Basic Append to existing stream
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderHandler {
@@ -464,7 +464,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_E03_AppendExclusive_TransformsWithWarningAsync() {
     // Arrange - E03: AppendExclusive with locking
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderHandler {
@@ -497,7 +497,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_E04_AppendOptimistic_TransformsWithExpectedSequenceAsync() {
     // Arrange - E04: Optimistic concurrency append
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderHandler {
@@ -529,7 +529,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_E05_CombGuidIdGeneration_TransformsToTrackedGuidAsync() {
     // Arrange - E05: CombGuid ID generation
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
       using Marten.Schema.Identity;
 
@@ -570,7 +570,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_E06_CollisionRetry_SimplifiesToSingleAppendAsync() {
     // Arrange - E06: Stream ID collision retry pattern
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderHandler {
@@ -619,7 +619,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_E07_MultipleAppends_TransformsToAppendBatchAsync() {
     // Arrange - E07: Multiple appends with single SaveChangesAsync
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderHandler {
@@ -656,7 +656,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_E08_BatchAppend_TransformsWithWorkCoordinatorAsync() {
     // Arrange - E08: Batch create across multiple streams
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderHandler {
@@ -696,7 +696,7 @@ public class EventStoreTransformerTests {
   public async Task TransformAsync_E09_TenantScopedSession_TransformsToScopedEventStoreAsync() {
     // Arrange - E09: Tenant-scoped session
     var transformer = new EventStoreTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class TenantAwareService {

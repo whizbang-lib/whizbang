@@ -7,7 +7,7 @@ namespace Whizbang.Core;
 /// </summary>
 /// <typeparam name="TMessage">The type of message this receptor handles</typeparam>
 /// <typeparam name="TResponse">The type of response this receptor produces</typeparam>
-/// <docs>core-concepts/receptors#synchronous-receptors</docs>
+/// <docs>fundamentals/receptors/receptors#synchronous-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Receptors/SyncReceptorTests.cs:SyncReceptor_Handle_ReturnsTypedResponseAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Receptors/SyncReceptorTests.cs:SyncReceptor_TupleReturn_ReturnsMultipleValuesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Receptors/SyncReceptorTests.cs:SyncReceptor_Stateless_NoSharedStateAsync</tests>
@@ -25,7 +25,7 @@ public interface ISyncReceptor<in TMessage, out TResponse> {
 /// Use for side-effect-only operations that don't require async.
 /// </summary>
 /// <typeparam name="TMessage">The type of message this receptor handles</typeparam>
-/// <docs>core-concepts/receptors#synchronous-receptors</docs>
+/// <docs>fundamentals/receptors/receptors#synchronous-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Receptors/SyncReceptorTests.cs:VoidSyncReceptor_Handle_ExecutesSynchronouslyAsync</tests>
 public interface ISyncReceptor<in TMessage> {
   /// <summary>

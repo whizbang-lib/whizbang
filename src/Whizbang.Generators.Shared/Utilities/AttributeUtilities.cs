@@ -14,7 +14,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Named arguments are checked first and take precedence over constructor arguments.
 /// Constructor parameter names are matched case-insensitively to property names.
 /// </remarks>
-/// <docs>source-generators/attribute-utilities</docs>
+/// <docs>extending/source-generators/attribute-utilities</docs>
 /// <tests>Whizbang.Generators.Tests/Utilities/AttributeUtilitiesTests.cs</tests>
 public static class AttributeUtilities {
   /// <summary>
@@ -39,10 +39,9 @@ public static class AttributeUtilities {
       for (var i = 0; i < constructorParams.Length && i < attribute.ConstructorArguments.Length; i++) {
         var param = constructorParams[i];
         // Case-insensitive match: constructor param "tag" matches property "Tag"
-        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase)) {
-          if (attribute.ConstructorArguments[i].Value is string ctorValue) {
-            return ctorValue;
-          }
+        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
+            attribute.ConstructorArguments[i].Value is string ctorValue) {
+          return ctorValue;
         }
       }
     }
@@ -72,10 +71,9 @@ public static class AttributeUtilities {
       var constructorParams = attribute.AttributeConstructor.Parameters;
       for (var i = 0; i < constructorParams.Length && i < attribute.ConstructorArguments.Length; i++) {
         var param = constructorParams[i];
-        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase)) {
-          if (attribute.ConstructorArguments[i].Value is bool ctorValue) {
-            return ctorValue;
-          }
+        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
+            attribute.ConstructorArguments[i].Value is bool ctorValue) {
+          return ctorValue;
         }
       }
     }
@@ -105,10 +103,9 @@ public static class AttributeUtilities {
       var constructorParams = attribute.AttributeConstructor.Parameters;
       for (var i = 0; i < constructorParams.Length && i < attribute.ConstructorArguments.Length; i++) {
         var param = constructorParams[i];
-        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase)) {
-          if (attribute.ConstructorArguments[i].Value is int ctorValue) {
-            return ctorValue;
-          }
+        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
+            attribute.ConstructorArguments[i].Value is int ctorValue) {
+          return ctorValue;
         }
       }
     }
@@ -129,10 +126,9 @@ public static class AttributeUtilities {
         .FirstOrDefault(a => a.Key == propertyName);
 
     if (namedArg.Key is not null && namedArg.Value.Kind == TypedConstantKind.Array) {
-      return namedArg.Value.Values
+      return [.. namedArg.Value.Values
           .Select(v => v.Value?.ToString() ?? "")
-          .Where(s => !string.IsNullOrEmpty(s))
-          .ToArray();
+          .Where(s => !string.IsNullOrEmpty(s))];
     }
 
     // 2. Check constructor arguments
@@ -143,10 +139,9 @@ public static class AttributeUtilities {
         if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase)) {
           var arg = attribute.ConstructorArguments[i];
           if (arg.Kind == TypedConstantKind.Array) {
-            return arg.Values
+            return [.. arg.Values
                 .Select(v => v.Value?.ToString() ?? "")
-                .Where(s => !string.IsNullOrEmpty(s))
-                .ToArray();
+                .Where(s => !string.IsNullOrEmpty(s))];
           }
         }
       }

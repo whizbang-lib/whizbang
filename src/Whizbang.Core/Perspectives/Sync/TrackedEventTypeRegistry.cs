@@ -18,7 +18,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </description></item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#type-registry</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#type-registry</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/TrackedEventTypeRegistryTests.cs</tests>
 public sealed class TrackedEventTypeRegistry : ITrackedEventTypeRegistry {
   private readonly Dictionary<Type, List<string>>? _staticMappings;
@@ -40,7 +40,7 @@ public sealed class TrackedEventTypeRegistry : ITrackedEventTypeRegistry {
   public TrackedEventTypeRegistry(IReadOnlyDictionary<Type, string> mappings) {
     ArgumentNullException.ThrowIfNull(mappings);
 
-    _staticMappings = new Dictionary<Type, List<string>>();
+    _staticMappings = [];
     foreach (var (eventType, perspectiveName) in mappings) {
       if (!_staticMappings.TryGetValue(eventType, out var list)) {
         list = [];
@@ -58,7 +58,7 @@ public sealed class TrackedEventTypeRegistry : ITrackedEventTypeRegistry {
   public TrackedEventTypeRegistry(IReadOnlyDictionary<Type, string[]> mappings) {
     ArgumentNullException.ThrowIfNull(mappings);
 
-    _staticMappings = new Dictionary<Type, List<string>>();
+    _staticMappings = [];
     foreach (var (eventType, perspectiveNames) in mappings) {
       _staticMappings[eventType] = [.. perspectiveNames];
     }

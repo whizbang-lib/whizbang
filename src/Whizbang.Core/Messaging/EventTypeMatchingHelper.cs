@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 namespace Whizbang.Core.Messaging;
@@ -35,22 +36,63 @@ public static class EventTypeMatchingHelper {
       return assemblyQualifiedTypeName;
     }
 
-    // For generic types like MessageEnvelope`1[[PayloadType, Assembly, Version=..., ...]], OuterAssembly, Version=..., ...
-    // we need to strip version info from BOTH the inner type and the outer type.
-    // Strategy: Use regex to replace ", Version=..., Culture=..., PublicKeyToken=..." patterns anywhere in the string.
+    // Strip ", Version=..., Culture=..., PublicKeyToken=..." segments from assembly-qualified names.
+    // Uses string scanning instead of regex to avoid backtracking timeouts on long/nested generic types.
+    var result = new System.Text.StringBuilder(assemblyQualifiedTypeName.Length);
+    var span = assemblyQualifiedTypeName.AsSpan();
+    var i = 0;
 
-    // Pattern matches: ", Version=X, Culture=Y, PublicKeyToken=Z" or any subset
-    // This works for both simple types and nested generic types
-    // Timeout added to prevent ReDoS attacks (S6444)
-    // Strip version, culture, and public key token info but preserve nested type separators (+)
-    // MessageJsonContextGenerator now uses CLR format (+ for nested types) matching Type.FullName
-    return System.Text.RegularExpressions.Regex.Replace(
-      assemblyQualifiedTypeName,
-      @",\s*Version=[^,\]]+(?:,\s*Culture=[^,\]]+)?(?:,\s*PublicKeyToken=[^,\]]+)?",
-      "",
-      System.Text.RegularExpressions.RegexOptions.None,
-      TimeSpan.FromSeconds(1)
-    );
+    while (i < span.Length) {
+      // Check for ", Version=" pattern (with optional whitespace after comma)
+      if (i + 2 < span.Length && span[i] == ',' && _isVersionStart(span, i)) {
+        // Skip this segment: advance past ", Version=value" and any following ", Culture=value", ", PublicKeyToken=value"
+        i = _skipAssemblyMetadata(span, i);
+      } else {
+        result.Append(span[i]);
+        i++;
+      }
+    }
+
+    return result.ToString();
+  }
+
+  private static bool _isVersionStart(ReadOnlySpan<char> span, int commaIndex) {
+    var j = commaIndex + 1;
+    // Skip whitespace after comma
+    while (j < span.Length && span[j] == ' ') { j++; }
+    // Check for "Version="
+    return j + 8 <= span.Length && span.Slice(j, 8).SequenceEqual("Version=".AsSpan());
+  }
+
+  private static int _skipAssemblyMetadata(ReadOnlySpan<char> span, int start) {
+    // Skip ", Version=value" then optionally ", Culture=value" and ", PublicKeyToken=value"
+    var i = start;
+    // Skip up to 3 metadata segments (Version, Culture, PublicKeyToken)
+    for (var seg = 0; seg < 3 && i < span.Length; seg++) {
+      if (span[i] != ',') { break; }
+      var j = i + 1;
+      while (j < span.Length && span[j] == ' ') { j++; }
+      // Check if this is a known metadata key
+      if (_startsWithMetadataKey(span, j)) {
+        // Skip to end of value (next comma, ']', or end)
+        i = j;
+        while (i < span.Length && span[i] != ',' && span[i] != ']') { i++; }
+      } else {
+        break;
+      }
+    }
+    return i;
+  }
+
+  private static bool _startsWithMetadataKey(ReadOnlySpan<char> span, int pos) {
+    return _startsWith(span, pos, "Version=") ||
+           _startsWith(span, pos, "Culture=") ||
+           _startsWith(span, pos, "PublicKeyToken=");
+  }
+
+  private static bool _startsWith(ReadOnlySpan<char> span, int pos, string prefix) {
+    return pos + prefix.Length <= span.Length &&
+           span.Slice(pos, prefix.Length).SequenceEqual(prefix.AsSpan());
   }
 
   /// <summary>
@@ -81,5 +123,65 @@ public static class EventTypeMatchingHelper {
              et.FullName + ", " + et.Assembly.GetName().Name == messageTypeName ||
              etNormalized == normalizedMessageType;
     });
+  }
+
+  /// <summary>
+  /// Builds the canonical normalized lookup from a perspective's candidate event types, used to
+  /// resolve a stored <c>EventType</c> string back to its concrete <see cref="Type"/>.
+  /// This is the ONE strategy every event-store read path shares (replacing the hand-rolled
+  /// per-store type maps); keys cover every form a producer may have written:
+  /// the storage form "FullName, AssemblyName" (what <see cref="TypeNameFormatter.Format"/> and
+  /// <c>AppendAsync</c> write — also the normalized form of an assembly-qualified name),
+  /// the bare <see cref="Type.FullName"/>, and the simple <see cref="MemberInfo.Name"/>.
+  /// AOT-safe: uses only compile-time type metadata, no reflection-based binding.
+  /// </summary>
+  /// <param name="candidateTypes">The event types the caller is willing to materialize (e.g. a perspective's known types).</param>
+  /// <returns>A case-sensitive lookup keyed by every normalized name form, mapping to the concrete type.</returns>
+  public static Dictionary<string, Type> BuildTypeLookup(IReadOnlyList<Type> candidateTypes) {
+    ArgumentNullException.ThrowIfNull(candidateTypes);
+
+    var lookup = new Dictionary<string, Type>(candidateTypes.Count * 3, StringComparer.Ordinal);
+    foreach (var type in candidateTypes) {
+      var assemblyName = type.Assembly.GetName().Name;
+      if (type.FullName is { } fullName) {
+        if (assemblyName is not null) {
+          // Storage form — identical to NormalizeTypeName(AssemblyQualifiedName) and to Format(type).
+          lookup[fullName + ", " + assemblyName] = type;
+        }
+        lookup[fullName] = type;
+      }
+      // Simple-name fallback (last resort; mirrors the legacy per-store maps).
+      lookup[type.Name] = type;
+    }
+    return lookup;
+  }
+
+  /// <summary>
+  /// Resolves a stored <c>EventType</c> string against a lookup built by <see cref="BuildTypeLookup"/>.
+  /// Tries the raw stored string first, then its normalized (version-stripped) form. Returns
+  /// <c>false</c> when the type is not among the candidates — the caller skips the event, since a
+  /// perspective only materializes its own registered types.
+  /// </summary>
+  /// <param name="lookup">A lookup produced by <see cref="BuildTypeLookup"/>.</param>
+  /// <param name="storedTypeName">The stored <c>EventType</c> string from the event row.</param>
+  /// <param name="resolved">The resolved concrete type when this returns <c>true</c>.</param>
+  /// <returns><c>true</c> if the stored type name maps to a candidate type; otherwise <c>false</c>.</returns>
+  public static bool TryResolveType(
+      Dictionary<string, Type> lookup,
+      string storedTypeName,
+      [NotNullWhen(true)] out Type? resolved) {
+    ArgumentNullException.ThrowIfNull(lookup);
+
+    resolved = null;
+    if (string.IsNullOrEmpty(storedTypeName)) {
+      return false;
+    }
+
+    if (lookup.TryGetValue(storedTypeName, out resolved)) {
+      return true;
+    }
+
+    var normalized = NormalizeTypeName(storedTypeName);
+    return lookup.TryGetValue(normalized, out resolved);
   }
 }

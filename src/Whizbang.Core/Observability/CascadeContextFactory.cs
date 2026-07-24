@@ -7,33 +7,29 @@ namespace Whizbang.Core.Observability;
 /// Centralizes context extraction and enrichment logic.
 /// </summary>
 /// <remarks>
-/// This factory provides a consistent way to create cascade contexts:
+/// <para>This factory provides a consistent way to create cascade contexts:
 /// - NewRoot(): For entry points starting new message flows
 /// - FromEnvelope(): For extracting context from incoming messages
-/// - FromMessageContext(): For creating context from existing IMessageContext
+/// - FromMessageContext(): For creating context from existing IMessageContext</para>
 ///
-/// All methods apply registered enrichers in order, allowing extensibility.
+/// <para>All methods apply registered enrichers in order, allowing extensibility.</para>
 ///
-/// Register as a singleton in DI:
+/// <para>Register as a singleton in DI:
 /// <code>
 /// services.AddSingleton&lt;CascadeContextFactory&gt;();
 /// services.AddSingleton&lt;ICascadeContextEnricher, MyEnricher&gt;();
-/// </code>
+/// </code></para>
 /// </remarks>
-/// <docs>core-concepts/cascade-context#factory</docs>
+/// <docs>fundamentals/messages/cascade-context#factory</docs>
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs</tests>
-public sealed class CascadeContextFactory {
-  private readonly IEnumerable<ICascadeContextEnricher> _enrichers;
-
-  /// <summary>
-  /// Creates a new factory with the specified enrichers.
-  /// </summary>
-  /// <param name="enrichers">Enrichers to apply during context creation (can be null or empty)</param>
-  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs:Constructor_WithNullEnrichers_CreatesFactoryWithEmptyEnrichersAsync</tests>
-  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs:Constructor_WithEmptyEnrichers_CreatesFactoryAsync</tests>
-  public CascadeContextFactory(IEnumerable<ICascadeContextEnricher>? enrichers) {
-    _enrichers = enrichers ?? [];
-  }
+/// <remarks>
+/// Creates a new factory with the specified enrichers.
+/// </remarks>
+/// <param name="enrichers">Enrichers to apply during context creation (can be null or empty)</param>
+/// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs:Constructor_WithNullEnrichers_CreatesFactoryWithEmptyEnrichersAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs:Constructor_WithEmptyEnrichers_CreatesFactoryAsync</tests>
+public sealed class CascadeContextFactory(IEnumerable<ICascadeContextEnricher>? enrichers) {
+  private readonly IEnumerable<ICascadeContextEnricher> _enrichers = enrichers ?? [];
 
   /// <summary>
   /// Creates cascade context from a message envelope.

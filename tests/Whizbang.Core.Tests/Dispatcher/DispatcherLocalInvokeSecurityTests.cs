@@ -41,8 +41,8 @@ public class DispatcherLocalInvokeSecurityTests {
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
 
     // Set up scope context with security
-    var testUserId = "user-123";
-    var testTenantId = "tenant-456";
+    const string testUserId = "user-123";
+    const string testTenantId = "tenant-456";
 
     var scope = new PerspectiveScope {
       UserId = testUserId,
@@ -129,8 +129,8 @@ public class DispatcherLocalInvokeSecurityTests {
     var serviceProvider = services.BuildServiceProvider();
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
 
-    var testUserId = "user-chain-test";
-    var testTenantId = "tenant-chain-test";
+    const string testUserId = "user-chain-test";
+    const string testTenantId = "tenant-chain-test";
 
     var scope = new PerspectiveScope {
       UserId = testUserId,
@@ -196,12 +196,8 @@ public class DispatcherLocalInvokeSecurityTests {
   /// <summary>
   /// Test receptor that cascades to another receptor using LocalInvokeAsync.
   /// </summary>
-  public sealed class TestCascadingReceptor : IReceptor<TestCascadingCommand> {
-    private readonly IDispatcher _dispatcher;
-
-    public TestCascadingReceptor(IDispatcher dispatcher) {
-      _dispatcher = dispatcher;
-    }
+  public sealed class TestCascadingReceptor(IDispatcher dispatcher) : IReceptor<TestCascadingCommand> {
+    private readonly IDispatcher _dispatcher = dispatcher;
 
     public async ValueTask HandleAsync(TestCascadingCommand message, CancellationToken cancellationToken) {
       // Cascade to another command

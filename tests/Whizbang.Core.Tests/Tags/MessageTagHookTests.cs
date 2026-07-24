@@ -84,7 +84,7 @@ public class MessageTagHookTests {
     };
 
     // Act
-    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+    _ = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
 
     // Assert
     await Assert.That(hook.LastReceivedTag).IsEqualTo("order-created");

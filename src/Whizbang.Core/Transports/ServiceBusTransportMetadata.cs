@@ -5,20 +5,20 @@ namespace Whizbang.Core.Transports;
 /// Wraps Service Bus application properties for security context extraction.
 /// </summary>
 /// <remarks>
-/// Azure Service Bus messages can contain application properties (string key-value pairs)
+/// <para>Azure Service Bus messages can contain application properties (string key-value pairs)
 /// that are set by the message producer. These properties can carry security tokens,
-/// tenant IDs, user IDs, roles, and other contextual information.
+/// tenant IDs, user IDs, roles, and other contextual information.</para>
 ///
-/// This class provides an immutable view of these properties that can be accessed
-/// by security context extractors during message processing.
+/// <para>This class provides an immutable view of these properties that can be accessed
+/// by security context extractors during message processing.</para>
 ///
-/// Common application properties for security:
+/// <para>Common application properties for security:
 /// - X-Security-Token: JWT or other token
 /// - X-Tenant-Id: Multi-tenant identifier
 /// - X-User-Id: User identifier
-/// - X-Roles: Comma-separated role list
+/// - X-Roles: Comma-separated role list</para>
 /// </remarks>
-/// <docs>core-concepts/message-security#service-bus-metadata</docs>
+/// <docs>fundamentals/security/message-security#service-bus-metadata</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs</tests>
 public sealed class ServiceBusTransportMetadata : ITransportMetadata {
   private readonly Dictionary<string, object> _applicationProperties;

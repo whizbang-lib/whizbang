@@ -242,7 +242,7 @@ public class ILensQueryMultiGenericTests {
     var genericArgs = type.GetGenericArguments();
 
     // Act
-    var t1Constraints = genericArgs[0].GetGenericParameterConstraints();
+    _ = genericArgs[0].GetGenericParameterConstraints();
     var t1Attributes = genericArgs[0].GenericParameterAttributes;
 
     // Assert - T1 has class constraint (reference type)
@@ -257,7 +257,7 @@ public class ILensQueryMultiGenericTests {
     var genericArgs = type.GetGenericArguments();
 
     // Act
-    var t2Constraints = genericArgs[1].GetGenericParameterConstraints();
+    _ = genericArgs[1].GetGenericParameterConstraints();
     var t2Attributes = genericArgs[1].GenericParameterAttributes;
 
     // Assert - T2 has class constraint (reference type)

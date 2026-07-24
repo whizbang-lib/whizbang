@@ -47,19 +47,20 @@ public class IEventStoreRegistrationTests {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register minimal DbContext (doesn't need real connection for this test)
-    var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
-    dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    dataSourceBuilder.EnableDynamicJson();
-    var dataSource = dataSourceBuilder.Build();
-    builder.Services.AddSingleton(dataSource);
-
-    builder.Services.AddDbContext<InventoryDbContext>(options => {
-      options.UseNpgsql(dataSource);
-    });
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<InventoryDbContext> with UseNpgsql
+    // - IDbContextFactory<InventoryDbContext> singleton registration
+    // Connection string is provided via config above
 
     // DIAGNOSTIC: Check if callback is registered BEFORE .WithDriver.Postgres
     var registrarCountBefore = _getRegistrarCount();
+
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // The ECommerce.Integration.TestUtilities assembly's module initializer overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with a callback that registers
+    // DistributeStageTestReceptor (which has unresolvable constructor dependencies).
+    ServiceRegistrationCallbacks.Dispatcher = null;
 
     // THIS IS THE KEY LINE - triggers registration
     _ = builder.Services

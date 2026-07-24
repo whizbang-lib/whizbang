@@ -24,6 +24,14 @@ public static class EventStoreSchema {
     public const string SCOPE = "scope";
     public const string VERSION = "version";
     public const string CREATED_AT = "created_at";
+    /// <summary>
+    /// Event-categorization bitmask (Slice 2'). Stores
+    /// <c>Whizbang.Core.Messaging.EventFlags</c> as an INTEGER. Default
+    /// 0 (no flags = ordinary per-stream event). Collective events set
+    /// bit 0; composite events set bit 1. New categories ship by adding
+    /// flag values — no schema migration required.
+    /// </summary>
+    public const string FLAGS = "flags";
   }
 
   /// <summary>
@@ -45,9 +53,9 @@ public static class EventStoreSchema {
       new ColumnDefinition(
         Name: "event_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "stream_id",
         DataType: WhizbangDataType.UUID,
@@ -61,15 +69,15 @@ public static class EventStoreSchema {
       new ColumnDefinition(
         Name: "aggregate_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "event_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "event_data",
         DataType: WhizbangDataType.JSON,
@@ -95,23 +103,31 @@ public static class EventStoreSchema {
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      new ColumnDefinition(
+        Name: Columns.FLAGS,
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: false,
+        DefaultValue: DefaultValue.Integer(0)
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+
+    [
       new IndexDefinition(
-        Name: "idx_event_store_stream",
-        Columns: ImmutableArray.Create(Columns.STREAM_ID, Columns.VERSION),
-        Unique: true
-      ),
+            Name: "idx_event_store_stream",
+            Columns: [Columns.STREAM_ID, Columns.VERSION],
+            Unique: true
+          ),
       new IndexDefinition(
         Name: "idx_event_store_aggregate",
-        Columns: ImmutableArray.Create(Columns.AGGREGATE_ID, Columns.VERSION),
+        Columns: [Columns.AGGREGATE_ID, Columns.VERSION],
         Unique: true
       ),
       new IndexDefinition(
         Name: "idx_event_store_aggregate_type",
-        Columns: ImmutableArray.Create(Columns.AGGREGATE_TYPE, Columns.CREATED_AT)
+        Columns: [Columns.AGGREGATE_TYPE, Columns.CREATED_AT]
       )
-    )
-  );
+,
+    ]);
 }

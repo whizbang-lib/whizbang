@@ -20,6 +20,8 @@ namespace Whizbang.Core.Generated;
 /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersContextsWithRegistry_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersConverters_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RunsBeforeMain_ViaModuleInitializerAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersLenientDateTimeOffsetConverters_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:CreateCombinedOptions_DeserializesPostgresInfinityTimestamp_Async</tests>
 public static class WhizbangJsonContextInitializer {
   /// <summary>
   /// Module initializer that registers Whizbang.Core's JsonSerializerContext instances.
@@ -29,6 +31,8 @@ public static class WhizbangJsonContextInitializer {
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersContextsWithRegistry_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersConverters_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RunsBeforeMain_ViaModuleInitializerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersLenientDateTimeOffsetConverters_Async</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:CreateCombinedOptions_DeserializesPostgresInfinityTimestamp_Async</tests>
   // CA2255: Intentional use of ModuleInitializer in library code for AOT-compatible JSON context registration
 #pragma warning disable CA2255
   [ModuleInitializer]
@@ -57,6 +61,13 @@ public static class WhizbangJsonContextInitializer {
     // rather than objects with Value/Metadata properties.
     // Important for PostgreSQL UUID column compatibility and JSONB queries.
     JsonContextRegistry.RegisterConverter(new ValueObjects.TrackedGuidJsonConverter());
+
+    // Register lenient DateTimeOffset converters to handle PostgreSQL -infinity/infinity
+    // literals that appear in JSONB columns when DateTimeOffset.MinValue/MaxValue are persisted.
+    // Without these, manual JsonSerializer.Deserialize<T> calls on data::text JSONB reads throw
+    // JsonException on -infinity strings.
+    JsonContextRegistry.RegisterConverter(new LenientDateTimeOffsetConverter());
+    JsonContextRegistry.RegisterConverter(new LenientNullableDateTimeOffsetConverter());
 
     // Register type name mappings for infrastructure types
     // This enables Azure Service Bus and other transports to deserialize messages by assembly-qualified name

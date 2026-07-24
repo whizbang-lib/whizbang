@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -74,7 +75,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
 
     // Apply empty filter (no filtering)
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.None,
+      Filters = ScopeFilters.None,
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });
 
@@ -101,7 +102,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     await _seedOrderAsync(context, order3Id, 300m, tenantId: "tenant-2");
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant,
+      Filters = ScopeFilters.Tenant,
       TenantId = "tenant-1",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });
@@ -130,7 +131,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     await _seedOrderAsync(context, order3Id, 300m, tenantId: "tenant-2", userId: "user-alice");
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.User,
+      Filters = ScopeFilters.Tenant | ScopeFilters.User,
       TenantId = "tenant-1",
       UserId = "user-alice",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
@@ -158,7 +159,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     await _seedOrderAsync(context, order2Id, 200m, tenantId: "tenant-1", organizationId: "org-engineering");
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Organization,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Organization,
       TenantId = "tenant-1",
       OrganizationId = "org-sales",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
@@ -186,7 +187,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     await _seedOrderAsync(context, order2Id, 200m, tenantId: "tenant-1", customerId: "customer-globex");
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Customer,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Customer,
       TenantId = "tenant-1",
       CustomerId = "customer-acme",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
@@ -233,7 +234,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     };
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Principal,
       TenantId = "tenant-1",
       SecurityPrincipals = callerPrincipals,
       UseOrLogicForUserAndPrincipal = false
@@ -266,7 +267,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     };
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Principal,
       TenantId = "tenant-1",
       SecurityPrincipals = callerPrincipals,
       UseOrLogicForUserAndPrincipal = false
@@ -314,7 +315,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     };
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal,
       TenantId = "tenant-1",
       UserId = "user-alice",
       SecurityPrincipals = callerPrincipals,
@@ -350,7 +351,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     };
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal,
       TenantId = "tenant-1",
       UserId = "user-alice",
       SecurityPrincipals = callerPrincipals,
@@ -384,7 +385,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     };
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal,
       TenantId = "tenant-1",
       UserId = "user-alice",
       SecurityPrincipals = callerPrincipals,
@@ -411,7 +412,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     await _seedOrderAsync(context, orderId, 100m, tenantId: "tenant-1");
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant,
+      Filters = ScopeFilters.Tenant,
       TenantId = "tenant-1",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });
@@ -434,7 +435,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     await _seedOrderAsync(context, orderId, 100m, tenantId: "tenant-1");
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant,
+      Filters = ScopeFilters.Tenant,
       TenantId = "tenant-2",  // Wrong tenant
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });
@@ -462,7 +463,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     };
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Principal,
       TenantId = "tenant-1",
       SecurityPrincipals = callerPrincipals,
       UseOrLogicForUserAndPrincipal = false
@@ -492,7 +493,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     };
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Principal,
       TenantId = "tenant-1",
       SecurityPrincipals = callerPrincipals,
       UseOrLogicForUserAndPrincipal = false
@@ -536,7 +537,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
       customerId: "customer-acme");
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Organization | ScopeFilter.Customer,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Organization | ScopeFilters.Customer,
       TenantId = "tenant-1",
       OrganizationId = "org-sales",
       CustomerId = "customer-acme",
@@ -575,7 +576,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     };
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Principal,
       TenantId = "tenant-1",
       SecurityPrincipals = callerPrincipals,
       UseOrLogicForUserAndPrincipal = false
@@ -626,7 +627,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
       allowedPrincipals: ["user:alice", "group:group-001", "group:group-099"]);
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Principal,
       TenantId = "tenant-1",
       SecurityPrincipals = callerPrincipals,
       UseOrLogicForUserAndPrincipal = false
@@ -662,7 +663,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
       allowedPrincipals: ["group:group-050"]);
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.Principal,
+      Filters = ScopeFilters.Tenant | ScopeFilters.Principal,
       TenantId = "tenant-1",
       SecurityPrincipals = callerPrincipals,
       UseOrLogicForUserAndPrincipal = false

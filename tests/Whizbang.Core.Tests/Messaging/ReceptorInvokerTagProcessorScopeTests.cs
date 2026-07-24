@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -32,8 +33,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
   [Test]
   public async Task InvokeAsync_WhenSecurityContextEstablished_PassesScopeToTagProcessorAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-for-tags";
-    var expectedUserId = "test-user-for-tags";
+    const string expectedTenantId = "test-tenant-for-tags";
+    const string expectedUserId = "test-user-for-tags";
 
     // Security context returned by provider
     var testScopeContext = new TestScopeContext(expectedTenantId, expectedUserId);
@@ -78,8 +79,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
   [Test]
   public async Task InvokeAsync_WhenScopeInHops_PassesScopeToTagProcessorAsync() {
     // Arrange
-    var expectedTenantId = "hop-tenant-for-tags";
-    var expectedUserId = "hop-user-for-tags";
+    const string expectedTenantId = "hop-tenant-for-tags";
+    const string expectedUserId = "hop-user-for-tags";
 
     // Security provider returns NULL
     var securityProvider = new TestSecurityContextProvider(returns: null);
@@ -121,7 +122,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = message,
-      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -138,16 +140,13 @@ public class ReceptorInvokerTagProcessorScopeTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
-  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly IScopeContext? _returns;
-
-    public TestSecurityContextProvider(IScopeContext? returns = null) {
-      _returns = returns;
-    }
+  private sealed class TestSecurityContextProvider(IScopeContext? returns = null) : IMessageSecurityContextProvider {
+    private readonly IScopeContext? _returns = returns;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -198,12 +197,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
   /// <summary>
   /// Test tag processor that captures the scope passed to ProcessTagsAsync.
   /// </summary>
-  private sealed class TestTagProcessor : IMessageTagProcessor {
-    private readonly System.Action<IScopeContext?>? _onProcessTags;
-
-    public TestTagProcessor(System.Action<IScopeContext?>? onProcessTags = null) {
-      _onProcessTags = onProcessTags;
-    }
+  private sealed class TestTagProcessor(System.Action<IScopeContext?>? onProcessTags = null) : IMessageTagProcessor {
+    private readonly System.Action<IScopeContext?>? _onProcessTags = onProcessTags;
 
     public ValueTask ProcessTagsAsync(
         object message,
@@ -222,13 +217,9 @@ public class ReceptorInvokerTagProcessorScopeTests {
     public void RecordInvocation(string receptorId, LifecycleStage stage) => _invocations.Add((receptorId, stage));
   }
 
-  private sealed class TestReceptorRegistry : IReceptorRegistry {
+  private sealed class TestReceptorRegistry(ReceptorInvokerTagProcessorScopeTests.InvocationTracker tracker) : IReceptorRegistry {
     private readonly Dictionary<(System.Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
-    private readonly InvocationTracker _tracker;
-
-    public TestReceptorRegistry(InvocationTracker tracker) {
-      _tracker = tracker;
-    }
+    private readonly InvocationTracker _tracker = tracker;
 
     public void RegisterReceptor<TMessage>(string receptorId, LifecycleStage stage) where TMessage : notnull {
       var key = (typeof(TMessage), stage);
@@ -239,7 +230,7 @@ public class ReceptorInvokerTagProcessorScopeTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, ct) => {
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null);
         }));
@@ -249,6 +240,11 @@ public class ReceptorInvokerTagProcessorScopeTests {
       var key = (messageType, stage);
       return _receptors.TryGetValue(key, out var list) ? list : [];
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   #endregion

@@ -10,9 +10,10 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// Emitted when access to a sensitive resource is granted.
 /// Useful for audit trails of privileged access.
 /// </summary>
-/// <docs>core-concepts/system-events#access-granted</docs>
+/// <docs>fundamentals/events/system-events#access-granted</docs>
 /// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "System event - security events are not self-audited")]
+[PinnedId("030f98d2-5ca7-4a54-bd9b-9d8463a92c1e")]
 public sealed record AccessGranted : ISystemEvent {
   /// <summary>
   /// Unique identifier for this event.
@@ -38,7 +39,7 @@ public sealed record AccessGranted : ISystemEvent {
   /// <summary>
   /// Access filter applied.
   /// </summary>
-  public required ScopeFilter AccessFilter { get; init; }
+  public required ScopeFilters AccessFilter { get; init; }
 
   /// <summary>
   /// Scope context at time of access.

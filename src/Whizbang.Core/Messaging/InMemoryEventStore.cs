@@ -6,6 +6,8 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
@@ -71,20 +73,19 @@ public class InMemoryEventStore : IEventStore {
     // Try to get the envelope from the registry (preserves tracing context)
     var envelope = _envelopeRegistry?.TryGetEnvelope(message);
 
-    if (envelope is null) {
-      // No envelope registered - create a minimal envelope for backwards compatibility
-      envelope = new MessageEnvelope<TMessage> {
-        MessageId = MessageId.New(),
-        Payload = message,
-        Hops = [
-          new MessageHop {
-            ServiceInstance = ServiceInstanceInfo.Unknown,
-            Timestamp = DateTimeOffset.UtcNow,
-            TraceParent = System.Diagnostics.Activity.Current?.Id
-          }
-        ]
-      };
-    }
+    // No envelope registered - create a minimal envelope for backwards compatibility
+    envelope ??= new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id,
+        }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
 
     return AppendAsync(streamId, envelope, cancellationToken);
   }
@@ -169,7 +170,8 @@ public class InMemoryEventStore : IEventStore {
         var typedEnvelope = new MessageEnvelope<IEvent> {
           MessageId = envelope.MessageId,
           Payload = eventPayload,
-          Hops = envelope.Hops
+          Hops = envelope.Hops,
+          DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Outbox, Source = MessageSource.Local }
         };
         yield return typedEnvelope;
       }
@@ -234,7 +236,8 @@ public class InMemoryEventStore : IEventStore {
           eventEnvelopes.Add(new MessageEnvelope<IEvent> {
             MessageId = messageId,
             Payload = eventPayload,
-            Hops = hops
+            Hops = hops,
+            DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Outbox, Source = MessageSource.Local }
           });
         }
       }
@@ -272,9 +275,15 @@ public class InMemoryEventStore : IEventStore {
 
     public IEnumerable<IMessageEnvelope> Read(long fromSequence) {
       lock (_lock) {
+        // ORDER BY EventId (UUIDv7 = chronological) matches the SQL event store contract.
+        // Sorting by Version (insertion order) would diverge from real-Postgres reads when
+        // events are appended out of UUIDv7 order (e.g., concurrent producers, late-arrival
+        // events). Downstream cursor-comparison code in PerspectiveRunner relies on this
+        // event_id-sorted retrieval to keep idempotency + cursor-inversion logic consistent
+        // with production behavior.
         return [.. _events
           .Where(e => e.Version >= fromSequence)
-          .OrderBy(e => e.Version)
+          .OrderBy(e => e.EventId)
           .Select(e => e.Envelope)];
       }
     }
@@ -319,4 +328,9 @@ public class InMemoryEventStore : IEventStore {
   }
 
   private sealed record EventRecord(long Version, Guid EventId, IMessageEnvelope Envelope);
+
+  /// <inheritdoc />
+  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
+    return [];
+  }
 }

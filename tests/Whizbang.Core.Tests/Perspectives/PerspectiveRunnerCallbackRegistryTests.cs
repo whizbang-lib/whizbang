@@ -17,9 +17,9 @@ public class PerspectiveRunnerCallbackRegistryTests {
   public async Task RegisterCallback_WithValidCallback_StoresCallbackAsync() {
     // Arrange
     var wasCalled = false;
-    Action<IServiceCollection> callback = services => {
+    void callback(IServiceCollection services) {
       wasCalled = true;
-    };
+    }
 
     // Act
     PerspectiveRunnerCallbackRegistry.RegisterCallback(callback);
@@ -47,9 +47,9 @@ public class PerspectiveRunnerCallbackRegistryTests {
     // Arrange
     IServiceCollection? capturedServices = null;
 
-    Action<IServiceCollection> callback = services => {
+    void callback(IServiceCollection services) {
       capturedServices = services;
-    };
+    }
 
     PerspectiveRunnerCallbackRegistry.RegisterCallback(callback);
 
@@ -68,13 +68,13 @@ public class PerspectiveRunnerCallbackRegistryTests {
     var firstCalled = false;
     var secondCalled = false;
 
-    Action<IServiceCollection> firstCallback = services => {
+    void firstCallback(IServiceCollection services) {
       firstCalled = true;
-    };
+    }
 
-    Action<IServiceCollection> secondCallback = services => {
+    void secondCallback(IServiceCollection services) {
       secondCalled = true;
-    };
+    }
 
     // Act
     PerspectiveRunnerCallbackRegistry.RegisterCallback(firstCallback);
@@ -93,9 +93,9 @@ public class PerspectiveRunnerCallbackRegistryTests {
     // Arrange
     var callCount = 0;
 
-    Action<IServiceCollection> callback = services => {
+    void callback(IServiceCollection services) {
       callCount++;
-    };
+    }
 
     PerspectiveRunnerCallbackRegistry.RegisterCallback(callback);
 
@@ -114,9 +114,9 @@ public class PerspectiveRunnerCallbackRegistryTests {
     // Arrange
     var callCount = 0;
 
-    Action<IServiceCollection> callback = services => {
+    void callback(IServiceCollection services) {
       callCount++;
-    };
+    }
 
     PerspectiveRunnerCallbackRegistry.RegisterCallback(callback);
 

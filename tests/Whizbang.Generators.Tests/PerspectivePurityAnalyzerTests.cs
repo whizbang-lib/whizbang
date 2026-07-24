@@ -23,7 +23,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NonPureServiceInjection_ReportsWHIZ105WarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -75,7 +75,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_PureServiceInjection_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Perspectives;
@@ -129,7 +129,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NoDependencies_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -168,7 +168,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ValueTypeParameter_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -212,7 +212,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ClassImplementingPureServiceInterface_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Perspectives;
@@ -267,7 +267,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NonPerspectiveClass_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -305,7 +305,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_GlobalPerspectiveWithNonPureService_ReportsWHIZ105Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -358,7 +358,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_AsyncApplyMethod_ReportsWHIZ100ErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading.Tasks;
             using Whizbang.Core.Perspectives;
@@ -401,7 +401,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_DateTimeUtcNowUsage_ReportsWHIZ104WarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -430,5 +430,215 @@ public class PerspectivePurityAnalyzerTests {
     var whiz104 = diagnostics.Where(d => d.Id == "WHIZ104").ToArray();
     await Assert.That(whiz104.Length).IsEqualTo(1);
     await Assert.That(whiz104[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
+  }
+
+  // ========================================
+  // WHIZ106: Collective apply must not do apply-time cross-perspective queries
+  // (ICollectiveQuery.Of<>()) — such a spec cannot be re-evaluated per-row during
+  // a single-stream replay/rebuild, so it is non-replayable. Cross-queries must be
+  // resolved BEFORE event creation and baked into the event as static payload.
+  // ========================================
+
+  /// <summary>
+  /// A [CollectiveApplyFor] method that invokes ICollectiveQuery.Of&lt;&gt;() performs an apply-time
+  /// cross-perspective query and must report WHIZ106 (non-replayable).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_CollectiveApplyUsesCollectiveQuery_ReportsWHIZ106Async() {
+    // Arrange — handler whose Where correlates against a sibling perspective via q.Of<>()
+    const string source = """
+            using System;
+            using System.Linq;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public class OverlayModel {
+              public Guid Id { get; set; }
+              public Guid GlobalTemplateId { get; set; }
+              public bool IsActive { get; set; }
+            }
+
+            public class OverlayAppliedEvent {
+              public Guid OverlayId { get; set; }
+              public Guid GlobalTemplateId { get; set; }
+            }
+
+            public class OverlayHandler {
+              [CollectiveApplyFor(ScopeHandling = CollectiveScopeHandling.Custom)]
+              public ICollectiveSpec<OverlayModel> ClearSiblings(OverlayAppliedEvent e, ICollectiveQuery query) {
+                var exists = query.Of<OverlayModel>().Any(o => o.Data.GlobalTemplateId == e.GlobalTemplateId);
+                return null!;
+              }
+            }
+            """;
+
+    // Act
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    // Assert
+    var whiz106 = diagnostics.Where(d => d.Id == "WHIZ106").ToArray();
+    await Assert.That(whiz106.Length).IsEqualTo(1)
+      .Because("q.Of<>() is an apply-time cross-perspective query — non-replayable per-row");
+    await Assert.That(whiz106[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
+    await Assert.That(whiz106[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ClearSiblings");
+  }
+
+  /// <summary>
+  /// A self-referential [CollectiveApplyFor] method — takes the ICollectiveQuery parameter but never
+  /// invokes it (Where references only the row's own columns) — is replay-safe and must NOT report WHIZ106.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_SelfReferentialCollectiveApply_NoWHIZ106Async() {
+    // Arrange — the single-active flip: Where on the row's own GlobalTemplateId, Set IsActive=(Id==e.OverlayId).
+    // Takes the query param (signature parity) but never touches it.
+    const string source = """
+            using System;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public class OverlayModel {
+              public Guid Id { get; set; }
+              public Guid GlobalTemplateId { get; set; }
+              public bool IsActive { get; set; }
+            }
+
+            public class OverlayAppliedEvent {
+              public Guid OverlayId { get; set; }
+              public Guid GlobalTemplateId { get; set; }
+            }
+
+            public class OverlayHandler {
+              [CollectiveApplyFor(ScopeHandling = CollectiveScopeHandling.Custom)]
+              public ICollectiveSpec<OverlayModel> SetActive(OverlayAppliedEvent e, ICollectiveQuery query) {
+                return null!;
+              }
+            }
+            """;
+
+    // Act
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    // Assert
+    var whiz106 = diagnostics.Where(d => d.Id == "WHIZ106").ToArray();
+    await Assert.That(whiz106).IsEmpty();
+  }
+
+  /// <summary>
+  /// A non-collective method that happens to use ICollectiveQuery.Of&lt;&gt;() is not a collective apply
+  /// (no [CollectiveApplyFor]) and must NOT report WHIZ106 — the rule targets replayable collective specs only.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_NonCollectiveMethodUsesQuery_NoWHIZ106Async() {
+    // Arrange
+    const string source = """
+            using System;
+            using System.Linq;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public class OverlayModel {
+              public Guid Id { get; set; }
+              public Guid GlobalTemplateId { get; set; }
+            }
+
+            public class SomeService {
+              public bool AnySiblings(ICollectiveQuery query, Guid family) {
+                return query.Of<OverlayModel>().Any(o => o.Data.GlobalTemplateId == family);
+              }
+            }
+            """;
+
+    // Act
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    // Assert
+    var whiz106 = diagnostics.Where(d => d.Id == "WHIZ106").ToArray();
+    await Assert.That(whiz106).IsEmpty();
+  }
+
+  /// <summary>
+  /// Collective applies must be deterministic too — a [CollectiveApplyFor] method that reads DateTime.UtcNow
+  /// reports WHIZ104 (same determinism rule as a perspective Apply). This is what makes replay reproducible.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_CollectiveApplyUsesDateTimeUtcNow_ReportsWHIZ104Async() {
+    // Arrange
+    const string source = """
+            using System;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public class OverlayModel {
+              public Guid Id { get; set; }
+              public DateTimeOffset TouchedAt { get; set; }
+            }
+
+            public class OverlayAppliedEvent {
+              public Guid OverlayId { get; set; }
+            }
+
+            public class OverlayHandler {
+              [CollectiveApplyFor(ScopeHandling = CollectiveScopeHandling.Custom)]
+              public ICollectiveSpec<OverlayModel> Touch(OverlayAppliedEvent e, ICollectiveQuery query) {
+                var now = DateTime.UtcNow;
+                return null!;
+              }
+            }
+            """;
+
+    // Act
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    // Assert
+    var whiz104 = diagnostics.Where(d => d.Id == "WHIZ104").ToArray();
+    await Assert.That(whiz104.Length).IsEqualTo(1)
+      .Because("collective applies are folded during replay and must be deterministic — no DateTime.UtcNow");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Analyzer_IPerspectiveWithActionsFor_DetectsImpureApplyAsync() {
+    // Arrange — IPerspectiveWithActionsFor with impure Apply (uses DateTime.UtcNow)
+    // Matches format of existing purity tests
+    const string source = """
+            using System;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public record DeletedEvent : IEvent {
+              [StreamId]
+              public Guid Id { get; init; }
+            }
+
+            public record OrderModel {
+              [StreamId]
+              public Guid Id { get; init; }
+              public DateTimeOffset DeletedAt { get; init; }
+            }
+
+            public class ImpureWithActionsPerspective : IPerspectiveWithActionsFor<OrderModel, DeletedEvent> {
+              public ApplyResult<OrderModel> Apply(OrderModel current, DeletedEvent @event) {
+                return new OrderModel { Id = current.Id, DeletedAt = DateTime.UtcNow };
+              }
+            }
+            """;
+
+    // Act
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    // Assert — Purity analyzer must detect DateTime.UtcNow in WithActionsFor Apply methods (WHIZ104)
+    var whiz104 = diagnostics.Where(d => d.Id == "WHIZ104").ToArray();
+    await Assert.That(whiz104.Length).IsGreaterThanOrEqualTo(1)
+      .Because("IPerspectiveWithActionsFor Apply methods must be checked for purity — DateTime.UtcNow is impure");
   }
 }

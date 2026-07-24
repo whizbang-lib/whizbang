@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
@@ -63,18 +65,18 @@ public class MessageSecurityContextProviderTests {
     var callOrder = new List<string>();
     var extractor1 = new TestExtractor(
       priority: 100,
-      onExtract: () => callOrder.Add("100"),
-      extraction: null
+      extraction: null,
+      onExtract: () => callOrder.Add("100")
     );
     var extractor2 = new TestExtractor(
       priority: 50,
-      onExtract: () => callOrder.Add("50"),
-      extraction: null
+      extraction: null,
+      onExtract: () => callOrder.Add("50")
     );
     var extractor3 = new TestExtractor(
       priority: 200,
-      onExtract: () => callOrder.Add("200"),
-      extraction: null
+      extraction: null,
+      onExtract: () => callOrder.Add("200")
     );
 
     var options = new MessageSecurityOptions { AllowAnonymous = true };
@@ -107,13 +109,13 @@ public class MessageSecurityContextProviderTests {
 
     var extractor1 = new TestExtractor(
       priority: 50,
-      onExtract: () => callOrder.Add("50"),
-      extraction: extraction // Returns successfully
+      extraction: extraction, // Returns successfully
+      onExtract: () => callOrder.Add("50")
     );
     var extractor2 = new TestExtractor(
       priority: 100,
-      onExtract: () => callOrder.Add("100"),
-      extraction: null
+      extraction: null,
+      onExtract: () => callOrder.Add("100")
     );
 
     var options = new MessageSecurityOptions { AllowAnonymous = false };
@@ -148,13 +150,13 @@ public class MessageSecurityContextProviderTests {
 
     var extractor1 = new TestExtractor(
       priority: 50,
-      onExtract: () => callOrder.Add("50"),
-      extraction: null // Returns null
+      extraction: null, // Returns null
+      onExtract: () => callOrder.Add("50")
     );
     var extractor2 = new TestExtractor(
       priority: 100,
-      onExtract: () => callOrder.Add("100"),
-      extraction: extraction // Returns successfully
+      extraction: extraction, // Returns successfully
+      onExtract: () => callOrder.Add("100")
     );
 
     var options = new MessageSecurityOptions { AllowAnonymous = false };
@@ -237,8 +239,8 @@ public class MessageSecurityContextProviderTests {
     var extractorCalled = false;
     var extractor = new TestExtractor(
       priority: 100,
-      onExtract: () => extractorCalled = true,
-      extraction: null
+      extraction: null,
+      onExtract: () => extractorCalled = true
     );
 
     var options = new MessageSecurityOptions {
@@ -287,8 +289,8 @@ public class MessageSecurityContextProviderTests {
     // Arrange
     var extractor = new TestExtractor(
       priority: 100,
-      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct),
-      extraction: null
+      extraction: null,
+      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct)
     );
 
     var options = new MessageSecurityOptions {
@@ -350,8 +352,8 @@ public class MessageSecurityContextProviderTests {
     // Arrange
     var extractor = new TestExtractor(
       priority: 100,
-      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct),
-      extraction: null
+      extraction: null,
+      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct)
     );
 
     var options = new MessageSecurityOptions { AllowAnonymous = false };
@@ -379,8 +381,8 @@ public class MessageSecurityContextProviderTests {
     var receivedValidateFlag = false;
     var extractor = new TestExtractor(
       priority: 100,
-      onExtract: () => { },
       extraction: null,
+      onExtract: () => { },
       onExtractWithContext: (envelope, options) => {
         receivedValidateFlag = options.ValidateCredentials;
       }
@@ -479,12 +481,12 @@ public class MessageSecurityContextProviderTests {
   // === Events Without Security Context Tests ===
 
   /// <summary>
-  /// CRITICAL: Verifies that events published without security context (e.g., from system seeding)
+  /// <para>CRITICAL: Verifies that events published without security context (e.g., from system seeding)
   /// throw SecurityContextRequiredException when AllowAnonymous is false.
   /// This reproduces the issue where system events like FilterSubscriptionTemplateCreatedEvent
-  /// fail during PerspectiveWorker or ReceptorInvoker processing.
+  /// fail during PerspectiveWorker or ReceptorInvoker processing.</para>
   ///
-  /// FIX: Use dispatcher.AsSystem().PublishAsync() for system-initiated events.
+  /// <para>FIX: Use dispatcher.AsSystem().PublishAsync() for system-initiated events.</para>
   /// </summary>
   /// <tests>DefaultMessageSecurityContextProvider.EstablishContextAsync</tests>
   [Test]
@@ -515,7 +517,8 @@ public class MessageSecurityContextProviderTests {
           Topic = "system-seeding",
           Scope = null  // NO security context - this is the problem!
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act & Assert - Should throw because no security context and AllowAnonymous = false
@@ -562,7 +565,8 @@ public class MessageSecurityContextProviderTests {
             TenantId = null  // System operations may not have tenant
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - Should succeed because security context is present
@@ -595,7 +599,8 @@ public class MessageSecurityContextProviderTests {
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic"
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -608,26 +613,18 @@ public class MessageSecurityContextProviderTests {
   /// <summary>
   /// Test double for ISecurityContextExtractor.
   /// </summary>
-  private sealed class TestExtractor : ISecurityContextExtractor {
-    private readonly Action? _onExtract;
-    private readonly Func<CancellationToken, Task>? _onExtractAsync;
-    private readonly Action<IMessageEnvelope, MessageSecurityOptions>? _onExtractWithContext;
-    private readonly SecurityExtraction? _extraction;
+  private sealed class TestExtractor(
+    int priority,
+    SecurityExtraction? extraction = null,
+    Action? onExtract = null,
+    Func<CancellationToken, Task>? onExtractAsync = null,
+    Action<IMessageEnvelope, MessageSecurityOptions>? onExtractWithContext = null) : ISecurityContextExtractor {
+    private readonly Action? _onExtract = onExtract;
+    private readonly Func<CancellationToken, Task>? _onExtractAsync = onExtractAsync;
+    private readonly Action<IMessageEnvelope, MessageSecurityOptions>? _onExtractWithContext = onExtractWithContext;
+    private readonly SecurityExtraction? _extraction = extraction;
 
-    public int Priority { get; }
-
-    public TestExtractor(
-      int priority,
-      SecurityExtraction? extraction = null,
-      Action? onExtract = null,
-      Func<CancellationToken, Task>? onExtractAsync = null,
-      Action<IMessageEnvelope, MessageSecurityOptions>? onExtractWithContext = null) {
-      Priority = priority;
-      _extraction = extraction;
-      _onExtract = onExtract;
-      _onExtractAsync = onExtractAsync;
-      _onExtractWithContext = onExtractWithContext;
-    }
+    public int Priority { get; } = priority;
 
     public async ValueTask<SecurityExtraction?> ExtractAsync(
       IMessageEnvelope envelope,
@@ -647,12 +644,8 @@ public class MessageSecurityContextProviderTests {
   /// <summary>
   /// Test double for ISecurityContextCallback.
   /// </summary>
-  private sealed class TestCallback : ISecurityContextCallback {
-    private readonly Action<IScopeContext>? _onCallback;
-
-    public TestCallback(Action<IScopeContext>? onCallback = null) {
-      _onCallback = onCallback;
-    }
+  private sealed class TestCallback(Action<IScopeContext>? onCallback = null) : ISecurityContextCallback {
+    private readonly Action<IScopeContext>? _onCallback = onCallback;
 
     public ValueTask OnContextEstablishedAsync(
       IScopeContext context,

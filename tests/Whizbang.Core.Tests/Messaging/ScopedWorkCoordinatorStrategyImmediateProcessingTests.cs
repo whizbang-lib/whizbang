@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -12,7 +13,7 @@ namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
 /// Tests for ScopedWorkCoordinatorStrategy immediate processing of returned work.
-/// Verifies that work returned from ProcessWorkBatchAsync is written to channel immediately.
+/// Verifies flush behavior: returned work is signalled to the publisher, not written to the channel.
 /// </summary>
 public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   // Helper method to create test envelope
@@ -23,61 +24,10 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     };
   }
 
-  [Test]
-  public async Task FlushAsync_WithReturnedWork_WritesToChannelImmediatelyAsync(CancellationToken cancellationToken) {
-    // Arrange
-    var channelWriter = new TestWorkChannelWriter();
-    var messageId1 = System.Guid.CreateVersion7();
-    var messageId2 = System.Guid.CreateVersion7();
-    var coordinator = new TestWorkCoordinator {
-      WorkToReturn = [
-        new OutboxWork {
-          MessageId = messageId1,
-          Destination = "test-topic",
-          EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
-      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-          Envelope = _createTestEnvelope(messageId1),
-          Attempts = 0,
-          Status = MessageProcessingStatus.None
-        },
-        new OutboxWork {
-          MessageId = messageId2,
-          Destination = "test-topic",
-          EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
-      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-          Envelope = _createTestEnvelope(messageId2),
-          Attempts = 0,
-          Status = MessageProcessingStatus.None
-        }
-      ]
-    };
-
-    var instanceProvider = new TestServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
-
-    // Queue a message to trigger flush
-    var queuedMessageId = System.Guid.CreateVersion7();
-    strategy.QueueOutboxMessage(new OutboxMessage {
-      MessageId = queuedMessageId,
-      Destination = "test-topic",
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
-      Envelope = _createTestEnvelope(queuedMessageId),
-      IsEvent = false,
-      MessageType = "TestMessage, TestAssembly",
-      Metadata = new EnvelopeMetadata {
-        MessageId = MessageId.From(queuedMessageId),
-        Hops = []
-      }
-    });
-
-    // Act
-    var result = await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
-
-    // Assert - Work should be written to channel immediately
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(2);
-    await Assert.That(result.OutboxWork).Count().IsEqualTo(2);
-  }
+  // Deleted: FlushAsync_WithReturnedWork_WritesToChannelImmediatelyAsync.
+  // Asserted result.OutboxWork.Count == 2 against the legacy claim-during-flush;
+  // ExecuteFlushAsync returns empty WorkBatch post-Phase-H. The "no writes to channel"
+  // invariant is still locked in WorkCoordinatorFlushHelperTests via SignalCount.
 
   [Test]
   public async Task FlushAsync_NoReturnedWork_DoesNotWriteToChannelAsync(CancellationToken cancellationToken) {
@@ -107,7 +57,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     });
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+    await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
 
     // Assert - Nothing written to channel
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0);
@@ -144,7 +94,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
         Hops = []
       }
     });
-    await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+    await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
 
     // Act - Second flush with 3 messages
     var msg3 = System.Guid.CreateVersion7();
@@ -171,10 +121,10 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
         Hops = []
       }
     });
-    await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+    await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
 
-    // Assert - All 5 messages written to channel
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(5);
+    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -215,16 +165,15 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     });
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+    await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
 
-    // Assert - Work written in same order
-    await Assert.That(channelWriter.WrittenWork[0].MessageId).IsEqualTo(messageId1);
-    await Assert.That(channelWriter.WrittenWork[1].MessageId).IsEqualTo(messageId2);
-    await Assert.That(channelWriter.WrittenWork[2].MessageId).IsEqualTo(messageId3);
+    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0);
   }
 
   // Test helper - Mock work channel writer
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public List<OutboxWork> WrittenWork { get; } = [];
 
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
@@ -243,39 +192,43 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     public void Complete() {
       // No-op for testing
     }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   // Test helper - Mock work coordinator
   private sealed class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = WorkToReturn,
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -296,6 +249,8 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
   // Test envelope implementation
   private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
     public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;  // Test payload

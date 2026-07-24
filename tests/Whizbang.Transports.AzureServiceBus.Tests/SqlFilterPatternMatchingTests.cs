@@ -12,13 +12,13 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// and that generated patterns will match expected Subject values.
 /// </summary>
 /// <remarks>
-/// The Azure Service Bus SqlFilter uses SQL LIKE patterns:
+/// <para>The Azure Service Bus SqlFilter uses SQL LIKE patterns:
 /// - % matches zero or more characters
-/// - _ matches exactly one character
+/// - _ matches exactly one character</para>
 ///
-/// RabbitMQ-style patterns are translated:
+/// <para>RabbitMQ-style patterns are translated:
 /// - # → %
-/// - * → %
+/// - * → %</para>
 /// </remarks>
 public class SqlFilterPatternMatchingTests {
 
@@ -31,7 +31,7 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task TranslatePattern_HashWildcard_TranslatesToPercentAsync() {
     // Arrange - RabbitMQ-style pattern with #
-    var rabbitPattern = "a consumer.contracts.chat.#";
+    const string rabbitPattern = "a consumer.contracts.chat.#";
 
     // Act
     var sqlPattern = _translateToSqlPattern(rabbitPattern);
@@ -43,7 +43,7 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task TranslatePattern_AsteriskWildcard_TranslatesToPercentAsync() {
     // Arrange - RabbitMQ-style pattern with *
-    var rabbitPattern = "a consumer.contracts.chat.*";
+    const string rabbitPattern = "a consumer.contracts.chat.*";
 
     // Act
     var sqlPattern = _translateToSqlPattern(rabbitPattern);
@@ -55,7 +55,7 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task TranslatePattern_StandaloneHash_TranslatesToPercentAsync() {
     // Arrange - Single # (match all)
-    var rabbitPattern = "#";
+    const string rabbitPattern = "#";
 
     // Act
     var sqlPattern = _translateToSqlPattern(rabbitPattern);
@@ -95,8 +95,8 @@ public class SqlFilterPatternMatchingTests {
     // Arrange
     // TransportPublishStrategy generates: a consumer.contracts.chat.activitytrackedcommand
     // SqlFilter pattern is: [Subject] LIKE 'a consumer.contracts.chat.%'
-    var subject = "a consumer.contracts.chat.activitytrackedcommand";
-    var pattern = "a consumer.contracts.chat.%";
+    const string subject = "a consumer.contracts.chat.activitytrackedcommand";
+    const string pattern = "a consumer.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -111,8 +111,8 @@ public class SqlFilterPatternMatchingTests {
     // Arrange
     // TransportPublishStrategy generates: a consumer.contracts.chat.chatconversationscontracts+createcommand
     // SqlFilter pattern is: [Subject] LIKE 'a consumer.contracts.chat.%'
-    var subject = "a consumer.contracts.chat.chatconversationscontracts+createcommand";
-    var pattern = "a consumer.contracts.chat.%";
+    const string subject = "a consumer.contracts.chat.chatconversationscontracts+createcommand";
+    const string pattern = "a consumer.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -127,8 +127,8 @@ public class SqlFilterPatternMatchingTests {
     // Arrange
     // TransportPublishStrategy generates: myapp.orders.events.ordercreatedevent
     // SqlFilter pattern is: [Subject] LIKE 'myapp.orders.events.%'
-    var subject = "myapp.orders.events.ordercreatedevent";
-    var pattern = "myapp.orders.events.%";
+    const string subject = "myapp.orders.events.ordercreatedevent";
+    const string pattern = "myapp.orders.events.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -141,8 +141,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_DifferentNamespace_DoesNotMatchAsync() {
     // Arrange - Chat pattern should NOT match auth namespace
-    var subject = "a consumer.contracts.auth.authcontracts+createtenantcommand";
-    var pattern = "a consumer.contracts.chat.%";
+    const string subject = "a consumer.contracts.auth.authcontracts+createtenantcommand";
+    const string pattern = "a consumer.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -155,8 +155,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_DefaultSubject_DoesNotMatchNamespacePatternAsync() {
     // Arrange - This was the bug! Without RoutingKey, Subject defaulted to "message"
-    var subject = "message"; // Default when RoutingKey is null
-    var pattern = "a consumer.contracts.chat.%";
+    const string subject = "message"; // Default when RoutingKey is null
+    const string pattern = "a consumer.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -169,7 +169,7 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_MultiplePatterns_MatchesAnyAsync() {
     // Arrange - Service subscribed to multiple namespaces
-    var subject = "a consumer.contracts.facts.factcreatedevent";
+    const string subject = "a consumer.contracts.facts.factcreatedevent";
     var patterns = new[] {
       "whizbang.core.commands.system.%",
       "a consumer.contracts.chat.%",
@@ -187,8 +187,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_SystemCommand_MatchesSystemPatternAsync() {
     // Arrange - System commands are always included
-    var subject = "whizbang.core.commands.system.healthcheckcommand";
-    var pattern = "whizbang.core.commands.system.%";
+    const string subject = "whizbang.core.commands.system.healthcheckcommand";
+    const string pattern = "whizbang.core.commands.system.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -201,8 +201,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_CaseInsensitive_MatchesAsync() {
     // Arrange - Routing keys are lowercased by TransportPublishStrategy
-    var subject = "a consumer.contracts.chat.createcommand";
-    var pattern = "a consumer.contracts.chat.%";
+    const string subject = "a consumer.contracts.chat.createcommand";
+    const string pattern = "a consumer.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);

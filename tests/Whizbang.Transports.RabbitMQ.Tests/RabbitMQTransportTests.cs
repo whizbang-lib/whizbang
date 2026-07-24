@@ -4,6 +4,8 @@ using RabbitMQ.Client;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
@@ -54,6 +56,69 @@ public class RabbitMQTransportTests {
 
     // Assert - Verify channel was rented from pool
     await Assert.That(channelUsed).IsTrue();
+  }
+
+  /// <summary>
+  /// Locks the contract that when the publish strategy passes
+  /// <c>preSerializedBytes</c>, the transport sends those exact bytes on
+  /// the wire — no re-serialization. This is what avoids the
+  /// double-serialize cost when an upstream hook (size measurement,
+  /// body offload, compression) has already produced the bytes.
+  /// </summary>
+  [Test]
+  public async Task PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync() {
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+    var transport = new RabbitMQTransport(fakeConnection, jsonOptions, pool, options, logger: null);
+    await transport.InitializeAsync();
+
+    var envelope = _createTestEnvelope();
+    var destination = new TransportDestination("test-exchange");
+    var sentinel = "SENTINEL_BYTES_NOT_VALID_JSON_BUT_THATS_THE_POINT"u8.ToArray();
+
+    await transport.PublishAsync(envelope, destination, envelopeType: null,
+      preSerializedBytes: sentinel,
+      cancellationToken: CancellationToken.None);
+
+    await Assert.That(fakeChannel.PublishedMessages.Count).IsEqualTo(1);
+    var published = fakeChannel.PublishedMessages[0];
+    await Assert.That(published.Body.ToArray()).IsEquivalentTo(sentinel)
+      .Because("The hint MUST be used as-is — re-serializing the envelope here would defeat the upstream hook chain (size measurement, body-offload claim envelope substitution).");
+  }
+
+  /// <summary>
+  /// RabbitMQ's max message size is configured on the broker (default 128 MB
+  /// since 3.8, larger by config). For Whizbang's offload-strategy purposes
+  /// that's effectively unlimited — we never produce single messages near that
+  /// ceiling in practice, and gating offload on it would never trigger. Return
+  /// null to signal "no enforced limit for offload decisions" — consumers who
+  /// want a stricter ceiling can layer it via the offload-strategy options.
+  /// </summary>
+  [Test]
+  public async Task MaxMessageSizeBytes_ReturnsNull_NoEnforcedLimitAsync() {
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await Assert.That(transport.MaxMessageSizeBytes).IsNull()
+      .Because("RabbitMQ's default 128 MB ceiling is well above any Whizbang outbox message — null signals to size-aware strategies that offload pre-flight is not driven by this transport.");
   }
 
   [Test]
@@ -522,6 +587,7 @@ public class RabbitMQTransportTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test-content"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,

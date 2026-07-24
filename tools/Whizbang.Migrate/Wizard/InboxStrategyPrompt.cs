@@ -5,7 +5,11 @@ namespace Whizbang.Migrate.Wizard;
 /// Allows user to choose between shared topic and domain topic strategies.
 /// </summary>
 /// <docs>migrate-from-marten-wolverine/cli-wizard#inbox-strategy</docs>
-public sealed class InboxStrategyPrompt {
+/// <remarks>
+/// Creates a new inbox strategy prompt.
+/// </remarks>
+/// <param name="ownedDomains">The domains owned by this service (for example display).</param>
+public sealed class InboxStrategyPrompt(IReadOnlyList<string> ownedDomains) {
   private const string BOX_TOP_LEFT = "\u250c";
   private const string BOX_TOP_RIGHT = "\u2510";
   private const string BOX_BOTTOM_LEFT = "\u2514";
@@ -16,7 +20,7 @@ public sealed class InboxStrategyPrompt {
   private const string BOX_T_RIGHT = "\u2524";
   private const int BOX_WIDTH = 65;
 
-  private readonly IReadOnlyList<string> _ownedDomains;
+  private readonly IReadOnlyList<string> _ownedDomains = ownedDomains;
 
   /// <summary>
   /// Gets the selected inbox strategy.
@@ -32,14 +36,6 @@ public sealed class InboxStrategyPrompt {
   /// Gets the custom suffix (when using DomainTopics strategy).
   /// </summary>
   public string? CustomSuffix { get; private set; }
-
-  /// <summary>
-  /// Creates a new inbox strategy prompt.
-  /// </summary>
-  /// <param name="ownedDomains">The domains owned by this service (for example display).</param>
-  public InboxStrategyPrompt(IReadOnlyList<string> ownedDomains) {
-    _ownedDomains = ownedDomains;
-  }
 
   /// <summary>
   /// Renders the inbox strategy prompt to the console.

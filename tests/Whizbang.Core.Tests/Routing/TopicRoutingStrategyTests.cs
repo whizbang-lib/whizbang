@@ -18,7 +18,7 @@ public class TopicRoutingStrategyTests {
     // Arrange
     var strategy = PassthroughRoutingStrategy.Instance;
     var messageType = typeof(TestEvent);
-    var baseTopic = "products";
+    const string baseTopic = "products";
 
     // Act
     var result = strategy.ResolveTopic(messageType, baseTopic);
@@ -32,7 +32,7 @@ public class TopicRoutingStrategyTests {
     // Arrange
     var strategy = PassthroughRoutingStrategy.Instance;
     var messageType = typeof(TestEvent);
-    var baseTopic = "inventory";
+    const string baseTopic = "inventory";
     var context = new Dictionary<string, object> { ["TenantId"] = "tenant-123" };
 
     // Act
@@ -47,7 +47,7 @@ public class TopicRoutingStrategyTests {
     // Arrange
     var strategy = new PoolSuffixRoutingStrategy("01");
     var messageType = typeof(TestEvent);
-    var baseTopic = "products";
+    const string baseTopic = "products";
 
     // Act
     var result = strategy.ResolveTopic(messageType, baseTopic);
@@ -61,7 +61,7 @@ public class TopicRoutingStrategyTests {
     // Arrange
     var strategy = new PoolSuffixRoutingStrategy("09");
     var messageType = typeof(TestEvent);
-    var baseTopic = "inventory";
+    const string baseTopic = "inventory";
 
     // Act
     var result = strategy.ResolveTopic(messageType, baseTopic);
@@ -99,7 +99,7 @@ public class TopicRoutingStrategyTests {
     var composite = new CompositeTopicRoutingStrategy(tenantStrategy, poolStrategy);
 
     var messageType = typeof(TestEvent);
-    var baseTopic = "products";
+    const string baseTopic = "products";
 
     // Act
     var result = composite.ResolveTopic(messageType, baseTopic);
@@ -115,7 +115,7 @@ public class TopicRoutingStrategyTests {
     var composite = new CompositeTopicRoutingStrategy(poolStrategy);
 
     var messageType = typeof(TestEvent);
-    var baseTopic = "inventory";
+    const string baseTopic = "inventory";
 
     // Act
     var result = composite.ResolveTopic(messageType, baseTopic);
@@ -128,7 +128,7 @@ public class TopicRoutingStrategyTests {
   public async Task CompositeTopicRoutingStrategy_WithEmptyStrategies_ThrowsAsync() {
     // Assert
     await Assert.ThrowsAsync<ArgumentException>(async () => {
-      var composite = new CompositeTopicRoutingStrategy(Array.Empty<ITopicRoutingStrategy>());
+      var composite = new CompositeTopicRoutingStrategy([]);
       await Task.CompletedTask;
     });
   }
@@ -146,12 +146,8 @@ public class TopicRoutingStrategyTests {
   /// Test helper strategy that adds tenant prefix.
   /// Example: "products" → "tenant-A-products"
   /// </summary>
-  private sealed class TenantPrefixStrategy : ITopicRoutingStrategy {
-    private readonly string _tenantId;
-
-    public TenantPrefixStrategy(string tenantId) {
-      _tenantId = tenantId;
-    }
+  private sealed class TenantPrefixStrategy(string tenantId) : ITopicRoutingStrategy {
+    private readonly string _tenantId = tenantId;
 
     public string ResolveTopic(Type messageType, string baseTopic, IReadOnlyDictionary<string, object>? context = null) {
       return $"{_tenantId}-{baseTopic}";

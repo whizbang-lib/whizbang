@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -96,15 +97,31 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       description: "Perspectives may be replayed during system recovery. Injected services must be pure (deterministic, no side effects). Mark the service with [PureService] or suppress this warning if you're certain the service is pure."
   );
 
+  /// <summary>
+  /// WHIZ106: Error - Collective apply performs an apply-time cross-perspective query.
+  /// </summary>
+  public static readonly DiagnosticDescriptor CollectiveApplyUsesCollectiveQuery = new(
+      id: "WHIZ106",
+      title: "Collective apply must not query other perspectives at apply time",
+      messageFormat: "Collective apply method '{0}' calls ICollectiveQuery.Of<>() — an apply-time cross-perspective query. This makes the spec non-replayable: it can't be re-evaluated per-row during a single-stream replay/rebuild. Resolve the cross-query BEFORE event creation and bake the result into the event as static payload, so the apply depends only on the row's own state and the event.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A [CollectiveApplyFor] spec is folded per-row during replay/rebuild against a single stream in isolation. An apply-time query against a sibling perspective (ICollectiveQuery.Of<>()) cannot be reconstructed in isolation, so the collective effect would be lost on rebuild. Cross-perspective facts must be resolved on the command side (when the event is created) and carried on the event."
+  );
+
+  /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
       ApplyMethodIsAsync,
       ApplyMethodUsesAwait,
       ApplyMethodCallsDatabase,
       ApplyMethodCallsHttp,
       ApplyMethodUsesDateTime,
-      NonPureServiceInjected
+      NonPureServiceInjected,
+      CollectiveApplyUsesCollectiveQuery
   );
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
@@ -118,20 +135,25 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeMethod(SyntaxNodeAnalysisContext context) {
     var methodDeclaration = (MethodDeclarationSyntax)context.Node;
-    var methodSymbol = context.SemanticModel.GetDeclaredSymbol(methodDeclaration);
+    var methodSymbol = context.SemanticModel.GetDeclaredSymbol(methodDeclaration, context.CancellationToken);
 
     if (methodSymbol is null) {
       return;
     }
 
-    // Only analyze methods named "Apply"
-    if (methodSymbol.Name != "Apply") {
-      return;
+    // Collective-apply replay purity (WHIZ106): a [CollectiveApplyFor] spec is folded per-row against a
+    // single stream in isolation during replay/rebuild, so it must not query sibling perspectives at apply
+    // time. This is independent of the Apply-name / perspective-interface gating below.
+    var isCollectiveApply = _isCollectiveApply(methodSymbol);
+    if (isCollectiveApply) {
+      _analyzeCollectiveApply(context, methodDeclaration, methodSymbol);
     }
 
-    // Check if method is in a type implementing IPerspectiveFor or IGlobalPerspectiveFor
-    var containingType = methodSymbol.ContainingType;
-    if (!_implementsPerspectiveInterface(containingType)) {
+    // The determinism checks (async/await, DB/HTTP I/O, DateTime.UtcNow) apply to BOTH perspective Apply
+    // methods and collective applies — both are folded during replay and must be deterministic.
+    var isPerspectiveApply = methodSymbol.Name == "Apply"
+        && _implementsPerspectiveInterface(methodSymbol.ContainingType);
+    if (!isPerspectiveApply && !isCollectiveApply) {
       return;
     }
 
@@ -194,9 +216,46 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
   }
 
+  private const string COLLECTIVE_APPLY_FOR_ATTRIBUTE_FULL_NAME =
+      "Whizbang.Core.Perspectives.CollectiveApplyForAttribute";
+  private const string COLLECTIVE_QUERY_FULL_NAME =
+      "Whizbang.Core.Perspectives.ICollectiveQuery";
+
+  private static bool _isCollectiveApply(IMethodSymbol methodSymbol) {
+    return methodSymbol.GetAttributes()
+        .Any(a => a.AttributeClass?.ToDisplayString() == COLLECTIVE_APPLY_FOR_ATTRIBUTE_FULL_NAME);
+  }
+
+  /// <summary>
+  /// WHIZ106: flags any invocation of a member on an <c>ICollectiveQuery</c> (i.e. <c>q.Of&lt;&gt;()</c>)
+  /// inside a <c>[CollectiveApplyFor]</c> method — an apply-time cross-perspective query that cannot be
+  /// re-evaluated per-row during a single-stream replay/rebuild.
+  /// </summary>
+  private static void _analyzeCollectiveApply(
+      SyntaxNodeAnalysisContext context,
+      MethodDeclarationSyntax methodDeclaration,
+      IMethodSymbol methodSymbol) {
+    // Flag any member access whose RECEIVER is an ICollectiveQuery (i.e. `query.Of<>()`). Keying on the
+    // receiver's type — not the invocation's resolved symbol — is robust: the outer `.Any(...)` on the
+    // returned IQueryable may fail to bind (System.Linq.Queryable not in scope), which would null the
+    // invocation symbol, but `query`'s own type still resolves.
+    foreach (var memberAccess in methodDeclaration.DescendantNodes().OfType<MemberAccessExpressionSyntax>()) {
+      var receiverType = context.SemanticModel.GetTypeInfo(memberAccess.Expression, context.CancellationToken).Type;
+      if (receiverType?.ToDisplayString() != COLLECTIVE_QUERY_FULL_NAME) {
+        continue;
+      }
+
+      var diagnostic = Diagnostic.Create(
+          CollectiveApplyUsesCollectiveQuery,
+          memberAccess.GetLocation(),
+          methodSymbol.Name);
+      context.ReportDiagnostic(diagnostic);
+    }
+  }
+
   private static void _analyzeConstructor(SyntaxNodeAnalysisContext context) {
     var constructorDeclaration = (ConstructorDeclarationSyntax)context.Node;
-    var constructorSymbol = context.SemanticModel.GetDeclaredSymbol(constructorDeclaration);
+    var constructorSymbol = context.SemanticModel.GetDeclaredSymbol(constructorDeclaration, context.CancellationToken);
 
     if (constructorSymbol is null) {
       return;
@@ -246,11 +305,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
     // For class types, also check implemented interfaces
     if (typeSymbol is INamedTypeSymbol namedType) {
-      foreach (var iface in namedType.AllInterfaces) {
-        if (_hasAttribute(iface, "Whizbang.Core.Attributes.PureServiceAttribute")) {
-          return true;
-        }
-      }
+      return namedType.AllInterfaces.Any(iface =>
+        _hasAttribute(iface, "Whizbang.Core.Attributes.PureServiceAttribute"));
     }
 
     return false;
@@ -262,13 +318,9 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   }
 
   private static bool _implementsPerspectiveInterface(INamedTypeSymbol typeSymbol) {
-    // Check if type implements IPerspectiveFor<TModel, TEvent...> or IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent...>
-    foreach (var iface in typeSymbol.AllInterfaces) {
-      var interfaceName = iface.ToDisplayString();
-      if (interfaceName.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) ||
-          interfaceName.StartsWith("Whizbang.Core.Perspectives.IGlobalPerspectiveFor<", StringComparison.Ordinal)) {
-        return true;
-      }
+    // Use shared discovery helper for consistent perspective detection
+    if (Utilities.PerspectiveDiscoveryHelper.IsPerspectiveClass(typeSymbol)) {
+      return true;
     }
     return false;
   }
@@ -318,7 +370,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
             containingType.Contains("DbSet") ||
             containingType.Contains("IPerspectiveStore") ||
             containingType.Contains("ILensQuery") ||
-            methodName.EndsWith("Async", StringComparison.Ordinal) && (
+            (methodName.EndsWith("Async", StringComparison.Ordinal) && (
                 methodName.Contains("Save") ||
                 methodName.Contains("Insert") ||
                 methodName.Contains("Update") ||
@@ -327,7 +379,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
                 methodName.Contains("Query") ||
                 methodName.Contains("Get") ||
                 methodName.Contains("Find")
-            )) {
+            ))) {
           yield return (invocation, $"{containingType}.{methodName}");
         }
       }
@@ -349,10 +401,10 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
         // Check for HTTP operation patterns
         if (containingType.Contains("HttpClient") ||
             containingType.Contains("HttpMessageInvoker") ||
-            methodName.StartsWith("Get", StringComparison.Ordinal) && containingType.Contains("Http") ||
-            methodName.StartsWith("Post", StringComparison.Ordinal) && containingType.Contains("Http") ||
-            methodName.StartsWith("Put", StringComparison.Ordinal) && containingType.Contains("Http") ||
-            methodName.StartsWith("Delete", StringComparison.Ordinal) && containingType.Contains("Http")) {
+            (methodName.StartsWith("Get", StringComparison.Ordinal) && containingType.Contains("Http")) ||
+            (methodName.StartsWith("Post", StringComparison.Ordinal) && containingType.Contains("Http")) ||
+            (methodName.StartsWith("Put", StringComparison.Ordinal) && containingType.Contains("Http")) ||
+            (methodName.StartsWith("Delete", StringComparison.Ordinal) && containingType.Contains("Http"))) {
           yield return (invocation, $"{containingType}.{methodName}");
         }
       }

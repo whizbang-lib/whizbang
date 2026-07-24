@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Generated;
@@ -119,7 +120,11 @@ public class DeferredDispatchTests {
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      return FlushAndGetBatchAsync(flags, ct);
+    }
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -134,7 +139,8 @@ public class DeferredDispatchTests {
       var jsonEnvelope = new MessageEnvelope<System.Text.Json.JsonElement> {
         MessageId = envelope.MessageId,
         Payload = jsonElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return new SerializedEnvelope(
         jsonEnvelope,

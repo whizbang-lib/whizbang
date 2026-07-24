@@ -30,8 +30,8 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// }
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/perspectives/event-completion</docs>
-public interface IEventCompletionAwaiter {
+/// <docs>fundamentals/perspectives/event-completion</docs>
+public interface IEventCompletionAwaiter : IAwaiterIdentity {
   /// <summary>
   /// Waits for specific events to be processed by ALL perspectives.
   /// Returns when no perspectives are still tracking any of the specified events.

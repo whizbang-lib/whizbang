@@ -70,46 +70,57 @@ namespace Whizbang.Core.Observability;
 /// Static helper for recording message hops with automatic caller information capture.
 /// Uses C# compiler magic attributes to capture call site information at zero runtime cost.
 /// </summary>
+/// <summary>
+/// Groups the non-caller-info parameters for <see cref="MessageTracing.RecordHop"/>.
+/// </summary>
+/// <param name="ServiceInstance">The service instance information for the service processing this message</param>
+/// <param name="Topic">The topic being processed</param>
+/// <param name="StreamKey">The stream key being processed</param>
+/// <param name="ExecutionStrategy">The execution strategy being used</param>
+/// <param name="PartitionIndex">Optional partition index</param>
+/// <param name="SequenceNumber">Optional sequence number</param>
+/// <param name="Duration">Optional duration of processing</param>
+public readonly record struct HopContext(
+  ServiceInstanceInfo ServiceInstance,
+  string Topic,
+  string StreamKey,
+  string ExecutionStrategy,
+  int? PartitionIndex = null,
+  long? SequenceNumber = null,
+  TimeSpan? Duration = null);
+
+/// <summary>
+/// Static helper for recording message hops with automatic caller information capture.
+/// Uses C# compiler attributes to capture call site information at zero runtime cost.
+/// </summary>
 public static class MessageTracing {
   /// <summary>
   /// Records a message hop with automatic caller information capture.
   /// The caller information is captured at compile time via attributes.
   /// </summary>
-  /// <param name="serviceInstance">The service instance information for the service processing this message</param>
-  /// <param name="topic">The topic being processed</param>
-  /// <param name="streamKey">The stream key being processed</param>
-  /// <param name="executionStrategy">The execution strategy being used</param>
-  /// <param name="partitionIndex">Optional partition index</param>
-  /// <param name="sequenceNumber">Optional sequence number</param>
-  /// <param name="duration">Optional duration of processing</param>
+  /// <param name="context">The hop context containing service instance, topic, stream, and strategy details</param>
   /// <param name="callerMemberName">Automatically captured calling method name</param>
   /// <param name="callerFilePath">Automatically captured calling file path</param>
   /// <param name="callerLineNumber">Automatically captured calling line number</param>
   /// <returns>A MessageHop with all information including caller details</returns>
   public static MessageHop RecordHop(
-      ServiceInstanceInfo serviceInstance,
-      string topic,
-      string streamKey,
-      string executionStrategy,
-      int? partitionIndex = null,
-      long? sequenceNumber = null,
-      TimeSpan? duration = null,
+      HopContext context,
       [CallerMemberName] string? callerMemberName = null,
       [CallerFilePath] string? callerFilePath = null,
       [CallerLineNumber] int? callerLineNumber = null
   ) {
     return new MessageHop {
-      ServiceInstance = serviceInstance,
+      ServiceInstance = context.ServiceInstance,
       Timestamp = DateTimeOffset.UtcNow,
-      Topic = topic,
-      StreamId = streamKey,
-      PartitionIndex = partitionIndex,
-      SequenceNumber = sequenceNumber,
-      ExecutionStrategy = executionStrategy,
+      Topic = context.Topic,
+      StreamId = context.StreamKey,
+      PartitionIndex = context.PartitionIndex,
+      SequenceNumber = context.SequenceNumber,
+      ExecutionStrategy = context.ExecutionStrategy,
       CallerMemberName = callerMemberName,
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
-      Duration = duration ?? TimeSpan.Zero,
+      Duration = context.Duration ?? TimeSpan.Zero,
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
   }

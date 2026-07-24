@@ -33,12 +33,12 @@ public class AuditEventAttributeTests {
   }
 
   [Test]
-  public async Task AuditEventAttribute_IncludeEvent_DefaultsToTrueAsync() {
-    // Arrange & Act
+  public async Task AuditEventAttribute_Properties_IsNullByDefaultAsync() {
+    // Audit needs the full event body. Leaving Properties null signals the generator
+    // to fall back to every public property on the event.
     var attr = new AuditEventAttribute();
 
-    // Assert
-    await Assert.That(attr.IncludeEvent).IsTrue();
+    await Assert.That(attr.Properties).IsNull();
   }
 
   [Test]

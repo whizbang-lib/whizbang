@@ -15,7 +15,7 @@ namespace Whizbang.Generators;
 /// <tests>No tests found</tests>
 [Generator]
 public class PerspectiveInvokerGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveBase";
 
   /// <summary>
   /// Initializes the incremental generator by discovering perspective implementations and registering source generation.
@@ -69,8 +69,8 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          // Simple contains check to match any perspective interface
-          return originalDef.Contains("IPerspectiveFor");
+          // Match IPerspectiveBase — unified marker for all perspective types
+          return originalDef.Contains("IPerspectiveBase");
         })
         .ToList();
 
@@ -99,15 +99,10 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     // Calculate DATABASE FORMAT (TypeName, AssemblyName - no global:: prefix)
     // This generator doesn't use database registration, but we need to provide the parameter
     var eventTypeSymbols = perspectiveInterface.TypeArguments.Skip(1).ToArray();
+    // Shared runtime formatter ("Ns.Outer+Nested, Assembly") — consistent with every other
+    // generator that renders a database type-name (CLR '+' for nested types).
     var messageTypeNames = eventTypeSymbols
-        .Select(t => {
-          var typeName = t.ToDisplayString(new SymbolDisplayFormat(
-              typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-              genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
-          ));
-          var assemblyName = t.ContainingAssembly.Name;
-          return $"{typeName}, {assemblyName}";
-        })
+        .Select(TypeNameUtilities.FormatTypeNameForRuntime)
         .ToArray();
 
     // Compute nested-aware simple name
@@ -195,7 +190,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveInvokerGenerator).Assembly, result);
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
-    result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ROUTING", routingCode.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ROUTING", routingCode);
 
     context.AddSource("PerspectiveInvoker.g.cs", result);
   }

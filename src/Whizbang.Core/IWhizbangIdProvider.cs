@@ -6,7 +6,7 @@ namespace Whizbang.Core;
 /// Provides globally unique identifiers for WhizbangId types.
 /// Implement this interface to customize ID generation strategy (e.g., UUIDv7, sequential, testing).
 /// </summary>
-/// <docs>core-concepts/message-context</docs>
+/// <docs>fundamentals/messages/message-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:ImmediateWorkCoordinatorStrategy_EnqueueOutboxMessage_FlushesImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:IntervalWorkCoordinatorStrategy_EnqueueOutboxMessage_FlushesAfterIntervalAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:ScopedWorkCoordinatorStrategy_EnqueueOutboxMessage_FlushesOnScopeDisposeAsync</tests>

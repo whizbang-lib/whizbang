@@ -35,7 +35,7 @@ namespace Whizbang.Core.Attributes;
 /// public class OrderReceptor : IReceptor&lt;CreateOrder, OrderCreated&gt; { }
 /// </code>
 /// </example>
-/// <docs>core-concepts/persistence#per-receptor-strategy</docs>
+/// <docs>fundamentals/persistence/persistence#per-receptor-strategy</docs>
 /// <tests>Whizbang.Core.Tests/Persistence/PersistenceStrategyTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = true)]
 public sealed class PersistenceStrategyAttribute : Attribute {

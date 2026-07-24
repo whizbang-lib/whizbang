@@ -25,22 +25,23 @@ namespace Whizbang.Generators;
 /// and generates AOT-compatible topic filter lookup registry.
 /// Uses compile-time extraction of enum Description attributes for type-safe routing.
 /// </summary>
-/// <docs>source-generators/topic-filter-discovery</docs>
+/// <docs>extending/source-generators/topic-filter-discovery</docs>
 [Generator]
 public class TopicFilterGenerator : IIncrementalGenerator {
   private const string DESCRIPTION_ATTRIBUTE = "global::System.ComponentModel.DescriptionAttribute";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover ICommand classes with TopicFilter attributes
     var topicFilters = context.SyntaxProvider.CreateSyntaxProvider(
         // Syntactic filtering: Classes/records with attributes (cheap, filters ~99% of nodes)
         predicate: static (node, _) =>
             (node is ClassDeclarationSyntax or RecordDeclarationSyntax) &&
-            ((TypeDeclarationSyntax)node).AttributeLists.Count > 0,
+            ((TypeDeclarationSyntax)node).AttributeLists.Any(),
 
         // Semantic analysis: Extract topic filter info (expensive, only on filtered nodes)
         transform: static (ctx, ct) => _extractTopicFilters(ctx, ct)
-    ).Where(static infos => infos is not null && infos.Value.Length > 0);
+    ).Where(static infos => infos is { Length: > 0 });
 
     // Combine with compilation to get assembly name for namespace
     var compilationAndFilters = context.CompilationProvider.Combine(topicFilters.Collect());
@@ -71,13 +72,11 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   private static ImmutableArray<TopicFilterInfo>? _extractTopicFilters(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
     // Get class symbol
-    var classSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (classSymbol is null) {
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
       return null;  // Early exit - Roslyn returned null or not a named type
     }
 
@@ -171,7 +170,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
           .FirstOrDefault(a => a.AttributeClass is not null &&
             TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == DESCRIPTION_ATTRIBUTE);
 
-      if (descriptionAttr is not null && descriptionAttr.ConstructorArguments.Length > 0) {
+      if (descriptionAttr?.ConstructorArguments is { Length: > 0 }) {
         var descriptionValue = descriptionAttr.ConstructorArguments[0].Value;
         if (descriptionValue is not null) {
           return descriptionValue.ToString();

@@ -8,6 +8,9 @@
     <Project Path="benchmarks/Whizbang.Benchmarks/Whizbang.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/samples/" />
+  <Folder Name="/samples/CollectiveEvents/">
+    <Project Path="samples/CollectiveEvents/CollectiveEvents.Sample.csproj" />
+  </Folder>
   <Folder Name="/samples/ECommerce/">
     <Project Path="samples/ECommerce/ECommerce.AppHost/ECommerce.AppHost.csproj" />
     <Project Path="samples/ECommerce/ECommerce.BFF.API/ECommerce.BFF.API.csproj" />
@@ -45,11 +48,16 @@
     <Project Path="src/Whizbang.Data.EFCore.Postgres/Whizbang.Data.EFCore.Postgres.csproj" />
     <Project Path="src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
     <Project Path="src/Whizbang.Data.Schema/Whizbang.Data.Schema.csproj" />
+    <Project Path="src/Whizbang.Generators.CodeFixes/Whizbang.Generators.CodeFixes.csproj" />
     <Project Path="src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj" />
     <Project Path="src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <Project Path="src/Whizbang.Hosting.AspNet/Whizbang.Hosting.AspNet.csproj" />
     <Project Path="src/Whizbang.Hosting.Azure.ServiceBus/Whizbang.Hosting.Azure.ServiceBus.csproj" />
     <Project Path="src/Whizbang.Hosting.RabbitMQ/Whizbang.Hosting.RabbitMQ.csproj" />
     <Project Path="src/Whizbang.Observability/Whizbang.Observability.csproj" />
+    <Project Path="src/Whizbang.Sagas.Contracts/Whizbang.Sagas.Contracts.csproj" />
+    <Project Path="src/Whizbang.Sagas.Generators/Whizbang.Sagas.Generators.csproj" />
+    <Project Path="src/Whizbang.Sagas/Whizbang.Sagas.csproj" />
     <Project Path="src/Whizbang.SignalR/Whizbang.SignalR.csproj" />
     <Project Path="src/Whizbang.Testing/Whizbang.Testing.csproj" />
     <Project Path="src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
@@ -59,11 +67,14 @@
     <Project Path="src/Whizbang.Transports.Mutations/Whizbang.Transports.Mutations.csproj" />
     <Project Path="src/Whizbang.Transports.FastEndpoints/Whizbang.Transports.FastEndpoints.csproj" />
     <Project Path="src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj" />
+    <Project Path="src/Whizbang.Offloads.InMemory/Whizbang.Offloads.InMemory.csproj" />
+    <Project Path="src/Whizbang.Offloads.AzureBlob/Whizbang.Offloads.AzureBlob.csproj" />
   </Folder>
   <Folder Name="/test-diagnostics/">
     <Project Path="test-diagnostics/DiagnosticsTest.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Whizbang.Core.Integration.Tests/Whizbang.Core.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.EFCore.Postgres.Tests/Whizbang.Data.EFCore.Postgres.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.Dapper.Postgres.Tests/Whizbang.Data.Dapper.Postgres.Tests.csproj" />
@@ -72,22 +83,35 @@
     <Project Path="tests/Whizbang.Documentation.Tests/Whizbang.Documentation.Tests.csproj" />
     <Project Path="tests/Whizbang.Execution.Tests/Whizbang.Execution.Tests.csproj" />
     <Project Path="tests/Whizbang.Generators.Tests/Whizbang.Generators.Tests.csproj" />
+    <Project Path="tests/Whizbang.Hosting.AspNet.Tests/Whizbang.Hosting.AspNet.Tests.csproj" />
     <Project Path="tests/Whizbang.Hosting.Azure.ServiceBus.Tests/Whizbang.Hosting.Azure.ServiceBus.Tests.csproj" />
+    <Project Path="tests/Whizbang.LanguageServer.Tests/Whizbang.LanguageServer.Tests.csproj" />
+    <Project Path="tests/Whizbang.Migrate.Integration.Tests/Whizbang.Migrate.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Migrate.Tests/Whizbang.Migrate.Tests.csproj" />
     <Project Path="tests/Whizbang.Observability.Tests/Whizbang.Observability.Tests.csproj" />
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
     <Project Path="tests/Whizbang.Policies.Tests/Whizbang.Policies.Tests.csproj" />
+    <Project Path="tests/Whizbang.Sagas.Tests/Whizbang.Sagas.Tests.csproj" />
     <Project Path="tests/Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
     <Project Path="tests/Whizbang.SignalR.Tests/Whizbang.SignalR.Tests.csproj" />
+    <Project Path="tests/Whizbang.Testing.Tests/Whizbang.Testing.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.RabbitMQ.Tests/Whizbang.Transports.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.HotChocolate.Tests/Whizbang.Transports.HotChocolate.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Mutations.Tests/Whizbang.Transports.Mutations.Tests.csproj" />
+    <Project Path="tests/Whizbang.Offloads.InMemory.Tests/Whizbang.Offloads.InMemory.Tests.csproj" />
+    <Project Path="tests/Whizbang.Offloads.AzureBlob.Tests/Whizbang.Offloads.AzureBlob.Tests.csproj" />
+    <Project Path="tests/Whizbang.Offloads.AzureBlob.Integration.Tests/Whizbang.Offloads.AzureBlob.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.AzureServiceBus.Tests/Whizbang.Transports.AzureServiceBus.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.AzureServiceBus.Integration.Tests/Whizbang.Transports.AzureServiceBus.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.FastEndpoints.Tests/Whizbang.Transports.FastEndpoints.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.FastEndpoints.Integration.Tests/Whizbang.Transports.FastEndpoints.Integration.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.HotChocolate.Integration.Tests/Whizbang.Transports.HotChocolate.Integration.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.RabbitMQ.Integration.Tests/Whizbang.Transports.RabbitMQ.Integration.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Whizbang.CLI/Whizbang.CLI.csproj" />
+    <Project Path="tools/Whizbang.LanguageServer/Whizbang.LanguageServer.csproj" />
     <Project Path="tools/Whizbang.Migrate/Whizbang.Migrate.csproj" />
   </Folder>
 </Solution>

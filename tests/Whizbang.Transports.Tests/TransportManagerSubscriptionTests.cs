@@ -1,5 +1,7 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -27,9 +29,9 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    var handlerCalled = false;
+    var handlerSignal = new TaskCompletionSource();
     Task handler(IMessageEnvelope envelope) {
-      handlerCalled = true;
+      handlerSignal.TrySetResult();
       return Task.CompletedTask;
     }
 
@@ -44,12 +46,15 @@ public class TransportManagerSubscriptionTests {
     var testEnvelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "test",
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    await transport.PublishAsync(testEnvelope, new TransportDestination("test-topic"), envelopeType: null, CancellationToken.None);
-    await Task.Delay(50); // Allow async processing
+    await transport.PublishAsync(testEnvelope, new TransportDestination("test-topic"), envelopeType: null, preSerializedBytes: null, cancellationToken: CancellationToken.None);
 
-    await Assert.That(handlerCalled).IsTrue();
+    // Wait for the batch collector to flush and invoke the handler
+    await handlerSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    await Assert.That(handlerSignal.Task.IsCompleted).IsTrue();
   }
 
   [Test]
@@ -268,8 +273,10 @@ public class TransportManagerSubscriptionTests {
     };
 
     IMessageEnvelope? receivedEnvelope = null;
+    var handlerSignal = new TaskCompletionSource();
     Task handler(IMessageEnvelope envelope) {
       receivedEnvelope = envelope;
+      handlerSignal.TrySetResult();
       return Task.CompletedTask;
     }
 
@@ -280,10 +287,13 @@ public class TransportManagerSubscriptionTests {
     var testEnvelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "test-payload",
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    await transport.PublishAsync(testEnvelope, new TransportDestination("handler-test"), envelopeType: null, CancellationToken.None);
-    await Task.Delay(50); // Allow async processing
+    await transport.PublishAsync(testEnvelope, new TransportDestination("handler-test"), envelopeType: null, preSerializedBytes: null, cancellationToken: CancellationToken.None);
+
+    // Wait for the batch collector to flush and invoke the handler
+    await handlerSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
     // Assert
     await Assert.That(receivedEnvelope).IsNotNull();

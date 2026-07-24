@@ -1,4 +1,3 @@
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Pgvector;
@@ -62,10 +61,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
   /// DbContext for vector search tests with explicit configuration.
   /// Uses manual configuration instead of source generation for test isolation.
   /// </summary>
-  private sealed class VectorTestDbContext : DbContext {
-    public VectorTestDbContext(DbContextOptions<VectorTestDbContext> options)
-        : base(options) { }
-
+  private sealed class VectorTestDbContext(DbContextOptions<VectorSearchIntegrationTests.VectorTestDbContext> options) : DbContext(options) {
     public DbSet<PerspectiveRow<VectorTestModel>> VectorTestRows => Set<PerspectiveRow<VectorTestModel>>();
     public DbSet<PerspectiveRow<SecondVectorTestModel>> SecondVectorTestRows => Set<PerspectiveRow<SecondVectorTestModel>>();
 
@@ -80,7 +76,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
-        entity.OwnsOne(e => e.Data, data => { data.ToJson("data"); });
+        entity.OwnsOne(e => e.Data, data => data.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata).ToJson("metadata");
         entity.ComplexProperty(e => e.Scope).ToJson("scope");
 
@@ -104,7 +100,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
-        entity.OwnsOne(e => e.Data, data => { data.ToJson("data"); });
+        entity.OwnsOne(e => e.Data, data => data.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata).ToJson("metadata");
         entity.ComplexProperty(e => e.Scope).ToJson("scope");
 
@@ -241,8 +237,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Item4", Embedding: "[0.707,0.707,0]", Reference: "[0.707,0.707,0]")
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
   }
 
@@ -261,8 +257,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       Embedding = (float[]?)null,
       ReferenceEmbedding = (float[]?)null
     });
-    var metadataJson = """{"EventType":"Test","EventId":"1","Timestamp":"2024-01-01T00:00:00Z"}""";
-    var scopeJson = "{}";
+    const string metadataJson = """{"EventType":"Test","EventId":"1","Timestamp":"2024-01-01T00:00:00Z"}""";
+    const string scopeJson = "{}";
 
     await connection.ExecuteAsync(@"
       INSERT INTO wh_per_vector_test_model (id, data, metadata, scope, embedding, reference_embedding)
@@ -282,8 +278,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       Id = id.ToString(),
       Label = label
     });
-    var metadataJson = """{"EventType":"Test","EventId":"1","Timestamp":"2024-01-01T00:00:00Z"}""";
-    var scopeJson = "{}";
+    const string metadataJson = """{"EventType":"Test","EventId":"1","Timestamp":"2024-01-01T00:00:00Z"}""";
+    const string scopeJson = "{}";
 
     await connection.ExecuteAsync(@"
       INSERT INTO wh_per_second_vector_test_model (id, data, metadata, scope, target_embedding)
@@ -387,7 +383,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Item1");
     await Assert.That(names).Contains("Item4");
     await Assert.That(names).DoesNotContain("Item2");
@@ -413,7 +409,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Item1");
     await Assert.That(names).Contains("Item4");
   }
@@ -470,8 +466,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Differ", Embedding: "[1,0,0]", Reference: "[0,1,0]")
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
 
     await using var context = _createDbContext();
@@ -503,8 +499,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Differ", Embedding: "[1,0,0]", Reference: "[-1,0,0]")
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
 
     await using var context = _createDbContext();
@@ -535,8 +531,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Far", Embedding: "[1,0,0]", Reference: "[0,1,0]")        // Distance 1
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
 
     await using var context = _createDbContext();
@@ -548,7 +544,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Match");
     await Assert.That(names).Contains("Close");
     await Assert.That(names).DoesNotContain("Far");
@@ -569,8 +565,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Far", Embedding: "[1,0,0]", Reference: "[-1,0,0]")
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
 
     await using var context = _createDbContext();
@@ -582,7 +578,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Match");
     await Assert.That(names).Contains("Close");
     await Assert.That(names).DoesNotContain("Far");
@@ -608,8 +604,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "V3", Embedding: "[-1,0,0]")
     };
 
-    foreach (var item in vectorItems) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Embedding);
+    foreach (var (Id, Name, Embedding) in vectorItems) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Embedding);
     }
 
     // Seed SecondVectorTestModel with target vector [1,0,0]
@@ -702,7 +698,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Item1");
     await Assert.That(names).Contains("Item4");
   }

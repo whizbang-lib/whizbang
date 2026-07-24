@@ -9,7 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Extension methods for filtering perspective rows by security principals.
 /// Uses EF Core 10 ComplexProperty().ToJson() with native LINQ support.
 /// </summary>
-/// <docs>core-concepts/security#principal-filtering</docs>
+/// <docs>fundamentals/security/security#principal-filtering</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PrincipalFilterExtensionsTests.cs</tests>
 /// <remarks>
 /// <para>
@@ -59,7 +59,7 @@ public static class PrincipalFilterExtensions {
 
     if (callerPrincipals == null || callerPrincipals.Count == 0) {
       // No principals = no access (return empty result)
-      return query.Where(r => false);
+      return query.Where(_ => false);
     }
 
     // Convert principals to string list for LINQ Contains
@@ -106,7 +106,7 @@ public static class PrincipalFilterExtensions {
 
     if (!hasUserId && !hasPrincipals) {
       // No filter criteria = no access (return empty result)
-      return query.Where(r => false);
+      return query.Where(_ => false);
     }
 
     // Build OR predicate: (UserId = currentUser) OR (AllowedPrincipals contains any caller principal)

@@ -79,12 +79,14 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_RECEPTORS = "__RECEPTORS__";
   private const string PLACEHOLDER_PERSPECTIVES = "__PERSPECTIVES__";
   private const string PLACEHOLDER_MESSAGES = "__MESSAGES__";
+  private const string PLACEHOLDER_PACKAGES = "__PACKAGES__";
   private const string PLACEHOLDER_JSON = "__JSON__";
   private const string PLACEHOLDER_TEST_FILE = "__TEST_FILE__";
   private const string PLACEHOLDER_TEST_METHOD = "__TEST_METHOD__";
   private const string PLACEHOLDER_TEST_LINE = "__TEST_LINE__";
   private const string PLACEHOLDER_TEST_CLASS = "__TEST_CLASS__";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (ICommand, IEvent)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
@@ -122,15 +124,21 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
 
-    // Combine all discoveries and generate JSON
+    // Combine all discoveries + compilation (for referenced assembly versions)
     var allData = messageTypes.Collect()
         .Combine(dispatchers.Collect())
         .Combine(receptors.Collect())
-        .Combine(perspectives.Collect());
+        .Combine(perspectives.Collect())
+        .Combine(context.CompilationProvider);
 
     context.RegisterSourceOutput(
         allData,
-        static (ctx, data) => _generateMessageRegistry(ctx, data)
+        static (ctx, data) => {
+          var ((((messages, dispatchers2), receptors2), perspectives2), compilation) = data;
+          _generateMessageRegistry(ctx,
+            (((messages, dispatchers2), receptors2), perspectives2),
+            compilation);
+        }
     );
   }
 
@@ -175,9 +183,45 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var invocation = (InvocationExpressionSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    // Defensive guard: throws if Roslyn returns null (indicates compiler bug)
-    // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
-    var methodSymbol = RoslynGuards.GetMethodSymbolOrThrow(invocation, semanticModel, cancellationToken);
+    // Crash-fix (2026-06-15): the predicate matches purely on method name
+    // ("SendAsync" / "PublishAsync"), so invocations resolve to *any* type with
+    // a same-named method — including Rocks-generated expectations classes
+    // (e.g. `IDispatcherCreateExpectations.SetupsExpectations.PublishAsync<T>(Argument<T>)`)
+    // and any user-written wrapper. In overload-resolution-ambiguous cases
+    // Roslyn returns a null `Symbol`, and the prior `GetMethodSymbolOrThrow`
+    // dereference fired CS8785, breaking every a consumer test project that uses Rocks
+    // to mock `IDispatcher`. A generator must never throw on an invocation it
+    // cannot resolve — skip safely instead.
+    var symbolInfo = semanticModel.GetSymbolInfo(invocation, cancellationToken);
+    if (symbolInfo.Symbol is not IMethodSymbol methodSymbol) {
+      return null;
+    }
+
+    // Correctness filter: only register invocations whose containing type
+    // actually IS, or implements, `Whizbang.Core.IDispatcher`. This excludes:
+    //   - Rocks/NSubstitute/Moq generated `Setups.PublishAsync<T>` / `SendAsync<T>`
+    //     methods on expectations or mock proxy types,
+    //   - User-defined wrappers that happen to expose same-named methods
+    //     (e.g. an HTTP messenger named `SendAsync`).
+    // The match is fully qualified to avoid name collisions across assemblies.
+    // For the IS check we compare both `containingType` AND its `OriginalDefinition`
+    // — when SendAsync is called as a constructed generic method on an interface
+    // (the typical case), `ContainingType` is the same interface, but in some
+    // overload-resolution paths Roslyn returns an open or constructed wrapper
+    // whose `OriginalDefinition` is what matches our constant.
+    var containingType = methodSymbol.ContainingType;
+    if (containingType is null) {
+      return null;
+    }
+    var containingTypeName = TypeNameHelper.GetFullyQualifiedName(containingType);
+    var containingTypeOriginalName = TypeNameHelper.GetFullyQualifiedName(containingType.OriginalDefinition);
+    var isDispatcherMethod =
+        containingTypeName == StandardInterfaceNames.I_DISPATCHER
+        || containingTypeOriginalName == StandardInterfaceNames.I_DISPATCHER
+        || TypeNameHelper.ImplementsInterface(containingType, StandardInterfaceNames.I_DISPATCHER);
+    if (!isDispatcherMethod) {
+      return null;
+    }
 
     // Predicate already filtered for SendAsync/PublishAsync method names
 
@@ -185,7 +229,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     ITypeSymbol? messageType = null;
 
     // For SendAsync and PublishAsync, look at the first argument
-    if (invocation.ArgumentList.Arguments.Count > 0) {
+    if (invocation.ArgumentList.Arguments.Any()) {
       var firstArg = invocation.ArgumentList.Arguments[0].Expression;
       var argTypeInfo = semanticModel.GetTypeInfo(firstArg, cancellationToken);
       messageType = argTypeInfo.Type;
@@ -294,7 +338,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
-    // Look for IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
+    // Look for IPerspectiveFor / IPerspectiveWithActionsFor<TModel, TEvent1, ...> interfaces (all variants)
     // Must match the base marker interface or any event-handling variant
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
@@ -302,7 +346,10 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
           // Check for base marker or event-handling variants (with or without space after comma)
           return originalDef == StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel>" ||
                  originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel,", StringComparison.Ordinal) ||
-                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel, ", StringComparison.Ordinal);
+                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel, ", StringComparison.Ordinal) ||
+                 originalDef == StandardInterfaceNames.I_PERSPECTIVE_WITH_ACTIONS_FOR + "<TModel>" ||
+                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_WITH_ACTIONS_FOR + "<TModel,", StringComparison.Ordinal) ||
+                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_WITH_ACTIONS_FOR + "<TModel, ", StringComparison.Ordinal);
         })
         .ToList();
 
@@ -341,7 +388,8 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
   private static void _generateMessageRegistry(
       SourceProductionContext context,
-      (((ImmutableArray<MessageTypeInfo>, ImmutableArray<DispatcherLocationInfo>), ImmutableArray<ReceptorLocationInfo>), ImmutableArray<PerspectiveLocationInfo>) data) {
+      (((ImmutableArray<MessageTypeInfo>, ImmutableArray<DispatcherLocationInfo>), ImmutableArray<ReceptorLocationInfo>), ImmutableArray<PerspectiveLocationInfo>) data,
+      Compilation? compilation = null) {
 
     var (((messages, dispatchers), receptors), perspectives) = data;
 
@@ -464,8 +512,32 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       }
     }
 
+    // Extract referenced Whizbang package versions from compilation
+    var packageEntries = new StringBuilder();
+    if (compilation is not null) {
+      var whizbangAssemblies = compilation.ReferencedAssemblyNames
+          .Where(a => a.Name.StartsWith("Whizbang.", StringComparison.Ordinal))
+          .OrderBy(a => a.Name)
+          .ToList();
+
+      for (var p = 0; p < whizbangAssemblies.Count; p++) {
+        var asm = whizbangAssemblies[p];
+        var packageId = $"SoftwareExtravaganza.{asm.Name}";
+        // Assembly version is Major.Minor.Build.Revision (no prerelease suffix)
+        // Emit as "versionPrefix" so the extension can match NuGet folders by prefix
+        var ver = asm.Version;
+        var versionPrefix = $"{ver.Major}.{ver.Minor}.{ver.Build}";
+        packageEntries.Append($"    {{ \"id\": \"{packageId}\", \"versionPrefix\": \"{versionPrefix}\" }}");
+        if (p < whizbangAssemblies.Count - 1) {
+          packageEntries.AppendLine(",");
+        }
+      }
+    }
+
     // Build final JSON
-    var json = jsonWrapperSnippet.Replace(PLACEHOLDER_MESSAGES, messageEntries.ToString());
+    var json = jsonWrapperSnippet
+        .Replace(PLACEHOLDER_MESSAGES, messageEntries.ToString())
+        .Replace(PLACEHOLDER_PACKAGES, packageEntries.ToString());
 
     // Generate C# wrapper with embedded JSON using snippet
     var wrapperSnippet = TemplateUtilities.ExtractSnippet(

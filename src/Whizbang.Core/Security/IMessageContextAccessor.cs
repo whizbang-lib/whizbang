@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security;
 /// Provides access to the current message context within a scoped request.
 /// Similar to IHttpContextAccessor pattern.
 /// </summary>
-/// <docs>core-concepts/message-security#message-context-accessor</docs>
+/// <docs>fundamentals/security/message-security#message-context-accessor</docs>
 public interface IMessageContextAccessor {
   /// <summary>
   /// Gets or sets the current message context.
@@ -27,7 +27,12 @@ public interface IMessageContextAccessor {
 /// </para>
 /// </remarks>
 public class MessageContextAccessor : IMessageContextAccessor {
-  private static readonly AsyncLocal<MessageContextHolder> _messageContextCurrent = new();
+  // Use AsyncLocal<IMessageContext?> directly (no holder wrapper) so that writes in child
+  // execution contexts (e.g., local-dispatch cascades) are isolated to that scope and never
+  // mutate the parent's context. The holder pattern caused parent-context corruption: the
+  // setter nulled holder.Context before creating a new holder, and since AsyncLocal copies
+  // the holder *reference* into child scopes, that null write was visible back in the parent.
+  private static readonly AsyncLocal<IMessageContext?> _messageContextCurrent = new();
 
   /// <summary>
   /// Static accessor for the current message context.
@@ -43,35 +48,15 @@ public class MessageContextAccessor : IMessageContextAccessor {
   /// message context but cannot resolve scoped services.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/message-security#message-context-accessor</docs>
+  /// <docs>fundamentals/security/message-security#message-context-accessor</docs>
   public static IMessageContext? CurrentContext {
-    get => _messageContextCurrent.Value?.Context;
-    set {
-      var holder = _messageContextCurrent.Value;
-      if (holder != null) {
-        holder.Context = null;
-      }
-      if (value != null) {
-        _messageContextCurrent.Value = new MessageContextHolder { Context = value };
-      }
-    }
+    get => _messageContextCurrent.Value;
+    set => _messageContextCurrent.Value = value;
   }
 
   /// <inheritdoc />
   public IMessageContext? Current {
-    get => _messageContextCurrent.Value?.Context;
-    set {
-      var holder = _messageContextCurrent.Value;
-      if (holder != null) {
-        holder.Context = null;
-      }
-      if (value != null) {
-        _messageContextCurrent.Value = new MessageContextHolder { Context = value };
-      }
-    }
-  }
-
-  private sealed class MessageContextHolder {
-    public IMessageContext? Context;
+    get => _messageContextCurrent.Value;
+    set => _messageContextCurrent.Value = value;
   }
 }

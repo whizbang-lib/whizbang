@@ -35,7 +35,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// The database is the only authority for determining when perspectives have processed events.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
 public sealed class AwaitPerspectiveSyncAttribute(Type perspectiveType) : Attribute {

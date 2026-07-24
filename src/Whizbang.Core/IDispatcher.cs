@@ -13,7 +13,7 @@ namespace Whizbang.Core;
 /// - LocalInvokeAsync: In-process RPC with typed business result (zero allocation)
 /// - PublishAsync: Event broadcasting (fire-and-forget)
 /// </summary>
-/// <docs>core-concepts/dispatcher</docs>
+/// <docs>fundamentals/dispatcher/dispatcher</docs>
 public interface IDispatcher {
   // ========================================
   // SEND PATTERN - Command Dispatch with Acknowledgment
@@ -273,6 +273,95 @@ public interface IDispatcher {
   ValueTask LocalInvokeAsync(object message, DispatchOptions options);
 
   // ========================================
+  // LOCAL INVOKE WITH RECEIPT — In-Process RPC with Dispatch Metadata
+  // ========================================
+
+  /// <summary>
+  /// Invokes a receptor in-process with typed message and returns both the typed business result
+  /// AND a delivery receipt with dispatch metadata (AOT-compatible).
+  /// Always takes the tracing path since envelope data is needed for the receipt.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type</typeparam>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_Generic_ReturnsBusinessResultAndReceiptAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
+      TMessage message) where TMessage : notnull;
+
+  /// <summary>
+  /// Invokes a receptor in-process and returns both the typed business result
+  /// AND a delivery receipt with dispatch metadata.
+  /// Always takes the tracing path since envelope data is needed for the receipt.
+  /// For AOT compatibility, use the generic overload LocalInvokeWithReceiptAsync&lt;TMessage, TResult&gt;.
+  /// </summary>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_ReturnsBusinessResultAndReceiptAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
+      object message);
+
+  /// <summary>
+  /// Invokes a receptor in-process with typed message and explicit context, returning both
+  /// the typed business result AND a delivery receipt (AOT-compatible).
+  /// Captures caller information for debugging and observability.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type</typeparam>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <param name="context">The message context</param>
+  /// <param name="callerMemberName">Caller method name (auto-captured)</param>
+  /// <param name="callerFilePath">Caller file path (auto-captured)</param>
+  /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_PreservesCorrelationIdAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
+      TMessage message,
+      IMessageContext context,
+      [CallerMemberName] string callerMemberName = "",
+      [CallerFilePath] string callerFilePath = "",
+      [CallerLineNumber] int callerLineNumber = 0)
+      where TMessage : notnull;
+
+  /// <summary>
+  /// Invokes a receptor in-process with explicit context and returns both the typed business result
+  /// AND a delivery receipt.
+  /// For AOT compatibility, use the generic overload LocalInvokeWithReceiptAsync&lt;TMessage, TResult&gt;.
+  /// </summary>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <param name="context">The message context</param>
+  /// <param name="callerMemberName">Caller method name (auto-captured)</param>
+  /// <param name="callerFilePath">Caller file path (auto-captured)</param>
+  /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_NonGeneric_PreservesCorrelationIdAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
+      object message,
+      IMessageContext context,
+      [CallerMemberName] string callerMemberName = "",
+      [CallerFilePath] string callerFilePath = "",
+      [CallerLineNumber] int callerLineNumber = 0);
+
+  /// <summary>
+  /// Invokes a receptor in-process with dispatch options and returns both the typed business result
+  /// AND a delivery receipt.
+  /// </summary>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithDispatchOptions_ReturnsReceiptAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
+      object message, DispatchOptions options);
+
+  // ========================================
   // PUBLISH PATTERN - Event Broadcasting
   // ========================================
 
@@ -300,6 +389,49 @@ public interface IDispatcher {
   Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options);
 
   /// <summary>
+  /// Publishes an event at most once per <paramref name="claimKey"/> across all
+  /// concurrent callers. The first caller to claim the key proceeds with
+  /// <see cref="PublishAsync{TEvent}(TEvent)"/> and the method returns <c>true</c>;
+  /// concurrent callers with the same key intentionally no-op and return <c>false</c>.
+  /// </summary>
+  /// <typeparam name="TEvent">The event type.</typeparam>
+  /// <param name="claimKey">
+  /// Caller-chosen idempotency key, unique within the caller's domain. Opaque
+  /// to the framework. For sagas the conventional value is the saga id; for
+  /// other domains use whatever string uniquely identifies "this emission".
+  /// </param>
+  /// <param name="eventData">The event to publish if the claim is won.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// <c>true</c> if this caller won the claim and the event was published;
+  /// <c>false</c> if another caller already won the claim for this key.
+  /// </returns>
+  /// <remarks>
+  /// <para>
+  /// Use this in preference to a read-then-check pattern (<c>SELECT … WHERE
+  /// already_emitted</c> followed by <c>PublishAsync</c>) when two or more
+  /// concurrent callers may attempt the same logical emission. Atomicity is
+  /// enforced at the storage layer through <see cref="IClaimedEmissionStore"/>
+  /// — no SELECT-then-INSERT window exists.
+  /// </para>
+  /// <para>
+  /// When the caller is inside an ambient transaction, the claim INSERT
+  /// participates in that transaction (provided the underlying store joins
+  /// the same connection / DbContext). A rollback of the outer scope releases
+  /// the claim, preserving the invariant <em>claim taken iff emission
+  /// committed</em>.
+  /// </para>
+  /// <para>
+  /// Requires an <see cref="IClaimedEmissionStore"/> registration in the
+  /// service provider. Throws <see cref="InvalidOperationException"/> if
+  /// none is registered.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs</tests>
+  /// <docs>fundamentals/dispatcher/publish-once</docs>
+  Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Cascades a message (event or command) with explicit routing mode.
   /// Called by <see cref="IEventCascader"/> after resolving routing from wrappers and attributes.
   /// </summary>
@@ -324,8 +456,8 @@ public interface IDispatcher {
   /// sourceEnvelope's current security context when ambient context is unavailable.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
-  Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default);
+  /// <docs>fundamentals/dispatcher/message-cascade#cascade-to-outbox</docs>
+  Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default);
 
   // ========================================
   // LOCAL INVOKE AND SYNC - Wait for All Perspectives
@@ -379,7 +511,8 @@ public interface IDispatcher {
   /// Thrown when perspectives don't complete processing within the timeout period.
   /// Note: The handler has already completed successfully; only perspective sync timed out.
   /// </exception>
-  /// <docs>core-concepts/dispatcher#local-invoke-and-sync</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-and-sync</docs>
+  [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken) for void receptors. For receptors returning a typed result, prefer LocalInvokeAsync<TMessage,TResult>(message) followed by an explicit LocalInvokeAndSyncAsync(message, SyncMode.AllProjections, ct) when read-after-write semantics are required. Will be removed in the next major.")]
   Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -416,7 +549,8 @@ public interface IDispatcher {
   /// </param>
   /// <param name="cancellationToken">A cancellation token.</param>
   /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
-  /// <docs>core-concepts/dispatcher#local-invoke-and-sync</docs>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-and-sync</docs>
+  [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken). The TimeSpan timeout pattern is replaced by the caller's CancellationToken — perspective health is an observability concern, not a per-call timeout. Will be removed in the next major.")]
   Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -447,7 +581,8 @@ public interface IDispatcher {
   /// <param name="cancellationToken">A cancellation token.</param>
   /// <returns>The typed business result from the receptor.</returns>
   /// <exception cref="TimeoutException">Thrown when the perspective doesn't complete processing within the timeout.</exception>
-  /// <docs>core-concepts/dispatcher#local-invoke-and-sync-perspective</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync-perspective</docs>
+  [Obsolete("Use the W4 CT-only overload LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken) for SyncMode.AllProjections, then read the specific perspective via repository. Will be removed in the next major.")]
   Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult, TPerspective>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -480,7 +615,7 @@ public interface IDispatcher {
   /// <param name="onDecisionMade">Optional callback always invoked when the sync decision is made.</param>
   /// <param name="cancellationToken">A cancellation token.</param>
   /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
-  /// <docs>core-concepts/dispatcher#local-invoke-and-sync-perspective</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync-perspective</docs>
   Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncForPerspectiveAsync<TMessage, TPerspective>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -490,6 +625,45 @@ public interface IDispatcher {
       where TMessage : notnull
       where TPerspective : class
       => throw new NotSupportedException("LocalInvokeAndSyncForPerspectiveAsync requires a Dispatcher implementation with IPerspectiveSyncAwaiter support.");
+
+  // ========================================
+  // W4 — SYNC MODE (NEW SHAPE, NO TIMEOUT)
+  // ========================================
+
+  /// <summary>
+  /// Invokes a receptor in-process and waits for completion as defined by
+  /// <paramref name="mode"/>. CancellationToken-only — no <c>TimeSpan</c> timeout;
+  /// the caller's <paramref name="cancellationToken"/> is the sole wait bound.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// New W4 shape that replaces the timeout-based
+  /// <see cref="LocalInvokeAndSyncAsync{TMessage}(TMessage, System.TimeSpan?, System.Action{Perspectives.Sync.SyncWaitingContext}?, System.Action{Perspectives.Sync.SyncDecisionContext}?, CancellationToken)"/>
+  /// overloads (now <see cref="System.ObsoleteAttribute"/>). Perspective health is
+  /// a separate observability concern — a hung perspective surfaces via metrics and
+  /// the caller's own cancellation, not via an implicit 30 s timeout.
+  /// </para>
+  /// <para>
+  /// <see cref="Perspectives.Sync.SyncMode.AllProjections"/> is the
+  /// read-after-write CQRS default; callers explicitly opt into
+  /// <see cref="Perspectives.Sync.SyncMode.StreamOnly"/> when they do NOT need to
+  /// read from any local perspective in the same request.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="mode">What completion to wait for. Required (no implicit default) — every callsite makes its read-after-write expectation explicit.</param>
+  /// <param name="cancellationToken">A cancellation token. When triggered, propagates as <see cref="System.OperationCanceledException"/>.</param>
+  /// <returns>A task that completes when the chosen sync mode is satisfied.</returns>
+  /// <docs>fundamentals/dispatcher/sync-mode</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs</tests>
+  System.Threading.Tasks.ValueTask LocalInvokeAndSyncAsync<TMessage>(
+      TMessage message,
+      Perspectives.Sync.SyncMode mode,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      => throw new System.NotSupportedException(
+          "LocalInvokeAndSyncAsync(SyncMode) requires a Dispatcher implementation with IEventCompletionAwaiter / IEventStore support. Ensure AddWhizbang() ran.");
 
   // ========================================
   // BATCH OPERATIONS
@@ -515,6 +689,51 @@ public interface IDispatcher {
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendMany_WithMultipleCommands_ShouldReturnAllReceiptsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendManyAsync_Generic_DifferentFromNonGenericVersionAsync</tests>
   Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages);
+
+  /// <summary>
+  /// Sends multiple typed messages to local receptors ONLY (no outbox delivery).
+  /// Messages are processed in-process via strongly-typed delegates (AOT-compatible).
+  /// Throws <see cref="ReceptorNotFoundException"/> if any message has no local receptor.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type</typeparam>
+  /// <param name="messages">The messages to send locally</param>
+  /// <returns>All delivery receipts (Delivered status)</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
+  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull;
+
+  /// <summary>
+  /// Sends multiple messages to local receptors ONLY (no outbox delivery).
+  /// For AOT compatibility, use the generic overload LocalSendManyAsync&lt;TMessage&gt;.
+  /// Throws <see cref="ReceptorNotFoundException"/> if any message has no local receptor.
+  /// </summary>
+  /// <param name="messages">The messages to send locally</param>
+  /// <returns>All delivery receipts (Delivered status)</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
+  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages);
+
+  /// <summary>
+  /// Publishes multiple events with event routing (namespace-specific topics).
+  /// Each event is processed locally (if handlers exist) and queued to the outbox.
+  /// </summary>
+  /// <typeparam name="TEvent">The event type</typeparam>
+  /// <param name="events">The events to publish</param>
+  /// <returns>All delivery receipts</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
+  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull;
+
+  /// <summary>
+  /// Publishes multiple events. For AOT compatibility, use the generic overload.
+  /// </summary>
+  /// <param name="events">The events to publish</param>
+  /// <returns>All delivery receipts</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
+  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events);
 
   /// <summary>
   /// Invokes multiple receptors in-process and collects all typed business results.

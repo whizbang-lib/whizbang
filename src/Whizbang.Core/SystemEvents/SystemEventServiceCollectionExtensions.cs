@@ -9,7 +9,7 @@ namespace Whizbang.Core.SystemEvents;
 /// <summary>
 /// Extension methods for registering system event services with dependency injection.
 /// </summary>
-/// <docs>core-concepts/system-events#registration</docs>
+/// <docs>fundamentals/events/system-events#registration</docs>
 public static class SystemEventServiceCollectionExtensions {
   /// <summary>
   /// Adds system event infrastructure services.
@@ -20,11 +20,12 @@ public static class SystemEventServiceCollectionExtensions {
   /// <remarks>
   /// <para>
   /// This method registers:
-  /// - <see cref="ISystemEventEmitter"/> for emitting system events
   /// - <see cref="ITransportPublishFilter"/> for transport filtering
+  /// - <see cref="AuditingEventStoreDecorator"/> when event audit is enabled
   /// </para>
   /// <para>
-  /// To enable event or command auditing, configure the options:
+  /// The decorator uses <see cref="IDeferredOutboxChannel"/> (singleton) to queue
+  /// audit events, avoiding circular DI dependencies.
   /// </para>
   /// <code>
   /// services.AddSystemEvents(options => {
@@ -37,10 +38,10 @@ public static class SystemEventServiceCollectionExtensions {
   /// // Basic setup with audit enabled
   /// services.AddSystemEvents(options => options.EnableAudit());
   ///
-  /// // Centralized monitoring with broadcast
+  /// // OptIn mode: only audit explicitly marked events
   /// services.AddSystemEvents(options => {
-  ///   options.EnableAll();
-  ///   options.Broadcast();
+  ///   options.EnableEventAudit();
+  ///   options.AuditMode = AuditMode.OptIn;
   /// });
   /// </code>
   /// </example>
@@ -52,8 +53,45 @@ public static class SystemEventServiceCollectionExtensions {
     configure?.Invoke(options);
     services.TryAddSingleton(Options.Create(options));
 
+    // Wire up custom humanizers if provided
+    if (options.EventNameHumanizer != null) {
+      Audit.AuditEventProjection.CustomHumanizer = options.EventNameHumanizer;
+    }
+    if (options.EventDescriptionHumanizer != null) {
+      Audit.AuditEventProjection.CustomDescriptionHumanizer = options.EventDescriptionHumanizer;
+    }
+
     // Register core services
     services.TryAddSingleton<ITransportPublishFilter, SystemEventTransportFilter>();
+
+    // Decorate the IEventStore with auditing if event audit is enabled
+    if (options.EventAuditEnabled) {
+      var eventStoreDescriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IEventStore));
+      if (eventStoreDescriptor != null) {
+        var captured = eventStoreDescriptor;
+        services.Remove(captured);
+
+        // Re-register IEventStore wrapped with AuditingEventStoreDecorator
+        // No circular dependency: decorator depends on IDeferredOutboxChannel (singleton)
+        // and IOptions<SystemEventOptions> (singleton), not IEventStore or ISystemEventEmitter
+        services.Add(new ServiceDescriptor(
+            typeof(IEventStore),
+            sp => {
+              IEventStore inner;
+              if (captured.ImplementationFactory != null) {
+                inner = (IEventStore)captured.ImplementationFactory(sp);
+              } else if (captured.ImplementationType != null) {
+                inner = (IEventStore)ActivatorUtilities.CreateInstance(sp, captured.ImplementationType);
+              } else {
+                inner = (IEventStore)captured.ImplementationInstance!;
+              }
+              var channel = sp.GetRequiredService<IDeferredOutboxChannel>();
+              var opts = sp.GetRequiredService<IOptions<SystemEventOptions>>();
+              return new AuditingEventStoreDecorator(inner, channel, opts);
+            },
+            captured.Lifetime));
+      }
+    }
 
     return services;
   }
@@ -96,10 +134,6 @@ public static class SystemEventServiceCollectionExtensions {
     // Add base system event services
     services.AddSystemEvents(configure);
 
-    // Note: The ISystemEventEmitter requires an IEventStore for the system stream
-    // This is typically provided by the storage provider (EF Core, Dapper, etc.)
-    // The AuditingEventStoreDecorator wraps the user's event store
-
     // Register pipeline behavior for command auditing
     // This will be applied to all commands flowing through the pipeline
     services.TryAddSingleton(
@@ -117,8 +151,8 @@ public static class SystemEventServiceCollectionExtensions {
   /// <remarks>
   /// <para>
   /// This method uses the decorator pattern to wrap an existing IEventStore
-  /// with the <see cref="AuditingEventStoreDecorator"/>. The decorator emits
-  /// <see cref="EventAudited"/> system events when events are appended.
+  /// with the <see cref="AuditingEventStoreDecorator"/>. The decorator queues
+  /// <see cref="EventAudited"/> to the deferred outbox channel.
   /// </para>
   /// <para>
   /// Call this method AFTER registering your IEventStore implementation
@@ -135,46 +169,32 @@ public static class SystemEventServiceCollectionExtensions {
   public static IServiceCollection DecorateEventStoreWithAuditing(
       this IServiceCollection services) {
     // Find existing IEventStore registration
-    var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IEventStore));
-    if (descriptor == null) {
-      throw new InvalidOperationException(
+    var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IEventStore))
+      ?? throw new InvalidOperationException(
           "No IEventStore registration found. Register your IEventStore implementation " +
           "before calling DecorateEventStoreWithAuditing().");
-    }
 
     // Remove existing registration
     services.Remove(descriptor);
 
-    // Re-register the original as the inner store with a specific key
-    // This uses a factory to resolve the original implementation
-    if (descriptor.ImplementationInstance != null) {
-      services.AddSingleton(new InnerEventStoreHolder(descriptor.ImplementationInstance));
-    } else if (descriptor.ImplementationFactory != null) {
-      services.AddSingleton(sp => new InnerEventStoreHolder(
-          descriptor.ImplementationFactory(sp)));
-    } else if (descriptor.ImplementationType != null) {
-      services.AddSingleton(sp => new InnerEventStoreHolder(
-          ActivatorUtilities.CreateInstance(sp, descriptor.ImplementationType)));
-    }
-
-    // Register the decorator
-    services.AddSingleton<IEventStore>(sp => {
-      var holder = sp.GetRequiredService<InnerEventStoreHolder>();
-      var emitter = sp.GetRequiredService<ISystemEventEmitter>();
-      return new AuditingEventStoreDecorator((IEventStore)holder.Instance, emitter);
-    });
+    // Re-register with the decorator wrapping the original
+    services.Add(new ServiceDescriptor(
+        typeof(IEventStore),
+        sp => {
+          IEventStore inner;
+          if (descriptor.ImplementationFactory != null) {
+            inner = (IEventStore)descriptor.ImplementationFactory(sp);
+          } else if (descriptor.ImplementationType != null) {
+            inner = (IEventStore)ActivatorUtilities.CreateInstance(sp, descriptor.ImplementationType);
+          } else {
+            inner = (IEventStore)descriptor.ImplementationInstance!;
+          }
+          var channel = sp.GetRequiredService<IDeferredOutboxChannel>();
+          var opts = sp.GetRequiredService<IOptions<SystemEventOptions>>();
+          return new AuditingEventStoreDecorator(inner, channel, opts);
+        },
+        descriptor.Lifetime));
 
     return services;
-  }
-
-  /// <summary>
-  /// Holder for the inner event store instance to enable decoration.
-  /// </summary>
-  private sealed class InnerEventStoreHolder {
-    public object Instance { get; }
-
-    public InnerEventStoreHolder(object instance) {
-      Instance = instance;
-    }
   }
 }

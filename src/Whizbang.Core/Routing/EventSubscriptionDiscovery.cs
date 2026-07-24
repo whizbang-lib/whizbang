@@ -17,7 +17,7 @@ namespace Whizbang.Core.Routing;
 /// Use this service at transport startup to determine which event topics to subscribe to.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#event-subscription-discovery</docs>
+/// <docs>fundamentals/dispatcher/routing#event-subscription-discovery</docs>
 public sealed class EventSubscriptionDiscovery {
   private readonly IEventNamespaceRegistry? _registry;
   private readonly RoutingOptions _routingOptions;
@@ -71,6 +71,13 @@ public sealed class EventSubscriptionDiscovery {
 
       namespaces.RemoveWhere(ns =>
         ns.StartsWith(ownedPrefix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Absorbed namespaces are subscribed unconditionally: add them AFTER the owned-domain subtraction so it
+    // can never strip a topic we explicitly chose to absorb, and so the binding is always created (otherwise
+    // absorbed events would never reach the transport consumer to be stored).
+    foreach (var ns in _routingOptions.AbsorbedNamespaces) {
+      namespaces.Add(ns);
     }
 
     return namespaces;

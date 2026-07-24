@@ -89,23 +89,11 @@ builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.InventoryLevel
 // Register dispatcher for sending commands
 builder.Services.AddWhizbangDispatcher();
 
-// Register lifecycle invoker for lifecycle receptor invocation
-builder.Services.AddWhizbangLifecycleInvoker();
 builder.Services.AddWhizbangLifecycleMessageDeserializer();
-
-// Register lifecycle receptor registry for runtime receptor registration (used in tests)
-builder.Services.AddSingleton<ILifecycleReceptorRegistry, DefaultLifecycleReceptorRegistry>();
 
 // Register lenses (readonly repositories using EF Core ILensQuery)
 builder.Services.AddScoped<IProductLens, ProductLens>();
 builder.Services.AddScoped<IInventoryLens, InventoryLens>();
-
-// WorkCoordinator publisher - atomic coordination with lease-based work claiming
-// Options configured via appsettings.json "WorkCoordinatorPublisher" section
-// Use AddOptions().Bind() for AOT compatibility (instead of Configure<T>())
-builder.Services.AddOptions<WorkCoordinatorPublisherOptions>()
-  .Bind(builder.Configuration.GetSection("WorkCoordinatorPublisher"));
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
 // Perspective worker - processes perspective checkpoints using IPerspectiveRunner instances
 // Options configured via appsettings.json "PerspectiveWorker" section

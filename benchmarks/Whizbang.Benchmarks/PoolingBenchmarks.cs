@@ -202,7 +202,7 @@ public class PoolingBenchmarks {
       });
 
       var valueTask = new ValueTask<ProcessingResult>(source, source.Token);
-      var result = await valueTask;
+      _ = await valueTask;
 
       source.Reset();
       PooledSourcePool<ProcessingResult>.Return(source);

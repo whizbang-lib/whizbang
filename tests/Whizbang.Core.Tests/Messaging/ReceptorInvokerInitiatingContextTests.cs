@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -39,8 +40,8 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_ShouldSetInitiatingContextFromEnvelopeAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     var capturingScopeAccessor = new CapturingScopeContextAccessor();
@@ -79,8 +80,8 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_InitiatingContext_ShouldBeSameAsMessageContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     var capturingScopeAccessor = new CapturingScopeContextAccessor();
@@ -117,29 +118,29 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_WhenReceptorCascades_ChildShouldInheritInitiatingContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
-    IMessageContext? capturedInitiating = null;
+    // Use CapturingScopeContextAccessor to snapshot InitiatingContext at assignment time
+    // (AsyncLocal values set inside child async methods don't flow back to the parent)
+    var capturingScopeAccessor = new CapturingScopeContextAccessor();
     var registry = new TestReceptorRegistry();
 
-    // Register a receptor that captures the InitiatingContext during execution
+    // Register a receptor (no need to capture inside - we use the capturing accessor)
     registry.AddReceptor(
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestReceptor",
-        InvokeAsync: async (provider, message, ct) => {
-          // Capture InitiatingContext during receptor execution
-          capturedInitiating = ScopeContextAccessor.CurrentInitiatingContext;
-          await Task.CompletedTask;
-          return null;
+        InvokeAsync: (provider, message, envelope, callerInfo, ct) => {
+          return ValueTask.FromResult<object?>(null);
         }
       ),
       LifecycleStage.LocalImmediateInline);
 
     var services = new ServiceCollection();
     services.AddWhizbangMessageSecurity();
+    services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IReceptorRegistry>(registry);
 
     var serviceProvider = services.BuildServiceProvider();
@@ -151,11 +152,11 @@ public class ReceptorInvokerInitiatingContextTests {
     // Act
     await invoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline);
 
-    // Assert - Receptor should have been able to access InitiatingContext
-    await Assert.That(capturedInitiating).IsNotNull();
-    await Assert.That(capturedInitiating!.MessageId).IsEqualTo(testMessageId);
-    await Assert.That(capturedInitiating!.UserId).IsEqualTo(testUserId);
-    await Assert.That(capturedInitiating!.TenantId).IsEqualTo(testTenantId);
+    // Assert - InitiatingContext should have been captured at assignment time
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext).IsNotNull();
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext!.MessageId).IsEqualTo(testMessageId);
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext!.UserId).IsEqualTo(testUserId);
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext!.TenantId).IsEqualTo(testTenantId);
 
     // Cleanup
     ScopeContextAccessor.CurrentContext = null;
@@ -169,8 +170,8 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_InitiatingContext_ShouldContainCorrelationIdAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
     var testCorrelationId = CorrelationId.New();
 
@@ -246,8 +247,8 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_ScopedMessageContext_ShouldReadFromInitiatingContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     string? capturedUserId = null;
@@ -260,7 +261,7 @@ public class ReceptorInvokerInitiatingContextTests {
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestScopedContextReceptor",
-        InvokeAsync: async (provider, message, ct) => {
+        InvokeAsync: async (provider, message, envelope, callerInfo, ct) => {
           // Get ScopedMessageContext from DI - this is what real receptors do
           var scopedMessageContext = provider.GetRequiredService<IMessageContext>();
 
@@ -307,14 +308,18 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_ScopedMessageContext_ShouldPrioritizeInitiatingContextOverScopeContextAsync() {
     // Arrange
-    var initiatingUserId = "initiating-user@example.com";
-    var initiatingTenantId = "initiating-tenant-123";
-    var scopeUserId = "scope-user@example.com";
-    var scopeTenantId = "scope-tenant-456";
+    const string initiatingUserId = "initiating-user@example.com";
+    const string initiatingTenantId = "initiating-tenant-123";
+    const string scopeUserId = "scope-user@example.com";
+    const string scopeTenantId = "scope-tenant-456";
     var testMessageId = MessageId.New();
 
     string? capturedUserId = null;
     string? capturedTenantId = null;
+
+    // Use CapturingScopeContextAccessor so ScopedMessageContext can read InitiatingContext
+    // (AsyncLocal values set inside child async methods don't flow back to the parent)
+    var capturingScopeAccessor = new CapturingScopeContextAccessor();
 
     var registry = new TestReceptorRegistry();
 
@@ -323,7 +328,7 @@ public class ReceptorInvokerInitiatingContextTests {
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestPriorityReceptor",
-        InvokeAsync: async (provider, message, ct) => {
+        InvokeAsync: async (provider, message, envelope, callerInfo, ct) => {
           // First, set a conflicting IScopeContext (should NOT be used)
           var scopeAccessor = provider.GetRequiredService<IScopeContextAccessor>();
           var extraction = new SecurityExtraction {
@@ -350,6 +355,7 @@ public class ReceptorInvokerInitiatingContextTests {
 
     var services = new ServiceCollection();
     services.AddWhizbangMessageSecurity();
+    services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IMessageContext, ScopedMessageContext>();
 
@@ -381,7 +387,7 @@ public class ReceptorInvokerInitiatingContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -398,7 +404,8 @@ public class ReceptorInvokerInitiatingContextTests {
             TenantId = tenantId
           })
         }
-      }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -410,7 +417,7 @@ public class ReceptorInvokerInitiatingContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -427,7 +434,8 @@ public class ReceptorInvokerInitiatingContextTests {
             TenantId = tenantId
           })
         }
-      }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -436,7 +444,7 @@ public class ReceptorInvokerInitiatingContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -450,7 +458,8 @@ public class ReceptorInvokerInitiatingContextTests {
           },
           Scope = null
         }
-      }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -460,13 +469,15 @@ public class ReceptorInvokerInitiatingContextTests {
 
   /// <summary>
   /// Accessor that captures both Current and InitiatingContext for testing.
+  /// Returns captured values from getters so ScopedMessageContext can read them
+  /// even when AsyncLocal values don't flow back from child async methods.
   /// </summary>
   private sealed class CapturingScopeContextAccessor : IScopeContextAccessor {
     public IScopeContext? CapturedContext { get; private set; }
     public IMessageContext? CapturedInitiatingContext { get; private set; }
 
     public IScopeContext? Current {
-      get => ScopeContextAccessor.CurrentContext;
+      get => CapturedContext ?? ScopeContextAccessor.CurrentContext;
       set {
         CapturedContext = value;
         ScopeContextAccessor.CurrentContext = value;
@@ -474,7 +485,7 @@ public class ReceptorInvokerInitiatingContextTests {
     }
 
     public IMessageContext? InitiatingContext {
-      get => ScopeContextAccessor.CurrentInitiatingContext;
+      get => CapturedInitiatingContext ?? ScopeContextAccessor.CurrentInitiatingContext;
       set {
         CapturedInitiatingContext = value;
         ScopeContextAccessor.CurrentInitiatingContext = value;
@@ -501,12 +512,12 @@ public class ReceptorInvokerInitiatingContextTests {
   /// Simple test receptor registry for testing.
   /// </summary>
   private sealed class TestReceptorRegistry : IReceptorRegistry {
-    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = new();
+    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
 
     public void AddReceptor(ReceptorInfo receptor, LifecycleStage stage) {
       var key = (receptor.MessageType, stage);
       if (!_receptors.TryGetValue(key, out var list)) {
-        list = new List<ReceptorInfo>();
+        list = [];
         _receptors[key] = list;
       }
       list.Add(receptor);
@@ -516,6 +527,11 @@ public class ReceptorInvokerInitiatingContextTests {
       var key = (messageType, stage);
       return _receptors.TryGetValue(key, out var list) ? list : Array.Empty<ReceptorInfo>();
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   #endregion

@@ -10,9 +10,10 @@ namespace Whizbang.Core;
 /// This enum uses the [Flags] attribute, allowing individual components to be combined
 /// using bitwise OR operations. Composite presets are provided for common combinations.
 /// </remarks>
-/// <docs>core-concepts/type-qualification</docs>
+/// <docs>fundamentals/identity/type-qualification</docs>
 [Flags]
-public enum TypeQualification {
+#pragma warning disable RCS1154 // Members are intentionally grouped: component flags first, then composite presets.
+public enum TypeQualifications {
   /// <summary>
   /// No formatting applied. Use this as a base for custom combinations.
   /// </summary>
@@ -95,3 +96,4 @@ public enum TypeQualification {
   /// </summary>
   FullyQualifiedWithVersion = Namespace | TypeName | Assembly | Version | Culture | PublicKeyToken
 }
+#pragma warning restore RCS1154

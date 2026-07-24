@@ -146,6 +146,6 @@ public sealed class WhizbangDbContextAttribute(params string[]? keys) : Attribut
   /// public partial class ChatDbContext : DbContext { }
   /// </code>
   /// </example>
-  /// <docs>features/vector-search#turnkey-setup</docs>
+  /// <docs>extending/features/vector-search#turnkey-setup</docs>
   public string? ConnectionStringName { get; set; }
 }

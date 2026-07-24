@@ -10,7 +10,7 @@ namespace Whizbang.Migrate.Analysis;
 /// Scans for properties like TenantId, Scope, OrganizationId, and Marten tenant features.
 /// </summary>
 /// <docs>migration-guide/automated-migration#tenant-context-detection</docs>
-public sealed class TenantContextDetector {
+public static class TenantContextDetector {
   private static readonly HashSet<string> _tenantPropertyPatterns = new(StringComparer.OrdinalIgnoreCase) {
     "TenantId",
     "Scope",
@@ -118,7 +118,7 @@ public sealed class TenantContextDetector {
       MostCommon = sortedProperties.FirstOrDefault(),
       HasTenantContext = sortedProperties.Count > 0 || allMartenPatterns.Count > 0,
       UsesMartenTenantFeatures = allMartenPatterns.Count > 0,
-      MartenTenantPatterns = allMartenPatterns.ToList()
+      MartenTenantPatterns = [.. allMartenPatterns]
     };
   }
 

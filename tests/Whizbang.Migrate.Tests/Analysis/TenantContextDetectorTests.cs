@@ -10,7 +10,7 @@ public class TenantContextDetectorTests {
   [Test]
   public async Task DetectAsync_FindsTenantIdProperty_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(Guid OrderId, string TenantId, string CustomerId);
       public record OrderUpdated(Guid OrderId, string TenantId, string Description);
       """;
@@ -28,7 +28,7 @@ public class TenantContextDetectorTests {
   [Test]
   public async Task DetectAsync_FindsScopeProperty_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(Guid OrderId, string Scope, string CustomerId);
       public record OrderUpdated(Guid OrderId, string Scope, string Description);
       """;
@@ -45,7 +45,7 @@ public class TenantContextDetectorTests {
   [Test]
   public async Task DetectAsync_FindsSecurityContextProperty_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(Guid OrderId, SecurityContext SecurityContext, string CustomerId);
       public record OrderUpdated(Guid OrderId, SecurityContext SecurityContext, string Description);
 
@@ -63,7 +63,7 @@ public class TenantContextDetectorTests {
   [Test]
   public async Task DetectAsync_DetectsMartenForTenantUsage_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public async Task ProcessOrder(IDocumentSession session, OrderCommand cmd) {
           var tenantSession = session.ForTenant(cmd.TenantId);
@@ -83,7 +83,7 @@ public class TenantContextDetectorTests {
   [Test]
   public async Task DetectAsync_DetectsMartenTenantedSession_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public OrderService(IDocumentStore store) {
           _tenantSession = store.OpenSession("tenant-123");
@@ -102,7 +102,7 @@ public class TenantContextDetectorTests {
   [Test]
   public async Task DetectAsync_RanksMultiplePropertiesByOccurrence_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(Guid OrderId, string TenantId, string CustomerId);
       public record OrderUpdated(Guid OrderId, string TenantId, string Description);
       public record OrderShipped(Guid OrderId, string TenantId, string Carrier);
@@ -121,7 +121,7 @@ public class TenantContextDetectorTests {
   [Test]
   public async Task DetectAsync_IgnoresNonTenantProperties_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(Guid OrderId, string CustomerId, string Description);
       public record OrderUpdated(Guid OrderId, string Name);
       """;
@@ -137,7 +137,7 @@ public class TenantContextDetectorTests {
   [Test]
   public async Task DetectAsync_RecognizesOrganizationIdAsTenant_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(Guid OrderId, Guid OrganizationId, string CustomerId);
       public record OrderUpdated(Guid OrderId, Guid OrganizationId, string Description);
       """;
@@ -184,7 +184,7 @@ public class TenantContextDetectorTests {
   [Test]
   public async Task DetectAsync_DetectsWorkspaceIdAsTenant_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public record DocumentCreated(Guid DocumentId, Guid WorkspaceId, string Title);
       public record DocumentUpdated(Guid DocumentId, Guid WorkspaceId, string Title);
       """;

@@ -14,19 +14,15 @@ namespace Whizbang.Core.HealthChecks;
 /// Returns <see cref="HealthStatus.Unhealthy"/> when no subscriptions are healthy.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+/// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Tests/HealthChecks/SubscriptionHealthCheckTests.cs</tests>
-public class SubscriptionHealthCheck : IHealthCheck {
-  private readonly IReadOnlyDictionary<TransportDestination, SubscriptionState> _states;
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="SubscriptionHealthCheck"/>.
-  /// </summary>
-  /// <param name="states">The subscription states to monitor.</param>
-  /// <exception cref="ArgumentNullException">Thrown when states is null.</exception>
-  public SubscriptionHealthCheck(IReadOnlyDictionary<TransportDestination, SubscriptionState> states) {
-    _states = states ?? throw new ArgumentNullException(nameof(states));
-  }
+/// <remarks>
+/// Initializes a new instance of <see cref="SubscriptionHealthCheck"/>.
+/// </remarks>
+/// <param name="states">The subscription states to monitor.</param>
+/// <exception cref="ArgumentNullException">Thrown when states is null.</exception>
+public class SubscriptionHealthCheck(IReadOnlyDictionary<TransportDestination, SubscriptionState> states) : IHealthCheck {
+  private readonly IReadOnlyDictionary<TransportDestination, SubscriptionState> _states = states ?? throw new ArgumentNullException(nameof(states));
 
   /// <inheritdoc />
   public Task<HealthCheckResult> CheckHealthAsync(

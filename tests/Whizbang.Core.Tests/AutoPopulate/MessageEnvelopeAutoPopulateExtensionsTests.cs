@@ -2,6 +2,8 @@ using System.Text.Json;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.AutoPopulate;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
@@ -56,7 +58,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task GetAutoPopulated_ReturnsDefault_WhenPropertyDoesNotExistAsync() {
     // Arrange
-    var envelope = _createEnvelopeWithAutoPopulatedMetadata(new Dictionary<string, JsonElement>());
+    var envelope = _createEnvelopeWithAutoPopulatedMetadata([]);
 
     // Act
     var result = envelope.GetAutoPopulated<DateTimeOffset>("NonExistent");
@@ -68,7 +70,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task GetAutoPopulated_ReturnsNull_ForNullableWhenPropertyDoesNotExistAsync() {
     // Arrange
-    var envelope = _createEnvelopeWithAutoPopulatedMetadata(new Dictionary<string, JsonElement>());
+    var envelope = _createEnvelopeWithAutoPopulatedMetadata([]);
 
     // Act
     var result = envelope.GetAutoPopulated<string>("NonExistent");
@@ -80,7 +82,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task GetAutoPopulated_DeserializesString_CorrectlyAsync() {
     // Arrange
-    var expectedValue = "user-123";
+    const string expectedValue = "user-123";
     var metadata = new Dictionary<string, JsonElement> {
       [$"{AutoPopulateProcessor.METADATA_PREFIX}CreatedBy"] =
           JsonSerializer.SerializeToElement(expectedValue)
@@ -114,7 +116,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task GetAutoPopulated_DeserializesInt_CorrectlyAsync() {
     // Arrange
-    var expectedValue = 12345;
+    const int expectedValue = 12345;
     var metadata = new Dictionary<string, JsonElement> {
       [$"{AutoPopulateProcessor.METADATA_PREFIX}ProcessId"] =
           JsonSerializer.SerializeToElement(expectedValue)
@@ -150,7 +152,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task TryGetAutoPopulated_ReturnsTrue_WhenPropertyExistsAsync() {
     // Arrange
-    var expectedValue = "tenant-abc";
+    const string expectedValue = "tenant-abc";
     var metadata = new Dictionary<string, JsonElement> {
       [$"{AutoPopulateProcessor.METADATA_PREFIX}TenantId"] =
           JsonSerializer.SerializeToElement(expectedValue)
@@ -168,7 +170,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task TryGetAutoPopulated_ReturnsFalse_WhenPropertyDoesNotExistAsync() {
     // Arrange
-    var envelope = _createEnvelopeWithAutoPopulatedMetadata(new Dictionary<string, JsonElement>());
+    var envelope = _createEnvelopeWithAutoPopulatedMetadata([]);
 
     // Act
     var found = envelope.TryGetAutoPopulated<string>("NonExistent", out var result);
@@ -201,7 +203,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task HasAutoPopulated_ReturnsFalse_WhenPropertyDoesNotExistAsync() {
     // Arrange
-    var envelope = _createEnvelopeWithAutoPopulatedMetadata(new Dictionary<string, JsonElement>());
+    var envelope = _createEnvelopeWithAutoPopulatedMetadata([]);
 
     // Act
     var result = envelope.HasAutoPopulated("NonExistent");

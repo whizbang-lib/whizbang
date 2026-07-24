@@ -3,7 +3,7 @@ namespace Whizbang.Core.Security;
 /// <summary>
 /// Fluent builder for defining roles with permissions.
 /// </summary>
-/// <docs>core-concepts/security#role-definition</docs>
+/// <docs>fundamentals/security/security#role-definition</docs>
 /// <tests>Whizbang.Core.Tests/Security/RoleBuilderTests.cs</tests>
 /// <example>
 /// var orderManager = new RoleBuilder("OrderManager")
@@ -13,15 +13,13 @@ namespace Whizbang.Core.Security;
 ///   .HasReadPermission("customers")
 ///   .Build();
 /// </example>
-public sealed class RoleBuilder {
-  private readonly string _name;
+/// <remarks>
+/// Creates a new role builder with the specified role name.
+/// </remarks>
+/// <param name="name">The name of the role.</param>
+public sealed class RoleBuilder(string name) {
+  private readonly string _name = name;
   private readonly HashSet<Permission> _permissions = [];
-
-  /// <summary>
-  /// Creates a new role builder with the specified role name.
-  /// </summary>
-  /// <param name="name">The name of the role.</param>
-  public RoleBuilder(string name) => _name = name;
 
   /// <summary>
   /// Adds a permission to the role.

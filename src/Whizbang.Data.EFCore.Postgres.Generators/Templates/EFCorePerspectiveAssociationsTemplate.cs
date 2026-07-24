@@ -19,6 +19,13 @@ namespace Whizbang.Core.Generated;
 /// </summary>
 public static class EFCorePerspectiveAssociationExtensions {
   /// <summary>
+  /// SHA256 hex digest of the canonical (sorted) set of (MessageType, AssociationType, TargetName, ServiceName) tuples.
+  /// Used by schema initialization to detect when the set of perspective → event type associations has changed
+  /// between builds, so wh_message_associations can be re-synced even when no perspective table DDL changed.
+  /// </summary>
+  public const string AssociationsHash = "__ASSOCIATIONS_HASH__";
+
+  /// <summary>
   /// Registers perspective → event type associations in the database.
   /// This enables the work coordinator to automatically create perspective checkpoints when events arrive.
   /// MUST be called during database initialization (after EnsureWhizbangDatabaseInitializedAsync).
@@ -50,14 +57,15 @@ public static class EFCorePerspectiveAssociationExtensions {
 
     logger?.LogInformation("Registering {Count} perspective message association(s) in schema '{Schema}'...", __ASSOCIATION_COUNT__, schema);
 
-    // Call the schema-qualified register_message_associations function
-    // Uses parameterized query to avoid SQL injection
+    // Call the schema-qualified register_message_associations function.
+    // Passes serviceName as @p1 so the SQL function's orphan DELETE can scope itself to this
+    // service's rows (defense-in-depth if a schema is ever shared between services).
     var sql = $@"
-      SELECT {schema}.register_message_associations(@p0::jsonb)
+      SELECT {schema}.register_message_associations(@p0::jsonb, @p1::varchar)
     ";
 
     try {
-      await context.Database.ExecuteSqlRawAsync(sql, new[] { jsonString }, cancellationToken);
+      await context.Database.ExecuteSqlRawAsync(sql, new object[] { jsonString, serviceName }, cancellationToken);
       logger?.LogInformation("Successfully registered perspective message associations");
     } catch (Exception ex) {
       logger?.LogError(ex, "Failed to register perspective message associations in schema '{Schema}'", schema);

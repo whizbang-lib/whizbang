@@ -24,7 +24,7 @@ public sealed class ServiceBusBatchFixtureSource {
   /// <summary>
   /// Gets the initialized ServiceBus fixture.
   /// </summary>
-  public ServiceBusBatchFixture ServiceBusFixture => _serviceBusFixture ?? throw new InvalidOperationException("ServiceBus fixture not initialized");
+  public static ServiceBusBatchFixture ServiceBusFixture => _serviceBusFixture ?? throw new InvalidOperationException("ServiceBus fixture not initialized");
 
   /// <summary>
   /// Initializes the shared ServiceBus emulator fixture once per assembly.

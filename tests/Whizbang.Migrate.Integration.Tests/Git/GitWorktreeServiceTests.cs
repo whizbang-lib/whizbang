@@ -59,7 +59,7 @@ public class GitWorktreeServiceTests {
   public async Task CreateWorktreeAsync_WithCustomBranchName_UsesBranchName_Async() {
     // Arrange
     var service = new GitWorktreeService();
-    var branchName = "whizbang-migrate/custom-branch";
+    const string branchName = "whizbang-migrate/custom-branch";
 
     // Act
     var result = await service.CreateWorktreeAsync(_repoPath, branchName);
@@ -260,8 +260,8 @@ public class GitWorktreeServiceTests {
   public async Task ListWorktreesAsync_ReturnsAllWorktrees_Async() {
     // Arrange
     var service = new GitWorktreeService();
-    var worktree1 = await service.CreateWorktreeAsync(_repoPath, "whizbang-migrate/wt1");
-    var worktree2 = await service.CreateWorktreeAsync(_repoPath, "whizbang-migrate/wt2");
+    _ = await service.CreateWorktreeAsync(_repoPath, "whizbang-migrate/wt1");
+    _ = await service.CreateWorktreeAsync(_repoPath, "whizbang-migrate/wt2");
 
     // Act
     var worktrees = await service.ListWorktreesAsync(_repoPath);

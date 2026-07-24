@@ -190,19 +190,18 @@ public class IScopedEventStoreQueryTests {
     var serviceProvider = services.BuildServiceProvider();
 
     DisposableTracker? tracker;
-    using (var scope = serviceProvider.CreateScope()) {
-      tracker = scope.ServiceProvider.GetRequiredService<DisposableTracker>();
-      var mockQuery = new MockEventStoreQuery();
+    using var scope = serviceProvider.CreateScope();
+    tracker = scope.ServiceProvider.GetRequiredService<DisposableTracker>();
+    var mockQuery = new MockEventStoreQuery();
 
-      // Act
-      using (var queryScope = new EventStoreQueryScope(scope, mockQuery)) {
-        await Assert.That(queryScope.Value).IsNotNull();
-        await Assert.That(tracker.IsDisposed).IsFalse();
-      }
-
-      // Assert - scope is disposed after using block
-      await Assert.That(tracker.IsDisposed).IsTrue();
+    // Act
+    using (var queryScope = new EventStoreQueryScope(scope, mockQuery)) {
+      await Assert.That(queryScope.Value).IsNotNull();
+      await Assert.That(tracker.IsDisposed).IsFalse();
     }
+
+    // Assert - scope is disposed after using block
+    await Assert.That(tracker.IsDisposed).IsTrue();
   }
 
   // Helper class to track disposal

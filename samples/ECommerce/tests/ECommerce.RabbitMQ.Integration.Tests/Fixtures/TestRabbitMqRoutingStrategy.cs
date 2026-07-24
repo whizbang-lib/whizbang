@@ -8,12 +8,8 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 /// Maps topic names to test-specific exchange names to prevent interference between tests.
 /// Each test class gets unique exchanges/queues based on the test class name.
 /// </summary>
-public class TestRabbitMqRoutingStrategy : ITopicRoutingStrategy {
-  private readonly string _testClassName;
-
-  public TestRabbitMqRoutingStrategy(string testClassName) {
-    _testClassName = testClassName;
-  }
+public class TestRabbitMqRoutingStrategy(string testClassName) : ITopicRoutingStrategy {
+  private readonly string _testClassName = testClassName;
 
   /// <summary>
   /// Resolves topic name to test-specific exchange name.

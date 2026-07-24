@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -43,8 +44,8 @@ public class ServiceBusConsumerWorkerSecurityContextTests {
   [Test]
   public async Task HandleMessage_SetsScopeContextAccessor_WithUserIdAndTenantIdAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
 
     // Use capturing accessor to verify value is set (AsyncLocal behavior requires this)
     var capturingAccessor = new CapturingScopeContextAccessor();
@@ -85,8 +86,8 @@ public class ServiceBusConsumerWorkerSecurityContextTests {
   [Test]
   public async Task HandleMessage_SetsMessageContextAccessor_WithUserIdAndTenantIdAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     // Use capturing accessor to verify IMessageContextAccessor.Current is set
@@ -161,8 +162,8 @@ public class ServiceBusConsumerWorkerSecurityContextTests {
   [Test]
   public async Task HandleMessage_EstablishFullContext_SetsBothAccessorsAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     // Use capturing accessors for both
@@ -204,7 +205,7 @@ public class ServiceBusConsumerWorkerSecurityContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = System.DateTimeOffset.UtcNow,
@@ -219,7 +220,8 @@ public class ServiceBusConsumerWorkerSecurityContextTests {
             TenantId = tenantId
           })
         }
-      }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -227,7 +229,7 @@ public class ServiceBusConsumerWorkerSecurityContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = System.DateTimeOffset.UtcNow,
@@ -239,7 +241,8 @@ public class ServiceBusConsumerWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

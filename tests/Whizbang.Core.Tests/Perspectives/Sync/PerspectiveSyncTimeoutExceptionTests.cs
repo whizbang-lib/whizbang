@@ -21,7 +21,7 @@ public class PerspectiveSyncTimeoutExceptionTests {
   [Test]
   public async Task MessageConstructor_SetsMessageAsync() {
     // Arrange
-    var message = "Sync timed out";
+    const string message = "Sync timed out";
 
     // Act
     var ex = new PerspectiveSyncTimeoutException(message);
@@ -35,7 +35,7 @@ public class PerspectiveSyncTimeoutExceptionTests {
   [Test]
   public async Task MessageAndInnerConstructor_SetsBothAsync() {
     // Arrange
-    var message = "Sync timed out";
+    const string message = "Sync timed out";
     var inner = new InvalidOperationException("Inner error");
 
     // Act
@@ -53,7 +53,7 @@ public class PerspectiveSyncTimeoutExceptionTests {
     // Arrange
     var perspectiveType = typeof(object);
     var timeout = TimeSpan.FromSeconds(30);
-    var message = "Perspective sync timed out after 30 seconds";
+    const string message = "Perspective sync timed out after 30 seconds";
 
     // Act
     var ex = new PerspectiveSyncTimeoutException(perspectiveType, timeout, message);
@@ -70,7 +70,7 @@ public class PerspectiveSyncTimeoutExceptionTests {
     // Arrange
     var perspectiveType = typeof(string);
     var timeout = TimeSpan.FromMinutes(1);
-    var message = "Perspective sync failed";
+    const string message = "Perspective sync failed";
     var inner = new TimeoutException("Database timeout");
 
     // Act
@@ -94,7 +94,7 @@ public class PerspectiveSyncTimeoutExceptionTests {
     // Arrange
     var perspectiveType = typeof(int);
     var timeout = TimeSpan.FromSeconds(5);
-    var message = "Test timeout";
+    const string message = "Test timeout";
 
     // Act & Assert
     await Assert.That(() => {

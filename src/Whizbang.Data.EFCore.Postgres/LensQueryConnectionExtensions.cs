@@ -8,7 +8,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Extension methods for raw SQL execution and direct connection access on lens queries.
 /// Use only when LINQ extensions are insufficient for complex queries.
 /// </summary>
-/// <docs>lenses/raw-sql</docs>
+/// <docs>fundamentals/lenses/raw-sql</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LensQueryConnectionExtensionsTests.cs</tests>
 /// <remarks>
 /// <para>

@@ -4,6 +4,8 @@
 --              Returns stream IDs for downstream stream cleanup. Supports debug mode retention.
 -- Dependencies: 001-012 (requires wh_outbox table)
 
+SELECT __SCHEMA__.drop_all_overloads('process_outbox_completions');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.process_outbox_completions(
   p_completions JSONB,
   p_now TIMESTAMPTZ,
@@ -19,6 +21,8 @@ DECLARE
   v_new_status INTEGER;
   v_stream_id UUID;
 BEGIN
+  IF jsonb_array_length(p_completions) = 0 THEN RETURN; END IF;
+
   FOR v_completion IN
     SELECT
       (elem->>'MessageId')::UUID as msg_id,
@@ -28,7 +32,7 @@ BEGIN
     -- Get current status and stream_id
     SELECT o.status, o.stream_id
     INTO v_current_status, v_stream_id
-    FROM wh_outbox o
+    FROM __SCHEMA__.wh_outbox o
     WHERE o.message_id = v_completion.msg_id;
 
     -- Skip if message not found (already deleted or never existed)
@@ -41,7 +45,7 @@ BEGIN
     -- Special case: status_flags = 0 means "release lease without completion"
     -- Don't set processed_at so message remains claimable by other instances
     IF v_completion.status_flags = 0 THEN
-      UPDATE wh_outbox o
+      UPDATE __SCHEMA__.wh_outbox o
       SET instance_id = NULL,
           lease_expiry = NULL
       WHERE o.message_id = v_completion.msg_id;
@@ -51,7 +55,7 @@ BEGIN
 
     IF p_debug_mode THEN
       -- Debug mode: Retain message for troubleshooting
-      UPDATE wh_outbox o
+      UPDATE __SCHEMA__.wh_outbox o
       SET status = v_new_status,
           processed_at = p_now,
           published_at = CASE WHEN (v_completion.status_flags & 4) = 4
@@ -65,11 +69,11 @@ BEGIN
     ELSE
       -- Production: Delete if Published flag set (ephemeral pattern)
       IF (v_new_status & 4) = 4 THEN
-        DELETE FROM wh_outbox o WHERE o.message_id = v_completion.msg_id;
+        DELETE FROM __SCHEMA__.wh_outbox o WHERE o.message_id = v_completion.msg_id;
         RETURN QUERY SELECT v_completion.msg_id AS message_id, v_stream_id AS stream_id, TRUE AS was_deleted;
       ELSE
         -- Not yet published, retain with updated status
-        UPDATE wh_outbox o
+        UPDATE __SCHEMA__.wh_outbox o
         SET status = v_new_status,
             processed_at = p_now,
             instance_id = NULL,

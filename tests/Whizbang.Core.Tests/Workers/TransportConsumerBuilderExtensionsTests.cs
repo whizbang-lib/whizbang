@@ -189,6 +189,12 @@ public class TransportConsumerBuilderExtensionsTests {
     await Assert.That(hostedServiceDescriptor!.Lifetime).IsEqualTo(ServiceLifetime.Singleton);
   }
 
+  // WorkCoordinatorPublisherWorker was deleted in Phase H step 3 — its responsibilities
+  // (outbox/inbox drain, claim, heartbeat, completion flushes) are now distributed across
+  // OutboxDrainWorker / InboxDrainWorker / ClaimWorker / HeartbeatWorker / *FlushWorker.
+  // Develop's test ("AddTransportConsumer_RegistersWorkCoordinatorPublisherWorkerAsHostedService")
+  // was dropped during the merge — it asserted registration of a class that no longer exists.
+
   [Test]
   public async Task AddTransportConsumer_RegistersTransportConsumerOptionsAsSingletonAsync() {
     // Arrange
@@ -474,6 +480,10 @@ public class TransportConsumerBuilderExtensionsTests {
     await Assert.That(optionsDescriptor).IsNotNull();
   }
 
+  // Develop's "AddTransportConsumer_OnPerspectiveBuilder_RegistersWorkCoordinatorPublisherWorker"
+  // dropped — same reason as the sibling test above (WorkCoordinatorPublisherWorker deleted
+  // in Phase H step 3).
+
   #endregion
 
   #region Test Helpers
@@ -490,24 +500,16 @@ public class TransportConsumerBuilderExtensionsTests {
     }
   }
 
-  private sealed class TestEventNamespaceRegistry : IEventNamespaceRegistry {
-    private readonly HashSet<string> _namespaces;
-
-    public TestEventNamespaceRegistry(IEnumerable<string> namespaces) {
-      _namespaces = new HashSet<string>(namespaces, StringComparer.OrdinalIgnoreCase);
-    }
+  private sealed class TestEventNamespaceRegistry(IEnumerable<string> namespaces) : IEventNamespaceRegistry {
+    private readonly HashSet<string> _namespaces = new(namespaces, StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlySet<string> GetPerspectiveEventNamespaces() => _namespaces;
     public IReadOnlySet<string> GetReceptorEventNamespaces() => new HashSet<string>();
     public IReadOnlySet<string> GetAllEventNamespaces() => _namespaces;
   }
 
-  private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
-    public TestServiceInstanceProvider(string serviceName) {
-      ServiceName = serviceName;
-    }
-
-    public string ServiceName { get; }
+  private sealed class TestServiceInstanceProvider(string serviceName) : IServiceInstanceProvider {
+    public string ServiceName { get; } = serviceName;
     public string InstanceId => Guid.NewGuid().ToString("N")[..8];
 
     public string HostName => throw new NotImplementedException();

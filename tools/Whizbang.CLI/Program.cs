@@ -1,10 +1,14 @@
 using System.Globalization;
+using Whizbang.Core.Diagnostics;
 using Whizbang.Data.Dapper.Sqlite.Schema;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
 using Whizbang.Migrate.Commands;
 
 const string version = "0.1.0";
+
+// Show branded banner with tool info
+WhizbangBanner.PrintHeader("Whizbang CLI", version);
 
 // Parse command-line arguments
 if (args.Length == 0 || args[0] == "--help" || args[0] == "-h") {
@@ -107,7 +111,14 @@ async Task<int> _migrateApplyAsync(string[] commandArgs) {
   Console.WriteLine("=======================");
   Console.WriteLine();
   Console.WriteLine($"Project: {projectPath}");
-  var modeDesc = dryRun ? "Dry run" : guided ? "Guided (interactive)" : "Apply all";
+  string modeDesc;
+  if (dryRun) {
+    modeDesc = "Dry run";
+  } else if (guided) {
+    modeDesc = "Guided (interactive)";
+  } else {
+    modeDesc = "Apply all";
+  }
   Console.WriteLine($"Mode: {modeDesc}");
   Console.WriteLine();
 
@@ -299,10 +310,8 @@ async Task<int> _migrateStatusAsync(string[] commandArgs) {
 
 string? _parseProjectPath(string[] commandArgs, int startIndex) {
   for (int i = startIndex; i < commandArgs.Length; i++) {
-    if (commandArgs[i] == "--project" || commandArgs[i] == "-p") {
-      if (i + 1 < commandArgs.Length) {
-        return commandArgs[i + 1];
-      }
+    if ((commandArgs[i] == "--project" || commandArgs[i] == "-p") && i + 1 < commandArgs.Length) {
+      return commandArgs[i + 1];
     }
   }
   return null;
@@ -332,15 +341,16 @@ async Task<int> _generateSchemaAsync(string[] commandArgs) {
   string? outputPath = null;
   string? prefix = null;
 
-  for (int i = 3; i < commandArgs.Length; i++) {
-    if (commandArgs[i] == "--output" || commandArgs[i] == "-o") {
-      if (i + 1 < commandArgs.Length) {
-        outputPath = commandArgs[++i];
-      }
-    } else if (commandArgs[i] == "--prefix") {
-      if (i + 1 < commandArgs.Length) {
-        prefix = commandArgs[++i];
-      }
+  var argIndex = 3;
+  while (argIndex < commandArgs.Length) {
+    if ((commandArgs[argIndex] == "--output" || commandArgs[argIndex] == "-o") && argIndex + 1 < commandArgs.Length) {
+      outputPath = commandArgs[argIndex + 1];
+      argIndex += 2;
+    } else if (commandArgs[argIndex] == "--prefix" && argIndex + 1 < commandArgs.Length) {
+      prefix = commandArgs[argIndex + 1];
+      argIndex += 2;
+    } else {
+      argIndex++;
     }
   }
 
@@ -419,7 +429,7 @@ async Task<int> _validateSchemaAsync(string[] commandArgs) {
   // Check for required tables
   var requiredTables = new[] { "inbox", "outbox", "event_store", "request_response", "sequences" };
   foreach (var table in requiredTables) {
-    if (!sql.Contains($"_" + table, StringComparison.OrdinalIgnoreCase)) {
+    if (!sql.Contains("_" + table, StringComparison.OrdinalIgnoreCase)) {
       errors.Add($"Missing required table: {table}");
     }
   }

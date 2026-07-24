@@ -27,6 +27,7 @@ namespace Whizbang.Core.Policies;
 public class PolicyEngine : IPolicyEngine {
   private readonly List<Policy> _policies = [];
 
+  /// <inheritdoc/>
   public void AddPolicy(
     string name,
     Func<PolicyContext, bool> predicate,
@@ -43,6 +44,7 @@ public class PolicyEngine : IPolicyEngine {
     _policies.Add(new Policy(name, predicate, configure));
   }
 
+  /// <inheritdoc/>
   public Task<PolicyConfiguration?> MatchAsync(PolicyContext context) {
     ArgumentNullException.ThrowIfNull(context);
 

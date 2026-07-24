@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// Designed for startup initialization by generated code.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/physical-fields</docs>
+/// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PhysicalFieldRegistryTests.cs</tests>
 public static class PhysicalFieldRegistry {
   private static readonly ConcurrentDictionary<(Type ModelType, string PropertyName), PhysicalFieldMapping> _mappings = new();
@@ -37,8 +37,8 @@ public static class PhysicalFieldRegistry {
   /// <param name="propertyName">The property name (e.g., "Price")</param>
   /// <param name="columnName">The physical column name (e.g., "price")</param>
   /// <param name="shadowPropertyName">Optional shadow property name if different from column</param>
-  public static void Register<TModel>(string propertyName, string columnName, string? shadowPropertyName = null) {
-    Register(typeof(TModel), propertyName, columnName, shadowPropertyName);
+  public static void Register<TModel>(string propertyName, string columnName, string? shadowPropertyName = null, bool isVector = false) {
+    Register(typeof(TModel), propertyName, columnName, shadowPropertyName, isVector);
   }
 
   /// <summary>
@@ -49,12 +49,13 @@ public static class PhysicalFieldRegistry {
   /// <param name="propertyName">The property name (e.g., "Price")</param>
   /// <param name="columnName">The physical column name (e.g., "price")</param>
   /// <param name="shadowPropertyName">Optional shadow property name if different from column</param>
-  public static void Register(Type modelType, string propertyName, string columnName, string? shadowPropertyName = null) {
+  /// <param name="isVector">Whether this is a vector field (float[] → Pgvector.Vector conversion)</param>
+  public static void Register(Type modelType, string propertyName, string columnName, string? shadowPropertyName = null, bool isVector = false) {
     ArgumentNullException.ThrowIfNull(modelType);
     ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
     ArgumentException.ThrowIfNullOrWhiteSpace(columnName);
 
-    var mapping = new PhysicalFieldMapping(columnName, shadowPropertyName ?? columnName);
+    var mapping = new PhysicalFieldMapping(columnName, shadowPropertyName ?? columnName, isVector);
     _mappings[(modelType, propertyName)] = mapping;
   }
 
@@ -115,4 +116,4 @@ public static class PhysicalFieldRegistry {
 /// </summary>
 /// <param name="ColumnName">The physical database column name</param>
 /// <param name="ShadowPropertyName">The EF Core shadow property name (may differ from column)</param>
-public readonly record struct PhysicalFieldMapping(string ColumnName, string ShadowPropertyName);
+public readonly record struct PhysicalFieldMapping(string ColumnName, string ShadowPropertyName, bool IsVector = false);

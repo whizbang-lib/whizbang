@@ -18,17 +18,13 @@ namespace Whizbang.Core.Perspectives;
 ///     .WithDriver.Postgres;
 /// </code>
 /// </example>
-public sealed class WhizbangPerspectiveBuilder {
+/// <remarks>
+/// Initializes a new instance of WhizbangPerspectiveBuilder.
+/// </remarks>
+/// <param name="services">The service collection to configure.</param>
+public sealed class WhizbangPerspectiveBuilder(IServiceCollection services) {
   /// <summary>
   /// Gets the service collection for registering services.
   /// </summary>
-  public IServiceCollection Services { get; }
-
-  /// <summary>
-  /// Initializes a new instance of WhizbangPerspectiveBuilder.
-  /// </summary>
-  /// <param name="services">The service collection to configure.</param>
-  public WhizbangPerspectiveBuilder(IServiceCollection services) {
-    Services = services ?? throw new ArgumentNullException(nameof(services));
-  }
+  public IServiceCollection Services { get; } = services ?? throw new ArgumentNullException(nameof(services));
 }

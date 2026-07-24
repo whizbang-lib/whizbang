@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
@@ -38,7 +39,7 @@ public sealed record MessageAssociation(
 /// <param name="TargetName">Name of the perspective class</param>
 /// <param name="ServiceName">Service name (assembly name)</param>
 /// <param name="ApplyDelegate">Strongly-typed delegate to perspective's Apply method</param>
-/// <docs>perspectives/association-info</docs>
+/// <docs>fundamentals/perspectives/association-metadata</docs>
 public sealed record PerspectiveAssociationInfo<TModel, TEvent>(
   string MessageType,
   string TargetName,
@@ -60,6 +61,14 @@ public static class PerspectiveRegistrationExtensions {
   /// <param name="services">The service collection to add registrations to</param>
   /// <returns>A WhizbangPerspectiveBuilder for configuring storage providers</returns>
   public static WhizbangPerspectiveBuilder AddWhizbangPerspectives(this IServiceCollection services) {
+    // In-process per-(streamId, perspectiveName) Apply serializer. Closes the
+    // rewind-vs-live race window that produced a consumer's 4-lost-increment bulk-import
+    // bug. Idempotent via TryAddSingleton so multiple AddWhizbangPerspectives
+    // calls (multiple assemblies) collapse to one shared coordinator.
+    services.TryAddSingleton<
+        global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator,
+        global::Whizbang.Core.Perspectives.PerspectiveApplyCoordinator>();
+
     #region PERSPECTIVE_REGISTRATIONS
     // This region gets replaced with generated registration code
     #endregion
@@ -196,7 +205,7 @@ public static class PerspectiveRegistrationExtensions {
   /// }
   /// </code>
   /// </remarks>
-  /// <docs>perspectives/typed-associations</docs>
+  /// <docs>fundamentals/perspectives/typed-associations</docs>
   public static System.Collections.Generic.IReadOnlyList<PerspectiveAssociationInfo<TModel, TEvent>> GetPerspectiveAssociations<TModel, TEvent>(string serviceName)
     where TEvent : IEvent {
     #region PERSPECTIVE_ASSOCIATIONS_TYPED

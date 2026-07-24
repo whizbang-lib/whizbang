@@ -3,10 +3,12 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Generated;
+using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Dispatcher;
@@ -47,7 +49,11 @@ public class DispatcherOutboxTests {
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) =>
       QueuedFailures.Add((messageId, completedStatus, errorMessage));
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      return FlushAndGetBatchAsync(flags, ct);
+    }
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       FlushCount++;
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -73,7 +79,8 @@ public class DispatcherOutboxTests {
       var jsonEnvelope = new MessageEnvelope<System.Text.Json.JsonElement> {
         MessageId = envelope.MessageId,
         Payload = jsonElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return new SerializedEnvelope(
         jsonEnvelope,
@@ -243,7 +250,7 @@ public class DispatcherOutboxTests {
     var command = new CustomCommand("test");
 
     // Act
-    var receipt = await dispatcher.SendAsync(command);
+    _ = await dispatcher.SendAsync(command);
 
     // Assert
     await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("my-custom-queue");
@@ -321,7 +328,7 @@ public class DispatcherOutboxTests {
     var command = new CreateProductCommand("Test Product");
 
     // Act
-    var receipt = await dispatcher.SendAsync(command);
+    _ = await dispatcher.SendAsync(command);
 
     // Assert - Routing strategy should add pool suffix to "products" -> "products-pool1"
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
@@ -394,7 +401,7 @@ public class DispatcherOutboxTests {
     var command = new CustomCommand("test");
 
     // Act
-    var receipt = await dispatcher.SendAsync(command);
+    _ = await dispatcher.SendAsync(command);
 
     // Assert - Stream ID should be the message ID (since no aggregate ID extracted)
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
@@ -558,6 +565,175 @@ public class DispatcherOutboxTests {
   }
 
   // ========================================
+  // SENDMANYASYNC ROUTING FIX TESTS
+  // ========================================
+
+  // Test command that has a local result-returning receptor (source-generated, AOT-safe).
+  // Used to verify SendManyAsync sends to BOTH local receptor AND outbox.
+  public record LocallyHandledCommand(string Name);
+
+  // Result type for the receptor
+  public record LocallyHandledResult(bool Success);
+
+  // Receptor for LocallyHandledCommand - registered via source generator at build time.
+  // Having this receptor means GetReceptorInvoker will return non-null for LocallyHandledCommand.
+  public class LocallyHandledCommandReceptor : IReceptor<LocallyHandledCommand, LocallyHandledResult> {
+    public ValueTask<LocallyHandledResult> HandleAsync(LocallyHandledCommand message, CancellationToken cancellationToken = default) {
+      return ValueTask.FromResult(new LocallyHandledResult(true));
+    }
+  }
+
+  /// <summary>
+  /// SendManyAsync (generic) with a local receptor should ALSO publish to outbox.
+  /// This tests the fix for the either/or routing bug where local receptor
+  /// presence caused messages to skip outbox entirely.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:SendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#sendmanyasync</docs>
+  [Test]
+  public async Task SendManyAsync_Generic_WithLocalReceptor_AlsoPublishesToOutboxAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.SendManyAsync<LocallyHandledCommand>(events);
+
+    // Assert - All messages should reach outbox even though they have local receptors
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// SendManyAsync (non-generic) with a local receptor should ALSO publish to outbox.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:SendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#sendmanyasync</docs>
+  [Test]
+  public async Task SendManyAsync_NonGeneric_WithLocalReceptor_AlsoPublishesToOutboxAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.SendManyAsync(events);
+
+    // Assert - All messages should reach outbox even though they have local receptors
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+  }
+
+  // ========================================
+  // LOCALSENDMANYASYNC TESTS
+  // ========================================
+
+  /// <summary>
+  /// LocalSendManyAsync (generic) should NOT publish to outbox - local only.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:LocalSendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  [Test]
+  public async Task LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.LocalSendManyAsync<LocallyHandledCommand>(events);
+
+    // Assert - No outbox messages (local only)
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(0);
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// LocalSendManyAsync (non-generic) should NOT publish to outbox - local only.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:LocalSendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  [Test]
+  public async Task LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.LocalSendManyAsync(events);
+
+    // Assert - No outbox messages (local only)
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(0);
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// LocalSendManyAsync (generic) processes all messages locally and returns Delivered receipts.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:LocalSendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  [Test]
+  public async Task LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = (await dispatcher.LocalSendManyAsync<LocallyHandledCommand>(events)).ToList();
+
+    // Assert - All messages processed locally with Delivered status
+    await Assert.That(receipts).Count().IsEqualTo(2);
+    await Assert.That(receipts[0].Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(receipts[1].Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  /// <summary>
+  /// LocalSendManyAsync (non-generic) processes all messages locally and returns Delivered receipts.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:LocalSendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  [Test]
+  public async Task LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = (await dispatcher.LocalSendManyAsync(events)).ToList();
+
+    // Assert - All messages processed locally with Delivered status
+    await Assert.That(receipts).Count().IsEqualTo(2);
+    await Assert.That(receipts[0].Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(receipts[1].Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  // ========================================
   // STUB IMPLEMENTATIONS
   // ========================================
 
@@ -584,6 +760,193 @@ public class DispatcherOutboxTests {
   }
 
   // ========================================
+  // PUBLISHMANYASYNC TESTS
+  // ========================================
+
+  /// <summary>
+  /// PublishManyAsync (generic) queues all events with event routing to outbox.
+  /// </summary>
+  [Test]
+  public async Task PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new ProductCreatedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.PublishManyAsync<ProductCreatedEvent>(events);
+
+    // Assert - All events routed to event topic
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[2].Destination).IsEqualTo("products");
+  }
+
+  /// <summary>
+  /// PublishManyAsync (non-generic) queues all events with event routing.
+  /// </summary>
+  [Test]
+  public async Task PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new InventoryUpdatedEvent(Guid.NewGuid(), 5),
+      new OrderPlacedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.PublishManyAsync(events);
+
+    // Assert - Each event routes to its namespace topic
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("inventory");
+    await Assert.That(strategy.QueuedOutboxMessages[2].Destination).IsEqualTo("orders");
+  }
+
+  /// <summary>
+  /// PublishManyAsync flushes outbox only once for the entire batch (efficiency).
+  /// </summary>
+  [Test]
+  public async Task PublishManyAsync_SingleFlushForBatchAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new ProductCreatedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    await dispatcher.PublishManyAsync<ProductCreatedEvent>(events);
+
+    // Assert - Only one flush for the batch
+    await Assert.That(strategy.FlushCount).IsEqualTo(1);
+  }
+
+  // ========================================
+  // SENDMANYASYNC EVENT ROUTING FIX TESTS
+  // ========================================
+
+  /// <summary>
+  /// SendManyAsync (non-generic) with events should route to event topics, not command destinations.
+  /// This tests the fix for the bug where _sendManyToOutboxAsync hardcoded _resolveCommandDestination
+  /// for ALL messages, causing events to route to "inbox" instead of namespace-specific topics.
+  /// </summary>
+  [Test]
+  public async Task SendManyAsync_WithEvents_RoutesToEventTopicAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new InventoryUpdatedEvent(Guid.NewGuid(), 10)
+    };
+
+    // Act
+    await dispatcher.SendManyAsync(events);
+
+    // Assert - Events should route to event topics, not command destinations
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(2);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("inventory");
+  }
+
+  /// <summary>
+  /// SendManyAsync with a mixed batch of events and commands should route each correctly.
+  /// Events get event topic routing, commands get command destination routing.
+  /// </summary>
+  [Test]
+  public async Task SendManyAsync_WithMixedBatch_RoutesCorrectlyAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var messages = new object[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new CreateProductCommand("Widget"),
+      new OrderPlacedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    await dispatcher.SendManyAsync(messages);
+
+    // Assert - Events get event routing, commands get command routing
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");       // event → products topic
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("products");       // command → products (convention)
+    await Assert.That(strategy.QueuedOutboxMessages[2].Destination).IsEqualTo("orders");         // event → orders topic
+  }
+
+  /// <summary>
+  /// SendManyAsync generic overload with event types should route to event topics.
+  /// </summary>
+  [Test]
+  public async Task SendManyAsync_Generic_WithEvents_RoutesToEventTopicAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new ProductCreatedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    await dispatcher.SendManyAsync<ProductCreatedEvent>(events);
+
+    // Assert - All events should route to "products" event topic
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(2);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("products");
+  }
+
+  /// <summary>
+  /// SendManyAsync with IOutboxRoutingStrategy should pass correct MessageKind per message.
+  /// Events should get MessageKind.Event, commands should get MessageKind.Command.
+  /// </summary>
+  [Test]
+  public async Task SendManyAsync_WithOutboxRoutingStrategy_PassesCorrectMessageKindAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var kindTracker = new KindTrackingOutboxRoutingStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy, outboxRoutingStrategy: kindTracker);
+    var messages = new object[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new CreateProductCommand("Widget")
+    };
+
+    // Act
+    await dispatcher.SendManyAsync(messages);
+
+    // Assert - Event gets MessageKind.Event, command gets MessageKind.Command
+    await Assert.That(kindTracker.Calls).Count().IsEqualTo(2);
+    await Assert.That(kindTracker.Calls[0].kind).IsEqualTo(MessageKind.Event);
+    await Assert.That(kindTracker.Calls[1].kind).IsEqualTo(MessageKind.Command);
+  }
+
+  // ========================================
+  // STUB IMPLEMENTATIONS
+  // ========================================
+
+  // Tracks MessageKind passed to IOutboxRoutingStrategy per message type
+  private sealed class KindTrackingOutboxRoutingStrategy : IOutboxRoutingStrategy {
+    public List<(Type type, MessageKind kind)> Calls { get; } = [];
+    public TransportDestination GetDestination(Type messageType, IReadOnlySet<string> ownedDomains, MessageKind kind) {
+      Calls.Add((messageType, kind));
+      return new TransportDestination(kind == MessageKind.Event
+        ? $"events/{messageType.Name}" : $"commands/{messageType.Name}");
+    }
+  }
+
+  // ========================================
   // HELPER METHODS
   // ========================================
 
@@ -591,7 +954,8 @@ public class DispatcherOutboxTests {
     IWorkCoordinatorStrategy strategy,
     ITopicRegistry? registry = null,
     ITopicRoutingStrategy? routingStrategy = null,
-    IStreamIdExtractor? aggregateIdExtractor = null
+    IStreamIdExtractor? aggregateIdExtractor = null,
+    IOutboxRoutingStrategy? outboxRoutingStrategy = null
   ) {
     var services = new ServiceCollection();
 
@@ -615,6 +979,11 @@ public class DispatcherOutboxTests {
       services.AddSingleton(routingStrategy);
     }
 
+    // Register outbox routing strategy if provided
+    if (outboxRoutingStrategy != null) {
+      services.AddSingleton(outboxRoutingStrategy);
+    }
+
     // Register receptors and dispatcher
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -627,5 +996,62 @@ public class DispatcherOutboxTests {
 
     var serviceProvider = services.BuildServiceProvider();
     return serviceProvider.GetRequiredService<IDispatcher>();
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  //   ScheduledFor end-to-end through the dispatcher → outbox path
+  //   (closes the threading the watchdog tick needs to actually be
+  //    scheduled rather than fire immediately)
+  // ════════════════════════════════════════════════════════════════════
+
+  [Test]
+  public async Task PublishAsync_WithScheduledFor_PopulatesOutboxMessageScheduledForAsync() {
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+    var fireAt = DateTimeOffset.UtcNow.AddMinutes(5);
+
+    await dispatcher.PublishAsync(@event, new DispatchOptions().WithScheduledFor(fireAt));
+
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].ScheduledFor)
+      .IsEqualTo((DateTimeOffset?)fireAt)
+      .Because("DispatchOptions.ScheduledFor must thread through PublishAsync → PublishToOutboxAsync → " +
+               "_serializeToNewOutboxMessage and land on OutboxMessage.ScheduledFor. Otherwise the outbox " +
+               "row's scheduled_for column ends up NULL and mig 040's pickup query treats the row as " +
+               "immediately publishable — the watchdog tick fires instantly instead of waiting for " +
+               "expected-completion + slack.");
+  }
+
+  [Test]
+  public async Task PublishAsync_NoScheduledFor_LeavesOutboxMessageScheduledForNullAsync() {
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+
+    // Default DispatchOptions has ScheduledFor = null — immediate dispatch semantics.
+    await dispatcher.PublishAsync(@event, new DispatchOptions());
+
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].ScheduledFor)
+      .IsNull()
+      .Because("Default DispatchOptions == immediate dispatch. Null must flow through the chain so the " +
+               "wh_outbox row gets scheduled_for=NULL (the pickup query treats NULL as immediately publishable).");
+  }
+
+  [Test]
+  public async Task PublishAsync_NoOptions_OutboxMessageScheduledForIsNullAsync() {
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+
+    // The no-options overload — preserves the pre-v0.740 immediate-dispatch behavior verbatim.
+    await dispatcher.PublishAsync(@event);
+
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].ScheduledFor)
+      .IsNull()
+      .Because("The no-options PublishAsync overload existed before ScheduledFor was introduced. Its " +
+               "outbox path must remain immediate-dispatch by default — null on the resulting OutboxMessage.");
   }
 }

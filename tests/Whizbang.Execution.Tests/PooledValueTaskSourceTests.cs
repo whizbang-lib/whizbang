@@ -439,14 +439,18 @@ public class PooledValueTaskSourceTests {
     var resultReceived = false;
     var result = 0;
 
+    // Signal: fires when the consumer registers a continuation (begins awaiting)
+    var continuationRegistered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    source.OnContinuationRegistered += () => continuationRegistered.TrySetResult();
+
     // Act - start awaiting (will block until SetResult)
     var awaitTask = Task.Run(async () => {
       result = await valueTask;
       resultReceived = true;
     });
 
-    // Wait a bit to ensure await is blocked
-    await Task.Delay(100);
+    // Wait for the consumer to register its continuation (proves it's blocked)
+    await continuationRegistered.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(resultReceived).IsFalse();
 
     // Now complete it

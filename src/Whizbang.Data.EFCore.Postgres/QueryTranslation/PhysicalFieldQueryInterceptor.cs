@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>perspectives/physical-fields</docs>
+/// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnifiedQuerySyntaxTests.cs</tests>
 public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   private readonly PhysicalFieldExpressionVisitor _visitor = new();
@@ -30,6 +30,7 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   /// before compilation.
   /// </summary>
   public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData) {
+    // Apply our visitor to transform r.Data.PropertyName to EF.Property(r, "column")
     // Apply our visitor to transform r.Data.PropertyName to EF.Property(r, "column")
     return _visitor.Visit(queryExpression);
   }

@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 using Whizbang.Hosting.Azure.ServiceBus;
 
 namespace Whizbang.Hosting.Azure.ServiceBus.Tests;
@@ -122,12 +123,8 @@ public class ServiceBusReadinessCheckTests {
 /// <summary>
 /// Test implementation of ITransport for testing readiness checks.
 /// </summary>
-internal sealed class TestTransport : ITransport {
-  private readonly bool _isInitialized;
-
-  public TestTransport(bool isInitialized) {
-    _isInitialized = isInitialized;
-  }
+internal sealed class TestTransport(bool isInitialized) : ITransport {
+  private readonly bool _isInitialized = isInitialized;
 
   public bool IsInitialized => _isInitialized;
   public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -136,13 +133,20 @@ internal sealed class TestTransport : ITransport {
     return Task.CompletedTask;
   }
 
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 
   public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
+
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException();
 
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default)
     where TRequest : notnull where TResponse : notnull {
@@ -153,13 +157,9 @@ internal sealed class TestTransport : ITransport {
 /// <summary>
 /// Test implementation of ServiceBusClient for testing readiness checks.
 /// </summary>
-internal sealed class TestServiceBusClient : ServiceBusClient {
-  private readonly bool _isHealthy;
+internal sealed class TestServiceBusClient(bool isHealthy) : ServiceBusClient {
+  private readonly bool _isHealthy = isHealthy;
   public int IsClosedAccessCount { get; private set; }
-
-  public TestServiceBusClient(bool isHealthy) {
-    _isHealthy = isHealthy;
-  }
 
   public override bool IsClosed {
     get {

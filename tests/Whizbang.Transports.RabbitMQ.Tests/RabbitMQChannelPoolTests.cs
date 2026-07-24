@@ -113,4 +113,62 @@ public class RabbitMQChannelPoolTests {
     await Assert.That(channel1.IsDisposed).IsTrue();
     await Assert.That(channel2.IsDisposed).IsTrue();
   }
+
+  // ========================================
+  // Reset: clear stale channels after connection recovery
+  // ========================================
+
+  [Test]
+  public async Task Reset_DisposesAllPooledChannelsAsync() {
+    var channel1 = new FakeChannel();
+    var channel2 = new FakeChannel();
+    var channelIndex = 0;
+    FakeChannel[] channels = [channel1, channel2];
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(channels[channelIndex++]));
+
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+
+    // Rent two channels simultaneously (forces creation of both)
+    var rented1 = await pool.RentAsync(CancellationToken.None);
+    var rented2 = await pool.RentAsync(CancellationToken.None);
+    rented1.Dispose(); // return to pool
+    rented2.Dispose(); // return to pool
+
+    // Act — reset the pool (simulates connection recovery)
+    pool.Reset();
+
+    // Assert — both pooled channels should be disposed
+    await Assert.That(channel1.IsDisposed).IsTrue()
+      .Because("Reset must dispose all stale channels from the pool");
+    await Assert.That(channel2.IsDisposed).IsTrue()
+      .Because("Reset must dispose all stale channels from the pool");
+  }
+
+  [Test]
+  public async Task Reset_NextRent_CreatesNewChannelAsync() {
+    var staleChannel = new FakeChannel();
+    var freshChannel = new FakeChannel();
+    var callCount = 0;
+    var fakeConnection = new FakeConnection(() => {
+      callCount++;
+      return Task.FromResult<IChannel>(callCount == 1 ? staleChannel : freshChannel);
+    });
+
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+
+    // Rent, return — stale channel in pool
+    var rented = await pool.RentAsync(CancellationToken.None);
+    rented.Dispose();
+
+    // Reset — clears stale channel
+    pool.Reset();
+
+    // Rent again — should get a NEW channel (freshChannel), not the stale one
+    var rentedAfterReset = await pool.RentAsync(CancellationToken.None);
+
+    await Assert.That(rentedAfterReset.Channel).IsNotEqualTo(staleChannel)
+      .Because("After reset, pool must create new channels, not serve stale ones");
+    await Assert.That(staleChannel.IsDisposed).IsTrue()
+      .Because("Stale channel must be disposed on reset");
+  }
 }

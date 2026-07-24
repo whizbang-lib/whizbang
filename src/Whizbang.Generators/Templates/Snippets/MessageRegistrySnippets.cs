@@ -83,6 +83,9 @@ __PERSPECTIVES__
 {
   "messages": [
 __MESSAGES__
+  ],
+  "whizbangPackages": [
+__PACKAGES__
   ]
 }
   #endregion

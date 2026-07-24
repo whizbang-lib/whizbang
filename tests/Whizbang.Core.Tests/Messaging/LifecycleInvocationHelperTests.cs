@@ -1,7 +1,9 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -29,13 +31,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      null,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, null, deserializer, null));
 
     // Assert - deserializer should not be called
     await Assert.That(deserializer.CallCount).IsEqualTo(0);
@@ -50,13 +48,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      null,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), null, null));
 
     // Assert - invoker should not be called
     await Assert.That(invoker.Invocations.Count).IsEqualTo(0);
@@ -70,13 +64,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      null,
-      null,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, null, null, null));
 
     // Assert - outboxMessages list is still the same object (early return worked)
     await Assert.That(outboxMessages.Count).IsEqualTo(0);
@@ -96,13 +86,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Assert - inline stage should be invoked synchronously
     var inlineInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeInline).ToList();
@@ -120,13 +106,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Assert - inline stage should be invoked synchronously
     var inlineInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeInline).ToList();
@@ -144,13 +126,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Assert - both outbox and inbox should be processed for inline stage
     var inlineInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeInline).ToList();
@@ -167,13 +145,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Assert - no invocations for empty lists
     await Assert.That(invoker.Invocations.Count).IsEqualTo(0);
@@ -189,13 +163,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Assert - context should have correct stage and source
     var invocation = invoker.Invocations.First(i => i.Stage == LifecycleStage.PostDistributeInline);
@@ -214,13 +184,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Assert - context should have correct stage and source
     var invocation = invoker.Invocations.First(i => i.Stage == LifecycleStage.PostDistributeInline);
@@ -239,19 +205,19 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait briefly for background task to complete
-    await Task.Delay(100);
+    // Signal-based wait: detached + inline together produce ≥2 invocations.
+    // Wait until both land so the background detached invocation has actually
+    // run before we assert on it (replaces a pre-existing Task.Delay(100) that
+    // was flaking under CI Release-mode load — per feedback_no_timing_tests,
+    // tests must use completion signals, not wall-clock delays).
+    await invoker.WaitForInvocationsAsync(count: 2, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - async stage should be invoked in background
-    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeAsync).ToList();
+    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeDetached).ToList();
     await Assert.That(asyncInvocations.Count).IsEqualTo(1);
   }
 
@@ -268,12 +234,8 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      outboxMessages,
-      inboxMessages,
-      null,
-      deserializer,
-      null);
+      LifecycleStage.DistributeDetached,
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, null, deserializer, null));
 
     await Task.Delay(50);
 
@@ -290,12 +252,8 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      null,
-      null);
+      LifecycleStage.DistributeDetached,
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), null, null));
 
     await Task.Delay(50);
 
@@ -311,12 +269,8 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      outboxMessages,
-      inboxMessages,
-      null,
-      null,
-      null);
+      LifecycleStage.DistributeDetached,
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, null, null, null));
 
     // Assert - outboxMessages list is still the same object (early return worked)
     await Assert.That(outboxMessages.Count).IsEqualTo(0);
@@ -336,18 +290,14 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      LifecycleStage.DistributeDetached,
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Signal-based wait — Task.Delay(100) was flaking under CI Release load.
+    await invoker.WaitForInvocationsAsync(count: 1, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - async stage should be invoked
-    var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeAsync).ToList();
+    var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeDetached).ToList();
     await Assert.That(invocations.Count).IsEqualTo(1);
     await Assert.That(invocations[0].Context!.MessageSource).IsEqualTo(MessageSource.Outbox);
   }
@@ -362,18 +312,14 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      LifecycleStage.DistributeDetached,
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Signal-based wait — Task.Delay(100) was flaking under CI Release load.
+    await invoker.WaitForInvocationsAsync(count: 1, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - async stage should be invoked
-    var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeAsync).ToList();
+    var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeDetached).ToList();
     await Assert.That(invocations.Count).IsEqualTo(1);
     await Assert.That(invocations[0].Context!.MessageSource).IsEqualTo(MessageSource.Inbox);
   }
@@ -388,15 +334,11 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      LifecycleStage.DistributeDetached,
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Wait for both outbox+inbox background invocations via completion signal (no polling)
+    await invoker.WaitForInvocationsAsync(2, TimeSpan.FromSeconds(10));
 
     // Assert - both should be processed
     await Assert.That(invoker.Invocations.Count).IsEqualTo(2);
@@ -412,12 +354,8 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      LifecycleStage.DistributeDetached,
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Wait for any potential background task
     await Task.Delay(50);
@@ -441,13 +379,9 @@ public class LifecycleInvocationHelperTests {
 
     // Act - inline stage succeeds but async stage errors
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      logger);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, logger));
 
     // Wait for background task to complete (and fail) - using reliable synchronization
     await logger.WaitForErrorAsync(TimeSpan.FromSeconds(5));
@@ -467,12 +401,8 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      logger);
+      LifecycleStage.DistributeDetached,
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, logger));
 
     // Wait for background task to complete (and fail) - using reliable synchronization
     await logger.WaitForErrorAsync(TimeSpan.FromSeconds(5));
@@ -491,15 +421,11 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw even with null logger
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      LifecycleStage.DistributeDetached,
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Wait for background task to attempt the detached stage (and throw) using completion signal
+    await invoker.WaitForDetachedStageAttemptAsync(TimeSpan.FromSeconds(5));
 
     // Assert - outboxMessages is still empty (no exception thrown)
     await Assert.That(outboxMessages.Count).IsEqualTo(1);
@@ -523,20 +449,16 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Signal-based wait — 3 inline + 3 detached = 6 invocations expected.
+    await invoker.WaitForInvocationsAsync(count: 6, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - inline should have 3, async should have 3
     var inlineInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeInline).ToList();
-    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeAsync).ToList();
+    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeDetached).ToList();
     await Assert.That(inlineInvocations.Count).IsEqualTo(3);
     await Assert.That(asyncInvocations.Count).IsEqualTo(3);
   }
@@ -554,20 +476,17 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
-      outboxMessages,
-      inboxMessages,
-      invoker,
-      deserializer,
-      null);
+      new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Signal-based wait — 2 inline + 2 detached = 4 invocations expected.
+    // (The same Task.Delay(100) flaked under CI Release load on PR 215.)
+    await invoker.WaitForInvocationsAsync(count: 4, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - inline should have 2, async should have 2
     var inlineInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeInline).ToList();
-    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeAsync).ToList();
+    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeDetached).ToList();
     await Assert.That(inlineInvocations.Count).IsEqualTo(2);
     await Assert.That(asyncInvocations.Count).IsEqualTo(2);
   }
@@ -575,6 +494,13 @@ public class LifecycleInvocationHelperTests {
   // ========================================
   // Test Helpers
   // ========================================
+
+  private static IServiceScopeFactory _createScopeFactory(FakeLifecycleInvoker invoker) {
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(_ => invoker);
+    var sp = services.BuildServiceProvider();
+    return sp.GetRequiredService<IServiceScopeFactory>();
+  }
 
   private static OutboxMessage _createTestOutboxMessage() {
     var messageId = MessageId.New();
@@ -585,7 +511,8 @@ public class LifecycleInvocationHelperTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Timestamp = DateTimeOffset.UtcNow
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return new OutboxMessage {
@@ -607,7 +534,8 @@ public class LifecycleInvocationHelperTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Timestamp = DateTimeOffset.UtcNow
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return new InboxMessage {
@@ -623,31 +551,75 @@ public class LifecycleInvocationHelperTests {
   // Test Fakes
   // ========================================
 
-  private sealed class FakeLifecycleInvoker : ILifecycleInvoker {
+  private sealed class FakeLifecycleInvoker : IReceptorInvoker {
     private readonly List<LifecycleInvocation> _invocations = [];
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
+    private readonly TaskCompletionSource _detachedStageAttempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly List<(int Count, TaskCompletionSource Tcs)> _invocationWaiters = [];
 
     public bool ThrowOnAsyncStage { get; set; }
 
     public List<LifecycleInvocation> Invocations {
       get {
         lock (_lock) {
-          return _invocations.ToList();
+          return [.. _invocations];
         }
       }
     }
 
+    /// <summary>
+    /// Waits until the invoker has been called for a detached stage (even if it throws).
+    /// </summary>
+    public async Task WaitForDetachedStageAttemptAsync(TimeSpan timeout) {
+      using var cts = new CancellationTokenSource(timeout);
+      try {
+        await _detachedStageAttempted.Task.WaitAsync(cts.Token);
+      } catch (OperationCanceledException) {
+        // Timeout — stage wasn't attempted in time
+      }
+    }
+
+    /// <summary>
+    /// Waits until at least <paramref name="count"/> invocations have been recorded.
+    /// Replaces Task.Delay polling in tests that exercise fire-and-forget code paths.
+    /// </summary>
+    public Task WaitForInvocationsAsync(int count, TimeSpan timeout) {
+      TaskCompletionSource tcs;
+      lock (_lock) {
+        if (_invocations.Count >= count) {
+          return Task.CompletedTask;
+        }
+        tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _invocationWaiters.Add((count, tcs));
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
-      if (ThrowOnAsyncStage && stage.ToString().EndsWith("Async", StringComparison.Ordinal)) {
+      if (ThrowOnAsyncStage && stage.ToString().EndsWith("Detached", StringComparison.Ordinal)) {
+        _detachedStageAttempted.TrySetResult();
         throw new InvalidOperationException("Test exception in async stage");
       }
 
+      List<TaskCompletionSource>? toSignal = null;
       lock (_lock) {
         _invocations.Add(new LifecycleInvocation {
           Message = envelope.Payload,
           Stage = stage,
           Context = context as LifecycleExecutionContext
         });
+        var currentCount = _invocations.Count;
+        for (int i = _invocationWaiters.Count - 1; i >= 0; i--) {
+          if (_invocationWaiters[i].Count <= currentCount) {
+            (toSignal ??= []).Add(_invocationWaiters[i].Tcs);
+            _invocationWaiters.RemoveAt(i);
+          }
+        }
+      }
+      if (toSignal is not null) {
+        foreach (var tcs in toSignal) {
+          tcs.TrySetResult();
+        }
       }
       return ValueTask.CompletedTask;
     }
@@ -661,7 +633,7 @@ public class LifecycleInvocationHelperTests {
 
   private sealed class FakeLifecycleMessageDeserializer : ILifecycleMessageDeserializer {
     private int _callCount;
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public int CallCount {
       get {
@@ -696,7 +668,7 @@ public class LifecycleInvocationHelperTests {
 
   private sealed class FakeLogger : ILogger {
     private int _errorCount;
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     private readonly TaskCompletionSource _errorLogged = new();
 
     public int ErrorCount {

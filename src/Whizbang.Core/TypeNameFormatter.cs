@@ -8,19 +8,19 @@ namespace Whizbang.Core;
 /// Ensures all code paths use the same "TypeName, AssemblyName" format for type matching.
 /// </summary>
 /// <remarks>
-/// Why this format?
+/// <para>Why this format?
 /// - Matches wh_message_associations format used in perspective auto-checkpoint creation
 /// - Compatible with fuzzy matching in migration 006 (handles Version/Culture/PublicKeyToken differences)
 /// - Deterministic and consistent across .NET versions
-/// - Works with Type.GetType() for deserialization
+/// - Works with Type.GetType() for deserialization</para>
 ///
-/// Format: "Namespace.TypeName, AssemblyName"
-/// Example: "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts"
+/// <para>Format: "Namespace.TypeName, AssemblyName"
+/// Example: "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts"</para>
 ///
-/// NOT using:
+/// <para>NOT using:
 /// - Type.Name (too short, can't deserialize)
 /// - Type.FullName (no assembly info, can't deserialize across assemblies)
-/// - Type.AssemblyQualifiedName (includes version info that changes across builds)
+/// - Type.AssemblyQualifiedName (includes version info that changes across builds)</para>
 /// </remarks>
 public static class TypeNameFormatter {
   /// <summary>
@@ -40,6 +40,32 @@ public static class TypeNameFormatter {
       ?? throw new InvalidOperationException($"Type {type.Name} does not have an Assembly.GetName().Name");
 
     return $"{typeName}, {assemblyName}";
+  }
+
+  /// <summary>
+  /// Formats a type to its CLR full name (namespace + '+'-nested type chain), WITHOUT the assembly
+  /// qualifier — the runtime mirror of the generator-side <c>TypeNameUtilities.BuildClrTypeName</c>.
+  /// </summary>
+  /// <remarks>
+  /// This is the canonical no-assembly type-identity form used by the columns that store a
+  /// <c>clr_type_name</c>: the event store's <c>aggregate_type</c>,
+  /// <c>wh_message_type_registry.clr_type_name</c>, and <c>wh_perspective_registry.clr_type_name</c>.
+  /// Both the EF Core and Dapper event stores write <c>aggregate_type</c> through this method so the
+  /// value is identical across drivers and matchable by <c>IEventTypeRenameTool</c> (which keys on the
+  /// no-assembly clr_type_name form). For the assembly-qualified wire/lookup form used by
+  /// <c>event_type</c> and message routing, use <see cref="Format"/> instead.
+  /// </remarks>
+  /// <example>
+  /// typeof(MyApp.Events.OrderCreated) → "MyApp.Events.OrderCreated"
+  /// typeof(MyApp.OrderContracts.OrderPlaced) → "MyApp.OrderContracts+OrderPlaced" (nested)
+  /// </example>
+  /// <param name="type">The type to format.</param>
+  /// <returns>The CLR full type name without an assembly qualifier.</returns>
+  /// <exception cref="InvalidOperationException">If the type has no FullName.</exception>
+  public static string FormatClrTypeName(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.FullName
+      ?? throw new InvalidOperationException($"Type {type.Name} does not have a FullName");
   }
 
   /// <summary>
@@ -89,5 +115,152 @@ public static class TypeNameFormatter {
     } catch {
       return false;
     }
+  }
+
+  /// <summary>
+  /// Extracts the full type name (namespace + type) without assembly qualifier or global:: prefix.
+  /// Handles all common formats: assembly-qualified, global:: prefixed, simple names.
+  /// </summary>
+  /// <example>
+  /// "MyApp.Events.OrderCreated, MyApp" → "MyApp.Events.OrderCreated"
+  /// "global::MyApp.Events.OrderCreated" → "MyApp.Events.OrderCreated"
+  /// "MyApp.Events.OrderCreated" → "MyApp.Events.OrderCreated"
+  /// </example>
+  public static string GetFullName(string typeName) {
+    if (string.IsNullOrEmpty(typeName)) {
+      return typeName;
+    }
+
+    var result = typeName;
+
+    // Strip global:: prefix
+    if (result.StartsWith("global::", StringComparison.Ordinal)) {
+      result = result[8..];
+    }
+
+    // Strip assembly qualifier (everything after first comma)
+    var commaIndex = result.IndexOf(',');
+    if (commaIndex >= 0) {
+      result = result[..commaIndex].Trim();
+    }
+
+    return result;
+  }
+
+  /// <summary>
+  /// Extracts just the simple type name (no namespace, no assembly).
+  /// Preserves nested type separators (+).
+  /// </summary>
+  /// <example>
+  /// "MyApp.Events.OrderCreated, MyApp" → "OrderCreated"
+  /// "global::MyApp.Events.OrderCreated" → "OrderCreated"
+  /// "MyApp.Events.SessionContracts+EndedEvent" → "SessionContracts+EndedEvent"
+  /// </example>
+  public static string GetSimpleName(string typeName) {
+    if (string.IsNullOrEmpty(typeName)) {
+      return typeName;
+    }
+
+    var fullName = GetFullName(typeName);
+
+    var lastDot = fullName.LastIndexOf('.');
+    return lastDot >= 0 ? fullName[(lastDot + 1)..] : fullName;
+  }
+
+  /// <summary>
+  /// Extracts the namespace from a type name string.
+  /// </summary>
+  /// <example>
+  /// "MyApp.Events.OrderCreated, MyApp" → "MyApp.Events"
+  /// "global::MyApp.Events.OrderCreated" → "MyApp.Events"
+  /// "OrderCreated" → null
+  /// </example>
+  public static string? GetNamespace(string typeName) {
+    if (string.IsNullOrEmpty(typeName)) {
+      return null;
+    }
+
+    var fullName = GetFullName(typeName);
+
+    var lastDot = fullName.LastIndexOf('.');
+    return lastDot >= 0 ? fullName[..lastDot] : null;
+  }
+
+  /// <summary>
+  /// Gets the CLR-format perspective name for a type.
+  /// This produces the same format as TypeNameUtilities.BuildClrTypeName() in generators,
+  /// ensuring consistency between compile-time registration and runtime lookup.
+  /// Uses '+' for nested types and '.' for namespaces (standard CLR format).
+  /// </summary>
+  /// <example>
+  /// typeof(MyApp.OrderPerspective) → "MyApp.OrderPerspective"
+  /// typeof(MyApp.Container.Nested) → "MyApp.Container+Nested"
+  /// </example>
+  /// <param name="perspectiveType">The perspective type.</param>
+  /// <returns>CLR-format type name suitable for database storage and sync tracking.</returns>
+  public static string GetPerspectiveName(Type perspectiveType) => FormatClrTypeName(perspectiveType);
+
+  /// <summary>
+  /// Extracts the payload namespace from a generic envelope type string.
+  /// The transport delivers types like "MessageEnvelope`1[[Payload.Type, Assembly]], Whizbang.Core".
+  /// This extracts the namespace of the inner payload type, not the envelope wrapper.
+  /// Falls back to <see cref="GetNamespace"/> if no generic parameter is found.
+  /// </summary>
+  /// <example>
+  /// "Whizbang...MessageEnvelope`1[[MyApp.Chat.MyEvent, MyApp]], Whizbang" → "MyApp.Chat"
+  /// "MyApp.Chat.MyEvent, MyApp" → "MyApp.Chat" (no generic wrapper — falls back)
+  /// "MyApp.Chat.Contracts+MyEvent, MyApp" → "MyApp.Chat" (nested type)
+  /// </example>
+  public static string? GetPayloadNamespace(string envelopeType) {
+    if (string.IsNullOrEmpty(envelopeType)) {
+      return null;
+    }
+
+    // Extract inner type from generic: "...`1[[Inner.Type, Assembly]]..."
+    var openBracket = envelopeType.IndexOf("[[", StringComparison.Ordinal);
+    if (openBracket >= 0) {
+      var closeBracket = envelopeType.IndexOf("]]", openBracket, StringComparison.Ordinal);
+      if (closeBracket > openBracket) {
+        var innerType = envelopeType[(openBracket + 2)..closeBracket];
+        // GetFullName strips assembly, then we strip nested type (+) to get outer class
+        var fullName = GetFullName(innerType);
+        var plusIdx = fullName.IndexOf('+');
+        var outerType = plusIdx > 0 ? fullName[..plusIdx] : fullName;
+        var lastDot = outerType.LastIndexOf('.');
+        return lastDot > 0 ? outerType[..lastDot] : null;
+      }
+    }
+
+    // No generic wrapper — fall back to regular namespace extraction
+    return GetNamespace(envelopeType);
+  }
+
+  /// <summary>
+  /// Extracts the payload type's full name (namespace + type, no assembly) from a generic envelope
+  /// type string. The transport delivers types like
+  /// <c>MessageEnvelope`1[[Payload.Type, Assembly]], Whizbang.Core</c>; this returns the inner
+  /// payload type's full name. Falls back to <see cref="GetFullName"/> of the whole string when no
+  /// generic parameter is present. Useful as a bounded metric dimension (e.g. <c>message.type</c>).
+  /// </summary>
+  /// <example>
+  /// "Whizbang...MessageEnvelope`1[[MyApp.Chat.MyEvent, MyApp]], Whizbang" → "MyApp.Chat.MyEvent"
+  /// "MyApp.Chat.MyEvent, MyApp" → "MyApp.Chat.MyEvent" (no generic wrapper — falls back)
+  /// </example>
+  public static string? GetPayloadFullName(string envelopeType) {
+    if (string.IsNullOrEmpty(envelopeType)) {
+      return null;
+    }
+
+    var openBracket = envelopeType.IndexOf("[[", StringComparison.Ordinal);
+    if (openBracket >= 0) {
+      var closeBracket = envelopeType.IndexOf("]]", openBracket, StringComparison.Ordinal);
+      if (closeBracket > openBracket) {
+        var innerType = envelopeType[(openBracket + 2)..closeBracket];
+        return GetFullName(innerType);
+      }
+    }
+
+    // No generic wrapper — fall back to regular full-name extraction.
+    return GetFullName(envelopeType);
   }
 }

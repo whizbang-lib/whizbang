@@ -5,16 +5,16 @@ namespace Whizbang.Core.Transports;
 /// Implementations create topics, exchanges, or other resources that subscribers will use.
 /// </summary>
 /// <remarks>
-/// This interface is used by the TransportConsumerWorker to provision infrastructure
+/// <para>This interface is used by the TransportConsumerWorker to provision infrastructure
 /// for domains this service owns (publishes events to). Infrastructure is provisioned
-/// at worker startup, before subscriptions are created.
+/// at worker startup, before subscriptions are created.</para>
 ///
-/// Examples of provisioning:
+/// <para>Examples of provisioning:
 /// - Azure Service Bus: Create topics via AdminClient
 /// - RabbitMQ: Declare topic exchanges
-/// - Kafka: Create topics via AdminClient
+/// - Kafka: Create topics via AdminClient</para>
 /// </remarks>
-/// <docs>core-concepts/routing#domain-topic-provisioning</docs>
+/// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
 /// <tests>Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs</tests>
 public interface IInfrastructureProvisioner {
   /// <summary>
@@ -35,4 +35,26 @@ public interface IInfrastructureProvisioner {
   Task ProvisionOwnedDomainsAsync(
     IReadOnlySet<string> ownedDomains,
     CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Ensures a single topic/exchange exists, creating it if necessary.
+  /// Used for on-demand provisioning during publish to avoid MessagingEntityNotFound errors.
+  /// </summary>
+  /// <param name="topicName">The topic name to ensure exists.</param>
+  /// <param name="cancellationToken">Cancellation token to cancel the operation.</param>
+  /// <returns>Task that completes when the topic is confirmed to exist.</returns>
+  /// <remarks>
+  /// This method should be idempotent - calling it multiple times with the same
+  /// topic name should be safe. Implementations should handle race conditions where
+  /// multiple service instances attempt to create the same topic.
+  /// The default implementation is a no-op for transports that don't need pre-creation (e.g., RabbitMQ).
+  /// </remarks>
+  /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_LowercasesTopicNameAsync</tests>
+  Task EnsureTopicExistsAsync(
+    string topicName,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

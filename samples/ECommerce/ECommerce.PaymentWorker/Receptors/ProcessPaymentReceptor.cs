@@ -9,14 +9,12 @@ namespace ECommerce.PaymentWorker.Receptors;
 /// Handles ProcessPaymentCommand and publishes PaymentProcessedEvent or PaymentFailedEvent
 /// </summary>
 public class ProcessPaymentReceptor(IDispatcher dispatcher, ILogger<ProcessPaymentReceptor> logger) : IReceptor<ProcessPaymentCommand, PaymentProcessedEvent> {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<ProcessPaymentReceptor> _logger = logger;
 
   public async ValueTask<PaymentProcessedEvent> HandleAsync(
     ProcessPaymentCommand message,
     CancellationToken cancellationToken = default) {
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Processing payment of ${Amount} for customer {CustomerId} and order {OrderId}",
       message.Amount,
       message.CustomerId,
@@ -37,9 +35,9 @@ public class ProcessPaymentReceptor(IDispatcher dispatcher, ILogger<ProcessPayme
       };
 
       // Publish success event
-      await _dispatcher.PublishAsync(paymentProcessed);
+      await dispatcher.PublishAsync(paymentProcessed);
 
-      _logger.LogInformation(
+      logger.LogInformation(
         "Payment processed successfully for order {OrderId} with transaction {TransactionId}",
         message.OrderId,
         paymentProcessed.TransactionId);
@@ -54,9 +52,9 @@ public class ProcessPaymentReceptor(IDispatcher dispatcher, ILogger<ProcessPayme
       };
 
       // Publish failure event
-      await _dispatcher.PublishAsync(paymentFailed);
+      await dispatcher.PublishAsync(paymentFailed);
 
-      _logger.LogWarning(
+      logger.LogWarning(
         "Payment failed for order {OrderId}: {Reason}",
         message.OrderId,
         paymentFailed.Reason);

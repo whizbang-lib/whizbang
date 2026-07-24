@@ -7,16 +7,16 @@ namespace Whizbang.Core.Security;
 /// Use this to initialize custom scoped services with the security context.
 /// </summary>
 /// <remarks>
-/// Callbacks are called after all extractors have run and a context is established.
+/// <para>Callbacks are called after all extractors have run and a context is established.
 /// They are NOT called if no context could be established (i.e., when returning null
-/// with AllowAnonymous=true).
+/// with AllowAnonymous=true).</para>
 ///
-/// Common use cases:
+/// <para>Common use cases:
 /// - Populating custom UserContextManager services
 /// - Setting up tenant-specific database connections
-/// - Initializing audit/logging contexts
+/// - Initializing audit/logging contexts</para>
 /// </remarks>
-/// <docs>core-concepts/message-security#callbacks</docs>
+/// <docs>fundamentals/security/message-security#callbacks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_WithCallbacks_CallsAllCallbacksAfterContextEstablishedAsync</tests>
 /// <example>
 /// public class UserContextManagerCallback : ISecurityContextCallback {

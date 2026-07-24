@@ -40,8 +40,9 @@ namespace Whizbang.Core.SystemEvents;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/system-events#audit</docs>
+/// <docs>fundamentals/events/system-events#audit</docs>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
+[PinnedId("a917ce3a-52ce-4c20-92de-99ab649c2ebe")]
 public sealed record EventAudited : ISystemEvent {
   /// <summary>
   /// Unique identifier for this audit event.
@@ -49,6 +50,11 @@ public sealed record EventAudited : ISystemEvent {
   /// </summary>
   [StreamId]
   public required Guid Id { get; init; }
+
+  /// <summary>
+  /// The unique ID of the original domain event (matches event store event_id / outbox message_id).
+  /// </summary>
+  public Guid OriginalEventId { get; init; }
 
   /// <summary>
   /// The type name of the original domain event (e.g., "OrderCreated").
@@ -84,11 +90,6 @@ public sealed record EventAudited : ISystemEvent {
   /// User identifier from event scope (copied for filtering).
   /// </summary>
   public string? UserId { get; init; }
-
-  /// <summary>
-  /// User display name from event scope (copied for display).
-  /// </summary>
-  public string? UserName { get; init; }
 
   /// <summary>
   /// Correlation identifier for distributed tracing.

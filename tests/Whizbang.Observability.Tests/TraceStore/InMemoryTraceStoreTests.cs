@@ -1,6 +1,8 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -32,6 +34,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = messageId ?? MessageId.New(),
       Payload = new TestCommand($"test-{Guid.NewGuid()}", "data"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 
@@ -287,6 +290,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = new TestCommand("test", "data"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 
@@ -320,6 +324,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = new TestCommand("test", "data"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 

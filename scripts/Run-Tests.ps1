@@ -51,6 +51,11 @@
     Stop test execution on first failure. Useful for quickly identifying and fixing issues.
     When enabled, adds --fail-fast flag to dotnet test command.
 
+.PARAMETER NoFailFast
+    Force-disable fail-fast (overrides the AI-mode auto-default). Use this when you want
+    to see ALL failures across the suite, not just the first one. Shell-friendly: avoids
+    the -FailFast:$false trap (zsh expands $false to empty, leaving the switch enabled).
+
 .PARAMETER HangTimeout
     Timeout in seconds to detect hung tests (default: 180). If no output is received for this
     duration, a warning is displayed. After 2x this timeout, the test run is terminated.
@@ -58,7 +63,7 @@
 
 .PARAMETER Cleanup
     Clean up ALL test containers after tests complete, including shared containers
-    (whizbang-test-postgres, whizbang-test-rabbitmq). Default: $true.
+    (postgres, rabbitmq, servicebus, mssql containers). Default: $true.
     Use -Cleanup:$false to preserve shared containers for faster subsequent runs.
 
 .PARAMETER CleanupOnly
@@ -245,8 +250,13 @@ param(
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
     [switch]$FailFast,  # Stop on first test failure
+    [switch]$NoFailFast,  # Force-disable fail-fast (overrides AI mode auto-default).
+                          # Shell-friendly alternative to -FailFast:$false (which breaks
+                          # in zsh because $false expands to empty).
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
+
+    [switch]$ReportTrx,  # Emit TRX result files (TestResults/*.trx) for CI test-status publishing
 
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Debug",  # Build configuration (Debug or Release)
@@ -274,6 +284,30 @@ param(
     [bool]$Cleanup = $true,  # Clean up ALL containers after tests (default: true). Use -Cleanup:$false to preserve shared containers
     [switch]$CleanupOnly,  # Only clean up containers, don't run tests
     [switch]$NoBuild,  # Skip building, use existing build artifacts (for CI when artifacts are pre-built)
+    [bool]$Fast = $true,  # Disable analyzers, XML docs, and code style enforcement for faster builds. Use -Fast:$false for full analysis
+
+    [string]$LogFile = "",  # Tee output to file (verbose to file, sparse to console)
+
+    [ValidateSet("All", "Ai", "AiUnit", "AiIntegrations", "Unit", "Integration")]
+    [string]$LogMode = "",  # Log file verbosity (defaults to -Mode if not specified)
+
+    [ValidateSet("Text", "Json")]
+    [string]$OutputFormat = "Text",  # Output format: Text (human-readable) or Json (machine-readable)
+
+    [switch]$NoHeader,  # Suppress the branded header (used when called from Run-PR.ps1)
+
+    [switch]$NoReport,  # Skip coverage report generation (used when Run-PR handles it)
+
+    # Parent progress context (passed by Run-PR.ps1 for progress bar updates)
+    [double]$ParentStartTime = 0,    # Parent start time as Unix epoch seconds
+    [double]$ParentTotalEstSec = 0,  # Total estimated seconds for all parent steps
+    [double]$StepEstSec = 0,         # Estimated seconds for this step
+    [int]$ParentStepNumber = 0,      # Current step number in parent
+    [int]$ParentTotalSteps = 0,      # Total steps in parent
+
+    [switch]$CleanLogs,     # Remove log files and coverage reports before running
+    [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
+    [switch]$CleanAll,      # Remove all logs, metrics, and reports before running
 
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
@@ -282,6 +316,25 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Import shared PR readiness module
+Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
+
+# Build fast-mode MSBuild args (disable analyzers, XML docs, code style)
+$fastBuildArgs = @()
+if ($Fast) {
+    $fastBuildArgs = @('/p:RunAnalyzers=false', '/p:GenerateDocumentationFile=false', '/p:EnforceCodeStyleInBuild=false')
+}
+
+# Handle cleanup flags
+$repoRoot = Split-Path -Parent $PSScriptRoot
+if ($CleanAll) {
+    Write-Host "Cleaning all logs, metrics, and reports..." -ForegroundColor Yellow
+    Invoke-CleanAll -RepoRoot $repoRoot
+} elseif ($CleanLogs -or $CleanMetrics) {
+    if ($CleanLogs) { Invoke-CleanLogs -RepoRoot $repoRoot }
+    if ($CleanMetrics) { Invoke-CleanMetrics -RepoRoot $repoRoot }
+}
 
 # Handle legacy parameters (for backward compatibility)
 if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey('ExcludeIntegration')) {
@@ -302,6 +355,34 @@ $useAiOutput = $Mode -in @("Ai", "AiUnit", "AiIntegrations")
 $useVerboseLogging = $Mode -in @("Unit", "Integration")  # Verbose log-format output for human-readable modes
 $includeIntegrationTests = $Mode -in @("All", "Ai", "Integration", "AiIntegrations")
 $onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
+
+# Suppress progress bars in AI mode
+if ($useAiOutput) {
+    $ProgressPreference = 'SilentlyContinue'
+}
+
+# FailFast defaults to true in AI modes (stop on first failure to save time).
+# -NoFailFast force-disables it (shell-friendly alternative to -FailFast:$false,
+# which breaks in zsh where $false expands to empty).
+if ($NoFailFast) {
+    $FailFast = $false
+} elseif ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
+    $FailFast = $true
+}
+
+# Initialize tee logging if -LogFile is specified
+if ($LogFile) {
+    $effectiveLogMode = if ($LogMode) { $LogMode } else { $Mode }
+    Initialize-TeeLogging -LogFile $LogFile -ConsoleMode $Mode -LogMode $effectiveLogMode
+}
+
+# Track start time for history logging
+$script:runStartTime = [DateTime]::UtcNow
+
+# Show run estimation from history
+$historyFile = Join-Path $PSScriptRoot ".." "logs" "test-runs.jsonl"
+$estimate = Get-RunEstimate -FilePath $historyFile -FilterKey "mode" -FilterValue $Mode
+$estimateStr = if ($estimate) { $estimate.Formatted } else { "" }
 
 # Handle -CleanupOnly: just clean up containers and exit
 if ($CleanupOnly) {
@@ -357,8 +438,8 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
 
     # Stop and remove Whizbang test containers EXCEPT shared containers which are designed to persist
     # We use name-based filtering with "whizbang-test-" prefix to avoid killing other projects' containers
-    # The whizbang-test-postgres and whizbang-test-rabbitmq containers are intentionally kept running for reuse
-    $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+    # Shared containers are intentionally kept running for reuse (postgres, rabbitmq, servicebus, mssql)
+    $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" -and $_ -notmatch "whizbang-test-servicebus" -and $_ -notmatch "whizbang-test-mssql" } | ForEach-Object { ($_ -split " ")[0] }
     if ($whizbangContainers) {
         $whizbangContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
     }
@@ -389,7 +470,8 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
     }
 
     # Verify RabbitMQ is responding
-    $mgmtPort = ((docker port whizbang-test-rabbitmq 15672 2>$null) -split "`n")[0] -replace '.*:', ''
+    $portOutput = docker port whizbang-test-rabbitmq 15672 2>$null
+    $mgmtPort = if ($portOutput) { ($portOutput -split "`n")[0] -replace '.*:', '' } else { $null }
     if ($mgmtPort) {
         $maxAttempts = 15
         for ($i = 1; $i -le $maxAttempts; $i++) {
@@ -414,6 +496,49 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
         }
     }
 
+    # Ensure shared PostgreSQL container is running (shared across all test projects)
+    $sharedPgState = docker inspect --format="{{.State.Status}}" whizbang-test-postgres 2>$null
+    if (-not $sharedPgState) {
+        if (-not $useAiOutput) {
+            Write-Host "Starting shared PostgreSQL container..." -ForegroundColor Yellow
+        }
+        docker run --detach --name whizbang-test-postgres `
+            -e POSTGRES_USER=whizbang_user `
+            -e POSTGRES_PASSWORD=whizbang_pass `
+            -e POSTGRES_DB=whizbang_test `
+            --publish 0:5432 `
+            --restart no `
+            pgvector/pgvector:pg17 `
+            -c max_connections=500 2>&1 | Out-Null
+        Start-Sleep -Seconds 5
+    } elseif ($sharedPgState -ne "running") {
+        if (-not $useAiOutput) {
+            Write-Host "Starting stopped PostgreSQL container..." -ForegroundColor Yellow
+        }
+        docker start whizbang-test-postgres 2>&1 | Out-Null
+        Start-Sleep -Seconds 3
+    }
+
+    # Verify PostgreSQL is responding
+    $portOutput = docker port whizbang-test-postgres 5432 2>$null
+    $pgPort = if ($portOutput) { ($portOutput -split "`n")[0] -replace '.*:', '' } else { $null }
+    if ($pgPort) {
+        $maxAttempts = 15
+        for ($i = 1; $i -le $maxAttempts; $i++) {
+            $pgReady = docker exec whizbang-test-postgres pg_isready -U whizbang_user 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                if (-not $useAiOutput) {
+                    Write-Host "PostgreSQL container ready on port $pgPort" -ForegroundColor Green
+                }
+                break
+            }
+            if ($i -eq $maxAttempts) {
+                Write-Warning "PostgreSQL container may not be fully ready after $maxAttempts attempts - tests will retry"
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
+
     # Stop and remove Testcontainers ryuk (reaper) containers
     $ryukContainers = docker ps -a --filter "ancestor=testcontainers/ryuk" --format "{{.ID}}"
     if ($ryukContainers) {
@@ -430,79 +555,181 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
     }
 }
 
+# Ctrl+C handler — kill dotnet child processes cleanly
+trap {
+    # Only handle pipeline-stopping exceptions (Ctrl+C) — re-throw everything else
+    # so the actual error is visible, not masked by "Interrupted"
+    if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or
+        $_.Exception -is [System.OperationCanceledException]) {
+        Write-Host ""
+        Write-Host "  ⚠️  Interrupted — stopping test processes..." -ForegroundColor Yellow
+        # Kill any dotnet test processes spawned by this script
+        if ($script:runStartTime) {
+            Get-Process -Name "dotnet" -ErrorAction SilentlyContinue |
+                Where-Object { $_.StartTime -gt $script:runStartTime } |
+                ForEach-Object { try { $_.Kill($true) } catch { } }
+        }
+        Write-Progress -Id 2 -Activity "x" -Completed -ErrorAction SilentlyContinue
+        exit 130
+    }
+    # Re-throw non-interrupt errors so they're visible
+    throw
+}
+
+# Generate coverage report from Cobertura XML files using reportgenerator
+# Returns hashtable with CoveragePct, TotalLines, TotalCovered, HtmlReport
+function Invoke-CoverageReport {
+    param(
+        [string]$RepoRoot,
+        [array]$CoberturaFiles
+    )
+
+    $reportDir = Join-Path $RepoRoot "coverage-report"
+    $reports = ($CoberturaFiles | ForEach-Object { $_.FullName }) -join ";"
+
+    # Generate HTML, TextSummary, and JsonSummary reports.
+    # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell).
+    #
+    # -filefilters excludes Whizbang source-generator output from the rendered
+    # report so the summary reflects only hand-written production code:
+    #   - *.g.cs                 — Roslyn source-generator output
+    #   - *.Generated.cs         — hand-emitted generated files (e.g., WhizbangBanner.Generated.cs)
+    #   - */.whizbang-generated/*— per-project generator output directory
+    # The underlying cobertura XMLs still include those lines, so external
+    # consumers (Sonar, Codecov) see the raw numbers until generator emitters
+    # are tagged with [System.CodeDom.Compiler.GeneratedCodeAttribute].
+    $fileFilters = '-filefilters:-*.g.cs;-*.Generated.cs;-*/.whizbang-generated/*'
+    reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" $fileFilters 2>&1 | Out-Null
+
+    # Read coverage totals from TextSummary (instant — no XML parsing needed)
+    $summaryFile = Join-Path $reportDir "Summary.txt"
+    $totalLines = 0
+    $totalCovered = 0
+    $coveragePct = 0
+    if (Test-Path $summaryFile) {
+        $summaryText = Get-Content $summaryFile -Raw
+        if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $coveragePct = [double]$Matches[1] }
+        if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
+        if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
+    }
+
+    Write-Host ""
+    Write-Host "=====================================" -ForegroundColor Cyan
+    Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
+    Write-Host "=====================================" -ForegroundColor Cyan
+
+    # Show classes below 100% coverage from JsonSummary (fast — already computed by reportgenerator)
+    $jsonSummaryFile = Join-Path $reportDir "Summary.json"
+    if (Test-Path $jsonSummaryFile) {
+        $jsonSummary = Get-Content $jsonSummaryFile -Raw | ConvertFrom-Json
+        $filesBelow100 = @()
+        foreach ($assembly in $jsonSummary.coverage.assemblies) {
+            foreach ($class in $assembly.classes) {
+                if ($class.coverage -lt 100 -and $class.name -notmatch "Tests?\.") {
+                    $filesBelow100 += @{
+                        Name     = $class.name
+                        Coverage = $class.coverage
+                        Covered  = $class.coveredLines
+                        Total    = $class.coverableLines
+                    }
+                }
+            }
+        }
+
+        if ($filesBelow100.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Classes below 100% coverage ($($filesBelow100.Count)):" -ForegroundColor Yellow
+            foreach ($file in ($filesBelow100 | Sort-Object { $_.Coverage })) {
+                $uncovered = $file.Total - $file.Covered
+                Write-Host "  $($file.Name) - $($file.Coverage)% ($uncovered uncovered lines)" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    $htmlReport = Join-Path $reportDir "index.html"
+    Write-Host ""
+    Write-Host "HTML report: $htmlReport" -ForegroundColor Cyan
+
+    return @{
+        CoveragePct  = $coveragePct
+        TotalLines   = $totalLines
+        TotalCovered = $totalCovered
+        HtmlReport   = $htmlReport
+    }
+}
+
 try {
     # Determine parallel level
     if ($MaxParallel -eq 0) {
         $MaxParallel = [Environment]::ProcessorCount
     }
 
-    if (-not $useAiOutput) {
-        Write-Host "=====================================" -ForegroundColor Cyan
-        Write-Host "  Whizbang Test Suite Runner" -ForegroundColor Cyan
-        Write-Host "  (Parallel Execution via dotnet test)" -ForegroundColor Cyan
-        Write-Host "=====================================" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host "Parallel Test Execution: Up to $MaxParallel test modules concurrently" -ForegroundColor Yellow
-        Write-Host "Mode: $Mode" -ForegroundColor Yellow
+    # Branded header (suppressed when called from Run-PR.ps1)
+    if (-not $NoHeader) {
+        $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
+        if ($Coverage) { $headerParams["Coverage"] = "On" }
+        if ($FailFast) { $headerParams["FailFast"] = "On" }
+        if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
+        if ($Tag) { $headerParams["Tag"] = $Tag }
+        if ($Fast) { $headerParams["Fast"] = "On" }
+
+        # Build detail lines for the config box
+        $details = @()
         if ($onlyIntegrationTests) {
-            Write-Host "Integration Tests: Only (other tests excluded)" -ForegroundColor Yellow
+            $details += "Integration Tests: Only"
         } elseif (-not $includeIntegrationTests) {
-            Write-Host "Integration Tests: Excluded (use -Mode Ai or -Mode Full to include)" -ForegroundColor Yellow
+            $details += "Integration Tests: Excluded"
         }
-        if ($ProjectFilter) {
-            Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Yellow
-        }
-        if ($TestFilter) {
-            Write-Host "Test Filter: $TestFilter" -ForegroundColor Yellow
-        }
-        if ($FailFast) {
-            Write-Host "Fail Fast: Enabled (stops on first failure)" -ForegroundColor Yellow
-        }
-        if ($Coverage) {
-            Write-Host "Coverage: Enabled (Cobertura XML output)" -ForegroundColor Yellow
-        }
-        if ($Tag) {
-            Write-Host "Tag Filter: $Tag" -ForegroundColor Yellow
-        }
-        Write-Host ""
-    } else {
-        Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
+        if ($TestFilter) { $details += "Test Filter: $TestFilter" }
+        if ($NoBuild) { $details += "Skipping build (using pre-built artifacts)" }
 
-        # Display actual command line that was used
-        $cmdLine = $MyInvocation.Line
-        if ([string]::IsNullOrWhiteSpace($cmdLine)) {
-            $cmdLine = "$($MyInvocation.MyCommand.Path) -Mode $Mode"
-            if ($FailFast) { $cmdLine += " -FailFast" }
-            if ($ProjectFilter) { $cmdLine += " -ProjectFilter '$ProjectFilter'" }
-            if ($TestFilter) { $cmdLine += " -TestFilter '$TestFilter'" }
-        }
-        Write-Host "Command: $cmdLine" -ForegroundColor DarkGray
-
-        Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
-        Write-Host "Mode: $Mode" -ForegroundColor Gray
-        if ($onlyIntegrationTests) {
-            Write-Host "Integration Tests: Only" -ForegroundColor Gray
-        } elseif (-not $includeIntegrationTests) {
-            Write-Host "Integration Tests: Excluded" -ForegroundColor Gray
-        }
-        if ($ProjectFilter) {
-            Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Gray
-        }
-        if ($TestFilter) {
-            Write-Host "Test Filter: $TestFilter" -ForegroundColor Gray
-        }
-        if ($FailFast) {
-            Write-Host "Fail Fast: Enabled" -ForegroundColor Gray
-        }
-        if ($Coverage) {
-            Write-Host "Coverage: Enabled" -ForegroundColor Gray
-        }
-        if ($Tag) {
-            Write-Host "Tag Filter: $Tag" -ForegroundColor Gray
-        }
-
-        # Flush output immediately so background processes show header right away
+        Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr -Details $details
         [Console]::Out.Flush()
+    }
+
+    # Progress bar updater — called from periodic progress checkpoints
+    # Updates parent progress bars (timing overall + timing step) when running under Run-PR
+    $script:parentEpochStart = if ($ParentStartTime -gt 0) { [DateTimeOffset]::FromUnixTimeSeconds([long]$ParentStartTime).UtcDateTime } else { $null }
+    function Update-ParentProgress {
+        if (-not $script:parentEpochStart -or $ParentTotalEstSec -le 0) { return }
+
+        $elapsed = ([DateTime]::UtcNow - $script:parentEpochStart).TotalSeconds
+
+        # Id 0: Overall step progress
+        if ($ParentTotalSteps -gt 0) {
+            $stepPct = [math]::Round(($ParentStepNumber / $ParentTotalSteps) * 100)
+            Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step ${ParentStepNumber}/${ParentTotalSteps}: $Mode Tests" -PercentComplete $stepPct
+        }
+
+        # Id 1: Total elapsed vs remaining
+        $timePct = [math]::Min(100, [math]::Round(($elapsed / $ParentTotalEstSec) * 100))
+        $remaining = [math]::Max(0, $ParentTotalEstSec - $elapsed)
+        Write-Progress -Id 1 -ParentId 0 -Activity "Total: $(Format-Duration -Seconds $elapsed) elapsed" -Status "~$(Format-Duration -Seconds $remaining) remaining" -PercentComplete $timePct
+
+        # Id 3: Step elapsed vs remaining
+        if ($StepEstSec -gt 0) {
+            $stepElapsed = ([DateTime]::UtcNow - $script:runStartTime).TotalSeconds
+            $stepTimePct = [math]::Min(100, [math]::Round(($stepElapsed / $StepEstSec) * 100))
+            $stepRemain = [math]::Max(0, $StepEstSec - $stepElapsed)
+            Write-Progress -Id 3 -ParentId 0 -Activity "$Mode Tests: $(Format-Duration -Seconds $stepElapsed) elapsed" -Status "~$(Format-Duration -Seconds $stepRemain) remaining" -PercentComplete $stepTimePct
+        }
+    }
+
+    # Indentation: when called as child from Run-PR.ps1, indent all output to align
+    # under the "▶" step indicators. Override Write-Host with an indented wrapper.
+    if ($NoHeader) {
+        function script:Write-IndentedHost {
+            param(
+                [Parameter(Position = 0)] [string]$Object = "",
+                [string]$ForegroundColor = "",
+                [switch]$NoNewline
+            )
+            $params = @{}
+            if ($ForegroundColor) { $params["ForegroundColor"] = $ForegroundColor }
+            if ($NoNewline) { $params["NoNewline"] = $true }
+            Microsoft.PowerShell.Utility\Write-Host "    ${Object}" @params
+        }
+        Set-Alias -Name Write-Host -Value Write-IndentedHost -Scope Script
     }
 
     # Build the dotnet test command
@@ -529,6 +756,11 @@ try {
     # Add no-build if requested (use pre-built artifacts)
     if ($NoBuild) {
         $testArgs += "--no-build"
+    }
+
+    # Emit TRX result files (used by CI to publish live test status to the docs site)
+    if ($ReportTrx) {
+        $testArgs += "--report-trx"
     }
 
     # Coverage mode: Run projects in parallel with unique output paths per project
@@ -603,6 +835,31 @@ try {
         }
 
         # Helper function to run a single test project with coverage
+        # Extract test counts from dotnet test output (summary lines or progress indicators)
+        function Get-TestCountsFromOutput {
+            param([string]$FullOutput)
+            $passed = 0; $failed = 0; $skipped = 0
+            $foundSummary = $false
+            foreach ($line in ($FullOutput -split "`n")) {
+                $l = $line.Trim()
+                # Authoritative: TUnit summary lines (e.g., "succeeded: 6534")
+                if ($l -match "^\s*succeeded:\s+(\d+)\s*$") { $passed = [int]$Matches[1]; $foundSummary = $true }
+                if ($l -match "^\s*failed:\s+(\d+)\s*$") { $failed = [int]$Matches[1]; $foundSummary = $true }
+                if ($l -match "^\s*skipped:\s+(\d+)\s*$") { $skipped = [int]$Matches[1]; $foundSummary = $true }
+            }
+            # Fallback: if no summary lines, extract from last progress indicator [+N/xN/?N]
+            if (-not $foundSummary) {
+                $progressMatches = [regex]::Matches($FullOutput, '\[\+(\d+)/x(\d+)/\?(\d+)\]')
+                if ($progressMatches.Count -gt 0) {
+                    $last = $progressMatches[$progressMatches.Count - 1]
+                    $passed = [int]$last.Groups[1].Value
+                    $failed = [int]$last.Groups[2].Value
+                    $skipped = [int]$last.Groups[3].Value
+                }
+            }
+            return @{ Passed = $passed; Failed = $failed; Skipped = $skipped }
+        }
+
         function Invoke-TestWithCoverage {
             param([string]$ProjectPath, [string]$Config, [string]$Filter, [bool]$FailFastEnabled)
 
@@ -615,15 +872,31 @@ try {
                 if (Test-Path $testExe) { chmod +x $testExe 2>$null }
             }
 
-            $args = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura")
-            if ($Filter) { $args += "--treenode-filter"; $args += "/*/*/*/*$Filter*" }
-            if ($FailFastEnabled) { $args += "--fail-fast" }
+            $coverageSettingsPath = Join-Path $repoRoot "codecoverage.config"
+            $testArgs = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+            if ($Filter) { $testArgs += "--treenode-filter"; $testArgs += "/*/*/*/*$Filter*" }
+            if ($FailFastEnabled) { $testArgs += "--fail-fast" }
+            if ($ReportTrx) { $testArgs += "--report-trx" }
 
-            $output = & dotnet @args 2>&1
+            $outFile = [System.IO.Path]::GetTempFileName()
+            $errFile = [System.IO.Path]::GetTempFileName()
+            $proc = Start-Process -FilePath "dotnet" -ArgumentList ($testArgs -join " ") -WorkingDirectory $projDir -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            while (-not $proc.HasExited) {
+                Update-ParentProgress
+                Start-Sleep -Milliseconds 2000
+            }
+            $proc.WaitForExit()
+            $output = (Get-Content $outFile -Raw) + (Get-Content $errFile -Raw)
+            Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
+            # Parse test counts from full output before truncating
+            $counts = Get-TestCountsFromOutput -FullOutput $output
             return [PSCustomObject]@{
                 ProjectName = $projName
-                ExitCode = $LASTEXITCODE
-                Output = ($output | Select-Object -Last 30) -join "`n"
+                ExitCode = $proc.ExitCode
+                Output = ($output -split "`n" | Select-Object -Last 30) -join "`n"
+                TestsPassed = $counts.Passed
+                TestsFailed = $counts.Failed
+                TestsSkipped = $counts.Skipped
             }
         }
 
@@ -640,7 +913,7 @@ try {
             $buildFailed = $false
             foreach ($projectPath in $allProjectsToBuild) {
                 $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-                $buildOutput = & dotnet build $projectPath --configuration $Configuration 2>&1
+                $buildOutput = & dotnet build $projectPath --configuration $Configuration @fastBuildArgs 2>&1
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "Build failed for $projectName`:" -ForegroundColor Red
                     $buildOutput | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
@@ -660,30 +933,98 @@ try {
         if ($unitTestProjects.Count -gt 0) {
             Write-Host "Running $($unitTestProjects.Count) unit test projects in parallel (max $MaxParallel)..." -ForegroundColor Cyan
 
-            $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
-                $projectPath = $_
-                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-                $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
-                $config = $using:Configuration
-                $testFilter = $using:TestFilter
-                $failFast = $using:FailFast
-                $resultsBag = $using:results
-
-                if ($IsLinux -or $IsMacOS) {
-                    $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
-                    if (Test-Path $testExe) { chmod +x $testExe 2>$null }
+            # Start a background thread to keep progress bars alive during ForEach-Object -Parallel
+            $progressCts = [System.Threading.CancellationTokenSource]::new()
+            $progressToken = $progressCts.Token
+            $parentEpochStartCopy = $script:parentEpochStart
+            $parentTotalEstSecCopy = $ParentTotalEstSec
+            $parentStepNumberCopy = $ParentStepNumber
+            $parentTotalStepsCopy = $ParentTotalSteps
+            $stepEstSecCopy = $StepEstSec
+            $runStartTimeCopy = $script:runStartTime
+            $modeCopy = $Mode
+            $progressThread = [System.Threading.Tasks.Task]::Run([Action]{
+                while (-not $progressToken.IsCancellationRequested) {
+                    try {
+                        if ($parentEpochStartCopy -and $parentTotalEstSecCopy -gt 0) {
+                            $elapsed = ([DateTime]::UtcNow - $parentEpochStartCopy).TotalSeconds
+                            if ($parentTotalStepsCopy -gt 0) {
+                                $stepPct = [math]::Round(($parentStepNumberCopy / $parentTotalStepsCopy) * 100)
+                                Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step ${parentStepNumberCopy}/${parentTotalStepsCopy}: $modeCopy Tests" -PercentComplete $stepPct
+                            }
+                            $timePct = [math]::Min(100, [math]::Round(($elapsed / $parentTotalEstSecCopy) * 100))
+                            $remaining = [math]::Max(0, $parentTotalEstSecCopy - $elapsed)
+                            $remMin = [math]::Floor($remaining / 60); $remSec = [math]::Floor($remaining % 60)
+                            $elapMin = [math]::Floor($elapsed / 60); $elapSec = [math]::Floor($elapsed % 60)
+                            Write-Progress -Id 1 -ParentId 0 -Activity "Total: ${elapMin}m ${elapSec}s elapsed" -Status "~${remMin}m ${remSec}s remaining" -PercentComplete $timePct
+                            if ($stepEstSecCopy -gt 0) {
+                                $stepElapsed = ([DateTime]::UtcNow - $runStartTimeCopy).TotalSeconds
+                                $stepTimePct = [math]::Min(100, [math]::Round(($stepElapsed / $stepEstSecCopy) * 100))
+                                $stepRemain = [math]::Max(0, $stepEstSecCopy - $stepElapsed)
+                                $srMin = [math]::Floor($stepRemain / 60); $srSec = [math]::Floor($stepRemain % 60)
+                                $seMin = [math]::Floor($stepElapsed / 60); $seSec = [math]::Floor($stepElapsed % 60)
+                                Write-Progress -Id 3 -ParentId 0 -Activity "$modeCopy Tests: ${seMin}m ${seSec}s elapsed" -Status "~${srMin}m ${srSec}s remaining" -PercentComplete $stepTimePct
+                            }
+                        }
+                    } catch { }
+                    [System.Threading.Thread]::Sleep(2000)
                 }
+            })
 
-                $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura")
-                if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
-                if ($failFast) { $projectArgs += "--fail-fast" }
+            try {
+                $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
+                    $projectPath = $_
+                    $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                    $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
+                    $config = $using:Configuration
+                    $testFilter = $using:TestFilter
+                    $failFast = $using:FailFast
+                    $reportTrx = $using:ReportTrx
+                    $resultsBag = $using:results
+                    $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
 
-                $output = & dotnet @projectArgs 2>&1
-                $resultsBag.Add([PSCustomObject]@{
-                    ProjectName = $projectName
-                    ExitCode = $LASTEXITCODE
-                    Output = ($output | Select-Object -Last 30) -join "`n"
-                })
+                    if ($IsLinux -or $IsMacOS) {
+                        $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
+                        if (Test-Path $testExe) { chmod +x $testExe 2>$null }
+                    }
+
+                    $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+                    if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
+                    if ($failFast) { $projectArgs += "--fail-fast" }
+                    if ($reportTrx) { $projectArgs += "--report-trx" }
+
+                    $output = & dotnet @projectArgs 2>&1
+                    $fullOutput = ($output | Out-String)
+                    # Parse test counts from full output (inline — can't call script functions from parallel runspace)
+                    $tPassed = 0; $tFailed = 0; $tSkipped = 0; $foundSummary = $false
+                    foreach ($line in ($fullOutput -split "`n")) {
+                        $l = $line.Trim()
+                        if ($l -match "^\s*succeeded:\s+(\d+)\s*$") { $tPassed = [int]$Matches[1]; $foundSummary = $true }
+                        if ($l -match "^\s*failed:\s+(\d+)\s*$") { $tFailed = [int]$Matches[1]; $foundSummary = $true }
+                        if ($l -match "^\s*skipped:\s+(\d+)\s*$") { $tSkipped = [int]$Matches[1]; $foundSummary = $true }
+                    }
+                    if (-not $foundSummary) {
+                        $progressMatches = [regex]::Matches($fullOutput, '\[\+(\d+)/x(\d+)/\?(\d+)\]')
+                        if ($progressMatches.Count -gt 0) {
+                            $last = $progressMatches[$progressMatches.Count - 1]
+                            $tPassed = [int]$last.Groups[1].Value
+                            $tFailed = [int]$last.Groups[2].Value
+                            $tSkipped = [int]$last.Groups[3].Value
+                        }
+                    }
+                    $resultsBag.Add([PSCustomObject]@{
+                        ProjectName = $projectName
+                        ExitCode = $LASTEXITCODE
+                        Output = ($output | Select-Object -Last 30) -join "`n"
+                        TestsPassed = $tPassed
+                        TestsFailed = $tFailed
+                        TestsSkipped = $tSkipped
+                    })
+                }
+            } finally {
+                $progressCts.Cancel()
+                try { $progressThread.Wait(5000) } catch { }
+                $progressCts.Dispose()
             }
         }
 
@@ -706,12 +1047,33 @@ try {
             }
         }
 
+        # Complete sub-progress bar
+        $totalTestProjects = $unitTestProjects.Count + $integrationTestProjects.Count
+        if ($NoHeader) {
+            Write-Progress -Id 2 -ParentId 0 -Activity "Running Tests" -Completed
+        }
+
         # Aggregate results
         $totalProjectsPassed = 0
         $totalProjectsFailed = 0
+        $totalTestsPassed = 0
+        $totalTestsFailed = 0
+        $totalTestsSkipped = 0
         $failedProjects = @()
 
+        $resultIndex = 0
         foreach ($result in $results) {
+            $resultIndex++
+            if ($NoHeader) {
+                $pct = [math]::Round(($resultIndex / $totalTestProjects) * 100)
+                Write-Progress -Id 2 -ParentId 0 -Activity "Test Results" -Status "${resultIndex}/${totalTestProjects}: $($result.ProjectName)" -PercentComplete $pct
+            }
+
+            # Accumulate test counts from parsed output
+            $totalTestsPassed += if ($result.PSObject.Properties['TestsPassed']) { $result.TestsPassed } else { 0 }
+            $totalTestsFailed += if ($result.PSObject.Properties['TestsFailed']) { $result.TestsFailed } else { 0 }
+            $totalTestsSkipped += if ($result.PSObject.Properties['TestsSkipped']) { $result.TestsSkipped } else { 0 }
+
             if ($result.ExitCode -eq 0) {
                 $totalProjectsPassed++
                 if ($useAiOutput) {
@@ -745,6 +1107,13 @@ try {
         Write-Host ""
         Write-Host "=== COVERAGE TEST RESULTS ===" -ForegroundColor Cyan
         Write-Host "Duration: $elapsedString" -ForegroundColor Cyan
+        $totalTests = $totalTestsPassed + $totalTestsFailed + $totalTestsSkipped
+        if ($totalTests -gt 0) {
+            Write-Host "Total Tests: $totalTests" -ForegroundColor White
+            Write-Host "Passed: $totalTestsPassed" -ForegroundColor Green
+            if ($totalTestsFailed -gt 0) { Write-Host "Failed: $totalTestsFailed" -ForegroundColor Red }
+            if ($totalTestsSkipped -gt 0) { Write-Host "Skipped: $totalTestsSkipped" -ForegroundColor Yellow }
+        }
         Write-Host "Projects Passed: $totalProjectsPassed" -ForegroundColor Green
         Write-Host "Projects Failed: $totalProjectsFailed" -ForegroundColor $(if ($totalProjectsFailed -gt 0) { "Red" } else { "Green" })
 
@@ -758,6 +1127,39 @@ try {
         }
         Write-Host ""
 
+        # Generate coverage report (skipped when Run-PR handles it separately)
+        if (-not $NoReport) {
+            Write-Host ""
+            Write-Host "Generating coverage report..." -ForegroundColor Cyan
+
+            # Auto-install reportgenerator: try local manifest first, fall back to global
+            $rgInstalled = dotnet tool list -g 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+            $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+            if (-not $rgInstalled -and -not $rgLocal) {
+                Write-Host "Installing reportgenerator..." -ForegroundColor Yellow
+                dotnet tool restore 2>&1 | Out-Null
+                $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+                if (-not $rgLocal) {
+                    dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+                }
+            }
+
+            # Find all cobertura XML files from test output
+            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+
+            if ($coberturaFiles.Count -gt 0) {
+                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+                $coveragePct = $coverageResult.CoveragePct
+                $totalLines = $coverageResult.TotalLines
+                $totalCovered = $coverageResult.TotalCovered
+                $htmlReport = $coverageResult.HtmlReport
+            } else {
+                Write-Host "No cobertura XML files found." -ForegroundColor Yellow
+            }
+        }
+
+        Write-Host ""
         if ($allPassed) {
             Write-Host "=== STATUS: ALL TESTS PASSED ===" -ForegroundColor Green
             exit 0
@@ -894,7 +1296,7 @@ try {
             } else {
                 Write-Host "Building solution..." -ForegroundColor Gray
             }
-            & dotnet build --verbosity quiet
+            & dotnet build --verbosity quiet @fastBuildArgs
             if ($LASTEXITCODE -ne 0) {
                 Write-Error "Build failed. Cannot discover test projects."
                 exit 1
@@ -1094,15 +1496,23 @@ try {
         $lineCounter = 0
         $hangWarningShown = $false
 
+        # Stall detection: kill when test counts don't change for 3 minutes
+        $lastCountChangeTime = $startTime
+        $lastCountChangeTotal = 0
+
         # Track completed project results separately (from summary lines)
         $completedPassed = 0
         $completedFailed = 0
         $completedSkipped = 0
 
-        # Track in-progress estimates (highest seen from progress lines)
+        # Track in-progress estimates per project (keyed by assembly DLL name)
+        $perProjectProgress = @{}
         $inProgressPassed = 0
         $inProgressFailed = 0
         $inProgressSkipped = 0
+
+        # Track the most recently completed test name for progress display
+        $lastTestName = ""
 
         # FailFast tracking (set at outer scope, used here)
         $firstFailureDetails = $null
@@ -1160,6 +1570,12 @@ try {
                 $silentSeconds = ($now - $lastOutputTime).TotalSeconds
                 $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
 
+                # Update parent progress bars every 2 seconds (realtime ticking)
+                if (-not $script:lastParentProgressUpdate -or ($now - $script:lastParentProgressUpdate).TotalSeconds -ge 2) {
+                    Update-ParentProgress
+                    $script:lastParentProgressUpdate = $now
+                }
+
                 # Time-based progress update (even when no output)
                 if ($elapsedSinceLastProgress -ge $ProgressInterval) {
                     $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
@@ -1170,16 +1586,41 @@ try {
 
                     if ($displayTotal -gt 0) {
                         $failureIndicator = if ($displayFailed -gt 0) { " ⚠️" } else { "" }
-                        Write-Host "[$($elapsedMinutes)m] Progress: ~$displayPassed passed, ~$displayFailed failed, ~$displaySkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
+                        $currentTestInfo = if ($lastTestName) { " - Current test: $lastTestName" } else { "" }
+                        Write-Host "[$($elapsedMinutes)m] Progress: ~$displayPassed passed, ~$displayFailed failed, ~$displaySkipped skipped$failureIndicator (in progress)$currentTestInfo" -ForegroundColor Gray
                     } else {
                         Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                     }
+                    Update-ParentProgress
                     $lastProgressTime = $now
                 }
 
-                # Hang detection
+                # Hang detection (silent output OR stalled progress)
                 if ($HangTimeout -gt 0 -and ($now - $lastHangCheckTime).TotalSeconds -ge 10) {
                     $lastHangCheckTime = $now
+
+                    # Stall detection: test counts haven't changed for HangTimeout seconds
+                    $stalledSeconds = ($now - $lastCountChangeTime).TotalSeconds
+                    if ($lastCountChangeTotal -gt 0 -and $stalledSeconds -ge $HangTimeout) {
+                        Write-Host ""
+                        Write-Host "=== STALL DETECTED ===" -ForegroundColor Red
+                        Write-Host "Test count stuck at $lastCountChangeTotal for $([Math]::Floor($stalledSeconds)) seconds. Terminating." -ForegroundColor Red
+                        if ($lastTestName) {
+                            Write-Host "Last test seen: $lastTestName" -ForegroundColor Yellow
+                        }
+                        Write-Host ""
+                        try {
+                            $process.Kill($true)
+                        } catch { }
+                        $failFastTriggered = $true
+                        $failedTests += "STALL: Test execution stalled for $([Math]::Floor($stalledSeconds))s at $lastCountChangeTotal tests"
+                        $testDetails["STALL: Test execution stalled"] = @{
+                            "ErrorMessage" = "Test count did not increase for $([Math]::Floor($stalledSeconds)) seconds. A test or fixture is likely hanging."
+                            "StackTrace" = "Last test: $lastTestName"
+                            "Exception" = "StallDetected"
+                        }
+                        break
+                    }
 
                     if ($silentSeconds -ge ($HangTimeout * 2)) {
                         # Hard hang - terminate
@@ -1213,50 +1654,60 @@ try {
                 continue  # Continue loop without processing (no line received)
             }
 
-            # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
-            # Note: Multiple test projects run in parallel, we track the highest seen for approximate progress
-            if ($lineStr -match '\[\+(\d+)/x(\d+)/\?(\d+)\]') {
-                $passed = [int]$matches[1]
-                $failed = [int]$matches[2]
-                $skipped = [int]$matches[3]
+            # Strip ANSI escape sequences for reliable regex matching
+            # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
+            $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
 
-                # Track highest values seen across parallel projects (approximate in-progress total)
-                if ($passed -gt $inProgressPassed) { $inProgressPassed = $passed }
-                if ($failed -gt $inProgressFailed) { $inProgressFailed = $failed }
-                if ($skipped -gt $inProgressSkipped) { $inProgressSkipped = $skipped }
+            # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
+            # Format: [+N/xN/?N] Assembly.dll (tfm|arch) - TestName (duration)
+            # Track per-project counts and sum for accurate parallel progress
+            if ($cleanLine -match '\[\+(\d+)/x(\d+)/\?(\d+)\]\s+(\S+\.dll)') {
+                $projectKey = $matches[4]
+                $perProjectProgress[$projectKey] = @{
+                    Passed = [int]$matches[1]
+                    Failed = [int]$matches[2]
+                    Skipped = [int]$matches[3]
+                }
+
+                # Sum across all projects for in-progress totals
+                $inProgressPassed = 0; $inProgressFailed = 0; $inProgressSkipped = 0
+                foreach ($proj in $perProjectProgress.Values) {
+                    $inProgressPassed += $proj.Passed
+                    $inProgressFailed += $proj.Failed
+                    $inProgressSkipped += $proj.Skipped
+                }
+
+                # Extract currently running test name
+                if ($lineStr -match ' - ([^\(]+)\s*\(') {
+                    $lastTestName = $matches[1].Trim()
+                }
             }
             # Capture final summary lines - these are the accurate completed counts
-            # Reset in-progress tracking when a project completes to avoid double-counting
-            elseif ($lineStr -match "^\s*succeeded:\s+(\d+)\s*$") {
+            # Clear per-project tracking when a project completes to avoid double-counting
+            # Use $cleanLine (ANSI-stripped) because TUnit wraps these in color codes
+            elseif ($cleanLine -match "^\s*succeeded:\s+(\d+)\s*$") {
                 $completedPassed += [int]$matches[1]
-                # Reset in-progress since this project's tests moved to completed
+                # Clear all per-project tracking — we can't tell which project finished,
+                # but completed counts are authoritative and will catch up
+                $perProjectProgress.Clear()
                 $inProgressPassed = 0
             }
-            elseif ($lineStr -match "^\s*failed:\s+(\d+)\s*$") {
+            elseif ($cleanLine -match "^\s*failed:\s+(\d+)\s*$") {
                 $completedFailed += [int]$matches[1]
                 $inProgressFailed = 0
             }
-            elseif ($lineStr -match "^\s*skipped:\s+(\d+)\s*$") {
+            elseif ($cleanLine -match "^\s*skipped:\s+(\d+)\s*$") {
                 $completedSkipped += [int]$matches[1]
                 $inProgressSkipped = 0
             }
 
             # Calculate display totals
-            # Use completed counts as authoritative; in-progress is just an activity indicator
-            # This avoids double-counting (a project's progress lines overlap with its summary)
-            $completedTotal = $completedPassed + $completedFailed + $completedSkipped
+            # completedPassed/Failed/Skipped are summed from authoritative "succeeded:/failed:/skipped:" summary lines
+            # inProgressPassed/Failed/Skipped are summed across all running projects' latest progress lines
             $inProgressTotal = $inProgressPassed + $inProgressFailed + $inProgressSkipped
-
-            # For display, prefer completed if available, otherwise show in-progress
-            if ($completedTotal -gt 0) {
-                $totalPassed = $completedPassed
-                $totalFailed = $completedFailed
-                $totalSkipped = $completedSkipped
-            } else {
-                $totalPassed = $inProgressPassed
-                $totalFailed = $inProgressFailed
-                $totalSkipped = $inProgressSkipped
-            }
+            $totalPassed = $completedPassed + $inProgressPassed
+            $totalFailed = $completedFailed + $inProgressFailed
+            $totalSkipped = $completedSkipped + $inProgressSkipped
             $totalTests = $totalPassed + $totalFailed + $totalSkipped
 
             # Smart progress updates
@@ -1276,27 +1727,40 @@ try {
                 if ($totalTests -gt 0 -or $inProgressTotal -gt 0) {
                     # Show test progress
                     $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
-                    # Show running indicator if there's in-progress activity beyond completed
-                    if ($completedTotal -gt 0 -and $inProgressTotal -gt 0) {
-                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator (+$inProgressTotal running)" -ForegroundColor Gray
-                    } elseif ($completedTotal -eq 0 -and $inProgressTotal -gt 0) {
-                        Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
+                    $currentTestInfo = if ($lastTestName) { " - Current test: $lastTestName" } else { "" }
+                    # Show running indicator when tests are actively executing
+                    if ($inProgressTotal -gt 0) {
+                        Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)$currentTestInfo" -ForegroundColor Gray
                     } else {
-                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
+                        # All projects finished — completed counts are authoritative
+                        Write-Host "[$($elapsedMinutes)m] Complete: $completedPassed passed, $completedFailed failed, $completedSkipped skipped$failureIndicator" -ForegroundColor Gray
                     }
                 } else {
                     # Show heartbeat (building/not yet testing)
                     Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                 }
+                Update-ParentProgress
 
                 $lastProgressTime = $now
                 $lastTotalTests = $totalTests
                 $lastTotalFailed = $totalFailed
+
+                # Track when counts actually change (for stall detection)
+                if ($totalTests -ne $lastCountChangeTotal) {
+                    $lastCountChangeTime = $now
+                    $lastCountChangeTotal = $totalTests
+                }
+            }
+
+            # Track last completed test name from passed/skipped lines for progress display
+            if ($cleanLine -match "^passed\s+([^\(]+)\s+\(" -or $cleanLine -match "^skipped\s+([^\(]+)\s+\(") {
+                $lastTestName = $matches[1].Trim()
             }
 
             # Capture failed test names (lines starting with "failed " followed by test name)
             # Note: This is an independent if block, not chained to progress display
-            if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
+            # Use $cleanLine because TUnit wraps "failed" in ANSI red color codes
+            if ($cleanLine -match "^failed\s+([^\(]+)\s+\(") {
                 # Save previous test's stack trace if we were capturing
                 if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
                     $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
@@ -1304,6 +1768,7 @@ try {
                 }
 
                 $testName = $matches[1].Trim()
+                $lastTestName = $testName
                 # Exclude false positives (EF Core logging, etc.)
                 if ($testName -notmatch "executing|DbCommand|Executed") {
                     $failedTests += $testName
@@ -1329,20 +1794,22 @@ try {
                             if ($null -eq $extraLine) { continue }
                             $extraLines++
 
+                            $cleanExtra = $extraLine -replace '\e\[[0-9;]*m', ''
+
                             # Capture exception type
-                            if ($extraLine -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                            if ($cleanExtra -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
                                 $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
                                 $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
                             }
                             # Capture stack trace
-                            elseif ($extraLine -match "^\s+at\s+[\w\.]+") {
-                                $stackTraceLines += $extraLine.Trim()
+                            elseif ($cleanExtra -match "^\s+at\s+[\w\.]+") {
+                                $stackTraceLines += $cleanExtra.Trim()
                             }
-                            elseif ($extraLine -match "^\s+in\s+.*:\s*line\s+\d+") {
-                                $stackTraceLines += $extraLine.Trim()
+                            elseif ($cleanExtra -match "^\s+in\s+.*:\s*line\s+\d+") {
+                                $stackTraceLines += $cleanExtra.Trim()
                             }
                             # Stop when we hit the next test or summary
-                            elseif ($extraLine -match "^(failed|passed|skipped|Test run summary|succeeded:)") {
+                            elseif ($cleanExtra -match "^(failed|passed|skipped|Test run summary|succeeded:)") {
                                 break
                             }
                         }
@@ -1370,30 +1837,30 @@ try {
             # Capture error messages and exception details for current failed test
             elseif ($currentFailedTest) {
                 # Detect exception type lines (e.g., "System.InvalidOperationException: Message")
-                if ($lineStr -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                if ($cleanLine -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
                     $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
                     $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
                 }
                 # Detect assertion failure messages (TUnit specific patterns)
-                elseif ($lineStr -match "Expected:?\s*(.+)") {
+                elseif ($cleanLine -match "Expected:?\s*(.+)") {
                     $testDetails[$currentFailedTest]["ErrorMessage"] += "`nExpected: " + $matches[1].Trim()
                 }
-                elseif ($lineStr -match "Actual:?\s*(.+)") {
+                elseif ($cleanLine -match "Actual:?\s*(.+)") {
                     $testDetails[$currentFailedTest]["ErrorMessage"] += "`nActual: " + $matches[1].Trim()
                 }
-                elseif ($lineStr -match "But was:?\s*(.+)") {
+                elseif ($cleanLine -match "But was:?\s*(.+)") {
                     $testDetails[$currentFailedTest]["ErrorMessage"] += "`nBut was: " + $matches[1].Trim()
                 }
                 # Detect start of stack trace (lines with "at " followed by namespace/method)
-                elseif ($lineStr -match "^\s+at\s+[\w\.]+") {
+                elseif ($cleanLine -match "^\s+at\s+[\w\.]+") {
                     $capturingStackTrace = $true
-                    $stackTraceLines += $lineStr.Trim()
+                    $stackTraceLines += $cleanLine.Trim()
                 }
                 # Continue capturing stack trace lines
                 elseif ($capturingStackTrace) {
                     # Stack trace continues if line starts with whitespace and contains "at " or file path
-                    if ($lineStr -match "^\s+at\s+" -or $lineStr -match "^\s+in\s+.*:\s*line\s+\d+") {
-                        $stackTraceLines += $lineStr.Trim()
+                    if ($cleanLine -match "^\s+at\s+" -or $cleanLine -match "^\s+in\s+.*:\s*line\s+\d+") {
+                        $stackTraceLines += $cleanLine.Trim()
                     }
                     else {
                         # Stack trace ended
@@ -1405,45 +1872,46 @@ try {
                     }
                 }
                 # Generic error message capture (non-empty lines that don't match other patterns)
-                elseif ($lineStr.Trim() -ne "" -and
-                        $lineStr -notmatch "^\s*(duration|total|failed|succeeded|skipped|passed):" -and
-                        $lineStr -notmatch "^(Building|Determining|Restored)" -and
+                elseif ($cleanLine.Trim() -ne "" -and
+                        $cleanLine -notmatch "^\s*(duration|total|failed|succeeded|skipped|passed):" -and
+                        $cleanLine -notmatch "^(Building|Determining|Restored)" -and
                         $testDetails[$currentFailedTest]["ErrorMessage"] -eq "") {
-                    $testDetails[$currentFailedTest]["ErrorMessage"] = $lineStr.Trim()
+                    $testDetails[$currentFailedTest]["ErrorMessage"] = $cleanLine.Trim()
                 }
             }
             # Capture test project errors (e.g., "Whizbang.Data.Postgres.Tests.dll failed with 1 error(s)")
-            elseif ($lineStr -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
+            # Use $cleanLine because TUnit wraps these in ANSI color codes
+            elseif ($cleanLine -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
                 $projectName = $matches[1]
                 $errorCount = $matches[2]
                 $projectErrors += "$projectName failed with $errorCount error(s)"
             }
             # Capture generic "error:" lines from test output (infrastructure errors)
-            elseif ($lineStr -match "^\s*error:\s+(\d+)") {
+            elseif ($cleanLine -match "^\s*error:\s+(\d+)") {
                 # This catches the final "error: X" summary line from MTP
                 # Infrastructure errors are setup/teardown failures separate from test failures
                 $infrastructureErrors += [int]$matches[1]
             }
             # Capture build errors
-            elseif ($lineStr -match "error\s+(CS\d+|MSB\d+):") {
+            elseif ($cleanLine -match "error\s+(CS\d+|MSB\d+):") {
                 $buildErrors += $lineStr.Trim()
             }
             # Capture critical warnings (skip common noise)
-            elseif ($lineStr -match "warning\s+(CS\d+|MSB\d+|EFCORE\d+):" -and
-                    $lineStr -notmatch "CS8019" -and  # Unnecessary using directive
-                    $lineStr -notmatch "CS0105" -and  # Duplicate using directive
-                    $lineStr -notmatch "CS8618" -and  # Non-nullable field
-                    $lineStr -notmatch "CS8600" -and  # Converting null literal
-                    $lineStr -notmatch "CS8601" -and  # Possible null reference assignment
-                    $lineStr -notmatch "CS8602" -and  # Dereference of null reference
-                    $lineStr -notmatch "CS8603" -and  # Possible null reference return
-                    $lineStr -notmatch "CS8604" -and  # Possible null reference argument
-                    $lineStr -notmatch "CS8619" -and  # Nullability mismatch
-                    $lineStr -notmatch "CS8714" -and  # Type parameter nullability
-                    $lineStr -notmatch "CS0414" -and  # Field assigned but never used
-                    $lineStr -notmatch "EFCORE998" -and  # No DbContext classes found
-                    $lineStr -notmatch "merge-message-registries") {
-                $buildWarnings += $lineStr.Trim()
+            elseif ($cleanLine -match "warning\s+(CS\d+|MSB\d+|EFCORE\d+):" -and
+                    $cleanLine -notmatch "CS8019" -and  # Unnecessary using directive
+                    $cleanLine -notmatch "CS0105" -and  # Duplicate using directive
+                    $cleanLine -notmatch "CS8618" -and  # Non-nullable field
+                    $cleanLine -notmatch "CS8600" -and  # Converting null literal
+                    $cleanLine -notmatch "CS8601" -and  # Possible null reference assignment
+                    $cleanLine -notmatch "CS8602" -and  # Dereference of null reference
+                    $cleanLine -notmatch "CS8603" -and  # Possible null reference return
+                    $cleanLine -notmatch "CS8604" -and  # Possible null reference argument
+                    $cleanLine -notmatch "CS8619" -and  # Nullability mismatch
+                    $cleanLine -notmatch "CS8714" -and  # Type parameter nullability
+                    $cleanLine -notmatch "CS0414" -and  # Field assigned but never used
+                    $cleanLine -notmatch "EFCORE998" -and  # No DbContext classes found
+                    $cleanLine -notmatch "merge-message-registries") {
+                $buildWarnings += $cleanLine.Trim()
             }
         }
 
@@ -1499,26 +1967,46 @@ try {
             Write-Host "Passed: ~$totalPassed" -ForegroundColor Green
             Write-Host "Failed: $actualFailedCount (stopped on first failure)" -ForegroundColor Red
             Write-Host "Skipped: ~$totalSkipped" -ForegroundColor Yellow
-        } elseif ($totalTests -gt 0) {
-            Write-Host ""
-            Write-Host "Total Tests: $totalTests" -ForegroundColor White
-            Write-Host "Passed: $totalPassed" -ForegroundColor Green
-            Write-Host "Failed: $totalFailed" -ForegroundColor $(if ($totalFailed -gt 0) { "Red" } else { "Green" })
-            Write-Host "Skipped: $totalSkipped" -ForegroundColor Yellow
-
-            if ($totalPassed + $totalFailed + $totalSkipped -ne $totalTests) {
-                Write-Host "Warning: Test counts don't add up (${totalPassed} + ${totalFailed} + ${totalSkipped} != ${totalTests})" -ForegroundColor Yellow
-            }
         } else {
-            Write-Host "No test results parsed" -ForegroundColor Yellow
-            Write-Host ""
-            Write-Host "Possible reasons:" -ForegroundColor Yellow
-            Write-Host "  1. Build failed (check BUILD ERRORS section above)" -ForegroundColor Gray
-            Write-Host "  2. Test filter matched zero tests (try broader pattern)" -ForegroundColor Gray
-            Write-Host "  3. Project filter matched zero projects (check project name)" -ForegroundColor Gray
-            Write-Host ""
-            Write-Host "Try running without filters to see all tests:" -ForegroundColor Yellow
-            Write-Host "  pwsh scripts/Run-Tests.ps1 -AiMode" -ForegroundColor Gray
+            # Compute final totals from all available sources:
+            # 1. $completedPassed/Failed/Skipped from "succeeded:/failed:/skipped:" summary lines
+            # 2. $perProjectProgress from "[+N/xN/?N] Assembly.dll" progress lines (last seen per project)
+            # Note: TUnit with --max-parallel-test-modules may not emit summary lines at all,
+            # so we fall back to summing the last-seen progress per project.
+            $progressPassed = 0; $progressFailed = 0; $progressSkipped = 0
+            foreach ($proj in $perProjectProgress.Values) {
+                $progressPassed += $proj.Passed
+                $progressFailed += $proj.Failed
+                $progressSkipped += $proj.Skipped
+            }
+            # Use whichever source has higher counts (completed summaries are authoritative when available)
+            $finalPassed = [Math]::Max($completedPassed, $progressPassed)
+            $finalFailed = [Math]::Max($completedFailed, $progressFailed)
+            $finalSkipped = [Math]::Max($completedSkipped, $progressSkipped)
+            $finalTotal = $finalPassed + $finalFailed + $finalSkipped
+
+            if ($finalTotal -gt 0) {
+                Write-Host ""
+                Write-Host "Total Tests: $finalTotal ($($perProjectProgress.Count) projects tracked)" -ForegroundColor White
+                Write-Host "Passed: $finalPassed" -ForegroundColor Green
+                Write-Host "Failed: $finalFailed" -ForegroundColor $(if ($finalFailed -gt 0) { "Red" } else { "Green" })
+                Write-Host "Skipped: $finalSkipped" -ForegroundColor Yellow
+
+                # Update totals for status determination
+                $totalPassed = $finalPassed
+                $totalFailed = $finalFailed
+                $totalSkipped = $finalSkipped
+            } else {
+                Write-Host "No test results parsed" -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "Possible reasons:" -ForegroundColor Yellow
+                Write-Host "  1. Build failed (check BUILD ERRORS section above)" -ForegroundColor Gray
+                Write-Host "  2. Test filter matched zero tests (try broader pattern)" -ForegroundColor Gray
+                Write-Host "  3. Project filter matched zero projects (check project name)" -ForegroundColor Gray
+                Write-Host ""
+                Write-Host "Try running without filters to see all tests:" -ForegroundColor Yellow
+                Write-Host "  pwsh scripts/Run-Tests.ps1 -AiMode" -ForegroundColor Gray
+            }
         }
 
         if ($projectErrors.Count -gt 0) {
@@ -1675,19 +2163,25 @@ try {
             # Stream ALL output in verbose mode (this is the key difference from AI mode)
             Write-Host $lineStr
 
+            # Strip ANSI escape sequences for reliable regex matching
+            # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
+            $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
+
             # Capture test counts from TUnit summary format
-            if ($lineStr -match "^\s*succeeded:\s+(\d+)\s*$") {
+            # Use $cleanLine because TUnit wraps these in ANSI color codes
+            if ($cleanLine -match "^\s*succeeded:\s+(\d+)\s*$") {
                 $totalPassed += [int]$matches[1]
             }
-            elseif ($lineStr -match "^\s*failed:\s+(\d+)\s*$") {
+            elseif ($cleanLine -match "^\s*failed:\s+(\d+)\s*$") {
                 $totalFailed += [int]$matches[1]
             }
-            elseif ($lineStr -match "^\s*skipped:\s+(\d+)\s*$") {
+            elseif ($cleanLine -match "^\s*skipped:\s+(\d+)\s*$") {
                 $totalSkipped += [int]$matches[1]
             }
 
             # Capture failed test names
-            if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
+            # Use $cleanLine because TUnit wraps "failed" in ANSI red color codes
+            if ($cleanLine -match "^failed\s+([^\(]+)\s+\(") {
                 if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
                     $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
                     $stackTraceLines = @()
@@ -1711,16 +2205,16 @@ try {
                 }
             }
             elseif ($currentFailedTest) {
-                if ($lineStr -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                if ($cleanLine -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
                     $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
                     $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
                 }
-                elseif ($lineStr -match "^\s+at\s+[\w\.]+") {
+                elseif ($cleanLine -match "^\s+at\s+[\w\.]+") {
                     $capturingStackTrace = $true
                     $stackTraceLines += $lineStr.Trim()
                 }
                 elseif ($capturingStackTrace) {
-                    if ($lineStr -match "^\s+at\s+" -or $lineStr -match "^\s+in\s+.*:\s*line\s+\d+") {
+                    if ($cleanLine -match "^\s+at\s+" -or $cleanLine -match "^\s+in\s+.*:\s*line\s+\d+") {
                         $stackTraceLines += $lineStr.Trim()
                     }
                     else {
@@ -1732,16 +2226,16 @@ try {
                     }
                 }
             }
-            elseif ($lineStr -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
+            elseif ($cleanLine -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
                 $projectName = $matches[1]
                 $errorCount = $matches[2]
                 $projectErrors += "$projectName failed with $errorCount error(s)"
             }
-            elseif ($lineStr -match "^\s*error:\s+(\d+)") {
+            elseif ($cleanLine -match "^\s*error:\s+(\d+)") {
                 $infrastructureErrors += [int]$matches[1]
             }
-            elseif ($lineStr -match "error\s+(CS\d+|MSB\d+):") {
-                $buildErrors += $lineStr.Trim()
+            elseif ($cleanLine -match "error\s+(CS\d+|MSB\d+):") {
+                $buildErrors += $cleanLine.Trim()
             }
         }
 
@@ -1822,24 +2316,34 @@ try {
             $stderrContent -split "`n" | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
         }
 
+        # Emit AI instructions if there are failures (only when running standalone, not from Run-PR)
+        if (($failedTests.Count -gt 0 -or $buildErrors.Count -gt 0) -and -not $NoHeader) {
+            Write-AiInstructions -Type TestFailure
+        }
+
         Write-Host ""
     } else {
         # Normal mode: Pass through to native MTP output with built-in progress
-        & dotnet @testArgs
+        # Tee output for failure detection (dotnet test may return 0 despite test failures)
+        & dotnet @testArgs | Tee-Object -Variable _testOutput
+        $script:_normalModeOutput = $_testOutput -join "`n"
     }
 
     # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
     if ($useAiOutput -or $useVerboseLogging) {
-        # In AI/Verbose mode, use the process exit code and check captured errors
+        # In AI/Verbose mode, check captured errors AND process exit code as safety net
         # Note: dotnet test returns 0 on success, non-zero on failure
-        # Don't count processExitCode alone - it can be non-zero due to skipped tests or cancellation
+        # Exit code 8 = all tests skipped (TUnit), not treated as failure
         #
         # Infrastructure errors (cleanup/teardown issues) are only treated as fatal if:
         # - Tests also failed (indicates a real problem)
         # - No tests passed (indicates setup failure)
         # If tests pass but cleanup throws, we log a warning but don't fail the build
-        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0
-        $hasInfraErrorsOnly = $infrastructureErrors -gt 0 -and -not $hasTestFailures
+        # Non-zero exit code with zero test failures and infrastructure errors = infra issue, not test failure
+        # The .NET test platform can exit non-zero due to NamedPipeServer broken pipe during cleanup
+        $exitCodeIsInfraIssue = $processExitCode -ne 0 -and $processExitCode -ne 8 -and $totalFailed -eq 0 -and $infrastructureErrors -gt 0
+        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or ($processExitCode -ne 0 -and $processExitCode -ne 8 -and -not $exitCodeIsInfraIssue)
+        $hasInfraErrorsOnly = ($infrastructureErrors -gt 0 -or $exitCodeIsInfraIssue) -and -not $hasTestFailures
 
         if ($hasInfraErrorsOnly -and $totalPassed -gt 0) {
             # Infrastructure errors with passing tests - warn but don't fail
@@ -1852,7 +2356,96 @@ try {
             $hasErrors = $hasTestFailures -or ($infrastructureErrors -gt 0 -and $totalPassed -eq 0)
         }
     } else {
+        # Check both exit code AND output for failures
+        # dotnet test with --max-parallel-test-modules can return 0 despite test module failures
         $hasErrors = $LASTEXITCODE -ne 0
+        if (-not $hasErrors -and $script:_normalModeOutput) {
+            if ($script:_normalModeOutput -match "failed with \d+ error" -or
+                $script:_normalModeOutput -match "^\s*failed:\s+[1-9]") {
+                $hasErrors = $true
+                Write-Host ""
+                Write-Host "WARNING: dotnet test returned exit code 0 but output contains test failures" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    # --- Coverage Report Generation (skipped when Run-PR handles it separately) ---
+    if ($Coverage -and -not $NoReport) {
+        Write-Host ""
+        Write-Host "Generating coverage report..." -ForegroundColor Cyan
+
+        # Auto-install reportgenerator: try local manifest first, fall back to global
+        $rgInstalled = dotnet tool list -g 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+        $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+        if (-not $rgInstalled -and -not $rgLocal) {
+            Write-Host "Installing reportgenerator..." -ForegroundColor Yellow
+            dotnet tool restore 2>&1 | Out-Null
+            $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+            if (-not $rgLocal) {
+                dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+            }
+        }
+
+        # Find all cobertura XML files from test output
+        $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+
+        if ($coberturaFiles.Count -gt 0) {
+            $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+            $coveragePct = $coverageResult.CoveragePct
+            $totalLines = $coverageResult.TotalLines
+            $totalCovered = $coverageResult.TotalCovered
+            $htmlReport = $coverageResult.HtmlReport
+        } else {
+            Write-Host "No cobertura XML files found. Ensure tests ran with --coverage." -ForegroundColor Yellow
+        }
+    }
+
+    # Calculate run duration
+    $runDuration = ([DateTime]::UtcNow - $script:runStartTime).TotalSeconds
+
+    # Calculate coverage percentage if available
+    $coveragePct = $null
+    if ($Coverage -and $totalLines -gt 0) {
+        $coveragePct = [math]::Round(($totalCovered / $totalLines) * 100, 2)
+    }
+
+    # Write history entry
+    $historyEntry = @{
+        mode        = $Mode
+        duration_s  = [math]::Round($runDuration, 1)
+        total       = $totalPassed + $totalFailed + $totalSkipped
+        passed      = $totalPassed
+        failed      = $totalFailed
+        skipped     = $totalSkipped
+    }
+    if ($null -ne $coveragePct) { $historyEntry["coverage_pct"] = $coveragePct }
+    if ($failedTests.Count -gt 0) { $historyEntry["failed_tests"] = @($failedTests) }
+    $histFile = Join-Path $PSScriptRoot ".." "logs" "test-runs.jsonl"
+    Write-HistoryEntry -FilePath $histFile -Entry $historyEntry
+
+    # Stop tee logging
+    if ($LogFile) { Stop-TeeLogging }
+
+    # JSON output mode
+    if ($OutputFormat -eq "Json") {
+        $jsonResult = @{
+            status       = if (-not $hasErrors) { "passed" } else { "failed" }
+            mode         = $Mode
+            duration_s   = [math]::Round($runDuration, 1)
+            total        = $totalPassed + $totalFailed + $totalSkipped
+            passed       = $totalPassed
+            failed       = $totalFailed
+            skipped      = $totalSkipped
+            failed_tests = @($failedTests)
+        }
+        if ($null -ne $coveragePct) { $jsonResult["coverage_pct"] = $coveragePct }
+        if ($Coverage) {
+            $htmlReport = Join-Path (Join-Path $repoRoot "coverage-report") "index.html"
+            if (Test-Path $htmlReport) { $jsonResult["coverage_report"] = $htmlReport }
+        }
+        ConvertTo-JsonResult -Result $jsonResult
+        exit $(if (-not $hasErrors) { 0 } else { 1 })
     }
 
     if (-not $hasErrors) {
@@ -1902,8 +2495,8 @@ try {
             # Prune unused volumes (only when doing full cleanup)
             docker volume prune -f 2>&1 | Out-Null
         } else {
-            # Partial cleanup: preserve shared containers (whizbang-test-postgres, whizbang-test-rabbitmq)
-            $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+            # Partial cleanup: preserve shared containers (postgres, rabbitmq, servicebus, mssql)
+            $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" -and $_ -notmatch "whizbang-test-servicebus" -and $_ -notmatch "whizbang-test-mssql" } | ForEach-Object { ($_ -split " ")[0] }
             if ($whizbangContainers) {
                 $whizbangContainers | ForEach-Object {
                     docker stop $_ 2>&1 | Out-Null

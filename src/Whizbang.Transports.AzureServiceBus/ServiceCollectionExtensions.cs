@@ -67,7 +67,7 @@ public static class ServiceCollectionExtensions {
     if (options.AutoProvisionInfrastructure) {
       var hasAdminClient = services.Any(sd => sd.ServiceType == typeof(IServiceBusAdminClient));
       if (!hasAdminClient) {
-        services.AddSingleton<IServiceBusAdminClient>(sp => {
+        services.AddSingleton<IServiceBusAdminClient>(_ => {
           var adminClient = new ServiceBusAdministrationClient(connectionString);
           return new ServiceBusAdminClientWrapper(adminClient);
         });
@@ -82,17 +82,49 @@ public static class ServiceCollectionExtensions {
       // Get admin client if available (for auto-provisioning)
       var adminClient = sp.GetService<IServiceBusAdminClient>();
 
-      var transport = new AzureServiceBusTransport(client, jsonOptions, options, logger, adminClient);
+      // Slice 2 — receptor + perspective registries enable receive-time drop of messages
+      // this service has no consumer for. Both optional so non-Whizbang-host scenarios
+      // (test fakes, custom bootstraps) keep working without the filter.
+      var receptorRegistry = sp.GetService<Whizbang.Core.Messaging.IReceptorRegistry>();
+      var perspectiveRegistry = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>();
+
+      // Slice 5 — opt-in raw receptor registry. When typed binder misses but a raw receptor
+      // is registered for the inner message type, dispatch routes there instead of dropping.
+      var rawReceptorRegistry = sp.GetService<Whizbang.Core.Messaging.IRawReceptorRegistry>();
+
+      // Slice 4 — multi-pass type binder fallback for envelope types not in the local
+      // JsonContextRegistry. Optional; transport instantiates a default when missing.
+      var typeBinder = sp.GetService<Whizbang.Core.Messaging.IMessageTypeBinder>();
+
+      // Shared discard policy — routes NoLocalConsumer drops through structured
+      // logging + the whizbang.message.skipped OTel counter (instead of WARN spam).
+      var discardPolicy = sp.GetService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
+
+      // Absorbed namespaces — an unconsumed event on one of these is KEPT (persisted) at the
+      // ASB receive gate instead of dropped, mirroring the core MessageDiscardPolicy behavior.
+      var absorbedNamespaces = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()
+        ?.Value.AbsorbedNamespaces;
+
+      var transport = new AzureServiceBusTransport(
+        client, jsonOptions, options, logger, adminClient,
+        receptorRegistry: receptorRegistry,
+        perspectiveRegistry: perspectiveRegistry,
+        rawReceptorRegistry: rawReceptorRegistry,
+        typeBinder: typeBinder,
+        discardPolicy: discardPolicy,
+        absorbedNamespaces: absorbedNamespaces);
 
       // IMPORTANT: Initialize transport during registration to verify connectivity
       // This ensures the application won't start if Service Bus is unreachable
       try {
         transport.InitializeAsync().GetAwaiter().GetResult();
         logger?.LogInformation("Transport initialized (using shared client)");
+#pragma warning disable S2139 // Intentional log-and-rethrow: DI factory exceptions are often swallowed or wrapped, so logging here ensures the root cause is captured for diagnostics.
       } catch (Exception ex) {
         logger?.LogError(ex, "Failed to initialize transport during registration");
         throw;
       }
+#pragma warning restore S2139
 
       return transport;
     });
@@ -111,17 +143,35 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IMessagePublishStrategy>(sp => {
       var transport = sp.GetRequiredService<ITransport>();
       var readinessCheck = sp.GetRequiredService<ITransportReadinessCheck>();
+      var loggerFactory = sp.GetService<ILoggerFactory>();
+
+      // Post-serialize hook chain + JsonSerializerOptions are optional; when
+      // AddWhizbangBodyOffload (or any AddWhizbangPostSerializeHook<T>) is
+      // registered AND the transport's JsonSerializerOptions resolver is
+      // available, the strategy will JIT-serialize, run the chain, stamp
+      // whizbang.body-size, and validate against the 256 KB ASB Standard
+      // ceiling. Both null → existing fast-path behavior (no pre-serialize).
+      var hookChain = sp.GetService<Whizbang.Core.Offloads.PostSerializeHookChain>();
+      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
 
       // Try to get inbox topic from registered outbox routing strategy
       // WithRouting() registers IOutboxRoutingStrategy directly
       var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
       if (outboxStrategy is SharedTopicOutboxStrategy sharedStrategy) {
         // Use the configured inbox topic from outbox strategy
-        return new TransportPublishStrategy(transport, readinessCheck, sharedStrategy.InboxTopic);
+        return new TransportPublishStrategy(
+          transport, readinessCheck, sharedStrategy.InboxTopic,
+          loggerFactory,
+          throttleRetryOptions: null, metrics: null,
+          postSerializeHookChain: hookChain, jsonOptions: jsonOptions);
       }
 
       // Fall back to default inbox topic
-      return new TransportPublishStrategy(transport, readinessCheck);
+      return new TransportPublishStrategy(
+        transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic,
+        loggerFactory,
+        throttleRetryOptions: null, metrics: null,
+        postSerializeHookChain: hookChain, jsonOptions: jsonOptions);
     });
 
     return services;
@@ -146,7 +196,7 @@ public static class ServiceCollectionExtensions {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
     // Register admin client wrapper
-    services.AddSingleton<IServiceBusAdminClient>(sp => {
+    services.AddSingleton<IServiceBusAdminClient>(_ => {
       var adminClient = new ServiceBusAdministrationClient(connectionString);
       return new ServiceBusAdminClientWrapper(adminClient);
     });

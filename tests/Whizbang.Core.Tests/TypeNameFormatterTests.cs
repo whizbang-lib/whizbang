@@ -79,7 +79,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task Parse_WithShortForm_ReturnsSameFormatAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests";
 
     // Act
     var result = TypeNameFormatter.Parse(input);
@@ -91,7 +91,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task Parse_WithLongForm_ExtractsShortFormAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
 
     // Act
     var result = TypeNameFormatter.Parse(input);
@@ -103,7 +103,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task Parse_WithExtraWhitespace_TrimsProperlyAsync() {
     // Arrange
-    var input = "  Whizbang.Core.Tests.TypeNameFormatterTests  ,  Whizbang.Core.Tests  ";
+    const string input = "  Whizbang.Core.Tests.TypeNameFormatterTests  ,  Whizbang.Core.Tests  ";
 
     // Act
     var result = TypeNameFormatter.Parse(input);
@@ -115,7 +115,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task Parse_WithTypeNameOnly_ThrowsInvalidOperationExceptionAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests";
 
     // Act & Assert
     await Assert.That(() => TypeNameFormatter.Parse(input))
@@ -145,7 +145,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task TryParse_WithValidInput_ReturnsTrueAndParsedResultAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests";
 
     // Act
     var success = TypeNameFormatter.TryParse(input, out var result);
@@ -158,7 +158,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task TryParse_WithLongForm_ReturnsTrueAndShortFormAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests, Version=1.0.0.0";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests, Version=1.0.0.0";
 
     // Act
     var success = TypeNameFormatter.TryParse(input, out var result);
@@ -201,7 +201,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task TryParse_WithTypeNameOnly_ReturnsFalseAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests";
 
     // Act
     var success = TypeNameFormatter.TryParse(input, out var result);
@@ -228,6 +228,250 @@ public class TypeNameFormatterTests {
     await Assert.That(parsed).IsEqualTo(formatted);
   }
 
+  // ========================================
+  // GETFULLNAME TESTS
+  // ========================================
+
+  [Test]
+  public async Task GetFullName_WithAssemblyQualified_ExtractsFullNameAsync() {
+    var result = TypeNameFormatter.GetFullName("MyApp.Events.OrderCreated, MyApp");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  [Test]
+  public async Task GetFullName_WithGlobalPrefix_StripsGlobalAsync() {
+    var result = TypeNameFormatter.GetFullName("global::MyApp.Events.OrderCreated");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  [Test]
+  public async Task GetFullName_WithSimpleName_ReturnsAsIsAsync() {
+    var result = TypeNameFormatter.GetFullName("MyApp.Events.OrderCreated");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  [Test]
+  public async Task GetFullName_WithVersionInfo_StripsAllQualifiersAsync() {
+    var result = TypeNameFormatter.GetFullName(
+      "MyApp.Events.OrderCreated, MyApp, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  [Test]
+  public async Task GetFullName_WithNullOrEmpty_ReturnsInputAsync() {
+    await Assert.That(TypeNameFormatter.GetFullName(null!)).IsNull();
+    await Assert.That(TypeNameFormatter.GetFullName("")).IsEqualTo("");
+  }
+
+  [Test]
+  public async Task GetFullName_WithGlobalPrefixAndAssembly_HandlesBothAsync() {
+    var result = TypeNameFormatter.GetFullName("global::MyApp.Events.OrderCreated, MyApp");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  // ========================================
+  // GETSIMPLENAME TESTS
+  // ========================================
+
+  [Test]
+  public async Task GetSimpleName_WithAssemblyQualified_ExtractsSimpleNameAsync() {
+    var result = TypeNameFormatter.GetSimpleName("MyApp.Events.OrderCreated, MyApp");
+    await Assert.That(result).IsEqualTo("OrderCreated");
+  }
+
+  [Test]
+  public async Task GetSimpleName_WithGlobalPrefix_ExtractsSimpleNameAsync() {
+    var result = TypeNameFormatter.GetSimpleName("global::MyApp.Events.OrderCreated");
+    await Assert.That(result).IsEqualTo("OrderCreated");
+  }
+
+  [Test]
+  public async Task GetSimpleName_WithNestedType_PreservesNestedSeparatorAsync() {
+    var result = TypeNameFormatter.GetSimpleName("MyApp.Events.SessionContracts+EndedEvent");
+    await Assert.That(result).IsEqualTo("SessionContracts+EndedEvent");
+  }
+
+  [Test]
+  public async Task GetSimpleName_WithSimpleName_ReturnsAsIsAsync() {
+    var result = TypeNameFormatter.GetSimpleName("OrderCreated");
+    await Assert.That(result).IsEqualTo("OrderCreated");
+  }
+
+  [Test]
+  public async Task GetSimpleName_WithNullOrEmpty_ReturnsInputAsync() {
+    await Assert.That(TypeNameFormatter.GetSimpleName(null!)).IsNull();
+    await Assert.That(TypeNameFormatter.GetSimpleName("")).IsEqualTo("");
+  }
+
+  // ========================================
+  // GETNAMESPACE TESTS
+  // ========================================
+
+  [Test]
+  public async Task GetNamespace_WithAssemblyQualified_ExtractsNamespaceAsync() {
+    var result = TypeNameFormatter.GetNamespace("MyApp.Events.OrderCreated, MyApp");
+    await Assert.That(result).IsEqualTo("MyApp.Events");
+  }
+
+  [Test]
+  public async Task GetNamespace_WithGlobalPrefix_ExtractsNamespaceAsync() {
+    var result = TypeNameFormatter.GetNamespace("global::MyApp.Events.OrderCreated");
+    await Assert.That(result).IsEqualTo("MyApp.Events");
+  }
+
+  [Test]
+  public async Task GetNamespace_WithNoNamespace_ReturnsNullAsync() {
+    var result = TypeNameFormatter.GetNamespace("OrderCreated");
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task GetNamespace_WithNullOrEmpty_ReturnsNullAsync() {
+    await Assert.That(TypeNameFormatter.GetNamespace(null!)).IsNull();
+    await Assert.That(TypeNameFormatter.GetNamespace("")).IsNull();
+  }
+
+  // ========================================
+  // GetPayloadNamespace — extracts inner type namespace from generic envelope wrapper
+  // ========================================
+
+  [Test]
+  public async Task GetPayloadNamespace_GenericEnvelope_ExtractsInnerTypeNamespaceAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, a consumer.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("a consumer.Contracts.Chat");
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_GenericEnvelope_NestedType_ExtractsOuterNamespaceAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Contracts.Chat.Conversations+CreatedEvent, MyApp.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("MyApp.Contracts.Chat");
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_SimpleType_FallsBackToGetNamespaceAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace(
+      "MyApp.Contracts.Chat.MyEvent, MyApp.Contracts");
+    await Assert.That(result).IsEqualTo("MyApp.Contracts.Chat");
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_NullInput_ReturnsNullAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace(null!);
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_EmptyInput_ReturnsNullAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace("");
+    await Assert.That(result).IsNull();
+  }
+
+  // ========================================
+  // GetPayloadFullName — extracts inner payload full name from generic envelope wrapper
+  // ========================================
+
+  [Test]
+  public async Task GetPayloadFullName_GenericEnvelope_ExtractsInnerFullNameAsync() {
+    var result = TypeNameFormatter.GetPayloadFullName(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, a consumer.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("a consumer.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent");
+  }
+
+  [Test]
+  public async Task GetPayloadFullName_SimpleType_FallsBackToGetFullNameAsync() {
+    var result = TypeNameFormatter.GetPayloadFullName("MyApp.Contracts.Chat.MyEvent, MyApp.Contracts");
+    await Assert.That(result).IsEqualTo("MyApp.Contracts.Chat.MyEvent");
+  }
+
+  [Test]
+  public async Task GetPayloadFullName_NullInput_ReturnsNullAsync() {
+    await Assert.That(TypeNameFormatter.GetPayloadFullName(null!)).IsNull();
+  }
+
+  [Test]
+  public async Task GetPayloadFullName_EmptyInput_ReturnsNullAsync() {
+    await Assert.That(TypeNameFormatter.GetPayloadFullName("")).IsNull();
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_RealWorldEnvelopeType_ExtractsCorrectlyAsync() {
+    // This is the actual format from RabbitMQ transport in a consumer application
+    var result = TypeNameFormatter.GetPayloadNamespace(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.SystemSeeding.SystemSeedContracts+ReseedSystemSucceededEvent, a consumer.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("a consumer.Contracts.SystemSeeding");
+  }
+
+  // ==========================================================================
+  // GetPerspectiveName tests
+  // ==========================================================================
+
+  [Test]
+  public async Task GetPerspectiveName_TopLevelType_ReturnsFullNameAsync() {
+    var result = TypeNameFormatter.GetPerspectiveName(typeof(TypeNameFormatterTests));
+    await Assert.That(result).IsEqualTo(typeof(TypeNameFormatterTests).FullName);
+  }
+
+  [Test]
+  public async Task GetPerspectiveName_NestedType_UsesPlusSeparatorAsync() {
+    var result = TypeNameFormatter.GetPerspectiveName(typeof(NestedTestClass));
+    // Should be "Namespace.TypeNameFormatterTests+NestedTestClass" (CLR format)
+    await Assert.That(result).Contains("+NestedTestClass");
+    await Assert.That(result).IsEqualTo(typeof(NestedTestClass).FullName);
+  }
+
+  [Test]
+  public async Task GetPerspectiveName_MatchesTypeFullNameAsync() {
+    // This is the key consistency guarantee — the method must produce the same
+    // output as Type.FullName (which matches BuildClrTypeName from generators)
+    var types = new[] { typeof(string), typeof(TypeNameFormatterTests), typeof(NestedTestClass), typeof(DeeplyNested.Inner) };
+    foreach (var type in types) {
+      var result = TypeNameFormatter.GetPerspectiveName(type);
+      await Assert.That(result).IsEqualTo(type.FullName);
+    }
+  }
+
+  // ==========================================================================
+  // FormatClrTypeName tests — the no-assembly CLR type-identity form written to
+  // aggregate_type / clr_type_name columns (runtime mirror of BuildClrTypeName).
+  // ==========================================================================
+
+  [Test]
+  public async Task FormatClrTypeName_TopLevelType_ReturnsFullNameAsync() {
+    var result = TypeNameFormatter.FormatClrTypeName(typeof(TypeNameFormatterTests));
+    await Assert.That(result).IsEqualTo(typeof(TypeNameFormatterTests).FullName);
+    // No assembly qualifier — this is the CLR full name, not the "Type, Assembly" form.
+    await Assert.That(result).DoesNotContain(", ");
+  }
+
+  [Test]
+  public async Task FormatClrTypeName_NestedType_UsesPlusSeparatorAsync() {
+    var result = TypeNameFormatter.FormatClrTypeName(typeof(NestedTestClass));
+    await Assert.That(result).Contains("+NestedTestClass");
+    await Assert.That(result).IsEqualTo(typeof(NestedTestClass).FullName);
+  }
+
+  [Test]
+  public async Task FormatClrTypeName_NullType_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => TypeNameFormatter.FormatClrTypeName(null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task FormatClrTypeName_GetPerspectiveName_AreEquivalentAsync() {
+    // GetPerspectiveName delegates to FormatClrTypeName; lock that they never diverge.
+    var types = new[] { typeof(string), typeof(TypeNameFormatterTests), typeof(NestedTestClass), typeof(DeeplyNested.Inner) };
+    foreach (var type in types) {
+      await Assert.That(TypeNameFormatter.FormatClrTypeName(type))
+        .IsEqualTo(TypeNameFormatter.GetPerspectiveName(type));
+    }
+  }
+
   // Helper nested class for testing
   private sealed class NestedTestClass { }
+
+  private sealed class DeeplyNested {
+    public sealed class Inner { }
+  }
 }

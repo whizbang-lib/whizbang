@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Tags;
@@ -14,7 +15,6 @@ namespace Whizbang.Core.Tags;
 /// The payload is built from:
 /// <list type="bullet">
 /// <item><description>Extracted properties from the <see cref="MessageTagAttribute.Properties"/> array</description></item>
-/// <item><description>Full event under "__event" key when <see cref="MessageTagAttribute.IncludeEvent"/> is true</description></item>
 /// <item><description>Merged content from <see cref="MessageTagAttribute.ExtraJson"/> if specified</description></item>
 /// </list>
 /// </para>
@@ -44,7 +44,7 @@ namespace Whizbang.Core.Tags;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#tag-context</docs>
+/// <docs>fundamentals/messages/message-tags#tag-context</docs>
 /// <tests>Whizbang.Core.Tests/Tags/TagContextTests.cs</tests>
 public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribute {
   /// <summary>
@@ -79,11 +79,10 @@ public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribu
   /// The payload structure depends on the tag attribute configuration:
   /// </para>
   /// <code>
-  /// // Example payload when Properties = ["JobId", "Status"], IncludeEvent = true, ExtraJson = {"source": "api"}
+  /// // Example payload when Properties = ["JobId", "Status"], ExtraJson = {"source": "api"}
   /// {
   ///   "JobId": "abc-123",
   ///   "Status": "Completed",
-  ///   "__event": { "JobId": "abc-123", "Status": "Completed", "Details": {...} },
   ///   "source": "api"
   /// }
   /// </code>
@@ -104,4 +103,10 @@ public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribu
   /// </code>
   /// </remarks>
   public IScopeContext? Scope { get; init; }
+
+  /// <summary>
+  /// Gets the lifecycle stage at which this hook is being invoked.
+  /// Hooks can inspect this to decide whether to act (e.g., only fire at PostPerspectiveInline).
+  /// </summary>
+  public LifecycleStage Stage { get; init; }
 }

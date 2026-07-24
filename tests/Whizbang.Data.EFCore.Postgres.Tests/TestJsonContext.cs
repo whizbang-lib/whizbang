@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Serialization;
+using Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -17,6 +18,21 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [JsonSerializable(typeof(TestOrderId))]
 [JsonSerializable(typeof(PerspectiveMetadata))]
 [JsonSerializable(typeof(PerspectiveScope))]
+[JsonSerializable(typeof(ActionTestModel))]
+[JsonSerializable(typeof(ActionTestCreatedEvent))]
+[JsonSerializable(typeof(ActionTestUpdatedEvent))]
+[JsonSerializable(typeof(ActionTestSoftDeletedEvent))]
+[JsonSerializable(typeof(ActionTestPurgedEvent))]
+[JsonSerializable(typeof(RebuildBalanceModel))]
+[JsonSerializable(typeof(RebuildCreditedEvent))]
+[JsonSerializable(typeof(RebuildDebitedEvent))]
+[JsonSerializable(typeof(RebuildInventoryModel))]
+[JsonSerializable(typeof(RebuildStockAdjustedEvent))]
+[JsonSerializable(typeof(MultiPerspectiveUpsertSymmetryTests.ModelOne))]
+[JsonSerializable(typeof(MultiPerspectiveUpsertSymmetryTests.ModelTwo))]
+[JsonSerializable(typeof(FullLinqSupportTests.CustomerOrder))]
+[JsonSerializable(typeof(FullLinqSupportTests.Address))]
+[JsonSerializable(typeof(FullLinqSupportTests.OrderItem))]
 public partial class TestJsonContext : JsonSerializerContext {
   /// <summary>
   /// Module initializer that registers TestJsonContext with the global registry.

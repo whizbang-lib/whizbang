@@ -19,6 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Dapper type handlers for TrackedGuid and DateTimeOffset are registered via
 /// <see cref="DapperTypeHandlers"/> module initializer.
 /// </remarks>
+[NotInParallel("PostgreSQL")]
 public abstract class PostgresTestBase : IAsyncDisposable {
   static PostgresTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
@@ -41,8 +42,8 @@ public abstract class PostgresTestBase : IAsyncDisposable {
   public async Task SetupAsync() {
     var setupSucceeded = false;
     try {
-      // Initialize shared container (only starts once, subsequent calls return immediately)
-      await SharedPostgresContainer.InitializeAsync();
+      // Initialize shared container (skips tests if Docker/PostgreSQL unavailable)
+      await SharedPostgresContainer.InitializeOrSkipAsync();
 
       // Create unique database for THIS test
       _testDatabaseName = $"test_{Guid.NewGuid():N}";
@@ -83,7 +84,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
   [After(Test)]
   public async Task TeardownAsync() {
     // Drop the test-specific database to clean up
-    if (_testDatabaseName != null) {
+    if (_testDatabaseName != null && SharedPostgresContainer.IsInitialized) {
       try {
         // Close all connections to the test database first
         await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
@@ -133,40 +134,19 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "..", "..", "..", "..", "..",
       "src", "Whizbang.Data.Postgres", "Migrations");
 
-    var functionFiles = new[] {
-      "001_CreateComputePartitionFunction.sql",
-      "002_CreateAcquireReceptorProcessingFunction.sql",
-      "003_CreateCompleteReceptorProcessingFunction.sql",
-      "004_CreateAcquirePerspectiveCheckpointFunction.sql",
-      "005_CreateCompletePerspectiveCheckpointFunction.sql",
-      "006_CreateNormalizeEventTypeFunction.sql",
-      "007_CreateActiveStreamsTable.sql",
-      "008_CreateMessageAssociationRegistry.sql",
-      "009_CreatePerspectiveEventsTable.sql",
-      "010_RegisterInstanceHeartbeat.sql",
-      "011_CleanupStaleInstances.sql",
-      "012_CalculateInstanceRank.sql",
-      "013_ProcessOutboxCompletions.sql",
-      "014_ProcessInboxCompletions.sql",
-      "015_ProcessPerspectiveEventCompletions.sql",
-      "016_UpdatePerspectiveCheckpoints.sql",
-      "017_ProcessOutboxFailures.sql",
-      "018_ProcessInboxFailures.sql",
-      "019_ProcessPerspectiveEventFailures.sql",
-      "020_StoreOutboxMessages.sql",
-      "021_StoreInboxMessages.sql",
-      "022_StorePerspectiveEvents.sql",
-      "023_CleanupCompletedStreams.sql",
-      "024_ClaimOrphanedOutbox.sql",
-      "025_ClaimOrphanedInbox.sql",
-      "026_ClaimOrphanedReceptorWork.sql",
-      "027_ClaimOrphanedPerspectiveEvents.sql",
-      "028_EventStorageErrorTracking.sql",
-      "029_ProcessWorkBatch.sql",
-      "030_DecompositionComplete.sql",
-      "031_ReconcilePerspectiveRegistry.sql",
-      "032_FixExponentialBackoffOverflow.sql"
-    };
+    // Discover all migration files dynamically — avoids the bit-rot that hardcoded lists
+    // accumulate as old migrations are deleted (002/003/004 were removed earlier; this
+    // list previously referenced them and broke any test that tried to use the base
+    // class). Sort by filename: PostgreSQL migration ordering is conventionally
+    // alphanumeric on the prefix (000_*, 001_*, ...), and any same-prefix collision is
+    // also handled deterministically by Ordinal sort.
+    var functionFiles = Directory
+      .GetFiles(migrationPath, "*.sql")
+      .Select(Path.GetFileName)
+      .Where(name => name is not null)
+      .Cast<string>()
+      .OrderBy(name => name, StringComparer.Ordinal)
+      .ToArray();
 
     foreach (var functionFile in functionFiles) {
       var functionFilePath = Path.Combine(migrationPath, functionFile);

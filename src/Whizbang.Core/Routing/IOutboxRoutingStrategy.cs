@@ -5,7 +5,7 @@ namespace Whizbang.Core.Routing;
 /// <summary>
 /// Determines where this service publishes events (outbox destination).
 /// </summary>
-/// <docs>core-concepts/routing#outbox-routing</docs>
+/// <docs>fundamentals/dispatcher/routing#outbox-routing</docs>
 public interface IOutboxRoutingStrategy {
   /// <summary>
   /// Gets the destination for publishing an event.

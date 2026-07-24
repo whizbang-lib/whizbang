@@ -1,10 +1,12 @@
 using System.Diagnostics.CodeAnalysis;
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Benchmarks;
 
@@ -18,7 +20,6 @@ public class TransportThroughputBenchmarks {
   private const string BENCHMARK_HOST = "benchmark-host";
   private const int BENCHMARK_PROCESS_ID = 12345;
 
-  private ITransportManager _transportManager = null!;
   private ITransport _transport = null!;
   private ServiceProvider _serviceProvider = null!;
 
@@ -33,7 +34,6 @@ public class TransportThroughputBenchmarks {
     services.AddSingleton<ITransport, InProcessTransport>();
 
     _serviceProvider = services.BuildServiceProvider();
-    _transportManager = _serviceProvider.GetRequiredService<ITransportManager>();
     _transport = _serviceProvider.GetRequiredService<ITransport>();
 
     // Pre-generate test envelopes
@@ -56,12 +56,13 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport-single";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-      if (Interlocked.Increment(ref receivedCount) >= messageCount) {
-        tcs.TrySetResult(true);
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        if (Interlocked.Increment(ref receivedCount) >= messageCount) {
+          tcs.TrySetResult(true);
+        }
       }
-      await Task.CompletedTask;
-    }, new TransportDestination(topic));
+    }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     for (int i = 0; i < messageCount; i++) {
       await _transport.PublishAsync(_testEnvelopes[i], new TransportDestination(topic));
@@ -86,12 +87,13 @@ public class TransportThroughputBenchmarks {
     // Subscribe multiple handlers to same topic
     var subscriptions = new List<ISubscription>();
     for (int i = 0; i < subscriberCount; i++) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-        if (Interlocked.Increment(ref receivedCount) >= expectedTotal) {
-          tcs.TrySetResult(true);
+      var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+        foreach (var msg in batch) {
+          if (Interlocked.Increment(ref receivedCount) >= expectedTotal) {
+            tcs.TrySetResult(true);
+          }
         }
-        await Task.CompletedTask;
-      }, new TransportDestination(topic));
+      }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
       subscriptions.Add(subscription);
     }
 
@@ -124,12 +126,13 @@ public class TransportThroughputBenchmarks {
     // Subscribe to each topic
     var subscriptions = new List<ISubscription>();
     foreach (var topic in topics) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-        if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
-          tcs.TrySetResult(true);
+      var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+        foreach (var msg in batch) {
+          if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
+            tcs.TrySetResult(true);
+          }
         }
-        await Task.CompletedTask;
-      }, new TransportDestination(topic));
+      }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
       subscriptions.Add(subscription);
     }
 
@@ -157,9 +160,9 @@ public class TransportThroughputBenchmarks {
     var topic = "transport-subscribe-test";
 
     for (int i = 0; i < operationCount; i++) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
+      var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
         await Task.CompletedTask;
-      }, new TransportDestination(topic));
+      }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
       subscription.Dispose();
     }
@@ -177,12 +180,13 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport-concurrent-pub";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-      if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
-        tcs.TrySetResult(true);
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
+          tcs.TrySetResult(true);
+        }
       }
-      await Task.CompletedTask;
-    }, new TransportDestination(topic));
+    }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     // Concurrent publishers
     var publishTasks = Enumerable.Range(0, publisherCount)
@@ -210,10 +214,11 @@ public class TransportThroughputBenchmarks {
     var topic = "transport-batched";
     var receivedCount = 0;
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-      Interlocked.Increment(ref receivedCount);
-      await Task.CompletedTask;
-    }, new TransportDestination(topic));
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        Interlocked.Increment(ref receivedCount);
+      }
+    }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     // Publish all messages without waiting
     var publishTasks = new List<Task>();
@@ -242,12 +247,13 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport.routing.test";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-      if (Interlocked.Increment(ref receivedCount) >= messageCount) {
-        tcs.TrySetResult(true);
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        if (Interlocked.Increment(ref receivedCount) >= messageCount) {
+          tcs.TrySetResult(true);
+        }
       }
-      await Task.CompletedTask;
-    }, new TransportDestination(topic, "*.routing.*"));
+    }, new TransportDestination(topic, "*.routing.*"), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     for (int i = 0; i < messageCount; i++) {
       await _transport.PublishAsync(_testEnvelopes[i], new TransportDestination(
@@ -277,12 +283,13 @@ public class TransportThroughputBenchmarks {
     // Subscribe to each topic with routing key pattern
     var subscriptions = new List<ISubscription>();
     foreach (var topic in topics) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-        if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
-          tcs.TrySetResult(true);
+      var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+        foreach (var msg in batch) {
+          if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
+            tcs.TrySetResult(true);
+          }
         }
-        await Task.CompletedTask;
-      }, new TransportDestination(topic, "*.key.*"));
+      }, new TransportDestination(topic, "*.key.*"), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
       subscriptions.Add(subscription);
     }
 
@@ -307,6 +314,7 @@ public class TransportThroughputBenchmarks {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = command,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = []
     };
 

@@ -17,7 +17,7 @@ namespace Whizbang.Core.SystemEvents;
 /// - When <c>LocalOnly = false</c> (via <c>Broadcast()</c>), system events are transported
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/system-events#transport-filtering</docs>
+/// <docs>fundamentals/events/system-events#transport-filtering</docs>
 public interface ITransportPublishFilter {
   /// <summary>
   /// Determines if the given message should be published to transport.

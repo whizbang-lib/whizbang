@@ -6,6 +6,8 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Data;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -22,6 +24,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Uses JsonbSizeValidator for C#-based size validation.
 /// </summary>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
+#pragma warning disable CS9113 // Primary constructor parameters are unread - retained for backward compatibility
 public class DapperPostgresEventStore(
   IDbConnectionFactory connectionFactory,
   IDbExecutor executor,
@@ -32,13 +35,12 @@ public class DapperPostgresEventStore(
   IPerspectiveInvoker? perspectiveInvoker,
   ILogger<DapperPostgresEventStore> logger
   ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
+#pragma warning restore CS9113
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
   private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
 
-  // Unused parameters retained for backward compatibility
-  private readonly IPerspectiveInvoker? _ = perspectiveInvoker;
-  private readonly ILogger<DapperPostgresEventStore> __ = logger;
+  private const int MAX_RETRIES = 10;
 
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
@@ -54,87 +56,17 @@ public class DapperPostgresEventStore(
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
-    // Get policy configuration
-    var payload = envelope.Payload!;  // Payload is guaranteed non-null by MessageEnvelope contract
-    var policyCtx = new PolicyContext(payload, envelope);
-    var policy = await _policyEngine.MatchAsync(policyCtx);
+    var jsonb = await _prepareJsonbAsync(envelope);
 
-    // Split into 3 JSONB columns
-    var jsonb = _adapter.ToJsonb(envelope, policy);
-
-    // Validate size (calculates in C#, logs warnings, adds to metadata if threshold crossed)
-    jsonb = _sizeValidator.Validate(jsonb, typeof(TMessage).Name, policy);
-
-    const int maxRetries = 10;
-    var lastException = default(Exception);
-
-    for (int attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
-        EnsureConnectionOpen(connection);
-
-        // Get next sequence number
-        var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
-        var nextSequence = lastSequence + 1;
-
-        // INSERT with 3 JSONB columns
-        await Executor.ExecuteAsync(
-          connection,
-          GetAppendSql(),
-          new {
-            EventId = envelope.MessageId.Value,
-            StreamId = streamId,
-            AggregateId = streamId, // For backwards compatibility, stream_id = aggregate_id
-            AggregateType = typeof(TMessage).Name,
-            Version = (int)nextSequence, // version tracks stream-specific sequence
-            // Use centralized formatter for consistent type name format across all event stores
-            // Format: "TypeName, AssemblyName" (medium form)
-            // This matches wh_message_associations format and enables auto-checkpoint creation
-            EventType = TypeNameFormatter.Format(typeof(TMessage)),
-            EventData = jsonb.DataJson,
-            Metadata = jsonb.MetadataJson,
-            Scope = jsonb.ScopeJson,
-            CreatedAt = DateTimeOffset.UtcNow
-          },
-          cancellationToken: cancellationToken);
-
-        // NOTE: Inline perspective invocation removed - perspectives are now processed via PerspectiveWorker
-        // using checkpoint-based processing for better reliability and scalability.
-        // See: Stage 4 of perspective worker refactoring (2025-12-18)
-
-        // Success - exit retry loop
-        return;
-      } catch (Exception ex) when (IsUniqueConstraintViolation(ex)) {
-        // UNIQUE constraint violation - concurrent write, retry
-        lastException = ex;
-        await Task.Delay(10 * (attempt + 1), cancellationToken);
-      }
-    }
-
-    // Max retries exceeded
-    throw new InvalidOperationException(
-      $"Failed to append event to stream '{streamId}' after {maxRetries} attempts due to concurrent writes.",
-      lastException);
+    await _executeWithRetryAsync(
+      streamId, envelope, jsonb, cancellationToken);
   }
 
   /// <inheritdoc />
   public override Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
 
-    // Create a minimal envelope - registry-based lookup would require constructor injection
-    // which is a larger refactor. For now, create minimal envelope for compatibility.
-    var envelope = new MessageEnvelope<TMessage> {
-      MessageId = MessageId.New(),
-      Payload = message,
-      Hops = [
-        new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
-        }
-      ]
-    };
-
+    var envelope = _createMinimalEnvelope(message);
     return AppendAsync(streamId, envelope, cancellationToken);
   }
 
@@ -162,14 +94,7 @@ public class DapperPostgresEventStore(
       cancellationToken: cancellationToken);
 
     foreach (var row in rows) {
-      var jsonb = new JsonbPersistenceModel {
-        DataJson = row.EventData,
-        MetadataJson = row.Metadata,
-        ScopeJson = row.Scope
-      };
-
-      var envelope = _adapter.FromJsonb<TMessage>(jsonb);
-      yield return envelope;
+      yield return _deserializeRow<TMessage>(row);
     }
   }
 
@@ -186,21 +111,7 @@ public class DapperPostgresEventStore(
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
-    var sql = fromEventId == null
-      ? @"SELECT event_type AS EventType,
-                 event_data::text AS EventData,
-                 metadata::text AS Metadata,
-                 scope::text AS Scope
-          FROM wh_event_store
-          WHERE stream_id = @StreamId
-          ORDER BY event_id"
-      : @"SELECT event_type AS EventType,
-                 event_data::text AS EventData,
-                 metadata::text AS Metadata,
-                 scope::text AS Scope
-          FROM wh_event_store
-          WHERE stream_id = @StreamId AND event_id > @FromEventId
-          ORDER BY event_id";
+    var sql = _getReadByEventIdSql(fromEventId);
 
     var rows = await Executor.QueryAsync<EventRow>(
       connection,
@@ -212,14 +123,7 @@ public class DapperPostgresEventStore(
       cancellationToken: cancellationToken);
 
     foreach (var row in rows) {
-      var jsonb = new JsonbPersistenceModel {
-        DataJson = row.EventData,
-        MetadataJson = row.Metadata,
-        ScopeJson = row.Scope
-      };
-
-      var envelope = _adapter.FromJsonb<TMessage>(jsonb);
-      yield return envelope;
+      yield return _deserializeRow<TMessage>(row);
     }
   }
 
@@ -236,29 +140,8 @@ public class DapperPostgresEventStore(
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
-    // Build type lookup dictionary for fast EventType -> Type resolution
-    var typeMap = new Dictionary<string, Type>();
-    foreach (var type in eventTypes) {
-      // Use the same format as AppendAsync: "TypeName, AssemblyName"
-      var typeKey = $"{type.FullName}, {type.Assembly.GetName().Name}";
-      typeMap[typeKey] = type;
-    }
-
-    var sql = fromEventId == null
-      ? @"SELECT event_type AS EventType,
-                 event_data::text AS EventData,
-                 metadata::text AS Metadata,
-                 scope::text AS Scope
-          FROM wh_event_store
-          WHERE stream_id = @StreamId
-          ORDER BY event_id"
-      : @"SELECT event_type AS EventType,
-                 event_data::text AS EventData,
-                 metadata::text AS Metadata,
-                 scope::text AS Scope
-          FROM wh_event_store
-          WHERE stream_id = @StreamId AND event_id > @FromEventId
-          ORDER BY event_id";
+    var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+    var sql = _getReadByEventIdSql(fromEventId);
 
     var rows = await Executor.QueryAsync<EventRow>(
       connection,
@@ -270,92 +153,7 @@ public class DapperPostgresEventStore(
       cancellationToken: cancellationToken);
 
     foreach (var row in rows) {
-      // Look up the concrete type from the event_type column
-      if (!typeMap.TryGetValue(row.EventType, out var concreteType)) {
-        throw new InvalidOperationException(
-          $"Event type '{row.EventType}' in stream {streamId} is not in the provided event types list. " +
-          $"Available types: {string.Join(", ", typeMap.Keys)}"
-        );
-      }
-
-      var jsonb = new JsonbPersistenceModel {
-        DataJson = row.EventData,
-        MetadataJson = row.Metadata,
-        ScopeJson = row.Scope
-      };
-
-      // Deserialize using the concrete type's JsonTypeInfo
-      var typeInfo = JsonOptions.GetTypeInfo(concreteType);
-      if (typeInfo == null) {
-        throw new InvalidOperationException(
-          $"No JsonTypeInfo found for type {concreteType.FullName}. " +
-          "Ensure the event type is registered in your JsonSerializerContext."
-        );
-      }
-
-      var eventData = JsonSerializer.Deserialize(jsonb.DataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event of type {concreteType.FullName}");
-      }
-
-      // Deserialize metadata using dictionary approach (matches FromJsonb pattern)
-      // Stored metadata uses PascalCase keys: MessageId, Hops
-      var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
-      if (metadataDictTypeInfo == null) {
-        throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
-      }
-
-      var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
-                         ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
-
-      // Extract MessageId from metadata (snake_case key to match ToJsonb)
-      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
-        ? Guid.Parse(msgIdElem.GetString()!)
-        : throw new InvalidOperationException("message_id not found in metadata");
-
-      // Deserialize Hops from metadata (snake_case key)
-      List<MessageHop> hops;
-      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
-        var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>))
-                           ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
-        hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
-      } else {
-        hops = [];
-      }
-
-      // Restore SecurityContext from Scope column if present (snake_case keys: tenant_id, user_id)
-      if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0) {
-        var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
-                                ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>");
-        var scopeDict = JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
-        if (scopeDict != null) {
-          string? tenantId = null;
-          string? userId = null;
-
-          if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
-            tenantId = tenantElem.Value.GetString();
-          }
-          if (scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
-            userId = userElem.Value.GetString();
-          }
-
-          if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-            // Update first hop with ScopeDelta
-            var firstHop = hops[0];
-            hops[0] = firstHop with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
-          }
-        }
-      }
-
-      // Cast to IEvent and construct envelope
-      if (eventData is IEvent eventPayload) {
-        var typedEnvelope = new MessageEnvelope<IEvent> {
-          MessageId = MessageId.From(messageId),
-          Payload = eventPayload,
-          Hops = hops
-        };
-        yield return typedEnvelope;
-      }
+      yield return _deserializePolymorphicRow(row, typeMap, streamId);
     }
   }
 
@@ -379,12 +177,16 @@ public class DapperPostgresEventStore(
   /// Returns the PostgreSQL-specific SQL for inserting events with 3-column JSONB structure.
   /// </summary>
   /// <tests>No tests found</tests>
+  // Full split (E1 #13b4-3, migration 078): the pointer is narrow — the body goes to wh_event_body.
+  // Two statements in one Dapper batch; the same parameter set serves both.
   protected override string GetAppendSql() => @"
     INSERT INTO wh_event_store
-      (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, event_data, metadata, scope, created_at)
+      (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope, created_at)
     VALUES
-      (@EventId, @StreamId, @AggregateId, @AggregateType, @Version, @EventType,
-       @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)";
+      (@EventId, @StreamId, @AggregateId, @AggregateType, @Version, @EventType, @Scope::jsonb, @CreatedAt);
+    INSERT INTO wh_event_body (event_id, event_data, metadata)
+    VALUES (@EventId, @EventData::jsonb, @Metadata::jsonb)
+    ON CONFLICT DO NOTHING";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for reading events from a stream by sequence number.
@@ -392,25 +194,27 @@ public class DapperPostgresEventStore(
   /// <tests>No tests found</tests>
   protected override string GetReadSql() => @"
     SELECT
-      event_type AS EventType,
-      event_data::text AS EventData,
-      metadata::text AS Metadata,
-      scope::text AS Scope
-    FROM wh_event_store
-    WHERE stream_id = @StreamId AND version >= @FromSequence
-    ORDER BY version";
+      es.event_type AS EventType,
+      eb.event_data::text AS EventData,
+      eb.metadata::text AS Metadata,
+      es.scope::text AS Scope
+    FROM wh_event_store es
+    LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+    WHERE es.stream_id = @StreamId AND es.version >= @FromSequence
+    ORDER BY es.version";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for querying events between two checkpoint IDs.
   /// Guid.Empty means "no upper bound" - read all events for the stream.
   /// </summary>
   protected override string GetEventsBetweenSql() => @"
-    SELECT event_type AS EventType, event_data::text AS EventData, metadata::text AS Metadata, scope::text AS Scope
-    FROM wh_event_store
-    WHERE stream_id = @StreamId
-      AND (@UpToEventId = '00000000-0000-0000-0000-000000000000' OR event_id <= @UpToEventId)
-      AND (@AfterEventId IS NULL OR event_id > @AfterEventId)
-    ORDER BY event_id";
+    SELECT es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope
+    FROM wh_event_store es
+    LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+    WHERE es.stream_id = @StreamId
+      AND (@UpToEventId = '00000000-0000-0000-0000-000000000000' OR es.event_id <= @UpToEventId)
+      AND (@AfterEventId IS NULL OR es.event_id > @AfterEventId)
+    ORDER BY es.event_id";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for retrieving the last sequence number in a stream.
@@ -420,4 +224,287 @@ public class DapperPostgresEventStore(
     SELECT COALESCE(MAX(version), -1)
     FROM wh_event_store
     WHERE stream_id = @StreamId";
+
+  // --- Private helper methods ---
+
+  /// <summary>
+  /// Prepares the JSONB persistence model by applying policies and size validation.
+  /// </summary>
+  private async Task<JsonbPersistenceModel> _prepareJsonbAsync<TMessage>(MessageEnvelope<TMessage> envelope) {
+    var payload = envelope.Payload!;
+    var policyCtx = new PolicyContext(payload, envelope);
+    var policy = await _policyEngine.MatchAsync(policyCtx);
+
+    var jsonb = _adapter.ToJsonb(envelope, policy);
+    return _sizeValidator.Validate(jsonb, typeof(TMessage).Name, policy);
+  }
+
+  /// <summary>
+  /// Executes the append operation with retry logic for concurrent write conflicts.
+  /// </summary>
+  private async Task _executeWithRetryAsync<TMessage>(
+    Guid streamId,
+    MessageEnvelope<TMessage> envelope,
+    JsonbPersistenceModel jsonb,
+    CancellationToken cancellationToken) {
+
+    var lastException = default(Exception);
+
+    for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        await _insertEventAsync(streamId, envelope, jsonb, cancellationToken);
+        return;
+      } catch (Exception ex) when (IsUniqueConstraintViolation(ex)) {
+        lastException = ex;
+        await Task.Delay(10 * (attempt + 1), cancellationToken);
+      }
+    }
+
+    throw new InvalidOperationException(
+      $"Failed to append event to stream '{streamId}' after {MAX_RETRIES} attempts due to concurrent writes.",
+      lastException);
+  }
+
+  /// <summary>
+  /// Inserts a single event into the event store.
+  /// </summary>
+  private async Task _insertEventAsync<TMessage>(
+    Guid streamId,
+    MessageEnvelope<TMessage> envelope,
+    JsonbPersistenceModel jsonb,
+    CancellationToken cancellationToken) {
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
+    var nextSequence = lastSequence + 1;
+
+    var parameters = _buildAppendParameters(streamId, envelope, jsonb, nextSequence);
+
+    await Executor.ExecuteAsync(
+      connection,
+      GetAppendSql(),
+      parameters,
+      cancellationToken: cancellationToken);
+  }
+
+  /// <summary>
+  /// Builds the parameter object for the append SQL statement.
+  /// </summary>
+  private static object _buildAppendParameters<TMessage>(
+    Guid streamId,
+    MessageEnvelope<TMessage> envelope,
+    JsonbPersistenceModel jsonb,
+    long nextSequence) {
+
+    return new {
+      EventId = envelope.MessageId.Value,
+      StreamId = streamId,
+      AggregateId = streamId,
+      // CLR full type name (no assembly, '+'-nested) via the shared formatter — identical to the
+      // EF Core store and matchable by IEventTypeRenameTool's clr_type_name UPDATE. Previously this
+      // wrote the bare simple name (typeof(TMessage).Name), diverging from EF Core and the rename tool.
+      AggregateType = TypeNameFormatter.FormatClrTypeName(typeof(TMessage)),
+      Version = (int)nextSequence,
+      EventType = TypeNameFormatter.Format(typeof(TMessage)),
+      EventData = jsonb.DataJson,
+      Metadata = jsonb.MetadataJson,
+      Scope = jsonb.ScopeJson,
+      CreatedAt = DateTimeOffset.UtcNow
+    };
+  }
+
+  /// <summary>
+  /// Creates a minimal envelope for a raw message.
+  /// </summary>
+  private static MessageEnvelope<TMessage> _createMinimalEnvelope<TMessage>(TMessage message) {
+    return new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
+        }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+  }
+
+  /// <summary>
+  /// Returns the appropriate SQL for reading events by event ID, with or without a starting event ID filter.
+  /// </summary>
+  private static string _getReadByEventIdSql(Guid? fromEventId) {
+    if (fromEventId == null) {
+      return @"SELECT es.event_type AS EventType,
+                 eb.event_data::text AS EventData,
+                 eb.metadata::text AS Metadata,
+                 es.scope::text AS Scope
+          FROM wh_event_store es
+          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+          WHERE es.stream_id = @StreamId
+          ORDER BY es.event_id";
+    }
+
+    return @"SELECT es.event_type AS EventType,
+                 eb.event_data::text AS EventData,
+                 eb.metadata::text AS Metadata,
+                 es.scope::text AS Scope
+          FROM wh_event_store es
+          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+          WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
+          ORDER BY es.event_id";
+  }
+
+  /// <summary>
+  /// Deserializes an EventRow into a typed MessageEnvelope using the JSONB adapter.
+  /// </summary>
+  private MessageEnvelope<TMessage> _deserializeRow<TMessage>(EventRow row) {
+    var jsonb = new JsonbPersistenceModel {
+      DataJson = row.EventData,
+      MetadataJson = row.Metadata,
+      ScopeJson = row.Scope
+    };
+
+    return _adapter.FromJsonb<TMessage>(jsonb);
+  }
+
+  /// <summary>
+  /// Deserializes an EventRow into a polymorphic MessageEnvelope using type resolution from the type map.
+  /// </summary>
+  private MessageEnvelope<IEvent> _deserializePolymorphicRow(
+    EventRow row,
+    Dictionary<string, Type> typeMap,
+    Guid streamId) {
+
+    var concreteType = _resolveEventType(row.EventType, typeMap, streamId);
+    var jsonb = _rowToJsonbModel(row);
+    var eventData = _deserializeEventData(jsonb, concreteType);
+
+    var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
+    _restoreScopeFromJson(jsonb.ScopeJson, hops);
+
+    return _buildPolymorphicEnvelope(eventData, messageId, hops);
+  }
+
+  /// <summary>
+  /// Resolves a stored event type string to its CLR Type using the canonical resolver.
+  /// Unlike the EFCore/base read paths (which skip unknown types), this store throws on an
+  /// unrecognized type — preserving its historical fail-loud contract for direct stream reads.
+  /// </summary>
+  private static Type _resolveEventType(
+    string eventType,
+    Dictionary<string, Type> typeMap,
+    Guid streamId) {
+
+    if (EventTypeMatchingHelper.TryResolveType(typeMap, eventType, out var concreteType)) {
+      return concreteType;
+    }
+
+    throw new InvalidOperationException(
+      $"Event type '{eventType}' in stream {streamId} is not in the provided event types list. " +
+      $"Available types: {string.Join(", ", typeMap.Keys)}");
+  }
+
+  /// <summary>
+  /// Converts an EventRow to a JsonbPersistenceModel.
+  /// </summary>
+  private static JsonbPersistenceModel _rowToJsonbModel(EventRow row) {
+    return new JsonbPersistenceModel {
+      DataJson = row.EventData,
+      MetadataJson = row.Metadata,
+      ScopeJson = row.Scope
+    };
+  }
+
+  /// <summary>
+  /// Deserializes event data from JSONB using the concrete type's JsonTypeInfo.
+  /// </summary>
+  private object _deserializeEventData(JsonbPersistenceModel jsonb, Type concreteType) {
+    var typeInfo = JsonOptions.GetTypeInfo(concreteType)
+      ?? throw new InvalidOperationException(
+        $"No JsonTypeInfo found for type {concreteType.FullName}. " +
+        "Ensure the event type is registered in your JsonSerializerContext.");
+
+    return JsonSerializer.Deserialize(jsonb.DataJson, typeInfo)
+      ?? throw new InvalidOperationException($"Failed to deserialize event of type {concreteType.FullName}");
+  }
+
+  /// <summary>
+  /// Builds a polymorphic MessageEnvelope from deserialized event data.
+  /// </summary>
+  private static MessageEnvelope<IEvent> _buildPolymorphicEnvelope(
+    object eventData,
+    Guid messageId,
+    List<MessageHop> hops) {
+
+    if (eventData is not IEvent eventPayload) {
+      throw new InvalidOperationException(
+        $"Deserialized event of type {eventData.GetType().FullName} does not implement IEvent.");
+    }
+
+    return new MessageEnvelope<IEvent> {
+      MessageId = MessageId.From(messageId),
+      Payload = eventPayload,
+      Hops = hops,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+    };
+  }
+
+  private (Guid messageId, List<MessageHop> hops) _deserializeMetadataAndHops(JsonbPersistenceModel jsonb) {
+    var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
+    var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
+                       ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
+
+    var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
+      ? Guid.Parse(msgIdElem.GetString()!)
+      : throw new InvalidOperationException("message_id not found in metadata");
+
+    List<MessageHop> hops;
+    if (metadataDict.TryGetValue("hops", out var hopsElem)) {
+      var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>))
+                         ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
+      hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
+    } else {
+      hops = [];
+    }
+
+    return (messageId, hops);
+  }
+
+  private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {
+    if (string.IsNullOrEmpty(scopeJson) || hops.Count == 0 || hops[0].Scope != null) {
+      return;
+    }
+
+    var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
+                            ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>");
+    if (JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) is not Dictionary<string, JsonElement?> scopeDict) {
+      return;
+    }
+
+    var tenantId = _extractScopeValue(scopeDict, "t") ?? _extractScopeValue(scopeDict, "tenant_id");
+    var userId = _extractScopeValue(scopeDict, "u") ?? _extractScopeValue(scopeDict, "user_id");
+    var customerId = _extractScopeValue(scopeDict, "c");
+    var organizationId = _extractScopeValue(scopeDict, "o");
+
+    if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(customerId) || !string.IsNullOrEmpty(organizationId)) {
+      var scope = new PerspectiveScope {
+        TenantId = tenantId,
+        UserId = userId,
+        CustomerId = customerId,
+        OrganizationId = organizationId
+      };
+      hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
+    }
+  }
+
+  private static string? _extractScopeValue(Dictionary<string, JsonElement?> scopeDict, string key) {
+    return scopeDict.TryGetValue(key, out var elem) && elem.HasValue && elem.Value.ValueKind != JsonValueKind.Null
+      ? elem.Value.GetString()
+      : null;
+  }
 }

@@ -30,7 +30,7 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>attributes/must-exist</docs>
+/// <docs>extending/attributes/must-exist</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/MustExistAttributeTests.cs</tests>
 /// <example>
 /// <para><strong>Typical usage with creation and update events:</strong></para>
@@ -53,4 +53,4 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = true)]
-public sealed class MustExistAttribute : Attribute { }
+public sealed class MustExistAttribute : Attribute;

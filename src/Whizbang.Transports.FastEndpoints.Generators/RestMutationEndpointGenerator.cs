@@ -15,6 +15,8 @@ namespace Whizbang.Transports.FastEndpoints.Generators;
 [Generator]
 public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
   private const string COMMAND_ENDPOINT_ATTRIBUTE_PREFIX = "Whizbang.Transports.Mutations.CommandEndpointAttribute";
+  private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
+  private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
   /// <inheritdoc />
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -46,11 +48,9 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
   private static RestMutationInfo? _extractMutationInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -192,90 +192,76 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
 
     // Determine request type - either custom or the command itself
     var requestType = mutation.RequestTypeName ?? mutation.CommandTypeName;
-    var requestTypeShort = mutation.RequestTypeName is not null
-        ? _getShortTypeName(mutation.RequestTypeName)
-        : mutation.CommandTypeNameShort;
     var usesCustomRequest = mutation.RequestTypeName is not null;
 
-    sb.AppendLine($"/// <summary>");
+    sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// Generated REST mutation endpoint for {mutation.CommandTypeNameShort}.");
     sb.AppendLine($"/// Route: POST {mutation.RestRoute}");
-    sb.AppendLine($"/// </summary>");
+    sb.AppendLine("/// </summary>");
     sb.AppendLine($"public partial class {mutation.EndpointClassName}");
     sb.AppendLine($"    : RestMutationEndpointBase<{mutation.CommandTypeName}, {mutation.ResultTypeName}>,");
-    sb.AppendLine($"      IEndpoint {{");
-    sb.AppendLine($"  private readonly IDispatcher _dispatcher;");
+    sb.AppendLine("      IEndpoint {");
+    sb.AppendLine("  private readonly IDispatcher _dispatcher;");
     sb.AppendLine();
-    sb.AppendLine($"  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine($"  /// Creates a new instance of {mutation.EndpointClassName}.");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine($"  public {mutation.EndpointClassName}(IDispatcher dispatcher) {{");
-    sb.AppendLine($"    _dispatcher = dispatcher;");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("    _dispatcher = dispatcher;");
+    sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine($"  /// <summary>");
-    sb.AppendLine($"  /// Configures the endpoint route and HTTP method.");
-    sb.AppendLine($"  /// </summary>");
-    sb.AppendLine($"  public void Configure(IEndpointRouteBuilder routeBuilder) {{");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+    sb.AppendLine("  /// Configures the endpoint route and HTTP method.");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
+    sb.AppendLine("  public void Configure(IEndpointRouteBuilder routeBuilder) {");
     sb.AppendLine($"    routeBuilder.MapPost(\"{mutation.RestRoute}\", HandleAsync);");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine($"  /// <summary>");
-    sb.AppendLine($"  /// Dispatches the command to the handler via IDispatcher.");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+    sb.AppendLine("  /// Dispatches the command to the handler via IDispatcher.");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine($"  protected override async ValueTask<{mutation.ResultTypeName}> DispatchCommandAsync(");
     sb.AppendLine($"      {mutation.CommandTypeName} command,");
-    sb.AppendLine($"      CancellationToken ct) {{");
+    sb.AppendLine("      CancellationToken ct) {");
     sb.AppendLine($"    return await _dispatcher.LocalInvokeAsync<{mutation.CommandTypeName}, {mutation.ResultTypeName}>(command, ct);");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("  }");
     sb.AppendLine();
 
     if (usesCustomRequest) {
-      sb.AppendLine($"  /// <summary>");
-      sb.AppendLine($"  /// Handles the incoming HTTP request with custom request type.");
-      sb.AppendLine($"  /// </summary>");
+      sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+      sb.AppendLine("  /// Handles the incoming HTTP request with custom request type.");
+      sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
       sb.AppendLine($"  public async Task<{mutation.ResultTypeName}> HandleAsync(");
       sb.AppendLine($"      {requestType} request,");
-      sb.AppendLine($"      CancellationToken ct) {{");
-      sb.AppendLine($"    return await ExecuteWithRequestAsync(request, ct);");
-      sb.AppendLine($"  }}");
+      sb.AppendLine("      CancellationToken ct) {");
+      sb.AppendLine("    return await ExecuteWithRequestAsync(request, ct);");
+      sb.AppendLine("  }");
     } else {
-      sb.AppendLine($"  /// <summary>");
-      sb.AppendLine($"  /// Handles the incoming HTTP request where command is the request.");
-      sb.AppendLine($"  /// </summary>");
+      sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+      sb.AppendLine("  /// Handles the incoming HTTP request where command is the request.");
+      sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
       sb.AppendLine($"  public async Task<{mutation.ResultTypeName}> HandleAsync(");
       sb.AppendLine($"      {mutation.CommandTypeName} command,");
-      sb.AppendLine($"      CancellationToken ct) {{");
-      sb.AppendLine($"    return await ExecuteAsync(command, ct);");
-      sb.AppendLine($"  }}");
+      sb.AppendLine("      CancellationToken ct) {");
+      sb.AppendLine("    return await ExecuteAsync(command, ct);");
+      sb.AppendLine("  }");
     }
 
-    sb.AppendLine($"}}");
+    sb.AppendLine("}");
 
     return sb.ToString();
-  }
-
-  /// <summary>
-  /// Extract short type name from fully qualified name.
-  /// </summary>
-  private static string _getShortTypeName(string fullyQualifiedName) {
-    // Handle "global::Namespace.TypeName" format
-    var name = fullyQualifiedName;
-    if (name.StartsWith("global::", StringComparison.Ordinal)) {
-      name = name.Substring(8);
-    }
-    var lastDot = name.LastIndexOf('.');
-    return lastDot >= 0 ? name.Substring(lastDot + 1) : name;
   }
 
   /// <summary>
   /// Generate a mutation info property for diagnostics.
   /// </summary>
   private static string _generateMutationInfoProperty(RestMutationInfo mutation) {
-    return $@"  /// <summary>
+    return $"""
+  /// <summary>
   /// Information about the {mutation.EndpointClassName} mutation endpoint.
   /// </summary>
   public static (string Route, string CommandType, string ResultType) {mutation.EndpointClassName}Info =>
-      (""{mutation.RestRoute}"", ""{mutation.CommandTypeName}"", ""{mutation.ResultTypeName}"");";
+      ("{mutation.RestRoute}", "{mutation.CommandTypeName}", "{mutation.ResultTypeName}");
+""";
   }
 }

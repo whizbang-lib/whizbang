@@ -245,14 +245,16 @@ public class MessageTagProcessorTests {
   private static TagContext<TAttribute> _createProcessContext<TAttribute>(
       TAttribute attribute,
       object payloadData,
-      IScopeContext? scope = null)
+      IScopeContext? scope = null,
+      LifecycleStage stage = LifecycleStage.AfterReceptorCompletion)
       where TAttribute : MessageTagAttribute {
     return new TagContext<TAttribute> {
       Attribute = attribute,
       Message = payloadData,
       MessageType = payloadData.GetType(),
       Payload = JsonSerializer.SerializeToElement(payloadData),
-      Scope = scope
+      Scope = scope,
+      Stage = stage
     };
   }
 
@@ -292,14 +294,9 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class OrderTrackingHook : IMessageTagHook<SignalTagAttribute> {
-    private readonly string _name;
-    private readonly List<string> _executionOrder;
-
-    public OrderTrackingHook(string name, List<string> executionOrder) {
-      _name = name;
-      _executionOrder = executionOrder;
-    }
+  private sealed class OrderTrackingHook(string name, List<string> executionOrder) : IMessageTagHook<SignalTagAttribute> {
+    private readonly string _name = name;
+    private readonly List<string> _executionOrder = executionOrder;
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
@@ -376,7 +373,7 @@ public class MessageTagProcessorTests {
   #region ProcessTagsAsync Tests
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithNoHookResolver_ReturnsEarlyAsync() {
     // Arrange
     _cleanupRegistry();
@@ -398,7 +395,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithNoTags_DoesNothingAsync() {
     // Arrange
     _cleanupRegistry();
@@ -419,7 +416,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithMatchingTag_InvokesHookAsync() {
     // Arrange
     _cleanupRegistry();
@@ -442,7 +439,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithMultipleTags_ProcessesAllAsync() {
     // Arrange
     _cleanupRegistry();
@@ -478,7 +475,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_BuildsPayloadFromMessageAsync() {
     // Arrange
     _cleanupRegistry();
@@ -502,7 +499,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_PassesScopeToContextAsync() {
     // Arrange
     _cleanupRegistry();
@@ -535,7 +532,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_InvokesHooksInPriorityOrderAsync() {
     // Arrange
     _cleanupRegistry();
@@ -715,7 +712,7 @@ public class MessageTagProcessorTests {
   #region ScopeFactory Tests
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithScopeFactory_CreatesScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -742,7 +739,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithScopeFactory_DisposesScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -766,7 +763,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithScopeFactory_MultipleHooksShareSameScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -797,7 +794,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithNoHooksAndScopeFactory_DoesNotCreateScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -842,16 +839,11 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class TrackingScope : IServiceScope, IAsyncDisposable {
-    private readonly Func<Type, object?> _resolver;
-
-    public TrackingScope(Func<Type, object?> resolver) {
-      _resolver = resolver;
-      ServiceProvider = new TrackingServiceProvider(resolver);
-    }
+  private sealed class TrackingScope(Func<Type, object?> resolver) : IServiceScope, IAsyncDisposable {
+    private readonly Func<Type, object?> _resolver = resolver;
 
     public bool Disposed { get; private set; }
-    public IServiceProvider ServiceProvider { get; }
+    public IServiceProvider ServiceProvider { get; } = new TrackingServiceProvider(resolver);
 
     public void Dispose() {
       Disposed = true;
@@ -863,12 +855,8 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class TrackingServiceProvider : IServiceProvider {
-    private readonly Func<Type, object?> _resolver;
-
-    public TrackingServiceProvider(Func<Type, object?> resolver) {
-      _resolver = resolver;
-    }
+  private sealed class TrackingServiceProvider(Func<Type, object?> resolver) : IServiceProvider {
+    private readonly Func<Type, object?> _resolver = resolver;
 
     public object? GetService(Type serviceType) {
       return _resolver(serviceType);
@@ -884,7 +872,7 @@ public class MessageTagProcessorTests {
   /// Custom attributes require generated dispatchers for AOT-compatible hook invocation.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithCustomAttribute_CallsDispatcherRegistryAsync() {
     // Arrange
     _cleanupRegistry();
@@ -920,7 +908,7 @@ public class MessageTagProcessorTests {
   /// Built-in types should NOT call the dispatcher registry.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithBuiltInAttribute_UsesDirectDispatchAsync() {
     // Arrange
     _cleanupRegistry();
@@ -955,7 +943,7 @@ public class MessageTagProcessorTests {
   /// Test that processor falls back to base context when custom attribute has no dispatcher.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithUnknownAttribute_FallsBackToBaseContextAsync() {
     // Arrange
     _cleanupRegistry();
@@ -984,7 +972,7 @@ public class MessageTagProcessorTests {
   /// Test that custom dispatcher correctly handles TryDispatchAsync.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithCustomAttribute_InvokesHookViaDispatcherAsync() {
     // Arrange
     _cleanupRegistry();
@@ -1098,7 +1086,8 @@ public class MessageTagProcessorTests {
         object message,
         Type messageType,
         JsonElement payload,
-        IScopeContext? scope) {
+        IScopeContext? scope,
+        LifecycleStage stage) {
       TryCreateContextCallCount++;
 
       if (attributeType == typeof(CustomTestTagAttribute) && attribute is CustomTestTagAttribute customAttr) {
@@ -1107,7 +1096,8 @@ public class MessageTagProcessorTests {
           Message = message,
           MessageType = messageType,
           Payload = payload,
-          Scope = scope
+          Scope = scope,
+          Stage = stage
         };
       }
 
@@ -1128,6 +1118,758 @@ public class MessageTagProcessorTests {
       }
 
       return null;
+    }
+  }
+
+  #endregion
+
+  #region Stage Context Tests — Parameterized (All Lifecycle Stages)
+
+  public static LifecycleStage[] AllLifecycleStages()
+    => Enum.GetValues<LifecycleStage>();
+
+  [Test]
+  [MethodDataSource(nameof(AllLifecycleStages))]
+  public async Task ProcessAsync_PassesStageToHookContext_AllStagesAsync(LifecycleStage stage) {
+    // Arrange
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
+      new { OrderId = "123" },
+      stage: stage
+    );
+
+    // Act
+    await processor.ProcessAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(stage);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  [MethodDataSource(nameof(AllLifecycleStages))]
+  public async Task ProcessTagsAsync_PassesStageToHookContext_AllStagesAsync(LifecycleStage stage) {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(stage);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  [MethodDataSource(nameof(AllLifecycleStages))]
+  public async Task ProcessTagsAsync_TelemetryTag_PassesStage_AllStagesAsync(LifecycleStage stage) {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(TelemetryTagAttribute), "telemetry-stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new TelemetryStageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<TelemetryTagAttribute, TelemetryStageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TelemetryStageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastStage).IsEqualTo(stage);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  [MethodDataSource(nameof(AllLifecycleStages))]
+  public async Task ProcessTagsAsync_MetricTag_PassesStage_AllStagesAsync(LifecycleStage stage) {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(MetricTagAttribute), "metric-stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new MetricStageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<MetricTagAttribute, MetricStageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(MetricStageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastStage).IsEqualTo(stage);
+  }
+
+  #endregion
+
+  #region Stage Context Tests — Scenario Tests
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_MultipleStagesInSequence_HookReceivesCorrectStageEachTimeAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act - simulate the full lifecycle: Dispatcher fires first, then lifecycle stages
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(LifecycleStage.AfterReceptorCompletion);
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.LocalImmediateInline);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(LifecycleStage.LocalImmediateInline);
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostInboxInline);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(LifecycleStage.PostInboxInline);
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostPerspectiveInline);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+
+    // Assert - hook was invoked for each stage
+    await Assert.That(hook.InvokedCount).IsEqualTo(4);
+    await Assert.That(hook.AllReceivedStages).Contains(LifecycleStage.AfterReceptorCompletion);
+    await Assert.That(hook.AllReceivedStages).Contains(LifecycleStage.LocalImmediateInline);
+    await Assert.That(hook.AllReceivedStages).Contains(LifecycleStage.PostInboxInline);
+    await Assert.That(hook.AllReceivedStages).Contains(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_HookCanFilterByStage_OnlyActsOnPostPerspectiveDetachedAsync() {
+    // Arrange - simulates a consumer application's pattern of filtering for PostPerspective only
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "notification-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new PostPerspectiveOnlyHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, PostPerspectiveOnlyHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(PostPerspectiveOnlyHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act - fire at multiple stages
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.LocalImmediateInline);
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostPerspectiveInline);
+
+    // Assert - hook was called 3 times but only "acted" on PostPerspectiveInline
+    await Assert.That(hook.TotalCallCount).IsEqualTo(3);
+    await Assert.That(hook.ActedCount).IsEqualTo(1);
+    await Assert.That(hook.ActedOnStage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_CustomAttribute_PassesStageViaDispatcherAsync() {
+    // Arrange
+    _cleanupRegistry();
+    _cleanupDispatcherRegistry();
+    var customRegistry = new CustomAttributeTestRegistry();
+    MessageTagRegistry.Register(customRegistry, priority: 100);
+    var customDispatcher = new TestMessageTagHookDispatcher();
+    MessageTagHookDispatcherRegistry.Register(customDispatcher, priority: 100);
+    var customHook = new CustomTagTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<CustomTestTagAttribute, CustomTagTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(CustomTagTrackingHook) ? customHook : null);
+    var message = new CustomTaggedMessage("test-stage");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(CustomTaggedMessage), LifecycleStage.PostPerspectiveInline);
+
+    // Assert - custom hook receives the stage via dispatcher-created context
+    await Assert.That(customHook.InvokedCount).IsEqualTo(1);
+    await Assert.That(customHook.LastContext?.Stage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_UniversalHook_ReceivesStageAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "universal-stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new UniversalStageTrackingHook();
+    var options = new TagOptions();
+    options.UseUniversalHook<UniversalStageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(UniversalStageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostPerspectiveInline);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastStage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_SameEventMultipleStages_ContextIdenticalExceptStageAsync() {
+    // Arrange — lock-in: when the same event fires across stages, only Stage changes
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "context-consistency");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("order-42");
+
+    // Act — fire at representative stages from each path
+    var stages = new[] {
+      LifecycleStage.AfterReceptorCompletion,
+      LifecycleStage.LocalImmediateInline,
+      LifecycleStage.PreDistributeInline,
+      LifecycleStage.PostOutboxDetached,
+      LifecycleStage.PostPerspectiveInline
+    };
+    foreach (var stage in stages) {
+      await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+    }
+
+    // Assert — all contexts share identical Attribute, Message, MessageType, Payload
+    await Assert.That(hook.AllReceivedContexts).Count().IsEqualTo(5);
+    var first = hook.AllReceivedContexts[0];
+    for (var i = 1; i < hook.AllReceivedContexts.Count; i++) {
+      var ctx = hook.AllReceivedContexts[i];
+      await Assert.That(ctx.Attribute.Tag).IsEqualTo(first.Attribute.Tag);
+      await Assert.That(ctx.MessageType).IsEqualTo(first.MessageType);
+      await Assert.That(ctx.Message).IsEqualTo(first.Message);
+      await Assert.That(ctx.Payload.GetRawText()).IsEqualTo(first.Payload.GetRawText());
+    }
+
+    // Assert — each context has a distinct, correct Stage
+    await Assert.That(hook.AllReceivedStages).IsEquivalentTo(stages);
+  }
+
+  [Test]
+  public async Task ProcessAsync_SameEventMultipleStages_ContextIdenticalExceptStageAsync() {
+    // Arrange — lock-in via ProcessAsync path: only Stage differs between invocations
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var attribute = new SignalTagAttribute { Tag = "order-created" };
+    var payload = new { OrderId = "abc", Total = 99.99m };
+
+    // Act — fire at every lifecycle stage
+    var allStages = Enum.GetValues<LifecycleStage>();
+    foreach (var stage in allStages) {
+      var context = _createProcessContext<SignalTagAttribute>(attribute, payload, stage: stage);
+      await processor.ProcessAsync(context, CancellationToken.None);
+    }
+
+    // Assert — invoked exactly once per stage
+    await Assert.That(hook.AllReceivedContexts).Count().IsEqualTo(allStages.Length);
+
+    // Assert — all contexts share identical Attribute, Message, MessageType, Payload
+    var first = hook.AllReceivedContexts[0];
+    for (var i = 1; i < hook.AllReceivedContexts.Count; i++) {
+      var ctx = hook.AllReceivedContexts[i];
+      await Assert.That(ctx.Attribute.Tag).IsEqualTo(first.Attribute.Tag);
+      await Assert.That(ctx.MessageType).IsEqualTo(first.MessageType);
+      await Assert.That(ctx.Payload.GetRawText()).IsEqualTo(first.Payload.GetRawText());
+    }
+
+    // Assert — every stage received exactly once, in order
+    await Assert.That(hook.AllReceivedStages).IsEquivalentTo(allStages);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_AllStagesFired_ReceivesAllUniqueStagesAsync() {
+    // Arrange — lock-in: all stages (20 lifecycle + AfterReceptorCompletion) produce
+    // exactly one invocation each with unique stages
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "all-stages");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act — fire at every lifecycle stage
+    var allStages = Enum.GetValues<LifecycleStage>();
+    foreach (var stage in allStages) {
+      await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+    }
+
+    // Assert — one invocation per stage, each with a unique stage value
+    await Assert.That(hook.InvokedCount).IsEqualTo(allStages.Length);
+    await Assert.That(hook.AllReceivedStages.Distinct().Count()).IsEqualTo(allStages.Length);
+    await Assert.That(hook.AllReceivedStages).IsEquivalentTo(allStages);
+  }
+
+  #endregion
+
+  #region Stage Hook Helpers
+
+  // Stage-tracking hook for SignalTagAttribute
+  private sealed class StageTrackingHook : IMessageTagHook<SignalTagAttribute> {
+    public int InvokedCount { get; private set; }
+    public TagContext<SignalTagAttribute>? LastContext { get; private set; }
+    public List<LifecycleStage> AllReceivedStages { get; } = [];
+    public List<TagContext<SignalTagAttribute>> AllReceivedContexts { get; } = [];
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      LastContext = context;
+      AllReceivedStages.Add(context.Stage);
+      AllReceivedContexts.Add(context);
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // Hook that only acts on PostPerspectiveInline (simulates a consumer application notification pattern)
+  private sealed class PostPerspectiveOnlyHook : IMessageTagHook<SignalTagAttribute> {
+    public int TotalCallCount { get; private set; }
+    public int ActedCount { get; private set; }
+    public LifecycleStage? ActedOnStage { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      TotalCallCount++;
+
+      // Only act on PostPerspectiveInline — the a consumer application pattern
+      if (context.Stage == LifecycleStage.PostPerspectiveInline) {
+        ActedCount++;
+        ActedOnStage = context.Stage;
+      }
+
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // Telemetry stage-tracking hook
+  private sealed class TelemetryStageTrackingHook : IMessageTagHook<TelemetryTagAttribute> {
+    public int InvokedCount { get; private set; }
+    public LifecycleStage? LastStage { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<TelemetryTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      LastStage = context.Stage;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // Metric stage-tracking hook
+  private sealed class MetricStageTrackingHook : IMessageTagHook<MetricTagAttribute> {
+    public int InvokedCount { get; private set; }
+    public LifecycleStage? LastStage { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<MetricTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      LastStage = context.Stage;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // Universal stage-tracking hook
+  private sealed class UniversalStageTrackingHook : IMessageTagHook<MessageTagAttribute> {
+    public int InvokedCount { get; private set; }
+    public LifecycleStage? LastStage { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<MessageTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      LastStage = context.Stage;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // FireAt-aware hooks for testing stage filtering in ProcessTagsAsync
+  private sealed class FireAtHookA : IMessageTagHook<SignalTagAttribute> {
+    public int InvokedCount { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  private sealed class FireAtHookB : IMessageTagHook<SignalTagAttribute> {
+    public int InvokedCount { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  #endregion
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_FireAtFiltering_OnlyInvokesHookAtRegisteredStageAsync() {
+    // Arrange — two hooks for the same attribute, registered at different stages
+    // Bug: MessageTagProcessor._processTagRegistrationAsync (line 147) calls
+    // GetHooksFor(attributeType) without passing stage, so FireAt is ignored
+    // and BOTH hooks fire at EVERY stage.
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "fireat-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hookA = new FireAtHookA();
+    var hookB = new FireAtHookB();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, FireAtHookA>(fireAt: LifecycleStage.PostPerspectiveInline);
+    options.UseHook<SignalTagAttribute, FireAtHookB>(fireAt: LifecycleStage.PostAllPerspectivesDetached);
+
+    var processor = new MessageTagProcessor(options, type => {
+      if (type == typeof(FireAtHookA)) {
+        return hookA;
+      }
+      if (type == typeof(FireAtHookB)) {
+        return hookB;
+      }
+      return null;
+    });
+    var message = new TaggedTestMessage("123");
+
+    // Act — fire at PostPerspectiveInline: only hookA should fire
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostPerspectiveInline);
+
+    // Assert — hookA fires, hookB does NOT
+    await Assert.That(hookA.InvokedCount).IsEqualTo(1);
+    await Assert.That(hookB.InvokedCount).IsEqualTo(0);
+
+    // Act — fire at PostAllPerspectivesDetached: only hookB should fire
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostAllPerspectivesDetached);
+
+    // Assert — hookA still 1, hookB now 1
+    await Assert.That(hookA.InvokedCount).IsEqualTo(1);
+    await Assert.That(hookB.InvokedCount).IsEqualTo(1);
+  }
+
+  #region Payload Size Threshold Tests
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PayloadExceedsErrorThreshold_ThrowsAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "large");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions {
+      PayloadSizeErrorThresholdBytes = 16
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await Assert.That(async () =>
+      await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion))
+      .ThrowsExactly<InvalidOperationException>();
+
+    // Hook must NOT fire when payload is over the error threshold
+    await Assert.That(hook.InvokedCount).IsEqualTo(0);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PayloadBelowErrorThreshold_DoesNotThrowAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "small");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions {
+      PayloadSizeErrorThresholdBytes = 100_000
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new LargePayloadMessage("short");
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PayloadExceedsWarningThreshold_LogsWarningAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "warn-me");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var capturingLogger = new PayloadSizeCapturingLogger();
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = 16
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var scopeFactory = new LoggingScopeFactory(capturingLogger, hook);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(capturingLogger.Warnings.Any(w => w.Contains("warn-me", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(capturingLogger.Warnings.Any(w => w.Contains("LargePayloadMessage", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PayloadBelowWarningThreshold_DoesNotLogAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "quiet");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var capturingLogger = new PayloadSizeCapturingLogger();
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = 100_000
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var scopeFactory = new LoggingScopeFactory(capturingLogger, hook);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new LargePayloadMessage("short");
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(capturingLogger.Warnings).IsEmpty();
+  }
+
+  [Test]
+  public async Task TagOptions_PayloadSizeWarningThreshold_DefaultsTo8192Async() {
+    var options = new TagOptions();
+    await Assert.That(options.PayloadSizeWarningThresholdBytes).IsEqualTo(8192);
+  }
+
+  [Test]
+  public async Task TagOptions_PayloadSizeErrorThreshold_DefaultsToNullAsync() {
+    var options = new TagOptions();
+    await Assert.That(options.PayloadSizeErrorThresholdBytes).IsNull();
+  }
+
+  private sealed record LargePayloadMessage(string Body);
+
+  private sealed class PayloadSizeCapturingLogger : Microsoft.Extensions.Logging.ILogger {
+    public List<string> Warnings { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning) {
+        Warnings.Add(formatter(state, exception));
+      }
+    }
+  }
+
+  private sealed class PayloadSizeLoggerFactory(Microsoft.Extensions.Logging.ILogger logger) : Microsoft.Extensions.Logging.ILoggerFactory {
+    public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => logger;
+    public void Dispose() { }
+  }
+
+  private sealed class LoggingScopeFactory(Microsoft.Extensions.Logging.ILogger logger, TrackingHook hook) : IServiceScopeFactory {
+    private readonly Microsoft.Extensions.Logging.ILogger _logger = logger;
+    private readonly TrackingHook _hook = hook;
+
+    public IServiceScope CreateScope() => new LoggingScope(_logger, _hook);
+  }
+
+  private sealed class LoggingScope(Microsoft.Extensions.Logging.ILogger logger, TrackingHook hook) : IServiceScope, IAsyncDisposable {
+    public IServiceProvider ServiceProvider { get; } = new LoggingServiceProvider(logger, hook);
+    public void Dispose() { }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+  }
+
+  private sealed class LoggingServiceProvider(Microsoft.Extensions.Logging.ILogger logger, TrackingHook hook) : IServiceProvider {
+    public object? GetService(Type serviceType) {
+      if (serviceType == typeof(Microsoft.Extensions.Logging.ILoggerFactory)) {
+        return new PayloadSizeLoggerFactory(logger);
+      }
+      if (serviceType == typeof(TrackingHook)) {
+        return hook;
+      }
+      return null;
+    }
+  }
+
+  #endregion
+
+  #region Diagnostic Logging Branch Coverage
+
+  /// <summary>
+  /// Both size thresholds explicitly null → the payload-size enforcement short-circuits to
+  /// "allowed" before measuring the payload. Covers the early-return in _enforcePayloadSize.
+  /// </summary>
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_WithBothPayloadThresholdsNull_SkipsSizeEnforcementAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "no-limits");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = null,
+      PayloadSizeErrorThresholdBytes = null
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
+
+    // With both thresholds off, no measurement happens and the hook still fires.
+    await Assert.That(hook.InvokedCount).IsEqualTo(1)
+      .Because("with both size thresholds null, enforcement is skipped and the hook processes normally");
+  }
+
+  /// <summary>
+  /// With a Debug-enabled logger (via scope factory) and a hook resolver that returns null,
+  /// the processor logs the "resolved to NULL — skipping" diagnostic and skips the hook.
+  /// Covers the null-hook-instance Debug branch in _resolveHookInstance.
+  /// </summary>
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_DebugLogging_HookResolvesToNull_LogsAndSkipsAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "debug-null");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    // Resolver ALWAYS returns null for the hook — but provides the Debug logger factory.
+    var scopeFactory = new DebugLoggingScopeFactory(_ => null);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new TaggedTestMessage("123");
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
+
+    // No hook ran (resolver returned null), and the Debug branch was walked without throwing.
+    await Assert.That(scopeFactory.Logger.DebugMessages.Any(m => m.Contains("resolved to NULL", StringComparison.Ordinal))).IsTrue()
+      .Because("a null-resolving hook must be logged at Debug and skipped, not invoked");
+  }
+
+  /// <summary>
+  /// With a Debug-enabled logger and a custom (non-built-in) attribute type, the processor
+  /// walks the dispatcher-registry fallback in _invokeHookAsync, logging the "Trying dispatcher
+  /// registry" and result diagnostics. Covers those Debug branches.
+  /// </summary>
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_DebugLogging_CustomAttribute_LogsDispatcherRegistryAttemptAsync() {
+    _cleanupRegistry();
+    _cleanupDispatcherRegistry();
+
+    var customRegistry = new CustomAttributeTestRegistry();
+    MessageTagRegistry.Register(customRegistry, priority: 100);
+    var customDispatcher = new TestMessageTagHookDispatcher();
+    MessageTagHookDispatcherRegistry.Register(customDispatcher, priority: 100);
+
+    var customHook = new CustomTagTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<CustomTestTagAttribute, CustomTagTrackingHook>();
+    var scopeFactory = new DebugLoggingScopeFactory(type => type == typeof(CustomTagTrackingHook) ? customHook : null);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new CustomTaggedMessage("dispatch-debug");
+
+    await processor.ProcessTagsAsync(message, typeof(CustomTaggedMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(customHook.InvokedCount).IsEqualTo(1);
+    await Assert.That(scopeFactory.Logger.DebugMessages.Any(m => m.Contains("dispatcher registry", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("a custom attribute type must fall through to the dispatcher registry, logged at Debug");
+  }
+
+  private sealed class DebugCapturingLogger : Microsoft.Extensions.Logging.ILogger {
+    public List<string> DebugMessages { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      DebugMessages.Add(formatter(state, exception));
+    }
+  }
+
+  private sealed class DebugCapturingLoggerFactory(Microsoft.Extensions.Logging.ILogger logger) : Microsoft.Extensions.Logging.ILoggerFactory {
+    public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => logger;
+    public void Dispose() { }
+  }
+
+  private sealed class DebugLoggingScopeFactory(Func<Type, object?> resolver) : IServiceScopeFactory {
+    public DebugCapturingLogger Logger { get; } = new();
+    public IServiceScope CreateScope() => new DebugLoggingScope(Logger, resolver);
+  }
+
+  private sealed class DebugLoggingScope(DebugCapturingLogger logger, Func<Type, object?> resolver) : IServiceScope, IAsyncDisposable {
+    public IServiceProvider ServiceProvider { get; } = new DebugLoggingServiceProvider(logger, resolver);
+    public void Dispose() { }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+  }
+
+  private sealed class DebugLoggingServiceProvider(DebugCapturingLogger logger, Func<Type, object?> resolver) : IServiceProvider {
+    public object? GetService(Type serviceType) {
+      if (serviceType == typeof(Microsoft.Extensions.Logging.ILoggerFactory)) {
+        return new DebugCapturingLoggerFactory(logger);
+      }
+      return resolver(serviceType);
     }
   }
 

@@ -26,7 +26,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_VectorFieldWithoutPackage_ReportsWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -53,7 +53,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MultipleVectorFieldsWithoutPackage_ReportsMultipleWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -82,7 +82,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_VectorFieldDiagnostic_ContainsPropertyNameAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -109,7 +109,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_VectorFieldDiagnostic_MentionsPackageNameAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -136,7 +136,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_VectorFieldDiagnostic_LocationIsOnAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -167,7 +167,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_VectorFieldWithPackage_NoWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -193,7 +193,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NoVectorFields_NoWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -219,7 +219,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_PhysicalFieldOnly_NoWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -249,7 +249,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_VectorFieldOnPrivateProperty_ReportsWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -275,7 +275,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_VectorFieldInNestedClass_ReportsWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -303,7 +303,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_VectorFieldWithCustomSettings_ReportsWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -329,7 +329,7 @@ public class VectorDependencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_VectorFieldOnRecord_ReportsWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core.Perspectives;
 
             namespace TestApp;
@@ -430,7 +430,7 @@ public static class VectorAnalyzerTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -440,7 +440,7 @@ public static class VectorAnalyzerTestHelper {
 
     // Create compilation with analyzers
     var compilationWithAnalyzers = compilation.WithAnalyzers(
-        ImmutableArray.Create<DiagnosticAnalyzer>(analyzer));
+        [analyzer]);
 
     // Get analyzer diagnostics only (exclude compiler diagnostics)
     var diagnostics = await compilationWithAnalyzers.GetAnalyzerDiagnosticsAsync();
@@ -455,7 +455,7 @@ public static class VectorAnalyzerTestHelper {
   /// </summary>
   private static PortableExecutableReference _createSyntheticPgvectorReference() {
     // Create minimal source that compiles to an assembly named "Pgvector.EntityFrameworkCore"
-    var pgvectorSource = """
+    const string pgvectorSource = """
         namespace Pgvector.EntityFrameworkCore {
             public static class PgvectorDbContextOptionsExtensions { }
         }
@@ -466,11 +466,11 @@ public static class VectorAnalyzerTestHelper {
 
     var compilation = CSharpCompilation.Create(
         assemblyName: "Pgvector.EntityFrameworkCore",
-        syntaxTrees: new[] { syntaxTree },
-        references: new[] {
+        syntaxTrees: [syntaxTree],
+        references: [
           MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
           MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll"))
-        },
+        ],
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
 

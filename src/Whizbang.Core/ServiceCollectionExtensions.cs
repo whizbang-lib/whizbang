@@ -1,14 +1,18 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core;
 
@@ -82,7 +86,7 @@ public static class ServiceCollectionExtensions {
   /// </code>
   /// </example>
   /// </remarks>
-  /// <docs>core-concepts/dependency-injection#multiple-addwhizbang-calls</docs>
+  /// <docs>operations/configuration/dependency-injection#multiple-addwhizbang-calls</docs>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_PreservesHooksFromFirstCall_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_MergesHooksFromBothCalls_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_ServiceDescriptor_HasImplementationInstance_Async</tests>
@@ -90,6 +94,11 @@ public static class ServiceCollectionExtensions {
   public static WhizbangBuilder AddWhizbang(
       this IServiceCollection services,
       Action<WhizbangCoreOptions>? configure) {
+    // Register startup logger (logs Whizbang version via ILogger on first call only)
+    if (!services.Any(s => s.ServiceType == typeof(WhizbangCoreOptions))) {
+      services.AddSingleton<IHostedService, WhizbangStartupLogger>();
+    }
+
     // Create and configure options
     var coreOptions = new WhizbangCoreOptions();
     configure?.Invoke(coreOptions);
@@ -103,11 +112,14 @@ public static class ServiceCollectionExtensions {
     var existingTagOptions = services.FirstOrDefault(s => s.ServiceType == typeof(TagOptions));
     if (existingTagOptions?.ImplementationInstance is TagOptions existing) {
       // Merge hooks from new options into existing
+      // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
+#pragma warning disable S3267
       foreach (var hook in coreOptions.Tags.HookRegistrations) {
         if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
           existing.UseHookRegistration(hook);
         }
       }
+#pragma warning restore S3267
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);
@@ -139,9 +151,23 @@ public static class ServiceCollectionExtensions {
     // Register perspective synchronization services
     _registerPerspectiveSyncServices(services);
 
+    // Register the Phase C work-pump pipeline (heartbeat, claim, inbox-handler,
+    // and the four batched flush workers + their channel surfaces).
+    // Driver-specific extensions (.WithDriver.Postgres()) wire IWorkCoordinator
+    // and may replace IWorkNotificationListener with a real Postgres LISTEN impl.
+    // Idempotent: TryAdd / AddOptions inside AddWhizbangWorkers handle repeat calls.
+    services.AddWhizbangWorkers();
+
     // Auto-invoke generated service registration callbacks
     // These are set by source-generated module initializers in consumer assemblies
     ServiceRegistrationCallbacks.InvokeAll(services, coreOptions.Services);
+
+    // Turnkey: if the ASP.NET hosting assembly is loaded, its [ModuleInitializer] set
+    // HostingIntegration; fold AddWhizbangAspNet() in automatically (health checks + the
+    // schema-availability gate). Opt out via AutoRegisterAspNetHosting = false and call it yourself.
+    if (coreOptions.AutoRegisterAspNetHosting) {
+      ServiceRegistrationCallbacks.HostingIntegration?.Invoke(services);
+    }
 
     // Auto-invoke WhizbangId provider DI callbacks if any were registered
     WhizbangIdProviderRegistry.InvokeDICallbacks(services);
@@ -186,12 +212,21 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<ITimeProvider, SystemTimeProvider>();
     services.AddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
     services.AddSingleton<Policies.IPolicyEngine, Policies.PolicyEngine>();
-    services.AddSingleton<Messaging.ILifecycleReceptorRegistry, Messaging.DefaultLifecycleReceptorRegistry>();
-    services.AddSingleton<Messaging.ILifecycleInvoker, Messaging.RuntimeLifecycleInvoker>();
+    services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
+    services.TryAddSingleton<ILifecycleCoordinator, LifecycleCoordinator>();
 
     // Deferred outbox channel for events published outside transaction context
     // Events queued here are drained by the work coordinator in the next lifecycle loop
     services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
+
+    // Inbox channel for routing claimed inbox work to the publisher worker
+    services.TryAddSingleton<Messaging.IInboxChannelWriter, Messaging.InboxChannelWriter>();
+
+    // Register IWorkFlusher - resolves to the same strategy instance for manual flush support
+    // IWorkCoordinatorStrategy is registered later by the storage provider (EFCore/Dapper),
+    // but the factory lambda resolves at runtime so ordering is fine.
+    services.TryAddScoped<Messaging.IWorkFlusher>(sp =>
+      (Messaging.IWorkFlusher)sp.GetRequiredService<Messaging.IWorkCoordinatorStrategy>());
 
     services.AddSingleton<Messaging.ILifecycleMessageDeserializer>(sp => {
       var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
@@ -209,6 +244,33 @@ public static class ServiceCollectionExtensions {
     });
 
     services.AddWhizbangMessageSecurity();
+
+    // Register lens infrastructure
+    services.TryAddSingleton<LensOptions>();
+    services.TryAddSingleton<SystemEvents.ISystemEventEmitter, SystemEvents.NullSystemEventEmitter>();
+    services.TryAddScoped<IScopedLensFactory, ScopedLensFactory>();
+
+    // Register observability metrics (near-zero cost when no OTEL exporter is attached)
+    services.TryAddSingleton<WhizbangMetrics>();
+    services.TryAddSingleton<WorkCoordinatorMetrics>();
+    services.TryAddSingleton<DispatcherMetrics>();
+    services.TryAddSingleton<TransportMetrics>();
+    services.TryAddSingleton<PerspectiveMetrics>();
+    services.TryAddSingleton<LifecycleMetrics>();
+    services.TryAddSingleton<InboxMetrics>();
+    services.TryAddSingleton<LifecycleCoordinatorMetrics>();
+    services.TryAddSingleton<EventCategoryMetrics>();
+    services.TryAddSingleton<TypeRegistryMetrics>();
+
+    // Cross-worker dedup: prevents same message+stage from firing twice
+    services.TryAddSingleton<Messaging.LifecycleStageTracker>();
+
+    // Register IPerspectiveRebuilder so callers (PerspectiveMigrationWorker, the
+    // RebuildPerspectiveCommand receptor) can resolve it. The rebuilder itself only depends
+    // on IServiceScopeFactory + ILogger — Core-level services — so registration lives here.
+    // Cursor persistence is routed through IPerspectiveCheckpointCompleter, which is
+    // registered by the storage driver extension (.WithDriver.Postgres or AddWhizbangPostgres).
+    services.TryAddSingleton<Perspectives.IPerspectiveRebuilder, Perspectives.PerspectiveRebuilder>();
   }
 
   /// <summary>
@@ -219,7 +281,7 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<ITracer, Tracer>();
     services.TryAddSingleton<IPerspectiveSyncSignaler, LocalSyncSignaler>();
 
-    services.TryAddScoped<IScopedEventTracker>(sp => {
+    services.TryAddScoped<IScopedEventTracker>(_ => {
       var tracker = new ScopedEventTracker();
       ScopedEventTrackerAccessor.CurrentTracker = tracker;
       return tracker;
@@ -229,17 +291,19 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<ISyncEventTracker, SyncEventTracker>();
     services.TryAddSingleton<IEventCompletionAwaiter, EventCompletionAwaiter>();
     services.TryAddSingleton<ITrackedEventTypeRegistry, TrackedEventTypeRegistry>();
+    // Temporal engine (F2): the home-grown recurrence next-fire factory. TryAdd so a developer's
+    // own IRecurrenceRuleFactory (the override hook — e.g. a different cron parser) takes precedence.
+    services.TryAddSingleton<Temporal.IRecurrenceRuleFactory, Temporal.DefaultRecurrenceRuleFactory>();
   }
 
   /// <summary>
   /// PostConfigure implementation for TracingOptions that binds from IConfiguration.
   /// Extracted to reduce cognitive complexity of AddWhizbang.
   /// </summary>
-  private sealed class TracingOptionsPostConfigure : IPostConfigureOptions<TracingOptions> {
-    private readonly IConfiguration? _config;
+  private sealed class TracingOptionsPostConfigure(IConfiguration? config) : IPostConfigureOptions<TracingOptions> {
+    private readonly IConfiguration? _config = config;
 
-    public TracingOptionsPostConfigure(IConfiguration? config) => _config = config;
-
+    /// <inheritdoc/>
     public void PostConfigure(string? name, TracingOptions options) {
       if (_config == null) {
         return;
@@ -363,9 +427,16 @@ public static class ServiceCollectionExtensions {
       services.AddScoped<Messaging.IEventStore>(sp => {
         var holder = sp.GetRequiredService<InnerEventStoreHolder>();
 
-        // Layer 1: SecurityContext (innermost - propagates security context)
-        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(
-            (Messaging.IEventStore)holder.Instance);
+        // Layer 0: Upcasting (innermost - transforms stored events to their current shape on
+        // read, so every outer decorator and consumer sees upcasted events). Only wrapped when
+        // upcasters are registered, so non-upcasting consumers pay nothing.
+        var upcasterPipeline = sp.GetService<Messaging.EventUpcasterPipeline>();
+        var innerStore = upcasterPipeline is { HasAny: true }
+            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline)
+            : (Messaging.IEventStore)holder.Instance;
+
+        // Layer 1: SecurityContext (propagates security context)
+        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
 
         // Layer 2: SyncTracking (tracks events for perspective sync)
         var scopedTracker = sp.GetService<IScopedEventTracker>();
@@ -403,9 +474,16 @@ public static class ServiceCollectionExtensions {
       services.AddSingleton<Messaging.IEventStore>(sp => {
         var holder = sp.GetRequiredService<InnerEventStoreHolder>();
 
-        // Layer 1: SecurityContext (innermost - propagates security context)
-        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(
-            (Messaging.IEventStore)holder.Instance);
+        // Layer 0: Upcasting (innermost - transforms stored events to their current shape on
+        // read, so every outer decorator and consumer sees upcasted events). Only wrapped when
+        // upcasters are registered, so non-upcasting consumers pay nothing.
+        var upcasterPipeline = sp.GetService<Messaging.EventUpcasterPipeline>();
+        var innerStore = upcasterPipeline is { HasAny: true }
+            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline)
+            : (Messaging.IEventStore)holder.Instance;
+
+        // Layer 1: SecurityContext (propagates security context)
+        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
 
         // Layer 2: SyncTracking (tracks events for perspective sync)
         var syncEventTracker = sp.GetService<ISyncEventTracker>();
@@ -434,11 +512,7 @@ public static class ServiceCollectionExtensions {
   /// <summary>
   /// Holder for the inner event store instance to enable decoration.
   /// </summary>
-  private sealed class InnerEventStoreHolder {
-    public object Instance { get; }
-
-    public InnerEventStoreHolder(object instance) {
-      Instance = instance;
-    }
+  private sealed class InnerEventStoreHolder(object instance) {
+    public object Instance { get; } = instance;
   }
 }

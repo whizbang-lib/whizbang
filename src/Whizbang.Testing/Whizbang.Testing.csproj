@@ -2,8 +2,16 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <Description>Testing utilities, fixtures, and helpers for testing Whizbang-based applications using TUnit and Bogus.</Description>
+    <!-- Suppress CA1707: Contract test base classes use underscores for readability (Given_When_Then pattern) -->
+    <!-- Suppress WHIZ055: Test code uses Guid.NewGuid() for stream IDs intentionally -->
+    <!-- Suppress IL2066: Generated dispatcher registrations in a library context -->
+    <NoWarn>$(NoWarn);CA1707;WHIZ055;IL2066</NoWarn>
     <OutputType>Library</OutputType>
     <IsTestProject>false</IsTestProject>
+    <!-- Prevent Microsoft.Testing.Platform (pulled in transitively via TUnit) from treating this
+         library as a runnable test application. Without this, `dotnet test` tries to execute it
+         and fails with: "A runnable project should target a runnable TFM and have OutputType 'Exe'". -->
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Whizbang.Core/Whizbang.Core.csproj" />

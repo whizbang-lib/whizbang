@@ -45,10 +45,10 @@ public class WhizbangOptionsTests {
   [Test]
   public async Task WhizbangOptions_SetDisableGuidTracking_PersistsValueAsync() {
     // Arrange
-    var options = new WhizbangOptions();
-
-    // Act
-    options.DisableGuidTracking = true;
+    var options = new WhizbangOptions {
+      // Act
+      DisableGuidTracking = true
+    };
 
     // Assert
     await Assert.That(options.DisableGuidTracking).IsTrue();
@@ -57,10 +57,10 @@ public class WhizbangOptionsTests {
   [Test]
   public async Task WhizbangOptions_SetGuidOrderingViolationSeverity_PersistsValueAsync() {
     // Arrange
-    var options = new WhizbangOptions();
-
-    // Act
-    options.GuidOrderingViolationSeverity = GuidOrderingSeverity.Error;
+    var options = new WhizbangOptions {
+      // Act
+      GuidOrderingViolationSeverity = GuidOrderingSeverity.Error
+    };
 
     // Assert
     await Assert.That(options.GuidOrderingViolationSeverity).IsEqualTo(GuidOrderingSeverity.Error);
@@ -69,10 +69,10 @@ public class WhizbangOptionsTests {
   [Test]
   public async Task WhizbangOptions_SetAutoGenerateStreamIds_PersistsValueAsync() {
     // Arrange
-    var options = new WhizbangOptions();
-
-    // Act
-    options.AutoGenerateStreamIds = false;
+    var options = new WhizbangOptions {
+      // Act
+      AutoGenerateStreamIds = false
+    };
 
     // Assert
     await Assert.That(options.AutoGenerateStreamIds).IsFalse();

@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -12,12 +13,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// when multiple parallel operations access the same DbContext instance.
 /// </summary>
 /// <remarks>
-/// These tests demonstrate the core problem: DbContext is NOT thread-safe.
+/// <para>These tests demonstrate the core problem: DbContext is NOT thread-safe.
 /// When multiple tasks query the same DbContext concurrently, EF Core throws
-/// "A second operation was started on this context instance before a previous operation completed".
+/// "A second operation was started on this context instance before a previous operation completed".</para>
 ///
-/// The fix changes ILensQuery registration from Scoped to Transient with IDbContextFactory,
-/// giving each injection its own DbContext from the connection pool.
+/// <para>The fix changes ILensQuery registration from Scoped to Transient with IDbContextFactory,
+/// giving each injection its own DbContext from the connection pool.</para>
 /// </remarks>
 /// <docs>lenses/lens-query-factory</docs>
 [Category("Integration")]

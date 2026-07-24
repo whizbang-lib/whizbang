@@ -258,25 +258,17 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   }
 
   // Test service that uses typed provider
-  private sealed class TestService {
-    private readonly IWhizbangIdProvider<RegistryTestId1> _provider;
-
-    public TestService(IWhizbangIdProvider<RegistryTestId1> provider) {
-      _provider = provider;
-    }
+  private sealed class TestService(IWhizbangIdProvider<RegistryTestId1> provider) {
+    private readonly IWhizbangIdProvider<RegistryTestId1> _provider = provider;
 
     public RegistryTestId1 CreateId() => _provider.NewId();
   }
 
   // Custom test provider for testing
-  private sealed class TestIdProvider : IWhizbangIdProvider {
-    private readonly Guid _fixedGuid;
-
-    public TestIdProvider(Guid fixedGuid) {
-      _fixedGuid = fixedGuid;
-    }
+  private sealed class TestIdProvider(Guid fixedGuid) : IWhizbangIdProvider {
+    private readonly Guid _fixedGuid = fixedGuid;
 
     public TrackedGuid NewGuid() =>
-        TrackedGuid.FromIntercepted(_fixedGuid, GuidMetadata.Version7 | GuidMetadata.SourceMedo);
+        TrackedGuid.FromIntercepted(_fixedGuid, GuidMetadatas.Version7 | GuidMetadatas.SourceMedo);
   }
 }

@@ -7,7 +7,7 @@
     <WhizbangTestType>Unit</WhizbangTestType>
     <!-- Enable viewing generated files -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
     <!-- Don't capture test output so Console.WriteLine appears in terminal -->
     <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
     <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
@@ -15,11 +15,12 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Exclude generated files from compilation -->
-    <Compile Remove=".whizbang-generated/**/*.cs" />
+    <Compile Remove=".whizbang/cache/**/*.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Reference to the generator projects we're testing -->
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators.CodeFixes/Whizbang.Generators.CodeFixes.csproj" />
     <!-- Shared library for testing shared utility types (use extern alias to avoid conflicts with ILRepack merged types) -->
     <ProjectReference Include="../../src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
       <Aliases>shared</Aliases>

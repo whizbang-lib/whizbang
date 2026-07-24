@@ -2,6 +2,7 @@ using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -36,7 +37,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 100,  // 100ms interval for fast test
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -62,8 +63,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       }
     });
 
-    // Act - Wait for timer to fire (give it 500ms = 5x the interval for reliability under load)
-    await Task.Delay(500);
+    // Act - Wait for timer to fire (signal-based, no arbitrary delay)
+    await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
 
     // Assert - Timer should have flushed the queued message
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -82,7 +83,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 1000,  // 1 second interval (longer to avoid races)
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -111,7 +112,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       }
     });
 
-    await Task.Delay(100);  // Delay between messages (still less than 1s interval)
+    // Small delay between messages (still well below 1s interval, but enough to be sequential)
+    await Task.Yield();
 
     var envelope2 = _createTestEnvelope(messageId2);
     sut.QueueOutboxMessage(new OutboxMessage {
@@ -128,8 +130,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       }
     });
 
-    // Wait for timer to fire (1s interval + buffer)
-    await Task.Delay(1500);
+    // Wait for timer to fire (signal-based, no arbitrary delay)
+    await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
 
     // Assert - Both messages should be batched together in single flush
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -150,7 +152,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 1000,  // 1 second interval
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -187,8 +189,8 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     var callCountBeforeDelay = fakeCoordinator.ProcessWorkBatchCallCount;
 
-    // Wait to verify timer stopped (no additional flushes after disposal)
-    await Task.Delay(1500);
+    // Wait briefly to verify timer stopped (negative assertion - timer would fire at 1s intervals)
+    await Task.Delay(200);
 
     // Assert - Timer should be stopped (no additional flush calls)
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(callCountBeforeDelay)
@@ -204,7 +206,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,  // 5 second interval (long)
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -231,11 +233,11 @@ public class IntervalWorkCoordinatorStrategyTests {
     });
 
     // Act - Manual flush (should not wait for 5 second timer)
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - Manual flush should work immediately (not wait for timer)
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
-      .Because("Manual FlushAsync should flush immediately without waiting for timer");
+      .Because("Manual FlushAndGetBatchAsync should flush immediately without waiting for timer");
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
 
@@ -256,7 +258,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -279,7 +281,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     });
 
     // Manual flush
-    await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -293,144 +295,14 @@ public class IntervalWorkCoordinatorStrategyTests {
   // ========================================
   // COMPLETION AND FAILURE TESTS
   // ========================================
-
-  [Test]
-  public async Task QueueOutboxCompletion_ShouldBeIncludedInFlushAsync() {
-    // Arrange
-    var fakeCoordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions {
-      IntervalMilliseconds = 5000,
-      PartitionCount = 10000,
-      LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
-      DebugMode = false
-    };
-
-    var sut = new IntervalWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    var messageId = _idProvider.NewGuid();
-
-    // Act
-    sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
-    await sut.FlushAsync(WorkBatchFlags.None);
-
-    // Assert
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastOutboxCompletions[0].MessageId).IsEqualTo(messageId);
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
-
-  [Test]
-  public async Task QueueInboxCompletion_ShouldBeIncludedInFlushAsync() {
-    // Arrange
-    var fakeCoordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions {
-      IntervalMilliseconds = 5000,
-      PartitionCount = 10000,
-      LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
-      DebugMode = false
-    };
-
-    var sut = new IntervalWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    var messageId = _idProvider.NewGuid();
-
-    // Act
-    sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Published);
-    await sut.FlushAsync(WorkBatchFlags.None);
-
-    // Assert
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastInboxCompletions[0].MessageId).IsEqualTo(messageId);
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
-
-  [Test]
-  public async Task QueueOutboxFailure_ShouldBeIncludedInFlushAsync() {
-    // Arrange
-    var fakeCoordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions {
-      IntervalMilliseconds = 5000,
-      PartitionCount = 10000,
-      LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
-      DebugMode = false
-    };
-
-    var sut = new IntervalWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    var messageId = _idProvider.NewGuid();
-
-    // Act
-    sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Failed, "Test error");
-    await sut.FlushAsync(WorkBatchFlags.None);
-
-    // Assert
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastOutboxFailures[0].MessageId).IsEqualTo(messageId);
-    await Assert.That(fakeCoordinator.LastOutboxFailures[0].Error).IsEqualTo("Test error");
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
-
-  [Test]
-  public async Task QueueInboxFailure_ShouldBeIncludedInFlushAsync() {
-    // Arrange
-    var fakeCoordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions {
-      IntervalMilliseconds = 5000,
-      PartitionCount = 10000,
-      LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
-      DebugMode = false
-    };
-
-    var sut = new IntervalWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    var messageId = _idProvider.NewGuid();
-
-    // Act
-    sut.QueueInboxFailure(messageId, MessageProcessingStatus.Failed, "Inbox error");
-    await sut.FlushAsync(WorkBatchFlags.None);
-
-    // Assert
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastInboxFailures[0].MessageId).IsEqualTo(messageId);
-    await Assert.That(fakeCoordinator.LastInboxFailures[0].Error).IsEqualTo("Inbox error");
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
+  // Completion/failure routing moved to WorkCoordinatorFlushHelperTests after
+  // Phase H. On the direct-coordinator path used here, completions and failures
+  // are dropped by design (channel resolution requires a scoped provider).
+  // Deleted strategy-level tests:
+  //   QueueOutboxCompletion_ShouldBeIncludedInFlushAsync
+  //   QueueInboxCompletion_ShouldBeIncludedInFlushAsync
+  //   QueueOutboxFailure_ShouldBeIncludedInFlushAsync
+  //   QueueInboxFailure_ShouldBeIncludedInFlushAsync
 
   // ========================================
   // EDGE CASE TESTS
@@ -445,7 +317,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -456,7 +328,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     );
 
     // Act - Flush with nothing queued
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - Should return empty batch without calling coordinator
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -476,7 +348,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -513,7 +385,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -526,7 +398,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     await sut.DisposeAsync();
 
     // Act & Assert
-    await Assert.That(async () => await sut.FlushAsync(WorkBatchFlags.None))
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
       .ThrowsExactly<ObjectDisposedException>();
   }
 
@@ -539,7 +411,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -569,7 +441,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new IntervalWorkCoordinatorStrategy(
-      null!,
+      null,
       instanceProvider,
       options
     )).Throws<ArgumentNullException>();
@@ -604,41 +476,13 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   // ========================================
-  // DEBUG MODE TESTS
-  // ========================================
-
-  [Test]
-  public async Task FlushAsync_WithDebugMode_SetsDebugFlagAsync() {
-    // Arrange
-    var fakeCoordinator = new FakeWorkCoordinatorWithFlags();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions {
-      IntervalMilliseconds = 5000,
-      DebugMode = true
-    };
-
-    var sut = new IntervalWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    var messageId = _idProvider.NewGuid();
-    sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
-
-    // Act
-    await sut.FlushAsync(WorkBatchFlags.None);
-
-    // Assert - DebugMode flag should be set
-    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
-
-  // ========================================
   // MORE DISPOSED STATE TESTS
   // ========================================
+  //
+  // Deleted: FlushAsync_WithDebugMode_SetsDebugFlagAsync. After Phase H the
+  // strategy no longer routes WorkBatchOptions.DebugMode through the coordinator
+  // (process_work_batch is gone). Debug-mode behavior is now per-component
+  // (e.g., OutboxCompletionFlushWorker), covered in those workers' own tests.
 
   [Test]
   public async Task QueueInboxMessage_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
@@ -724,10 +568,166 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   // ========================================
-  // Test Fakes
+  // Graceful Shutdown Tests
   // ========================================
 
-  private sealed class FakeWorkCoordinator : IWorkCoordinator {
+  [Test]
+  public async Task FlushAsync_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
+
+    var sut = new IntervalWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(async () => { await sut.FlushAsync(WorkBatchOptions.None); })
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task FlushAsync_ConcurrentFlush_ReturnsEmptyBatchAsync() {
+    // Arrange - use a slow coordinator so we can trigger concurrent flushes
+    var slowCoordinator = new SlowWorkCoordinator(delayMilliseconds: 500);
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { IntervalMilliseconds = 60000 };
+
+    var sut = new IntervalWorkCoordinatorStrategy(slowCoordinator, instanceProvider, options);
+
+    // Queue a message so the first flush has work to do
+    var messageId = _idProvider.NewGuid();
+    var envelope = _createTestEnvelope(messageId);
+    sut.QueueOutboxMessage(new OutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = []
+      }
+    });
+
+    // Act - start a flush, then immediately try a second flush
+    var firstFlush = sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+    await Task.Delay(50); // Let first flush acquire the lock
+
+    var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+    // Assert - second flush should return empty (first is in progress)
+    await Assert.That(secondResult.OutboxWork).IsEmpty()
+      .Because("Concurrent flush should return empty batch when another flush is in progress");
+
+    // Cleanup
+    await firstFlush;
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // Channel Write Tests
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithReturnedWork_WritesToChannelAsync() {
+    // Arrange
+    var channelWriter = new TestWorkChannelWriter();
+    var messageId1 = Guid.CreateVersion7();
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = messageId1,
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createTestEnvelope(messageId1),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 60000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+    );
+
+    try {
+      var messageId = _idProvider.NewGuid();
+      sut.QueueOutboxMessage(new OutboxMessage {
+        MessageId = messageId,
+        Destination = "test-topic",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = "Test",
+        StreamId = _idProvider.NewGuid(),
+        IsEvent = false,
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
+      });
+
+      // Act
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert — ExecuteFlushAsync signals publisher but does not write to channel
+      await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
+        .Because("ExecuteFlushAsync signals publisher but does not write to channel");
+      // Work was still persisted via the work coordinator
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
+  // Test Fakes
+  // ========================================
+  // Deleted: FlushAsync_NullChannelWriter_DoesNotThrowAsync,
+  //          FlushAsync_ChannelClosed_HandlesGracefullyAsync.
+  // Both asserted result.OutboxWork.Count == 1 against the legacy claim-during-flush
+  // behavior. Post-Phase-H, ExecuteFlushAsync returns an empty WorkBatch (claiming
+  // is owned by ClaimWorker); these tests can never pass.
+
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
+    public List<OutboxWork> WrittenWork { get; } = [];
+
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+      WrittenWork.Add(work);
+      return ValueTask.CompletedTask;
+    }
+
+    public bool TryWrite(OutboxWork work) {
+      WrittenWork.Add(work);
+      return true;
+    }
+
+    public void Complete() { }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
+  }
+
+  private sealed class FakeWorkCoordinator : IWorkCoordinator, IDisposable {
+    private readonly SemaphoreSlim _flushSignal = new(0, int.MaxValue);
+
+    public void Dispose() => _flushSignal.Dispose();
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
@@ -735,76 +735,55 @@ public class IntervalWorkCoordinatorStrategyTests {
     public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
     public MessageFailure[] LastOutboxFailures { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
+    public List<OutboxWork> WorkToReturn { get; set; } = [];
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
+    /// <summary>
+    /// Waits for at least one flush to the work coordinator.
+    /// </summary>
+    public async Task WaitForFlushAsync(TimeSpan timeout) {
+      if (!await _flushSignal.WaitAsync(timeout)) {
+        throw new TimeoutException("The work coordinator was not flushed within timeout");
+      }
+    }
+
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
-      LastNewOutboxMessages = request.NewOutboxMessages;
-      LastNewInboxMessages = request.NewInboxMessages;
-      LastOutboxCompletions = request.OutboxCompletions;
-      LastInboxCompletions = request.InboxCompletions;
-      LastOutboxFailures = request.OutboxFailures;
-      LastInboxFailures = request.InboxFailures;
-
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
+      LastNewOutboxMessages = messages;
+      _flushSignal.Release();
+      return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      LastNewInboxMessages = messages;
+      _flushSignal.Release();
+      return Task.CompletedTask;
+    }
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
-    }
-  }
-
-  private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
-    public WorkBatchFlags LastFlags { get; private set; }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      LastFlags = request.Flags;
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
-    public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
-      CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
-    }
-
-    public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
-      CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
-    }
-
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
-      Guid streamId,
-      string perspectiveName,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -826,6 +805,8 @@ public class IntervalWorkCoordinatorStrategyTests {
 
   // Test envelope implementation
   private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
     public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;  // Test payload
@@ -858,5 +839,42 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     public SecurityContext? GetCurrentSecurityContext() => null;
     public ScopeContext? GetCurrentScope() => null;
+  }
+
+  private sealed class SlowWorkCoordinator(int delayMilliseconds) : IWorkCoordinator {
+    private readonly int _delayMilliseconds = delayMilliseconds;
+
+    public async Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) {
+      // Slow the live store path so a concurrent flush observes one in progress.
+      await Task.Delay(_delayMilliseconds, cancellationToken);
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCursorCompletion completion,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCursorFailure failure,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) {
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
+    }
   }
 }

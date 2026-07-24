@@ -7,12 +7,12 @@ namespace Whizbang.Core.Routing;
 /// Marker interface to indicate that <see cref="RoutingBuilderExtensions.WithRouting"/> was called.
 /// Used by <c>AddTransportConsumer</c> to verify routing is configured.
 /// </summary>
-internal interface IRoutingConfigured { }
+internal interface IRoutingConfigured;
 
 /// <summary>
 /// Internal implementation of <see cref="IRoutingConfigured"/> marker.
 /// </summary>
-internal sealed class RoutingConfiguredMarker : IRoutingConfigured { }
+internal sealed class RoutingConfiguredMarker : IRoutingConfigured;
 
 /// <summary>
 /// Extension methods for configuring message routing on <see cref="WhizbangBuilder"/>.
@@ -38,7 +38,7 @@ internal sealed class RoutingConfiguredMarker : IRoutingConfigured { }
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#with-routing</docs>
+/// <docs>fundamentals/dispatcher/routing#with-routing</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingBuilderExtensionsTests.cs</tests>
 public static class RoutingBuilderExtensions {
   /// <summary>
@@ -75,7 +75,7 @@ public static class RoutingBuilderExtensions {
   ///     .AddTransportConsumer(); // Auto-generates subscriptions from routing config
   /// </code>
   /// </example>
-  /// <docs>core-concepts/routing#with-routing</docs>
+  /// <docs>fundamentals/dispatcher/routing#with-routing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingBuilderExtensionsTests.cs:WithRouting_RegistersRoutingOptionsAsync</tests>
   public static WhizbangBuilder WithRouting(
       this WhizbangBuilder builder,

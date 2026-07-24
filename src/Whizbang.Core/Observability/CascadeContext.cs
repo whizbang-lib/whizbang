@@ -1,3 +1,4 @@
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
@@ -8,15 +9,15 @@ namespace Whizbang.Core.Observability;
 /// Lightweight record containing only what needs to cascade - NOT the full hop history.
 /// </summary>
 /// <remarks>
-/// CascadeContext is the single source of truth for context propagation. It encapsulates:
+/// <para>CascadeContext is the single source of truth for context propagation. It encapsulates:
 /// - CorrelationId: Links all messages in a workflow
 /// - CausationId: Parent message's MessageId (for causation chain)
 /// - SecurityContext: UserId and TenantId for multi-tenant security
-/// - Metadata: Extensible key-value store for enrichers
+/// - Metadata: Extensible key-value store for enrichers</para>
 ///
-/// Use this instead of manually extracting and passing individual properties.
+/// <para>Use this instead of manually extracting and passing individual properties.</para>
 /// </remarks>
-/// <docs>core-concepts/cascade-context</docs>
+/// <docs>fundamentals/messages/cascade-context</docs>
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs</tests>
 public sealed record CascadeContext {
   /// <summary>
@@ -83,7 +84,10 @@ public sealed record CascadeContext {
   /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:NewRootWithAmbientSecurity_WithAmbientContextButPropagationDisabled_ReturnsNullSecurityAsync</tests>
   public static CascadeContext NewRootWithAmbientSecurity() {
     return new CascadeContext {
-      CorrelationId = CorrelationId.New(),
+      // Adopt a correlation id captured at the inbound edge (e.g. an X-Correlation-ID header) so a
+      // client-supplied token flows through the whole graph; otherwise mint one aligned to the ambient
+      // W3C trace (so Whizbang correlation lines up with the OpenTelemetry trace).
+      CorrelationId = InboundCorrelationAccessor.Current ?? CorrelationId.NewRootAligned(),
       CausationId = MessageId.New(),
       SecurityContext = GetSecurityFromAmbient()
     };
@@ -108,10 +112,146 @@ public sealed record CascadeContext {
       return null;
     }
 
-    return new SecurityContext {
-      UserId = ctx.Scope.UserId,
-      TenantId = ctx.Scope.TenantId
-    };
+    return SecurityFromScope(ctx.Scope);
+  }
+
+  /// <summary>
+  /// Builds a <see cref="SecurityContext"/> from raw tenant/user ids, or <see langword="null"/> when BOTH are
+  /// blank (the "no scope" case). The lowest-level scope primitive shared by the hop builders that stamp scope
+  /// from an explicit id pair — one place for the null-on-blank rule instead of re-inlining it per site.
+  /// </summary>
+  public static SecurityContext? SecurityFromIds(string? tenantId, string? userId) =>
+    string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)
+      ? null
+      : new SecurityContext { TenantId = tenantId, UserId = userId };
+
+  /// <summary>
+  /// Builds a <see cref="SecurityContext"/> carrying a scope's Tenant/User, or <see langword="null"/> when the
+  /// scope itself is null. (A scope with blank ids still yields a SecurityContext; downstream
+  /// <see cref="ScopeDelta.FromSecurityContext"/> collapses blank→null — matching the always-create-from-scope
+  /// hop builders this replaces.) The scope companion to <see cref="SecurityFromIds"/>.
+  /// </summary>
+  public static SecurityContext? SecurityFromScope(PerspectiveScope? scope) =>
+    scope is null ? null : new SecurityContext { TenantId = scope.TenantId, UserId = scope.UserId };
+
+  /// <summary>
+  /// The Tenant/User scope carried by an <see cref="IMessageContext"/> as a <see cref="ScopeDelta"/>, or
+  /// <see langword="null"/> when the context carries no tenant/user. Shared by the hop builders that stamp scope
+  /// from an explicit message context (dispatcher initial hop + the transport envelope builders).
+  /// </summary>
+  public static ScopeDelta? ScopeDeltaFromMessageContext(IMessageContext context) =>
+    ScopeDelta.FromSecurityContext(SecurityFromIds(context.TenantId, context.UserId));
+
+  /// <summary>
+  /// Resolves the cascade identity (<see cref="CorrelationId"/> + causation <see cref="MessageId"/>) to stamp
+  /// on a hop that is being published to the outbox or written to the event store — the mirror of
+  /// <see cref="GetSecurityFromAmbient"/> for the tracing/lineage axis.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The "publish/store" hop builders re-derive <em>scope</em> from ambient context but historically dropped
+  /// the correlation/causation pair, so a persisted hop carried <c>sc</c> (scope) yet no <c>co</c>/<c>ca</c> —
+  /// the notification's correlationId came back null and downstream consumers lost the chain. This resolves the
+  /// pair the same way scope is resolved, so identity flows wherever scope flows.
+  /// </para>
+  /// <para>Priority:
+  /// <list type="number">
+  /// <item><description>the ambient initiating context — the inbound message whose handler is emitting this event;</description></item>
+  /// <item><description>the source envelope — a cascaded event inherits its parent's correlation from the source hop;</description></item>
+  /// <item><description>a new id aligned to the ambient W3C trace (so Whizbang correlation lines up with the OTel trace).</description></item>
+  /// </list>
+  /// </para>
+  /// </remarks>
+  /// <param name="sourceEnvelope">The parent message's envelope when cascading, or <see langword="null"/> for a top-level publish/store.</param>
+  /// <returns>The correlation id (never default) and the causation id (null when there is no parent).</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveCascadeIdentity_WithAmbientInitiatingContext_UsesItsCorrelationAndCausationAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveCascadeIdentity_NoAmbient_FallsBackToSourceEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveCascadeIdentity_NoAmbientNoSource_MintsTraceAlignedRootAsync</tests>
+  public static (CorrelationId Correlation, MessageId? Causation) ResolveCascadeIdentity(IMessageEnvelope? sourceEnvelope) {
+    // 1. Ambient initiating context — the inbound message whose handler is emitting this event.
+    if (ScopeContextAccessor.CurrentInitiatingContext is { } initiating && initiating.CorrelationId.Value != Guid.Empty) {
+      return (initiating.CorrelationId, initiating.MessageId);
+    }
+
+    // 2. Source envelope — a cascaded event carries its parent's correlation on the source hop.
+    if (sourceEnvelope?.GetCorrelationId() is { } sourceCorrelation && sourceCorrelation.Value != Guid.Empty) {
+      return (sourceCorrelation, sourceEnvelope.GetCausationId());
+    }
+
+    // 3. New root — align to the ambient trace so Whizbang correlation == the OTel trace.
+    return (CorrelationId.NewRootAligned(), null);
+  }
+
+  /// <summary>
+  /// Resolves the cascade identity (correlation + causation) to stamp on the message context of a message being
+  /// <b>handled</b> — the mirror of <see cref="ResolveCascadeIdentity"/> (which resolves the identity for a message
+  /// being <b>published</b>). Together these two are the single place correlation propagation is decided, so every
+  /// establishment site (transport workers, the local cascade, perspective workers) inherits identically instead of
+  /// each re-implementing the rule — which is how one site at a time drifted into minting a fresh correlation.
+  /// </summary>
+  /// <remarks>
+  /// Priority:
+  /// <list type="number">
+  /// <item><description>the message's own envelope hop — an inbound message carries its authoritative
+  ///   correlation/causation;</description></item>
+  /// <item><description>the ambient parent message context — a locally-cascaded message (no envelope) inherits from
+  ///   the receptor whose handler emitted it. This branch also <b>rescues</b> an inbound message whose hop somehow
+  ///   lost its correlation, so a dropped hop can never silently start a fresh correlation tree (defence in depth);</description></item>
+  /// <item><description>a fresh root — only when there is genuinely no parent (a true entry point).</description></item>
+  /// </list>
+  /// Correlation propagates unchanged down the whole causal tree; causation points at the parent message.
+  /// </remarks>
+  /// <param name="sourceEnvelope">The envelope of the message being handled, or <see langword="null"/> for a local
+  /// cascade that carries no envelope.</param>
+  /// <returns>The correlation id (never default) and the causation id (never default).</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_HopHasNoCorrelation_RescuesFromAmbientParentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_HopHasCorrelation_UsesHopNotAmbientParentAsync</tests>
+  public static (CorrelationId Correlation, MessageId Causation) ResolveInheritedIdentity(IMessageEnvelope? sourceEnvelope) {
+    var parent = MessageContextAccessor.CurrentContext ?? ScopeContextAccessor.CurrentInitiatingContext;
+
+    var correlation =
+        sourceEnvelope?.GetCorrelationId() is { } hopCorrelation && hopCorrelation.Value != Guid.Empty ? hopCorrelation
+      : parent is not null && parent.CorrelationId.Value != Guid.Empty ? parent.CorrelationId
+      : CorrelationId.New();
+
+    var causation =
+        sourceEnvelope?.GetCausationId()
+      ?? parent?.MessageId
+      ?? MessageId.New();
+
+    return (correlation, causation);
+  }
+
+  /// <summary>
+  /// Resolves the (correlation, causation) to stamp on a child event's hop when PUBLISHING, HOP-FIRST: the source
+  /// hop captured at the calling site is authoritative — it survives detached/worker/collective boundaries where
+  /// AsyncLocal does not — falling back to the ambient initiating context and finally a trace-aligned fresh root
+  /// via <see cref="ResolveCascadeIdentity"/>. This is the single place the hop-first publish precedence lives, so
+  /// every hop builder (outbox typed/JSON, deferred, event-store decorator) resolves identically instead of
+  /// re-implementing the rule (which is how one site at a time drifted to ambient-first).
+  /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstIdentity_HopPresent_WinsOverDifferentAmbientAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstIdentity_NoHop_FallsBackToAmbientAsync</tests>
+  public static (CorrelationId Correlation, MessageId? Causation) ResolveHopFirstIdentity(IMessageEnvelope? sourceEnvelope) {
+    if (sourceEnvelope?.GetCorrelationId() is { } sourceCorrelation && sourceCorrelation.Value != Guid.Empty) {
+      return (sourceCorrelation, sourceEnvelope.GetCausationId());
+    }
+    return ResolveCascadeIdentity(sourceEnvelope);
+  }
+
+  /// <summary>
+  /// Resolves the security scope (Tenant/User) to stamp on a child event's hop, HOP-FIRST — the source hop
+  /// captured at the calling site is authoritative (survives detached/worker/collective boundaries), ambient is
+  /// the fallback. The scope companion to <see cref="ResolveHopFirstIdentity"/>: together they are the ONE place
+  /// the hop-first precedence lives, shared by every hop builder.
+  /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstScope_HopPresent_WinsOverDifferentAmbientAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstScope_NoHop_FallsBackToAmbientAsync</tests>
+  public static ScopeDelta? ResolveHopFirstScope(IMessageEnvelope? sourceEnvelope) {
+    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
+      ? ScopeDelta.FromSecurityContext(SecurityFromScope(s.Scope))
+      : null;
+    return sourceScope ?? ScopeDelta.FromSecurityContext(GetSecurityFromAmbient());
   }
 
   /// <summary>
@@ -144,7 +284,7 @@ public sealed record CascadeContext {
 
     var newMetadata = Metadata is not null
       ? new Dictionary<string, object>(Metadata)
-      : new Dictionary<string, object>();
+      : [];
 
     foreach (var kvp in additional) {
       newMetadata[kvp.Key] = kvp.Value;

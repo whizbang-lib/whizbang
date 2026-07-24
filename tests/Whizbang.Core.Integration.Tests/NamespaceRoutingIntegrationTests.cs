@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Integration.Tests.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -30,7 +31,11 @@ public class NamespaceRoutingIntegrationTests {
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      return FlushAndGetBatchAsync(flags, ct);
+    }
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -46,7 +51,8 @@ public class NamespaceRoutingIntegrationTests {
       var jsonEnvelope = new MessageEnvelope<System.Text.Json.JsonElement> {
         MessageId = envelope.MessageId,
         Payload = jsonElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return new SerializedEnvelope(
         jsonEnvelope,
@@ -216,7 +222,7 @@ public class NamespaceRoutingIntegrationTests {
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
     var destination = strategy.QueuedOutboxMessages[0].Destination;
     await Assert.That(destination).IsNotNull();
-    await Assert.That(destination!).IsEqualTo(destination.ToLowerInvariant());
+    await Assert.That(destination).IsEqualTo(destination.ToLowerInvariant());
     await Assert.That(destination).IsEqualTo("testnamespaces.myapp.orders.events");
   }
 

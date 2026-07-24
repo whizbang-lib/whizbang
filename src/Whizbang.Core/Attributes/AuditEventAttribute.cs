@@ -30,17 +30,18 @@ namespace Whizbang.Core.Attributes;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/audit-logging#selective-auditing</docs>
+/// <docs>fundamentals/security/audit-logging#selective-auditing</docs>
 /// <tests>Whizbang.Core.Tests/Audit/AuditEventAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
 public sealed class AuditEventAttribute : MessageTagAttribute {
   /// <summary>
   /// Creates a new audit event attribute with default tag "audit".
   /// </summary>
+  // Properties is left null so the generator falls back to extracting every public
+  // property on the event — audit needs the full event body.
   [SetsRequiredMembers]
   public AuditEventAttribute() {
     Tag = "audit";
-    IncludeEvent = true; // Always include full event body for audit
   }
 
   /// <summary>

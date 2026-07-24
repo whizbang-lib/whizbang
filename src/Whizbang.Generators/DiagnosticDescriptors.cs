@@ -142,6 +142,19 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
+  /// WHIZ013: Error - [GenerateStreamId] on an init-only [StreamId] property is a silent no-op.
+  /// </summary>
+  public static readonly DiagnosticDescriptor GenerateStreamIdOnInitOnly = new(
+      id: "WHIZ013",
+      title: "GenerateStreamId requires a settable StreamId",
+      messageFormat: "Type '{0}' has [GenerateStreamId] on the init-only property '{1}'. The framework mints the id at dispatch and writes it back through a generated setter, which cannot target an init-only property — so the id would silently stay empty and dispatch would fail at the outbox. Change '{1}' to a mutable 'get; set;' property.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "[GenerateStreamId] auto-generates the stream id at dispatch; the value is written back via a generated SetStreamId writer that only targets mutable Guid properties. An init-only [StreamId] makes the attribute a silent no-op. Applies to every message kind (IEvent, ICommand, collective events)."
+  );
+
+  /// <summary>
   /// WHIZ011: Info - Message type discovered for JSON serialization.
   /// </summary>
   public static readonly DiagnosticDescriptor JsonSerializableTypeDiscovered = new(
@@ -287,7 +300,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ030: Error - Event type used in perspective is missing [StreamId] attribute.
   /// </summary>
-  /// <docs>diagnostics/whiz030</docs>
+  /// <docs>operations/diagnostics/whiz030</docs>
   public static readonly DiagnosticDescriptor PerspectiveEventMissingStreamId = new(
       id: "WHIZ030",
       title: "Perspective Event Missing StreamId",
@@ -301,7 +314,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ031: Error - Event type has multiple [StreamId] attributes.
   /// </summary>
-  /// <docs>diagnostics/whiz031</docs>
+  /// <docs>operations/diagnostics/whiz031</docs>
   public static readonly DiagnosticDescriptor PerspectiveEventMultipleStreamIds = new(
       id: "WHIZ031",
       title: "Multiple StreamId Attributes",
@@ -315,7 +328,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ032: Error - Perspective name collision detected.
   /// </summary>
-  /// <docs>diagnostics/whiz032</docs>
+  /// <docs>operations/diagnostics/whiz032</docs>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithDuplicateNames_EmitsCollisionErrorAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveNameCollision = new(
       id: "WHIZ032",
@@ -330,7 +343,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ033: Warning - Perspective model missing [StreamId] attribute.
   /// </summary>
-  /// <docs>diagnostics/whiz033</docs>
+  /// <docs>operations/diagnostics/whiz033</docs>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs:PerspectiveRunnerGenerator_ModelMissingStreamId_EmitsWarningAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveModelMissingStreamId = new(
       id: "WHIZ033",
@@ -350,7 +363,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ040: Info - User service discovered during source generation.
   /// Reports when a user-defined interface extending Whizbang interfaces is registered.
   /// </summary>
-  /// <docs>diagnostics/whiz040</docs>
+  /// <docs>operations/diagnostics/whiz040</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs</tests>
   public static readonly DiagnosticDescriptor UserServiceDiscovered = new(
       id: "WHIZ040",
@@ -366,7 +379,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ041: Info - Abstract class skipped for service registration.
   /// Reports when an abstract class implementing Whizbang interfaces is skipped.
   /// </summary>
-  /// <docs>diagnostics/whiz041</docs>
+  /// <docs>operations/diagnostics/whiz041</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs</tests>
   public static readonly DiagnosticDescriptor AbstractClassSkipped = new(
       id: "WHIZ041",
@@ -382,7 +395,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ042: Info - No user services found in the compilation.
   /// Reports when no lens or perspective services are discovered.
   /// </summary>
-  /// <docs>diagnostics/whiz042</docs>
+  /// <docs>operations/diagnostics/whiz042</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs</tests>
   public static readonly DiagnosticDescriptor NoUserServicesFound = new(
       id: "WHIZ042",
@@ -470,7 +483,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ060: Error - Property uses non-serializable type 'object'.
   /// </summary>
-  /// <docs>diagnostics/whiz060</docs>
+  /// <docs>operations/diagnostics/whiz060</docs>
   /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
   public static readonly DiagnosticDescriptor NonSerializablePropertyObject = new(
       id: "WHIZ060",
@@ -485,7 +498,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ061: Error - Property uses non-serializable type 'dynamic'.
   /// </summary>
-  /// <docs>diagnostics/whiz061</docs>
+  /// <docs>operations/diagnostics/whiz061</docs>
   /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
   public static readonly DiagnosticDescriptor NonSerializablePropertyDynamic = new(
       id: "WHIZ061",
@@ -500,7 +513,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ062: Error - Property uses non-serializable interface type.
   /// </summary>
-  /// <docs>diagnostics/whiz062</docs>
+  /// <docs>operations/diagnostics/whiz062</docs>
   /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
   public static readonly DiagnosticDescriptor NonSerializablePropertyInterface = new(
       id: "WHIZ062",
@@ -515,7 +528,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ063: Error - Nested type contains non-serializable property.
   /// </summary>
-  /// <docs>diagnostics/whiz063</docs>
+  /// <docs>operations/diagnostics/whiz063</docs>
   /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
   public static readonly DiagnosticDescriptor NonSerializableNestedProperty = new(
       id: "WHIZ063",
@@ -535,7 +548,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ055: Warning - Guid.NewGuid() detected.
   /// Will be upgraded to Error after Phase 5 migration is complete.
   /// </summary>
-  /// <docs>diagnostics/whiz055</docs>
+  /// <docs>operations/diagnostics/whiz055</docs>
   public static readonly DiagnosticDescriptor GuidNewGuidUsage = new(
       id: "WHIZ055",
       title: "Guid.NewGuid() Usage",
@@ -550,7 +563,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ056: Warning - Guid.CreateVersion7() detected.
   /// Will be upgraded to Error after Phase 5 migration is complete.
   /// </summary>
-  /// <docs>diagnostics/whiz056</docs>
+  /// <docs>operations/diagnostics/whiz056</docs>
   public static readonly DiagnosticDescriptor GuidCreateVersion7Usage = new(
       id: "WHIZ056",
       title: "Guid.CreateVersion7() Usage",
@@ -564,7 +577,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ057: Warning - Raw Guid parameter where IWhizbangId expected.
   /// </summary>
-  /// <docs>diagnostics/whiz057</docs>
+  /// <docs>operations/diagnostics/whiz057</docs>
   public static readonly DiagnosticDescriptor RawGuidWhereIdExpected = new(
       id: "WHIZ057",
       title: "Raw Guid Parameter",
@@ -578,7 +591,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ058: Info - Guid generation call intercepted and wrapped with TrackedGuid.
   /// </summary>
-  /// <docs>diagnostics/whiz058</docs>
+  /// <docs>operations/diagnostics/whiz058</docs>
   public static readonly DiagnosticDescriptor GuidCallIntercepted = new(
       id: "WHIZ058",
       title: "Guid Call Intercepted",
@@ -592,7 +605,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ059: Info - Guid interception suppressed via attribute or pragma.
   /// </summary>
-  /// <docs>diagnostics/whiz059</docs>
+  /// <docs>operations/diagnostics/whiz059</docs>
   public static readonly DiagnosticDescriptor GuidInterceptionSuppressed = new(
       id: "WHIZ059",
       title: "Guid Interception Suppressed",
@@ -614,7 +627,7 @@ public static class DiagnosticDescriptors {
   /// Note: Disabled by default pending implementation of key-based RPC handler selection.
   /// Future: Handlers can be decorated with [RpcKey] and RPC calls can specify which handler to use.
   /// </summary>
-  /// <docs>diagnostics/whiz080</docs>
+  /// <docs>operations/diagnostics/whiz080</docs>
   public static readonly DiagnosticDescriptor MultipleHandlersForRpcMessage = new(
       id: "WHIZ080",
       title: "Multiple Handlers for RPC Message",
@@ -632,7 +645,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ801: Error - [VectorField] can only be applied to float[] properties.
   /// </summary>
-  /// <docs>diagnostics/whiz801</docs>
+  /// <docs>operations/diagnostics/whiz801</docs>
   public static readonly DiagnosticDescriptor VectorFieldInvalidType = new(
       id: "WHIZ801",
       title: "VectorField Invalid Type",
@@ -646,7 +659,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ802: Error - [VectorField] dimensions must be positive.
   /// </summary>
-  /// <docs>diagnostics/whiz802</docs>
+  /// <docs>operations/diagnostics/whiz802</docs>
   public static readonly DiagnosticDescriptor VectorFieldInvalidDimensions = new(
       id: "WHIZ802",
       title: "VectorField Invalid Dimensions",
@@ -660,7 +673,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ803: Warning - [PhysicalField] on complex type may not benefit from indexing.
   /// </summary>
-  /// <docs>diagnostics/whiz803</docs>
+  /// <docs>operations/diagnostics/whiz803</docs>
   public static readonly DiagnosticDescriptor PhysicalFieldComplexType = new(
       id: "WHIZ803",
       title: "PhysicalField Complex Type",
@@ -674,7 +687,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ805: Warning - Split mode with no [PhysicalField] is equivalent to JsonOnly.
   /// </summary>
-  /// <docs>diagnostics/whiz805</docs>
+  /// <docs>operations/diagnostics/whiz805</docs>
   public static readonly DiagnosticDescriptor SplitModeNoPhysicalFields = new(
       id: "WHIZ805",
       title: "Split Mode No Physical Fields",
@@ -688,7 +701,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ807: Info - Model has physical field(s) discovered.
   /// </summary>
-  /// <docs>diagnostics/whiz807</docs>
+  /// <docs>operations/diagnostics/whiz807</docs>
   public static readonly DiagnosticDescriptor PhysicalFieldsDiscovered = new(
       id: "WHIZ807",
       title: "Physical Fields Discovered",
@@ -706,7 +719,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ070: Error - [VectorField] requires Pgvector.EntityFrameworkCore package.
   /// </summary>
-  /// <docs>diagnostics/whiz070</docs>
+  /// <docs>operations/diagnostics/whiz070</docs>
   /// <tests>tests/Whizbang.Generators.Tests/VectorDependencyAnalyzerTests.cs</tests>
   public static readonly DiagnosticDescriptor VectorFieldMissingPackage = new(
       id: "WHIZ070",
@@ -727,7 +740,7 @@ public static class DiagnosticDescriptors {
   /// Reports when a base class or interface is discovered with derived types
   /// that will be registered for polymorphic JSON serialization.
   /// </summary>
-  /// <docs>source-generators/polymorphic-serialization</docs>
+  /// <docs>extending/source-generators/polymorphic-serialization</docs>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithPolymorphicBase_ReportsWHIZ071DiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor PolymorphicBaseTypeDiscovered = new(
       id: "WHIZ071",
@@ -748,7 +761,7 @@ public static class DiagnosticDescriptors {
   /// Whizbang's source generators extract attribute values using constructor parameter names.
   /// Parameters must match property names (case-insensitive) for values to be extracted correctly.
   /// </summary>
-  /// <docs>diagnostics/whiz090</docs>
+  /// <docs>operations/diagnostics/whiz090</docs>
   /// <tests>tests/Whizbang.Generators.Tests/Analyzers/MessageTagParameterAnalyzerTests.cs</tests>
   public static readonly DiagnosticDescriptor MessageTagParameterMismatch = new(
       id: "WHIZ090",
@@ -758,5 +771,124 @@ public static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "Whizbang's source generators extract attribute values using constructor parameter names. Parameters must match property names (case-insensitive) for values to be extracted correctly."
+  );
+
+  // ==========================================================================
+  // WHIZ110-112: Pinned identity
+  // ==========================================================================
+
+  /// <summary>
+  /// WHIZ110: Warning — concrete IMessage (IEvent or ICommand) missing [PinnedId].
+  /// Adds a stable identity for the type so it survives namespace restructuring.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz110</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor MessageMissingPinnedId = new(
+      id: "WHIZ110",
+      title: "Message Missing [PinnedId]",
+      messageFormat: "Message type '{0}' is missing [PinnedId]. Apply the code fix to add a stable pinned identity.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Concrete IEvent and ICommand types should carry [PinnedId] so stored events can survive namespace restructuring. This is a warning, not an error, to allow gradual adoption."
+  );
+
+  /// <summary>
+  /// WHIZ111: Warning — concrete IPerspectiveFor&lt;&gt; missing [PinnedId].
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz111</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PerspectiveMissingPinnedId = new(
+      id: "WHIZ111",
+      title: "Perspective Missing [PinnedId]",
+      messageFormat: "Perspective type '{0}' is missing [PinnedId]. Apply the code fix to add a stable pinned identity.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Concrete IPerspectiveFor<> types should carry [PinnedId] so perspective registrations survive namespace restructuring."
+  );
+
+  /// <summary>
+  /// WHIZ112: Error — [PinnedId] value is not a valid GUID string.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz112</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PinnedIdNotAValidGuid = new(
+      id: "WHIZ112",
+      title: "Invalid [PinnedId] GUID",
+      messageFormat: "[PinnedId] value '{0}' on '{1}' is not a valid GUID. Use a value parseable by Guid.Parse (e.g., '00000000-0000-0000-0000-000000000000').",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The [PinnedId] attribute requires its argument to be a parseable GUID string so it can uniquely identify the type across services and environments."
+  );
+
+  /// <summary>
+  /// WHIZ120: Error — a [PinnedId] type was renamed without acknowledging it in the pinned-type ledger.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz120</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedTypeRenameAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PinnedTypeRenamedWithoutAcknowledgment = new(
+      id: "WHIZ120",
+      title: "Pinned Type Renamed Without Ledger Acknowledgment",
+      messageFormat: "Pinned type '{0}' (id {1}) has CLR name '{2}' but the pinned-type ledger records '{3}'. This is a rename: in .whizbang/pinned-type-ledger.json, add '{3}' to this entry's formerNames and set its clrTypeName to '{2}' so old stored events still resolve to this type.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A pinned type's identity is its PinnedId; its CLR name is a versioned label. When the name changes, the former name must be recorded as an alias in the committed pinned-type ledger so events written under the old name (immutable in the event store) still deserialize to the current type. Renames must be acknowledged, not silently dropped.",
+      customTags: WellKnownDiagnosticTags.CompilationEnd
+  );
+
+  /// <summary>
+  /// WHIZ121: Warning — the pinned-type ledger has an entry whose PinnedId is no longer present in the compilation.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz121</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedTypeRenameAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor LedgerEntryHasNoLivingType = new(
+      id: "WHIZ121",
+      title: "Pinned-Type Ledger Entry Has No Living Type",
+      messageFormat: "The pinned-type ledger records id {0} ('{1}') but no [PinnedId] type with that id exists in this compilation. The type was removed or its PinnedId changed; prune or reconcile the ledger entry.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "The pinned-type ledger should track exactly the [PinnedId] types in the assembly. An entry with no matching living type indicates a removed type or a changed PinnedId, and its aliases will register against nothing.",
+      customTags: WellKnownDiagnosticTags.CompilationEnd
+  );
+
+  /// <summary>
+  /// WHIZ122: Warning — the pinned-type ledger file exists but could not be parsed (malformed JSON).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz122</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedTypeRenameAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PinnedTypeLedgerMalformed = new(
+      id: "WHIZ122",
+      title: "Pinned-Type Ledger Could Not Be Parsed",
+      messageFormat: "The pinned-type ledger '{0}' exists but is not valid JSON, so rename governance (WHIZ120/WHIZ121) is silently disabled for this project. Fix or restore the ledger.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A malformed pinned-type ledger is treated as 'no baseline', which silently disables rename governance — an un-acknowledged rename could then slip through and break deserialization of stored events. The build is not failed (a broken ledger shouldn't block compilation), but the corruption is surfaced so it can be fixed rather than drifting undetected.",
+      customTags: WellKnownDiagnosticTags.CompilationEnd
+  );
+
+  // ==========================================================================
+  // WHIZ200: Perspective sync in receptor safety
+  // ==========================================================================
+
+  /// <summary>
+  /// WHIZ200: Error — WaitForStreamAsync/WaitAsync called inside an Inline-stage receptor.
+  /// This will deadlock the work coordinator because the single-threaded coordinator cannot
+  /// process perspective commits while blocked by the synchronous wait.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz200</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveSyncInReceptorAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PerspectiveSyncInInlineReceptor = new(
+      id: "WHIZ900",
+      title: "Perspective Sync in Inline Receptor",
+      messageFormat: "Receptor '{0}' calls {1} but fires at Inline stage '{2}'. This will deadlock. Use [FireAt(LifecycleStage.{3})] or event enrichment.",
+      category: "Whizbang.ReceptorSafety",
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Calling WaitForStreamAsync or WaitAsync inside an Inline-stage receptor deadlocks the work coordinator. Use a Detached stage instead."
   );
 }

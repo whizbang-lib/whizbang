@@ -554,12 +554,12 @@ public class DispatcherSecurityBuilderTests {
   }
 
   /// <summary>
-  /// REGRESSION TEST: Replicates a consumer application seeder scenario using ACTUAL DispatcherSecurityBuilder.
+  /// <para>REGRESSION TEST: Replicates a consumer application seeder scenario using ACTUAL DispatcherSecurityBuilder.
   /// When code inside a message handler calls dispatcher.AsSystem().ForAllTenants().SendAsync(),
-  /// the envelope MUST have SYSTEM context on its hop, not the handler's context.
+  /// the envelope MUST have SYSTEM context on its hop, not the handler's context.</para>
   ///
-  /// This test will FAIL without the fix (clearing InitiatingContext).
-  /// This test will PASS with the fix.
+  /// <para>This test will FAIL without the fix (clearing InitiatingContext).
+  /// This test will PASS with the fix.</para>
   /// </summary>
   [Test]
   public async Task AsSystem_FromInsideMessageHandler_EnvelopeHopMustHaveSystemContext_NotHandlerContextAsync() {
@@ -781,16 +781,16 @@ public class DispatcherSecurityBuilderTests {
   // inherit the explicit security context from AsSystem()/RunAs().
 
   /// <summary>
-  /// REGRESSION TEST: When AsSystem().LocalInvokeAsync() invokes a receptor that returns
+  /// <para>REGRESSION TEST: When AsSystem().LocalInvokeAsync() invokes a receptor that returns
   /// an event (cascaded event), the cascaded event receptor should see SYSTEM context,
-  /// not the handler's InitiatingContext.
+  /// not the handler's InitiatingContext.</para>
   ///
-  /// This replicates the a consumer application seeder scenario where ReseedSystemSucceededEvent
+  /// <para>This replicates the a consumer application seeder scenario where ReseedSystemSucceededEvent
   /// was getting SecurityContextRequiredException because the cascaded event
-  /// didn't inherit the SYSTEM context.
+  /// didn't inherit the SYSTEM context.</para>
   ///
-  /// Uses Local routing to avoid JSON serialization complexity while still testing
-  /// the core security context propagation issue.
+  /// <para>Uses Local routing to avoid JSON serialization complexity while still testing
+  /// the core security context propagation issue.</para>
   /// </summary>
   [Test]
   [NotInParallel]
@@ -843,17 +843,17 @@ public class DispatcherSecurityBuilderTests {
   }
 
   /// <summary>
-  /// REGRESSION TEST: Verify that CascadeContext.GetSecurityFromAmbient() returns SYSTEM context
-  /// during cascade when AsSystem() is used, even when InitiatingContext exists.
+  /// <para>REGRESSION TEST: Verify that CascadeContext.GetSecurityFromAmbient() returns SYSTEM context
+  /// during cascade when AsSystem() is used, even when InitiatingContext exists.</para>
   ///
-  /// This tests the root cause of the a consumer application issue: the scope captured for envelope hops
-  /// must come from the explicit SYSTEM context, not the handler's InitiatingContext.
+  /// <para>This tests the root cause of the a consumer application issue: the scope captured for envelope hops
+  /// must come from the explicit SYSTEM context, not the handler's InitiatingContext.</para>
   /// </summary>
   [Test]
   [NotInParallel]
   public async Task GetSecurityFromAmbient_DuringCascade_ReturnsSystemContextNotInitiatingContextAsync() {
     // Arrange
-    var scopeContextAccessor = new ScopeContextAccessor();
+    _ = new ScopeContextAccessor();
 
     // CRITICAL: Simulate being INSIDE a message handler with InitiatingContext set
     var handlerScope = new PerspectiveScope { UserId = "handler-user@example.com", TenantId = "handler-tenant" };
@@ -898,13 +898,13 @@ public class DispatcherSecurityBuilderTests {
   // This is critical for background workers that read from the outbox.
 
   /// <summary>
-  /// REGRESSION TEST: Replicates a consumer application seeder scenario for PublishAsync.
+  /// <para>REGRESSION TEST: Replicates a consumer application seeder scenario for PublishAsync.
   /// When code inside a message handler calls dispatcher.AsSystem().ForAllTenants().PublishAsync(),
-  /// the event receptor MUST see SYSTEM context, not the handler's InitiatingContext.
+  /// the event receptor MUST see SYSTEM context, not the handler's InitiatingContext.</para>
   ///
-  /// This uses the same pattern as cascade event tests - capturing scope in a receptor.
+  /// <para>This uses the same pattern as cascade event tests - capturing scope in a receptor.
   /// Without the fix: The receptor sees "handler-user@example.com" (BUG!)
-  /// With the fix: The receptor sees "SYSTEM" (CORRECT!)
+  /// With the fix: The receptor sees "SYSTEM" (CORRECT!)</para>
   /// </summary>
   [Test]
   [NotInParallel]
@@ -1124,6 +1124,79 @@ public class DispatcherSecurityBuilderTests {
     await Assert.That(context.ActualPrincipal).IsEqualTo(Guid.Empty.ToString());
   }
 
+  /// <summary>
+  /// The <see cref="DispatcherSecurityBuilder.WithTenant"/> instance method (distinct from
+  /// the SystemDispatcherBuilder.ForTenant entry-point) rebuilds the builder with an explicit
+  /// tenant while preserving the effective principal. Chained AFTER ForAllTenants() it must
+  /// override the tenant to the explicit value on the captured context.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_OnSecurityBuilder_OverridesTenantOnCapturedContextAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    var command = new DispatcherSecurityBuilderTestCommand("test-data");
+
+    // Act - obtain a DispatcherSecurityBuilder via ForAllTenants(), then chain WithTenant()
+    await dispatcher.RunAs("target-user@example.com").ForAllTenants()
+      .WithTenant("explicit-tenant-42").SendAsync(command);
+
+    // Assert - the explicit tenant from WithTenant() wins, effective principal preserved
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context!.Scope.TenantId).IsEqualTo("explicit-tenant-42")
+      .Because("WithTenant() rebuilds the builder with the explicit tenant, overriding ForAllTenants()");
+    await Assert.That(context.EffectivePrincipal).IsEqualTo("target-user@example.com")
+      .Because("WithTenant() preserves the effective principal from the prior builder");
+  }
+
+  /// <summary>
+  /// <see cref="DispatcherSecurityBuilder.WithTenant"/> validates its argument — whitespace
+  /// must throw, matching the ForTenant entry-point guard.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_OnSecurityBuilder_WithWhitespace_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    // Act & Assert
+    await Assert.That(() => dispatcher.AsSystem().ForAllTenants().WithTenant("   ")).ThrowsException();
+  }
+
+  /// <summary>
+  /// The <see cref="DispatcherSecurityBuilder.SendAsync{TMessage}(TMessage, DispatchOptions)"/>
+  /// overload (an uncovered dispatch arm) must set the explicit context and forward to the
+  /// dispatcher when the token is not cancelled — the success counterpart to the
+  /// already-covered cancellation throw.
+  /// </summary>
+  [Test]
+  public async Task SendAsync_WithDispatchOptions_UncancelledToken_SetsContextAndDispatchesAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    var command = new DispatcherSecurityBuilderTestCommand("options-data");
+
+    // Act - a live (non-cancelled) token flows through the success path of the overload
+    using var cts = new CancellationTokenSource();
+    await dispatcher.AsSystem().ForAllTenants()
+      .SendAsync(command, new DispatchOptions { CancellationToken = cts.Token });
+
+    // Assert - SYSTEM context was applied and the receptor ran
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context!.EffectivePrincipal).IsEqualTo("SYSTEM")
+      .Because("the DispatchOptions overload must still apply the explicit SYSTEM context");
+    await Assert.That(context.ContextType).IsEqualTo(SecurityContextType.System);
+  }
+
   // ============================================
   // Helper Methods
   // ============================================
@@ -1169,8 +1242,8 @@ public record DispatcherSecurityBuilderVoidCommand(string Data);
 /// Uses static capture fields so the source-generator-discovered receptor can capture context
 /// during execution for later verification by tests.
 /// </summary>
-public class DispatcherSecurityBuilderTestCommandReceptor : IReceptor<DispatcherSecurityBuilderTestCommand, DispatcherSecurityBuilderTestResult> {
-  private readonly IScopeContextAccessor _scopeContextAccessor;
+public class DispatcherSecurityBuilderTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<DispatcherSecurityBuilderTestCommand, DispatcherSecurityBuilderTestResult> {
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   /// <summary>
   /// Static captured context - set during HandleAsync for test verification.
@@ -1182,15 +1255,14 @@ public class DispatcherSecurityBuilderTestCommandReceptor : IReceptor<Dispatcher
   /// </summary>
   public static void ResetCapture() => CapturedContext = null;
 
-  public DispatcherSecurityBuilderTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) {
-    _scopeContextAccessor = scopeContextAccessor;
-  }
-
   public ValueTask<DispatcherSecurityBuilderTestResult> HandleAsync(
     DispatcherSecurityBuilderTestCommand message,
     CancellationToken cancellationToken = default) {
     // Capture the context during execution for test verification
-    CapturedContext = _scopeContextAccessor.Current;
+    // Use ??= to capture only on first invocation - lifecycle system may re-invoke
+    // the receptor at default stages, but we want the context from the primary dispatch
+    var current = _scopeContextAccessor.Current;
+    CapturedContext ??= current;
     return ValueTask.FromResult(new DispatcherSecurityBuilderTestResult($"Processed: {message.Data}"));
   }
 }
@@ -1198,20 +1270,17 @@ public class DispatcherSecurityBuilderTestCommandReceptor : IReceptor<Dispatcher
 /// <summary>
 /// Void receptor for LocalInvokeAsync void tests.
 /// </summary>
-public class DispatcherSecurityBuilderVoidReceptor : IReceptor<DispatcherSecurityBuilderVoidCommand> {
-  private readonly IScopeContextAccessor _scopeContextAccessor;
+public class DispatcherSecurityBuilderVoidReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<DispatcherSecurityBuilderVoidCommand> {
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   public static IScopeContext? CapturedContext { get; private set; }
   public static void ResetCapture() => CapturedContext = null;
 
-  public DispatcherSecurityBuilderVoidReceptor(IScopeContextAccessor scopeContextAccessor) {
-    _scopeContextAccessor = scopeContextAccessor;
-  }
-
   public ValueTask HandleAsync(
     DispatcherSecurityBuilderVoidCommand message,
     CancellationToken cancellationToken = default) {
-    CapturedContext = _scopeContextAccessor.Current;
+    // Use ??= to capture only on first invocation - lifecycle system may re-invoke
+    CapturedContext ??= _scopeContextAccessor.Current;
     return ValueTask.CompletedTask;
   }
 }
@@ -1234,7 +1303,7 @@ public record SecurityBuilderCascadeTestResult(string Processed);
 /// Event that gets cascaded locally when receptor returns it.
 /// Uses Local routing so it invokes SecurityBuilderCascadeEventReceptor directly.
 /// </summary>
-[DefaultRouting(DispatchMode.Local)]
+[DefaultRouting(DispatchModes.Local)]
 public record SecurityBuilderCascadeTestEvent(string Data, [property: StreamId] Guid EventId) : IEvent;
 
 /// <summary>
@@ -1257,15 +1326,11 @@ public class SecurityBuilderCascadeTestReceptor
 /// Event receptor that captures the scope context when handling the cascaded event.
 /// This allows us to verify that cascaded events inherit the explicit SYSTEM context.
 /// </summary>
-public class SecurityBuilderCascadeEventReceptor : IReceptor<SecurityBuilderCascadeTestEvent> {
-  private readonly IScopeContextAccessor _scopeContextAccessor;
+public class SecurityBuilderCascadeEventReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<SecurityBuilderCascadeTestEvent> {
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   public static IScopeContext? CapturedScope { get; private set; }
   public static void ResetCapture() => CapturedScope = null;
-
-  public SecurityBuilderCascadeEventReceptor(IScopeContextAccessor scopeContextAccessor) {
-    _scopeContextAccessor = scopeContextAccessor;
-  }
 
   public ValueTask HandleAsync(SecurityBuilderCascadeTestEvent message, CancellationToken cancellationToken = default) {
     // Capture the scope context during cascaded event handling
@@ -1282,7 +1347,7 @@ public class SecurityBuilderCascadeEventReceptor : IReceptor<SecurityBuilderCasc
 /// Test event for verifying AsSystem().PublishAsync() behavior.
 /// This simulates events like ReseedSystemSucceededEvent, FilterSubscriptionTemplateCreatedEvent.
 /// </summary>
-[DefaultRouting(DispatchMode.Local)]
+[DefaultRouting(DispatchModes.Local)]
 public record SecurityBuilderPublishTestEvent(string Data, [property: StreamId] Guid EventId) : IEvent;
 
 /// <summary>
@@ -1290,18 +1355,14 @@ public record SecurityBuilderPublishTestEvent(string Data, [property: StreamId] 
 /// This allows us to verify that AsSystem().PublishAsync() sets SYSTEM context.
 /// Note: Must return a response type to be invoked by typed PublishAsync (void receptors only invoked in cascade).
 /// </summary>
-public class SecurityBuilderPublishTestEventReceptor : IReceptor<SecurityBuilderPublishTestEvent, object> {
-  private readonly IScopeContextAccessor _scopeContextAccessor;
+public class SecurityBuilderPublishTestEventReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<SecurityBuilderPublishTestEvent, object> {
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   public static IScopeContext? CapturedScope { get; private set; }
   public static bool WasInvoked { get; private set; }
   public static void ResetCapture() {
     CapturedScope = null;
     WasInvoked = false;
-  }
-
-  public SecurityBuilderPublishTestEventReceptor(IScopeContextAccessor scopeContextAccessor) {
-    _scopeContextAccessor = scopeContextAccessor;
   }
 
   public ValueTask<object> HandleAsync(SecurityBuilderPublishTestEvent message, CancellationToken cancellationToken = default) {

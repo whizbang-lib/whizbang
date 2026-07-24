@@ -2,7 +2,9 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Transports.HotChocolate.Middleware;
 
 namespace Whizbang.Transports.HotChocolate.Tests.Unit;
@@ -27,6 +29,87 @@ public class WhizbangScopeMiddlewareTests {
 
     // Assert
     await Assert.That(accessor.Current).IsNotNull();
+  }
+
+  [Test]
+  [NotInParallel("InboundCorrelation")]
+  public async Task InvokeAsync_WithCorrelationHeader_SeedsInboundCorrelationAccessor_ForDownstreamAsync() {
+    // Arrange — the scope middleware is the seam that reaches the HotChocolate resolver (scope flows through it).
+    // It must ALSO adopt the inbound X-Correlation-ID so the resolver's dispatch uses the client's token, not a
+    // fresh trace-aligned root. Assert INSIDE next() — that's where the resolver/dispatch runs.
+    InboundCorrelationAccessor.Current = null;
+    var expected = CorrelationId.New();
+    CorrelationId? seenDownstream = null;
+    var middleware = new WhizbangScopeMiddleware(_ => {
+      seenDownstream = InboundCorrelationAccessor.Current;
+      return Task.CompletedTask;
+    });
+    var context = new DefaultHttpContext();
+    context.Request.Headers["X-Correlation-ID"] = expected.Value.ToString();
+    var accessor = new TestScopeContextAccessor();
+
+    try {
+      // Act
+      await middleware.InvokeAsync(context, accessor);
+
+      // Assert
+      await Assert.That(seenDownstream).IsEqualTo(expected)
+        .Because("The scope middleware must seed InboundCorrelationAccessor from X-Correlation-ID so the HotChocolate resolver's dispatch adopts the client's correlation token.");
+    } finally {
+      InboundCorrelationAccessor.Current = null;
+    }
+  }
+
+  [Test]
+  [NotInParallel("InboundCorrelation")]
+  public async Task InvokeAsync_WithoutCorrelationHeader_DoesNotSeedInboundCorrelationAsync() {
+    // Arrange — no header => leave the accessor null so the dispatch mints its own trace-aligned root.
+    InboundCorrelationAccessor.Current = null;
+    var seenDownstreamHadValue = true;
+    var middleware = new WhizbangScopeMiddleware(_ => {
+      seenDownstreamHadValue = InboundCorrelationAccessor.Current is not null;
+      return Task.CompletedTask;
+    });
+    var context = new DefaultHttpContext();
+    var accessor = new TestScopeContextAccessor();
+
+    try {
+      // Act
+      await middleware.InvokeAsync(context, accessor);
+
+      // Assert
+      await Assert.That(seenDownstreamHadValue).IsFalse()
+        .Because("With no inbound correlation header the middleware leaves InboundCorrelationAccessor unset.");
+    } finally {
+      InboundCorrelationAccessor.Current = null;
+    }
+  }
+
+  [Test]
+  [NotInParallel("InboundCorrelation")]
+  public async Task InvokeAsync_WithNonGuidCorrelationHeader_DoesNotSeedInboundCorrelationAsync() {
+    // Arrange — a header that is present but not a parseable Guid must be ignored:
+    // the dispatch mints its own trace-aligned root instead of adopting garbage.
+    InboundCorrelationAccessor.Current = null;
+    var seenDownstreamHadValue = true;
+    var middleware = new WhizbangScopeMiddleware(_ => {
+      seenDownstreamHadValue = InboundCorrelationAccessor.Current is not null;
+      return Task.CompletedTask;
+    });
+    var context = new DefaultHttpContext();
+    context.Request.Headers["X-Correlation-ID"] = "not-a-guid";
+    var accessor = new TestScopeContextAccessor();
+
+    try {
+      // Act
+      await middleware.InvokeAsync(context, accessor);
+
+      // Assert
+      await Assert.That(seenDownstreamHadValue).IsFalse()
+        .Because("A malformed correlation token must not be adopted — Guid.TryParse gates the seeding.");
+    } finally {
+      InboundCorrelationAccessor.Current = null;
+    }
   }
 
   [Test]
@@ -389,8 +472,9 @@ public class WhizbangScopeMiddlewareTests {
   public async Task InvokeAsync_WithNullUser_ScopeFieldsShouldBeNullAsync() {
     // Arrange - explicitly set User to null to exercise the ?. branches
     var (middleware, accessor) = _createMiddleware();
-    var context = new DefaultHttpContext();
-    context.User = null!;
+    var context = new DefaultHttpContext {
+      User = null!
+    };
 
     // Act
     await middleware.InvokeAsync(context, accessor);
@@ -414,8 +498,9 @@ public class WhizbangScopeMiddlewareTests {
     var options = new WhizbangScopeOptions();
     options.ExtensionClaimMappings["region_claim"] = "Region";
     var (middleware, accessor) = _createMiddleware(options);
-    var context = new DefaultHttpContext();
-    context.User = null!;
+    var context = new DefaultHttpContext {
+      User = null!
+    };
 
     // Act
     await middleware.InvokeAsync(context, accessor);
@@ -593,6 +678,24 @@ public class WhizbangScopeMiddlewareTests {
 
     // Assert
     await Assert.That(accessor.Current!.Permissions.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithEmptiedPermissionsClaimTypesList_ProducesNoPermissionsAsync() {
+    // Arrange - an explicitly emptied claim-type list disables permission
+    // extraction entirely, even when matching claims are present on the user.
+    var options = new WhizbangScopeOptions { PermissionsClaimTypes = [] };
+    var (middleware, accessor) = _createMiddleware(options);
+    var context = _createContextWithClaims(
+      ("permissions", "orders:read"),
+      ("permissions", "orders:write")
+    );
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    await Assert.That(accessor.Current!.Permissions.Count).IsEqualTo(0);
   }
 
   #endregion
@@ -948,8 +1051,9 @@ public class WhizbangScopeMiddlewareTests {
   [Test]
   public async Task Options_SettingUserIdClaimType_ShouldReplaceListAsync() {
     // For backwards compatibility, setting UserIdClaimType replaces the list
-    var options = new WhizbangScopeOptions();
-    options.UserIdClaimType = "my_custom_user_id";
+    var options = new WhizbangScopeOptions {
+      UserIdClaimType = "my_custom_user_id"
+    };
     await Assert.That(options.UserIdClaimTypes.Count).IsEqualTo(1);
     await Assert.That(options.UserIdClaimTypes).Contains("my_custom_user_id");
     await Assert.That(options.UserIdClaimType).IsEqualTo("my_custom_user_id");

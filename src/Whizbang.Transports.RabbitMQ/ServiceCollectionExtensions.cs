@@ -14,7 +14,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <summary>
 /// Extension methods for registering RabbitMQ transport with dependency injection.
 /// </summary>
-/// <docs>components/transports/rabbitmq</docs>
+/// <docs>messaging/transports/rabbitmq</docs>
 public static class ServiceCollectionExtensions {
   /// <summary>
   /// Registers RabbitMQ transport as the ITransport implementation.
@@ -55,7 +55,8 @@ public static class ServiceCollectionExtensions {
         var factory = new ConnectionFactory {
           Uri = new Uri(connectionString),
           AutomaticRecoveryEnabled = true,
-          NetworkRecoveryInterval = options.InitialRetryDelay
+          NetworkRecoveryInterval = options.InitialRetryDelay,
+          ConsumerDispatchConcurrency = 200 // Allow concurrent ReceivedAsync dispatch for batch collection
         };
 
         var connection = connectionRetry.CreateConnectionWithRetryAsync(factory).GetAwaiter().GetResult();
@@ -85,8 +86,9 @@ public static class ServiceCollectionExtensions {
       var connection = sp.GetRequiredService<IConnection>();
       var pool = sp.GetRequiredService<RabbitMQChannelPool>();
       var logger = sp.GetService<ILogger<RabbitMQTransport>>();
+      var discardPolicy = sp.GetService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
 
-      var transport = new RabbitMQTransport(connection, jsonOptions, pool, options, logger);
+      var transport = new RabbitMQTransport(connection, jsonOptions, pool, options, logger, discardPolicy);
 
       // Initialize during registration
       transport.InitializeAsync().GetAwaiter().GetResult();
@@ -98,7 +100,8 @@ public static class ServiceCollectionExtensions {
     // Register transport readiness check
     services.AddSingleton<ITransportReadinessCheck>(sp => {
       var connection = sp.GetRequiredService<IConnection>();
-      return new RabbitMQReadinessCheck(connection);
+      var logger = sp.GetService<ILogger<RabbitMQReadinessCheck>>();
+      return new RabbitMQReadinessCheck(connection, logger);
     });
 
     // Register message publish strategy
@@ -107,17 +110,35 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IMessagePublishStrategy>(sp => {
       var transport = sp.GetRequiredService<ITransport>();
       var readinessCheck = sp.GetRequiredService<ITransportReadinessCheck>();
+      var loggerFactory = sp.GetService<ILoggerFactory>();
+
+      // Post-serialize hook chain + JsonSerializerOptions are optional; when
+      // AddWhizbangBodyOffload (or any AddWhizbangPostSerializeHook<T>) is
+      // registered AND the transport's JsonSerializerOptions resolver is
+      // available, the strategy will JIT-serialize, run the chain, stamp
+      // whizbang.body-size, and validate against MaxMessageSizeBytes.
+      // Both null → existing fast-path behavior (no pre-serialize).
+      var hookChain = sp.GetService<Whizbang.Core.Offloads.PostSerializeHookChain>();
+      var jsonOptions = sp.GetService<JsonSerializerOptions>();
 
       // Try to get inbox topic from registered outbox routing strategy
       // WithRouting() registers IOutboxRoutingStrategy directly
       var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
       if (outboxStrategy is SharedTopicOutboxStrategy sharedStrategy) {
         // Use the configured inbox topic from outbox strategy
-        return new TransportPublishStrategy(transport, readinessCheck, sharedStrategy.InboxTopic);
+        return new TransportPublishStrategy(
+          transport, readinessCheck, sharedStrategy.InboxTopic,
+          loggerFactory,
+          throttleRetryOptions: null, metrics: null,
+          postSerializeHookChain: hookChain, jsonOptions: jsonOptions);
       }
 
       // Fall back to default inbox topic
-      return new TransportPublishStrategy(transport, readinessCheck);
+      return new TransportPublishStrategy(
+        transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic,
+        loggerFactory,
+        throttleRetryOptions: null, metrics: null,
+        postSerializeHookChain: hookChain, jsonOptions: jsonOptions);
     });
 
     return services;

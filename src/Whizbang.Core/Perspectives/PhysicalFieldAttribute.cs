@@ -18,7 +18,7 @@ namespace Whizbang.Core.Perspectives;
 /// <item><see cref="FieldStorageMode.Split"/>: Property exists only in physical column, excluded from JSONB</item>
 /// </list>
 /// </remarks>
-/// <docs>perspectives/physical-fields</docs>
+/// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PhysicalFieldAttributeTests.cs</tests>
 /// <example>
 /// <code>

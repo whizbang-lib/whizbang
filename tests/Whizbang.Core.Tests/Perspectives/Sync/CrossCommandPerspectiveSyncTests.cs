@@ -8,15 +8,15 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// Tests for cross-command perspective sync scenario:
+/// <para>Tests for cross-command perspective sync scenario:
 /// 1. Fire command A → Receptor A returns Event B
 /// 2. Fire command E → Receptor E has [AwaitPerspectiveSync(typeof(C))]
-/// 3. Expected: Perspective C processes B FIRST, then E's receptor fires
+/// 3. Expected: Perspective C processes B FIRST, then E's receptor fires</para>
 ///
-/// This is the key scenario where perspective sync MUST work:
+/// <para>This is the key scenario where perspective sync MUST work:
 /// - Command A emits Event B
 /// - Command E wants to wait until Perspective C has processed B
-/// - E's receptor should NOT fire until C.Apply(B) has completed
+/// - E's receptor should NOT fire until C.Apply(B) has completed</para>
 /// </summary>
 /// <remarks>
 /// These tests use shared SyncEventTracker instances, so they must run
@@ -26,17 +26,17 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 public class CrossCommandPerspectiveSyncTests {
 
   /// <summary>
-  /// CORE BUG REPRODUCTION:
+  /// <para>CORE BUG REPRODUCTION:
   /// When command E is sent with [AwaitPerspectiveSync] for perspective C,
   /// and command A previously emitted event B (which C processes),
-  /// E's receptor should NOT fire until C has processed B.
+  /// E's receptor should NOT fire until C has processed B.</para>
   ///
-  /// This test verifies the execution order:
+  /// <para>This test verifies the execution order:
   /// 1. A's receptor fires, returns Event B → B is tracked for C
   /// 2. E is sent with sync attribute for C
   /// 3. E's receptor should WAIT for C to process B
   /// 4. C.Apply(B) fires (via MarkProcessed)
-  /// 5. THEN E's receptor fires
+  /// 5. THEN E's receptor fires</para>
   /// </summary>
   [Test]
   public async Task CrossCommandSync_EReceptorWaitsForCToProcessB_CorrectOrderAsync() {
@@ -68,8 +68,7 @@ public class CrossCommandPerspectiveSyncTests {
         mockCoordinator,
         clock,
         logger,
-        tracker: null,
-        syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // === STEP 3: Simulate perspective worker processing B after a delay ===
     // This represents C.Apply(B) firing and completing
@@ -142,16 +141,19 @@ public class CrossCommandPerspectiveSyncTests {
     singletonTracker.TrackEvent(typeof(TestEventB), eventBId, streamId, perspectiveCName);
     executionOrder.Add("A's receptor returned Event B");
 
-    // Simulate perspective processing after a delay
+    // Use completion signals for deterministic ordering instead of Task.Delay
+    var eReceptorFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Simulate perspective processing — waits for E to fire first, then completes
     var perspectiveTask = Task.Run(async () => {
-      await Task.Delay(100);
+      await eReceptorFired.Task;
       executionOrder.Add("C.Apply(B) completed");
       singletonTracker.MarkProcessedByPerspective([eventBId], perspectiveCName);
     });
 
-    // WITHOUT sync - E's receptor fires immediately
-    await Task.Delay(10); // Small delay
+    // WITHOUT sync - E's receptor fires immediately (before perspective completes)
     executionOrder.Add("E's receptor fired (NO SYNC)");
+    eReceptorFired.TrySetResult();
 
     await perspectiveTask;
 
@@ -188,7 +190,7 @@ public class CrossCommandPerspectiveSyncTests {
 
     var awaiter = new PerspectiveSyncAwaiter(
         mockCoordinator, clock, logger,
-        tracker: null, syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // Mark event as processed for C only
     _ = Task.Run(async () => {
@@ -228,7 +230,7 @@ public class CrossCommandPerspectiveSyncTests {
 
     var awaiter = new PerspectiveSyncAwaiter(
         mockCoordinator, clock, logger,
-        tracker: null, syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // Act - C never processes B, so this should timeout
     var result = await awaiter.WaitForStreamAsync(
@@ -256,7 +258,7 @@ public class CrossCommandPerspectiveSyncTests {
 
     // Mock coordinator returns "no pending events" from DB discovery
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      var inquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      var inquiry = (request.Count > 0 ? request[0] : null);
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -277,7 +279,7 @@ public class CrossCommandPerspectiveSyncTests {
 
     var awaiter = new PerspectiveSyncAwaiter(
         mockCoordinator, clock, logger,
-        tracker: null, syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // Act
     var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -288,11 +290,11 @@ public class CrossCommandPerspectiveSyncTests {
         timeout: TimeSpan.FromMilliseconds(500));
     sw.Stop();
 
-    // Assert - should sync quickly via DB discovery returning "no pending"
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
-      .Because("DB returned no pending events, so sync should succeed");
+    // Assert - with empty SyncEventTracker and no tracked events, returns NoPendingEvents immediately
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
     await Assert.That(sw.ElapsedMilliseconds).IsLessThan(200)
-      .Because("Should complete quickly when DB says no pending events");
+      .Because("Should complete quickly when no events are tracked");
   }
 }
 

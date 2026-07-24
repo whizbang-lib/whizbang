@@ -35,13 +35,13 @@ jobs:
     name: Calculate Version
     runs-on: ubuntu-latest
     outputs:
-      semver: ${{ steps.gitversion.outputs.semVer || steps.fallback.outputs.semVer }}
-      fullsemver: ${{ steps.gitversion.outputs.fullSemVer || steps.fallback.outputs.fullSemVer }}
-      major: ${{ steps.gitversion.outputs.major }}
-      minor: ${{ steps.gitversion.outputs.minor }}
-      patch: ${{ steps.gitversion.outputs.patch }}
-      prerelease: ${{ steps.gitversion.outputs.preReleaseTag }}
-      is_prerelease: ${{ steps.gitversion.outputs.preReleaseTag != '' }}
+      semver: ${{ steps.release_override.outputs.semVer || steps.gitversion.outputs.semVer || steps.fallback.outputs.semVer }}
+      fullsemver: ${{ steps.release_override.outputs.fullSemVer || steps.gitversion.outputs.fullSemVer || steps.fallback.outputs.fullSemVer }}
+      major: ${{ steps.release_override.outputs.major || steps.gitversion.outputs.major }}
+      minor: ${{ steps.release_override.outputs.minor || steps.gitversion.outputs.minor }}
+      patch: ${{ steps.release_override.outputs.patch || steps.gitversion.outputs.patch }}
+      prerelease: ${{ steps.release_override.outputs.preReleaseTag || steps.gitversion.outputs.preReleaseTag }}
+      is_prerelease: ${{ (steps.release_override.outputs.preReleaseTag || steps.gitversion.outputs.preReleaseTag) != '' }}
 
     steps:
       - name: Checkout
@@ -55,10 +55,56 @@ jobs:
           git fetch --tags --force
           git tag --list | head -20
 
+      # Release-line override: when the context is a PR into a release/v* branch (or a push to one),
+      # the version comes from the RELEASE BRANCH NAME, not GitVersion. On old-line hotfix branches
+      # GitVersion derives from the highest repo-wide version source (observed: 0.860.8-pr340.N
+      # computed on a 0.290-line PR) — which would stamp/publish the wrong version line. The branch
+      # name (e.g. release/v0.290.3-alpha.1) is the deterministic source of truth for release lines.
+      - name: Release-line version override
+        id: release_override
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_NUMBER: ${{ github.event.number }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          BRANCH=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BRANCH="$BASE_REF"
+          elif [[ "$REF_NAME" == release/v* ]]; then
+            BRANCH="$REF_NAME"
+          fi
+          if [[ "$BRANCH" =~ ^release/v([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z.]+))?$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"; MINOR="${BASH_REMATCH[2]}"; PATCH="${BASH_REMATCH[3]}"; LABEL="${BASH_REMATCH[5]}"
+            CORE="$MAJOR.$MINOR.$PATCH"
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              PRERELEASE="pr$PR_NUMBER.$RUN_NUMBER"
+            else
+              PRERELEASE="$LABEL"
+            fi
+            SEMVER="$CORE${PRERELEASE:+-$PRERELEASE}"
+            {
+              echo "override=true"
+              echo "semVer=$SEMVER"
+              echo "fullSemVer=$SEMVER"
+              echo "major=$MAJOR"
+              echo "minor=$MINOR"
+              echo "patch=$PATCH"
+              echo "preReleaseTag=$PRERELEASE"
+            } >> "$GITHUB_OUTPUT"
+            echo "Release-line override: $SEMVER (from release branch '$BRANCH')"
+            echo "::notice::Release-line version override: $SEMVER (from '$BRANCH')"
+          else
+            echo "override=false" >> "$GITHUB_OUTPUT"
+            echo "No release-line context — GitVersion computes the version."
+          fi
+
       - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
+        if: steps.release_override.outputs.override != 'true'
+        uses: gittools/actions/gitversion/setup@e0d584e657c606912e8fd522aeed29025975705f # v4.4.2
         with:
-          versionSpec: '6.0.x'
+          versionSpec: '6.1.x'
 
       - name: Display Git Info
         run: |
@@ -68,11 +114,21 @@ jobs:
           git tag --list --sort=-version:refname | head -10
 
       - name: Determine Version
+        if: steps.release_override.outputs.override != 'true'
         id: gitversion
-        uses: gittools/actions/gitversion/execute@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
-        with:
-          useConfigFile: true
-          configFilePath: GitVersion.yml
+        run: |
+          # Run GitVersion directly and strip BOM from output (6.1.x adds UTF-8 BOM)
+          OUTFILE="${RUNNER_TEMP}/gitversion.json"
+          dotnet-gitversion /config GitVersion.yml /output file /outputfile "$OUTFILE"
+          # Strip BOM if present
+          sed -i '1s/^\xEF\xBB\xBF//' "$OUTFILE"
+          # Parse and set outputs
+          SEMVER=$(jq -r '.SemVer' "$OUTFILE")
+          FULLSEMVER=$(jq -r '.FullSemVer' "$OUTFILE")
+          PRERELEASE=$(jq -r '.PreReleaseTag' "$OUTFILE")
+          echo "semVer=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "fullSemVer=$FULLSEMVER" >> "$GITHUB_OUTPUT"
+          echo "preReleaseTag=$PRERELEASE" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       - name: Fallback Version (if GitVersion fails)
@@ -88,11 +144,31 @@ jobs:
           else
             VERSION="0.9.1-alpha.999"
           fi
-          echo "semVer=$VERSION" >> $GITHUB_OUTPUT
-          echo "fullSemVer=$VERSION" >> $GITHUB_OUTPUT
+          echo "semVer=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "fullSemVer=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Display Version
+        env:
+          SEMVER: ${{ steps.release_override.outputs.semVer || steps.gitversion.outputs.semVer || steps.fallback.outputs.semVer }}
+          FULLSEMVER: ${{ steps.release_override.outputs.fullSemVer || steps.gitversion.outputs.fullSemVer || steps.fallback.outputs.fullSemVer }}
+          PRERELEASE: ${{ steps.release_override.outputs.preReleaseTag || steps.gitversion.outputs.preReleaseTag }}
         run: |
-          echo "Version: ${{ steps.gitversion.outputs.semVer }}"
-          echo "Full SemVer: ${{ steps.gitversion.outputs.fullSemVer }}"
-          echo "Pre-release: ${{ steps.gitversion.outputs.preReleaseTag }}"
+          echo "Version: $SEMVER"
+          echo "Full SemVer: $FULLSEMVER"
+          echo "Pre-release: $PRERELEASE"
+
+          # Annotation visible on the workflow run summary
+          echo "::notice::Version: $SEMVER (Full: $FULLSEMVER)"
+
+          # Step summary table
+          echo "## Version" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **SemVer** | \`$SEMVER\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Full SemVer** | \`$FULLSEMVER\` |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$PRERELEASE" ]; then
+            echo "| **Pre-release** | \`$PRERELEASE\` |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| **Pre-release** | _(none - stable)_ |" >> "$GITHUB_STEP_SUMMARY"
+          fi

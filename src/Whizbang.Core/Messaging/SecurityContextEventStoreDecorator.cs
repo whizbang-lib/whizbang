@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
@@ -31,19 +33,15 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/security-context-propagation</docs>
+/// <docs>fundamentals/security/security-context-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/SecurityContextEventStoreDecoratorTests.cs</tests>
-public sealed class SecurityContextEventStoreDecorator : IEventStore {
-  private readonly IEventStore _inner;
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="SecurityContextEventStoreDecorator"/>.
-  /// </summary>
-  /// <param name="inner">The underlying event store implementation.</param>
-  /// <exception cref="ArgumentNullException">Thrown when <paramref name="inner"/> is null.</exception>
-  public SecurityContextEventStoreDecorator(IEventStore inner) {
-    _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-  }
+/// <remarks>
+/// Initializes a new instance of <see cref="SecurityContextEventStoreDecorator"/>.
+/// </remarks>
+/// <param name="inner">The underlying event store implementation.</param>
+/// <exception cref="ArgumentNullException">Thrown when <paramref name="inner"/> is null.</exception>
+public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEventStore {
+  private readonly IEventStore _inner = inner ?? throw new ArgumentNullException(nameof(inner));
 
   /// <inheritdoc />
   /// <remarks>
@@ -62,8 +60,10 @@ public sealed class SecurityContextEventStoreDecorator : IEventStore {
       where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
 
-    // Use unified security extraction via CascadeContext
-    var securityContext = CascadeContext.GetSecurityFromAmbient();
+    // Top-level event-store append (no source hop) — resolve scope + identity through the SAME shared hop-first
+    // helpers as the outbox hop builders, so a raw event stored through this path keeps its correlation/causation
+    // and scope consistently (with a null source these collapse to the ambient context).
+    var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope: null);
 
     var envelope = new MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
@@ -73,9 +73,12 @@ public sealed class SecurityContextEventStoreDecorator : IEventStore {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = Activity.Current?.Id,
-          Scope = ScopeDelta.FromSecurityContext(securityContext)
+          Scope = CascadeContext.ResolveHopFirstScope(sourceEnvelope: null),
+          CorrelationId = correlation,
+          CausationId = causation,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return _inner.AppendAsync(streamId, envelope, cancellationToken);
@@ -109,5 +112,10 @@ public sealed class SecurityContextEventStoreDecorator : IEventStore {
   /// <inheritdoc />
   public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
     return _inner.GetLastSequenceAsync(streamId, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
+    return _inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
 }

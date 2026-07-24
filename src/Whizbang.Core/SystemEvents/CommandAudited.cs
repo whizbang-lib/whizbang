@@ -32,8 +32,9 @@ namespace Whizbang.Core.SystemEvents;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/audit-logging#command-auditing</docs>
+/// <docs>fundamentals/security/audit-logging#command-auditing</docs>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
+[PinnedId("9d574533-0ca6-4e83-a2ed-6519eab10257")]
 public sealed record CommandAudited : ISystemEvent {
   /// <summary>
   /// Unique identifier for this audit entry.

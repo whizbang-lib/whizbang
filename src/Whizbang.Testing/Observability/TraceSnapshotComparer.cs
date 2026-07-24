@@ -21,6 +21,8 @@ namespace Whizbang.Testing.Observability;
 /// </para>
 /// </remarks>
 public static class TraceSnapshotComparer {
+  private const string NULL_PLACEHOLDER = "(null)";
+
   /// <summary>
   /// Compares actual trace against expected baseline.
   /// Ignores volatile fields (TraceId, SpanId, Duration, StartTime).
@@ -54,8 +56,8 @@ public static class TraceSnapshotComparer {
       differences.Add(new TraceDifference(
         path,
         TraceDifferenceKind.NameMismatch,
-        expected.Span?.Name ?? "(null)",
-        actual.Span?.Name ?? "(null)"));
+        expected.Span?.Name ?? NULL_PLACEHOLDER,
+        actual.Span?.Name ?? NULL_PLACEHOLDER));
     }
 
     // Compare span kind
@@ -63,8 +65,8 @@ public static class TraceSnapshotComparer {
       differences.Add(new TraceDifference(
         path,
         TraceDifferenceKind.KindMismatch,
-        expected.Span?.Kind.ToString() ?? "(null)",
-        actual.Span?.Kind.ToString() ?? "(null)"));
+        expected.Span?.Kind.ToString() ?? NULL_PLACEHOLDER,
+        actual.Span?.Kind.ToString() ?? NULL_PLACEHOLDER));
     }
 
     // Compare span status
@@ -72,8 +74,8 @@ public static class TraceSnapshotComparer {
       differences.Add(new TraceDifference(
         path,
         TraceDifferenceKind.StatusMismatch,
-        expected.Span?.Status.ToString() ?? "(null)",
-        actual.Span?.Status.ToString() ?? "(null)"));
+        expected.Span?.Status.ToString() ?? NULL_PLACEHOLDER,
+        actual.Span?.Status.ToString() ?? NULL_PLACEHOLDER));
     }
 
     // Compare tags (non-volatile only)
@@ -128,12 +130,12 @@ public static class TraceSnapshotComparer {
     var actualTags = actual.Span?.Tags
       .Where(kvp => !_isVolatileTag(kvp.Key))
       .ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.ToString())
-      ?? new Dictionary<string, string?>();
+      ?? [];
 
     var expectedTags = expected.Span?.Tags
       .Where(kvp => !_isVolatileTag(kvp.Key))
       .ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.ToString())
-      ?? new Dictionary<string, string?>();
+      ?? [];
 
     // Check for missing or different tags
     foreach (var (key, expectedValue) in expectedTags) {
@@ -141,14 +143,14 @@ public static class TraceSnapshotComparer {
         differences.Add(new TraceDifference(
           $"{path}/@{key}",
           TraceDifferenceKind.MissingTag,
-          expectedValue ?? "(null)",
+          expectedValue ?? NULL_PLACEHOLDER,
           "(missing)"));
       } else if (actualValue != expectedValue) {
         differences.Add(new TraceDifference(
           $"{path}/@{key}",
           TraceDifferenceKind.TagValueMismatch,
-          expectedValue ?? "(null)",
-          actualValue ?? "(null)"));
+          expectedValue ?? NULL_PLACEHOLDER,
+          actualValue ?? NULL_PLACEHOLDER));
       }
     }
 
@@ -159,7 +161,7 @@ public static class TraceSnapshotComparer {
           $"{path}/@{key}",
           TraceDifferenceKind.ExtraTag,
           "(none)",
-          actualValue ?? "(null)"));
+          actualValue ?? NULL_PLACEHOLDER));
       }
     }
   }

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestType>Unit</WhizbangTestType>
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Sagas.Contracts/Whizbang.Sagas.Contracts.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Sagas/Whizbang.Sagas.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Sagas.Generators/Whizbang.Sagas.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+</Project>

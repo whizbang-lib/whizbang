@@ -13,8 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "Flags is the standard suffix for [Flags] enums")]
-public enum WorkBatchFlags {
+public enum WorkBatchOptions {
   /// <summary>
   /// No special flags.
   /// </summary>
@@ -61,9 +60,18 @@ public enum WorkBatchFlags {
   /// Indicates retry path vs. first-time processing.
   /// </summary>
   /// <tests>No tests found</tests>
-  RetryAfterFailure = 1 << 5
+  RetryAfterFailure = 1 << 5,
 
-  // Bits 6-31 reserved for future use
+  /// <summary>
+  /// Skip claiming orphaned inbox messages during process_work_batch.
+  /// Used by IntervalWorkCoordinatorStrategy (dispatcher) which only handles
+  /// outbox work — inbox claiming should be left to WorkCoordinatorPublisherWorker.
+  /// </summary>
+  /// <docs>messaging/work-coordinator#skip-inbox-claiming</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/InboxNullLeaseTests.cs</tests>
+  SkipInboxClaiming = 1 << 6
+
+  // Bits 7-31 reserved for future use
 }
 
 /// <summary>
@@ -126,7 +134,7 @@ public enum MessageProcessingStatus {
   Failed = 1 << 15
 
   // Note: Receptor and perspective processing are now tracked separately in
-  // wh_receptor_processing and wh_perspective_checkpoints tables.
+  // wh_receptor_processing and wh_perspective_cursors tables.
   // This allows for:
   // - Multiple receptors to process the same event independently
   // - Perspectives to catch up via time-travel (replay from event store)

@@ -8,7 +8,6 @@ namespace ECommerce.BFF.API.Hubs;
 /// AOT-compatible hub (untyped - strongly-typed hubs not supported with Native AOT).
 /// </summary>
 public class OrderStatusHub(ILogger<OrderStatusHub> logger) : Hub {
-  private readonly ILogger<OrderStatusHub> _logger = logger;
 
   /// <summary>
   /// Called when a client connects to the hub
@@ -17,7 +16,7 @@ public class OrderStatusHub(ILogger<OrderStatusHub> logger) : Hub {
     var connectionId = Context.ConnectionId;
     var userId = Context.User?.Identity?.Name ?? "Anonymous";
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Client connected to OrderStatusHub: ConnectionId={ConnectionId}, UserId={UserId}",
       connectionId,
       userId
@@ -33,13 +32,13 @@ public class OrderStatusHub(ILogger<OrderStatusHub> logger) : Hub {
     var connectionId = Context.ConnectionId;
 
     if (exception != null) {
-      _logger.LogError(
+      logger.LogError(
         exception,
         "Client disconnected from OrderStatusHub with error: ConnectionId={ConnectionId}",
         connectionId
       );
     } else {
-      _logger.LogInformation(
+      logger.LogInformation(
         "Client disconnected from OrderStatusHub: ConnectionId={ConnectionId}",
         connectionId
       );
@@ -54,7 +53,7 @@ public class OrderStatusHub(ILogger<OrderStatusHub> logger) : Hub {
   public async Task SubscribeToOrderAsync(string orderId) {
     await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{orderId}");
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Client subscribed to order updates: ConnectionId={ConnectionId}, OrderId={OrderId}",
       Context.ConnectionId,
       orderId
@@ -67,7 +66,7 @@ public class OrderStatusHub(ILogger<OrderStatusHub> logger) : Hub {
   public async Task UnsubscribeFromOrderAsync(string orderId) {
     await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"order-{orderId}");
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Client unsubscribed from order updates: ConnectionId={ConnectionId}, OrderId={OrderId}",
       Context.ConnectionId,
       orderId

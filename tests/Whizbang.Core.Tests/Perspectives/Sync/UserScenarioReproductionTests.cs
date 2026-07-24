@@ -9,14 +9,14 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// REPRODUCTION TESTS: These tests replicate the user's exact scenario.
+/// <para>REPRODUCTION TESTS: These tests replicate the user's exact scenario.</para>
 ///
-/// User's scenario:
+/// <para>User's scenario:
 /// - Request 1: Command A → Receptor A → Returns Event B → Event B should be tracked
 /// - Request 2: Command E with [AwaitPerspectiveSync(typeof(C), EventTypes=[typeof(EventB)])]
-///              → Should wait for Perspective C to process Event B BEFORE firing
+///              → Should wait for Perspective C to process Event B BEFORE firing</para>
 ///
-/// ACTUAL BUG: Command E's receptor fires BEFORE Perspective C processes Event B
+/// <para>ACTUAL BUG: Command E's receptor fires BEFORE Perspective C processes Event B</para>
 /// </summary>
 /// <remarks>
 /// These tests use the shared static SyncEventTypeRegistrations, so they must run
@@ -26,15 +26,15 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 public class UserScenarioReproductionTests {
 
   /// <summary>
-  /// CRITICAL: Test that demonstrates the complete cross-scope tracking flow.
+  /// <para>CRITICAL: Test that demonstrates the complete cross-scope tracking flow.</para>
   ///
-  /// This simulates:
+  /// <para>This simulates:
   /// 1. Scope 1: Event B is emitted and tracked in singleton tracker
   /// 2. Scope 2: Command E waits for sync
   /// 3. Perspective: Processes Event B and calls MarkProcessed
-  /// 4. Result: Command E's await completes AFTER MarkProcessed
+  /// 4. Result: Command E's await completes AFTER MarkProcessed</para>
   ///
-  /// Uses TaskCompletionSource signals for deterministic coordination instead of Task.Delay.
+  /// <para>Uses TaskCompletionSource signals for deterministic coordination instead of Task.Delay.</para>
   /// </summary>
   [Test]
   public async Task CrossScope_EventEmittedInScope1_AwaitedInScope2_WaitsForPerspectiveAsync() {
@@ -93,8 +93,7 @@ public class UserScenarioReproductionTests {
         mockCoordinator,
         new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
         NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
-        syncEventTracker: singletonTracker);
+        singletonTracker);
 
       // Signal that sync is about to start waiting
       syncWaitingStarted.SetResult();
@@ -176,8 +175,7 @@ public class UserScenarioReproductionTests {
       mockCoordinator,
       new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
       NullLogger<PerspectiveSyncAwaiter>.Instance,
-      tracker: null,
-      syncEventTracker: singletonTracker);
+      singletonTracker);
 
     // Act - wait with short timeout (perspective never calls MarkProcessed)
     var result = await awaiter.WaitForStreamAsync(
@@ -217,8 +215,7 @@ public class UserScenarioReproductionTests {
       mockCoordinator,
       new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
       NullLogger<PerspectiveSyncAwaiter>.Instance,
-      tracker: null,
-      syncEventTracker: singletonTracker);
+      singletonTracker);
 
     // Act - no events tracked, should sync immediately
     var result = await awaiter.WaitForStreamAsync(
@@ -227,9 +224,9 @@ public class UserScenarioReproductionTests {
       eventTypes: [typeof(UserScenarioEventB)],
       timeout: TimeSpan.FromSeconds(5));
 
-    // Assert - should sync immediately (no pending events)
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
-      .Because("Sync should complete immediately when no events are pending");
+    // Assert - with empty tracker and no tracked events, returns NoPendingEvents
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
 
     // Cleanup
     SyncEventTypeRegistrations.Clear();
@@ -245,56 +242,52 @@ internal sealed class UserScenarioPerspectiveC { }
 /// Mock work coordinator that integrates with the singleton tracker.
 /// Returns synced when all tracked events have been marked as processed.
 /// </summary>
-internal sealed class MockWorkCoordinatorWithTracker : IWorkCoordinator {
-  private readonly ISyncEventTracker _tracker;
-  private readonly string _perspectiveName;
+internal sealed class MockWorkCoordinatorWithTracker(ISyncEventTracker tracker, string perspectiveName) : IWorkCoordinator {
+  private readonly ISyncEventTracker _tracker = tracker;
+  private readonly string _perspectiveName = perspectiveName;
 
-  public MockWorkCoordinatorWithTracker(ISyncEventTracker tracker, string perspectiveName) {
-    _tracker = tracker;
-    _perspectiveName = perspectiveName;
-  }
-
-  public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
-    // Check if there are any pending events for any of the sync inquiries
+  public Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+    IReadOnlyList<SyncInquiry> inquiries,
+    CancellationToken cancellationToken = default) {
+    // Check if there are any pending events for any of the sync inquiries.
     var results = new List<SyncInquiryResult>();
 
-    if (request.PerspectiveSyncInquiries is { Length: > 0 }) {
-      foreach (var inquiry in request.PerspectiveSyncInquiries) {
-        var pendingEvents = _tracker.GetPendingEvents(
-          inquiry.StreamId,
-          inquiry.PerspectiveName ?? _perspectiveName,
-          null); // EventTypes filtering done by tracker
+    foreach (var inquiry in inquiries) {
+      var pendingEvents = _tracker.GetPendingEvents(
+        inquiry.StreamId,
+        inquiry.PerspectiveName ?? _perspectiveName,
+        null); // EventTypes filtering done by tracker
 
-        // If no pending events, we're synced
-        var pendingCount = pendingEvents.Count;
+      // If no pending events, we're synced
+      var pendingCount = pendingEvents.Count;
 
-        results.Add(new SyncInquiryResult {
-          InquiryId = inquiry.InquiryId,
-          StreamId = inquiry.StreamId,
-          PendingCount = pendingCount,
-          ProcessedCount = pendingCount == 0 ? 1 : 0,
-          ProcessedEventIds = pendingCount == 0 ? inquiry.EventIds : []
-        });
-      }
+      results.Add(new SyncInquiryResult {
+        InquiryId = inquiry.InquiryId,
+        StreamId = inquiry.StreamId,
+        PendingCount = pendingCount,
+        ProcessedCount = pendingCount == 0 ? 1 : 0,
+        ProcessedEventIds = pendingCount == 0 ? inquiry.EventIds : []
+      });
     }
 
-    return Task.FromResult(new WorkBatch {
-      OutboxWork = [],
-      InboxWork = [],
-      PerspectiveWork = [],
-      SyncInquiryResults = results
-    });
+    return Task.FromResult<IReadOnlyList<SyncInquiryResult>>(results);
   }
 
-  public Task ReportPerspectiveCompletionAsync(PerspectiveCheckpointCompletion completion, CancellationToken ct = default) {
+  public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
     return Task.CompletedTask;
   }
 
-  public Task ReportPerspectiveFailureAsync(PerspectiveCheckpointFailure failure, CancellationToken ct = default) {
+  public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
     return Task.CompletedTask;
   }
 
-  public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
-    return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+  public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+  public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    return Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 }

@@ -8,14 +8,12 @@ namespace ECommerce.NotificationWorker.Receptors;
 /// Handles SendNotificationCommand and publishes NotificationSentEvent
 /// </summary>
 public class SendNotificationReceptor(IDispatcher dispatcher, ILogger<SendNotificationReceptor> logger) : IReceptor<SendNotificationCommand, NotificationSentEvent> {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<SendNotificationReceptor> _logger = logger;
 
   public async ValueTask<NotificationSentEvent> HandleAsync(
     SendNotificationCommand message,
     CancellationToken cancellationToken = default) {
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Sending {NotificationType} notification to customer {CustomerId}: {Subject}",
       message.Type,
       message.CustomerId,
@@ -36,9 +34,9 @@ public class SendNotificationReceptor(IDispatcher dispatcher, ILogger<SendNotifi
 
     // Publish the event
     //
-    await _dispatcher.PublishAsync(notificationSent);
+    await dispatcher.PublishAsync(notificationSent);
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Notification sent to customer {CustomerId}",
       message.CustomerId);
 

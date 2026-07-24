@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// which is useful for custom vector implementations or testing scenarios.
 /// </para>
 /// </remarks>
-/// <docs>diagnostics/WHIZ070</docs>
+/// <docs>operations/diagnostics/whiz070</docs>
 /// <docs>diagnostics/WHIZ071</docs>
 /// <tests>VectorFieldPackageReferenceAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -56,9 +56,7 @@ public sealed class VectorFieldPackageReferenceAnalyzer : DiagnosticAnalyzer {
     var hasVectorField = new ThreadSafeFlag();
 
     // Analyze each named type symbol
-    context.RegisterSymbolAction(symbolContext => {
-      _analyzeType(symbolContext, hasVectorField);
-    }, SymbolKind.NamedType);
+    context.RegisterSymbolAction(symbolContext => _analyzeType(symbolContext, hasVectorField), SymbolKind.NamedType);
 
     // At the end of compilation, report missing packages if vector fields were found
     context.RegisterCompilationEndAction(endContext => {
@@ -94,13 +92,14 @@ public sealed class VectorFieldPackageReferenceAnalyzer : DiagnosticAnalyzer {
     // Find IPerspectiveFor<TModel, ...> interfaces
     foreach (var iface in typeSymbol.AllInterfaces) {
       // Must be IPerspectiveFor with at least 2 type arguments (TModel + at least one TEvent)
-      if (!iface.Name.StartsWith("IPerspectiveFor", StringComparison.Ordinal) || iface.TypeArguments.Length < 2) {
+      if ((!iface.Name.StartsWith("IPerspectiveFor", StringComparison.Ordinal) &&
+           !iface.Name.StartsWith("IPerspectiveWithActionsFor", StringComparison.Ordinal) &&
+           !iface.Name.StartsWith("IPerspectiveBase", StringComparison.Ordinal)) || iface.TypeArguments.Length < 2) {
         continue;
       }
 
       // TModel is the first type argument
-      var modelType = iface.TypeArguments[0] as INamedTypeSymbol;
-      if (modelType == null) {
+      if (iface.TypeArguments[0] is not INamedTypeSymbol modelType) {
         continue;
       }
 

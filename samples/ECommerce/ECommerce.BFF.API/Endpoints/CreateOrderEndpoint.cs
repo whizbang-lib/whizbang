@@ -6,7 +6,6 @@ namespace ECommerce.BFF.API.Endpoints;
 /// Create a new order (fire-and-forget)
 /// </summary>
 public class CreateOrderEndpoint(ILogger<CreateOrderEndpoint> logger) : Endpoint<CreateOrderRequest, CreateOrderResponse> {
-  private readonly ILogger<CreateOrderEndpoint> _logger = logger;
 
   public override void Configure() {
     Post("/orders");
@@ -23,7 +22,7 @@ public class CreateOrderEndpoint(ILogger<CreateOrderEndpoint> logger) : Endpoint
     // // Fire-and-forget: Returns correlation ID immediately
     // var receipt = await _dispatcher.SendAsync(command);
 
-    // _logger.LogInformation(
+    // logger.LogInformation(
     //   "Order creation command dispatched with CorrelationId={CorrelationId}",
     //   receipt.CorrelationId
     // );
@@ -34,7 +33,7 @@ public class CreateOrderEndpoint(ILogger<CreateOrderEndpoint> logger) : Endpoint
     // };
     // HttpContext.Response.StatusCode = 202;
 
-    _logger.LogWarning("CreateOrder endpoint not yet implemented - dispatcher integration pending");
+    logger.LogWarning("CreateOrder endpoint not yet implemented - dispatcher integration pending");
     Response = new CreateOrderResponse {
       CorrelationId = "",
       Message = "Order creation not yet implemented - dispatcher integration pending"

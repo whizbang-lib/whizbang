@@ -2,6 +2,7 @@ using System;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -21,15 +22,15 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveAssociationGeneratorTests.cs:Generator_GeneratesJsonFormatForDatabaseAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveAssociationGeneratorTests.cs:Generator_AbstractClass_IsIgnoredAsync</tests>
 [Generator]
+#pragma warning disable S1144 // Initialize is a public method implementing IIncrementalGenerator interface
 public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
-
   public void Initialize(IncrementalGeneratorInitializationContext context) {
+#pragma warning restore S1144
     // Filter for classes that have a base list (potential interface implementations)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => _extractPerspectiveAssociationInfo(ctx, ct)
-    ).Where(static infos => infos is not null && infos.Length > 0)
+    ).Where(static infos => infos?.Length > 0)
      .SelectMany(static (infos, _) => infos!.ToImmutableArray());
 
     // Collect all perspectives and generate registration code
@@ -51,13 +52,11 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
   private static PerspectiveAssociationInfo[]? _extractPerspectiveAssociationInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
 
-    if (classSymbol is null) {
+    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
       return null;
     }
 
@@ -66,11 +65,14 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for all IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
+    // Look for all perspective interfaces: IPerspectiveBase, IPerspectiveFor, IPerspectiveWithActionsFor
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return originalDef.Contains("IPerspectiveFor") && i.TypeArguments.Length > 1;
+          return (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel, TEvent", StringComparison.Ordinal) ||
+                  originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent", StringComparison.Ordinal) ||
+                  originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent", StringComparison.Ordinal))
+                 && i.TypeArguments.Length > 1;
         })
         .ToList();
 
@@ -120,14 +122,34 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       return;
     }
 
-    // Deduplicate perspectives by (PerspectiveClassName, MessageTypeName)
-    // This prevents "ON CONFLICT DO UPDATE command cannot affect row a second time" errors
+    // Deduplicate perspectives by (PerspectiveClassName, MessageTypeName), then sort deterministically.
+    // Sort order must be stable across rebuilds so the hash below is reproducible.
     var uniquePerspectives = perspectives
         .Distinct()
+        .OrderBy(p => p.PerspectiveClrTypeName, StringComparer.Ordinal)
+        .ThenBy(p => p.MessageTypeName, StringComparer.Ordinal)
         .ToImmutableArray();
 
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
+
+    // Compute SHA256 over the canonical (sorted) tuple form for drift detection at startup.
+    // Includes ServiceName (assembly name) so a rename would also trip re-registration.
+    var canonical = new StringBuilder();
+    foreach (var p in uniquePerspectives) {
+      canonical.Append(p.MessageTypeName).Append('|')
+               .Append("perspective").Append('|')
+               .Append(p.PerspectiveClrTypeName).Append('|')
+               .Append(assemblyName).Append('\n');
+    }
+    byte[] hashBytes;
+    using (var sha = SHA256.Create()) {
+      hashBytes = sha.ComputeHash(Encoding.UTF8.GetBytes(canonical.ToString()));
+    }
+    var associationsHash = new StringBuilder(hashBytes.Length * 2);
+    foreach (var b in hashBytes) {
+      associationsHash.Append(b.ToString("x2", CultureInfo.InvariantCulture));
+    }
 
     // Load template
     var template = TemplateUtilities.GetEmbeddedTemplate(
@@ -159,7 +181,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       isFirstAssociation = false;
 
       // Generate C# code that appends JSON object
-      associations.AppendLine($"    json.Append(\"    {{\");");
+      associations.AppendLine("    json.Append(\"    {\");");
       associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{perspective.MessageTypeName}\\\", \");");
       associations.AppendLine("    json.Append(\"\\\"AssociationType\\\": \\\"perspective\\\", \");");
       associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspective.PerspectiveClrTypeName}\\\", \");");
@@ -174,6 +196,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
     // Replace placeholders
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_ASSOCIATIONS_JSON", associations.ToString());
     template = template.Replace("__ASSOCIATION_COUNT__", associationCount.ToString(CultureInfo.InvariantCulture));
+    template = template.Replace("__ASSOCIATIONS_HASH__", associationsHash.ToString());
 
     context.AddSource("EFCorePerspectiveAssociations.g.cs", template);
 

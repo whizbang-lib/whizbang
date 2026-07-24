@@ -7,7 +7,7 @@ namespace Whizbang.Core;
 /// Uses the unified [StreamId] attribute on events, commands, and perspective models.
 /// Delegates to source-generated extractors for zero-reflection, AOT-compatible extraction.
 /// </summary>
-/// <docs>core-concepts/delivery-receipts</docs>
+/// <docs>fundamentals/messages/delivery-receipts</docs>
 /// <tests>tests/Whizbang.Core.Tests/StreamIdExtractorTests.cs</tests>
 public sealed class StreamIdExtractor : IStreamIdExtractor {
 
@@ -35,5 +35,15 @@ public sealed class StreamIdExtractor : IStreamIdExtractor {
 
     // For other message types (e.g., perspective DTOs), try generic extraction
     return StreamIdExtractors.TryResolveAsGuid(message);
+  }
+
+  /// <inheritdoc />
+  public (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
+    return StreamIdExtractors.GetGenerationPolicy(message);
+  }
+
+  /// <inheritdoc />
+  public bool SetStreamId(object message, Guid streamId) {
+    return StreamIdExtractors.SetStreamId(message, streamId);
   }
 }

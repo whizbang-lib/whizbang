@@ -5,8 +5,11 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Transports;
 
@@ -57,7 +60,7 @@ public class TransportManager(
     if (!_transports.TryGetValue(type, out var transport)) {
       throw new InvalidOperationException(
         $"Transport type '{type}' is not registered. " +
-        $"Please register it using AddTransport() before use."
+        "Please register it using AddTransport() before use."
       );
     }
     return transport;
@@ -74,7 +77,7 @@ public class TransportManager(
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithEmptyTargets_ShouldNotThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullMessage_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
-  public async Task PublishToTargetsAsync<TMessage>(
+  public Task PublishToTargetsAsync<TMessage>(
     TMessage message,
     IReadOnlyList<PublishTarget> targets,
     IMessageContext? context = null
@@ -84,9 +87,17 @@ public class TransportManager(
 
     // Early exit if no targets
     if (targets.Count == 0) {
-      return;
+      return Task.CompletedTask;
     }
 
+    return _publishToTargetsCoreAsync(message, targets, context);
+  }
+
+  private async Task _publishToTargetsCoreAsync<TMessage>(
+    TMessage message,
+    IReadOnlyList<PublishTarget> targets,
+    IMessageContext? context
+  ) {
     // Create context if not provided - use CascadeContextFactory for proper security propagation
     if (context == null) {
       var cascade = _cascadeContextFactory.NewRoot();
@@ -105,7 +116,7 @@ public class TransportManager(
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithEmptyTargets_ShouldReturnEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullHandler_ShouldThrowAsync</tests>
-  public async Task<List<ISubscription>> SubscribeFromTargetsAsync(
+  public Task<List<ISubscription>> SubscribeFromTargetsAsync(
     IReadOnlyList<SubscriptionTarget> targets,
     Func<IMessageEnvelope, Task> handler
   ) {
@@ -114,9 +125,16 @@ public class TransportManager(
 
     // Early exit if no targets
     if (targets.Count == 0) {
-      return [];
+      return Task.FromResult<List<ISubscription>>([]);
     }
 
+    return _subscribeFromTargetsCoreAsync(targets, handler);
+  }
+
+  private async Task<List<ISubscription>> _subscribeFromTargetsCoreAsync(
+    IReadOnlyList<SubscriptionTarget> targets,
+    Func<IMessageEnvelope, Task> handler
+  ) {
     // Subscribe to all targets in parallel
     var tasks = targets.Select(target => _subscribeFromTargetAsync(target, handler));
     var subscriptions = await Task.WhenAll(tasks);
@@ -138,7 +156,7 @@ public class TransportManager(
     );
 
     // Publish to transport
-    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, preSerializedBytes: null, CancellationToken.None);
   }
 
   /// <summary>
@@ -186,13 +204,17 @@ public class TransportManager(
       Metadata: metadata
     );
 
-    // Wrap handler to match ITransport signature (adds envelopeType and CancellationToken parameters)
-    Task __transportHandler(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
-      return handler(envelope);
-    }
-
-    // Subscribe to transport (handler is first parameter!)
-    return await transport.SubscribeAsync(__transportHandler, destination, CancellationToken.None);
+    // Subscribe to transport via batch API, wrapping per-message handler
+    return await transport.SubscribeBatchAsync(
+      async (batch, _) => {
+        foreach (var msg in batch) {
+          await handler(msg.Envelope);
+        }
+      },
+      destination,
+      new TransportBatchOptions(),
+      CancellationToken.None
+    );
   }
 
   /// <summary>
@@ -202,14 +224,8 @@ public class TransportManager(
     TMessage message,
     IMessageContext context
   ) {
-    // Extract scope from IMessageContext (UserId/TenantId)
-    ScopeDelta? scopeDelta = null;
-    if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
-      scopeDelta = ScopeDelta.FromSecurityContext(new SecurityContext {
-        UserId = context.UserId,
-        TenantId = context.TenantId
-      });
-    }
+    // Scope from the explicit IMessageContext (null when it carries no tenant/user) — shared resolver.
+    var scopeDelta = CascadeContext.ScopeDeltaFromMessageContext(context);
 
     return new MessageEnvelope<TMessage> {
       MessageId = context.MessageId,
@@ -222,9 +238,10 @@ public class TransportManager(
           CorrelationId = context.CorrelationId,
           CausationId = context.CausationId,
           Scope = scopeDelta,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
+          TraceParent = System.Diagnostics.Activity.Current?.Id,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
   }
 }

@@ -23,6 +23,18 @@ public interface IPerspectiveRunnerRegistry : IEventTypeProvider {
   /// </summary>
   /// <returns>Collection of registered perspective information with type details</returns>
   IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives();
+
+  /// <summary>
+  /// Gets the set of lifecycle stages that have at least one registered receptor.
+  /// Used by PerspectiveWorker to skip invocations for stages with no receptors,
+  /// avoiding unnecessary DI resolution, context creation, and InvokeAsync calls.
+  /// </summary>
+  /// <remarks>
+  /// The set is computed at compile time by the source generator and is immutable.
+  /// An empty set means no lifecycle receptors exist — all invocations can be skipped.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/drain-mode#lifecycle-skip</docs>
+  IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; }
 }
 
 /// <summary>

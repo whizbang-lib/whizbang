@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -28,9 +29,9 @@ public class PerspectiveWorkerSecurityContextTests {
   /// the IScopeContextAccessor.Current is set before lifecycle receptors are invoked.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_WithSecurityProvider_EstablishesSecurityContextAsync() {
+  public async Task PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync() {
     // Arrange
-    var expectedUserId = "user-123";
+    const string expectedUserId = "user-123";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -49,7 +50,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // Capture the accessor directly to avoid static field pollution
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           // Capture the IMessageContext.UserId at the moment of invocation
           capturedUserId = messageContextAccessor.Current?.UserId;
           securityContextEstablishedBeforeInvoke = capturedUserId is not null;
@@ -68,8 +69,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     // Return perspective work
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
@@ -87,25 +86,33 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -126,7 +133,7 @@ public class PerspectiveWorkerSecurityContextTests {
   /// (graceful no-op for security context establishment).
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_WithoutSecurityProvider_StillInvokesLifecycleReceptorsAsync() {
+  public async Task PrePerspectiveDetached_WithoutSecurityProvider_StillInvokesLifecycleReceptorsAsync() {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -134,7 +141,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           lifecycleInvoked = true;
         }
       });
@@ -151,8 +158,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -167,25 +172,33 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddSingleton<IEventStore>(eventStore);
     // NO IMessageSecurityContextProvider registered
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -204,7 +217,7 @@ public class PerspectiveWorkerSecurityContextTests {
   /// but lifecycle receptors are still invoked.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_SecurityProviderReturnsNull_DoesNotSetAccessorAsync() {
+  public async Task PrePerspectiveDetached_SecurityProviderReturnsNull_DoesNotSetAccessorAsync() {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -228,8 +241,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -245,24 +256,31 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IEventStore>(eventStore);
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -283,7 +301,7 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task PostPerspectiveInline_WithSecurityProvider_EstablishesSecurityContextAsync() {
     // Arrange
-    var expectedUserId = "user-456";
+    const string expectedUserId = "user-456";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -314,8 +332,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -332,24 +348,31 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
 
     // Wait for PostPerspectiveInline to be invoked (happens AFTER completion is reported)
     var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
@@ -381,19 +404,21 @@ public class PerspectiveWorkerSecurityContextTests {
     var streamId = Guid.CreateVersion7();
     var eventId1 = Guid.CreateVersion7();
     var eventId2 = Guid.CreateVersion7();
-    var userId1 = "user-1";
-    var userId2 = "user-2";
+    const string userId1 = "user-1";
+    const string userId2 = "user-2";
 
     var capturedUserIds = new List<string?>();
 
-    var messageContextAccessor = new TestMessageContextAccessor();
+    var messageContextAccessor = new AsyncLocalMessageContextAccessor();
 
-    var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
-          capturedUserIds.Add(messageContextAccessor.Current?.UserId);
-        }
-      });
+    void OnInlineCapture(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? ctx) {
+      // Capture on the Inline stage. The invoker (below) establishes the message context synchronously
+      // in-frame — like the real ReceptorInvoker — so Current reflects THIS envelope, isolated (via the
+      // AsyncLocal-backed accessor) from the Detached stages that re-establish context on Task.Run threads.
+      if (stage == LifecycleStage.PrePerspectiveInline) {
+        capturedUserIds.Add(messageContextAccessor.Current?.UserId);
+      }
+    }
 
     var eventStore = new FakeEventStore();
     eventStore.AddEvent(streamId, eventId1, new TestEvent(Guid.CreateVersion7(), "data-1"), userId1);
@@ -409,8 +434,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -427,25 +450,35 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    // Factory registration so the invoker receives the scoped provider and can establish the message
+    // context synchronously in-frame (mirrors the real ReceptorInvoker — the boundary fix).
+    services.AddScoped<IReceptorInvoker>(sp => new CapturingLifecycleInvoker(OnInlineCapture, sp));
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -454,7 +487,7 @@ public class PerspectiveWorkerSecurityContextTests {
       // Expected during shutdown
     }
 
-    // Assert - should have captured two different user IDs
+    // Assert - should have captured two different user IDs, one per envelope, in order
     await Assert.That(capturedUserIds.Count).IsEqualTo(2)
       .Because("Security context should be established for each envelope");
     await Assert.That(capturedUserIds[0]).IsEqualTo(userId1);
@@ -466,7 +499,7 @@ public class PerspectiveWorkerSecurityContextTests {
   /// (graceful no-op).
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_WithoutMessageContextAccessor_StillInvokesLifecycleReceptorsAsync() {
+  public async Task PrePerspectiveDetached_WithoutMessageContextAccessor_StillInvokesLifecycleReceptorsAsync() {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -474,7 +507,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           lifecycleInvoked = true;
         }
       });
@@ -493,8 +526,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -511,25 +542,33 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     // NO IMessageContextAccessor registered
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -553,15 +592,15 @@ public class PerspectiveWorkerSecurityContextTests {
   /// the MessageContext should use the extractor's result, NOT the envelope's null scope.
   /// </summary>
   /// <remarks>
-  /// This is the root cause of TenantContext being null in PostPerspectiveAsync handlers.
+  /// This is the root cause of TenantContext being null in PostPerspectiveDetached handlers.
   /// The PerspectiveWorker._establishSecurityContextAsync was reading from envelope.GetCurrentScope()
   /// instead of using the securityContext returned by EstablishContextAsync.
   /// </remarks>
   [Test]
   public async Task EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync() {
     // Arrange: Event envelope with NO scope in hops (GetCurrentScope() returns null)
-    var expectedTenantId = "tenant-123";
-    var expectedUserId = "user-456";
+    const string expectedTenantId = "tenant-123";
+    const string expectedUserId = "user-456";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -573,9 +612,12 @@ public class PerspectiveWorkerSecurityContextTests {
     var scopeContextAccessor = new TestScopeContextAccessor();
 
     // Create lifecycle invoker that captures the IMessageContext state
+    // Capture at PrePerspectiveInline (fires synchronously on the main thread) rather than
+    // PrePerspectiveDetached (fires via Task.Run and may not complete before test cancellation).
+    // Security context is established BEFORE all stages, so the context is already set.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
           capturedScopeContext = messageContextAccessor.Current?.ScopeContext;
@@ -598,8 +640,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -616,24 +656,31 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -661,8 +708,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync() {
     // Arrange: Envelope WITH scope in hops (so GetCurrentScope returns valid data)
-    var expectedTenantId = "hop-tenant";
-    var expectedUserId = "hop-user";
+    const string expectedTenantId = "hop-tenant";
+    const string expectedUserId = "hop-user";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -672,9 +719,11 @@ public class PerspectiveWorkerSecurityContextTests {
     var messageContextAccessor = new TestMessageContextAccessor();
     var scopeContextAccessor = new TestScopeContextAccessor();
 
+    // Capture at PrePerspectiveInline (fires synchronously) rather than PrePerspectiveDetached
+    // (fires via Task.Run). Security context is established before all stages.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
         }
@@ -695,8 +744,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -713,24 +760,31 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -755,8 +809,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task EstablishSecurityContext_SetsInitiatingContextOnScopeContextAccessorAsync() {
     // Arrange
-    var expectedTenantId = "tenant-from-initiating";
-    var expectedUserId = "user-from-initiating";
+    const string expectedTenantId = "tenant-from-initiating";
+    const string expectedUserId = "user-from-initiating";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -769,7 +823,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // Lifecycle invoker captures the InitiatingContext state during invocation
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           capturedInitiatingContext = scopeContextAccessor.InitiatingContext;
           capturedScopeContextFromAccessor = scopeContextAccessor.Current;
         }
@@ -791,8 +845,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -809,25 +861,33 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -854,21 +914,21 @@ public class PerspectiveWorkerSecurityContextTests {
   /// <summary>
   /// CRITICAL BUG FIX TEST: Verifies that ISecurityContextCallbacks are invoked when
   /// the security provider returns null (extraction fails) BUT the envelope has scope in hops.
-  /// This is required for UserContextManagerCallback to set TenantContext in PostPerspectiveAsync handlers.
+  /// This is required for UserContextManagerCallback to set TenantContext in PostPerspectiveDetached handlers.
   /// </summary>
   /// <remarks>
-  /// Root cause: DefaultMessageSecurityContextProvider only invokes callbacks when extraction succeeds.
+  /// <para>Root cause: DefaultMessageSecurityContextProvider only invokes callbacks when extraction succeeds.
   /// When extraction fails, callbacks are NOT invoked, so UserContextManagerCallback doesn't run,
-  /// and _userContextManager.TenantContext remains null.
+  /// and _userContextManager.TenantContext remains null.</para>
   ///
-  /// Fix: PerspectiveWorker should manually invoke callbacks with the envelope's scope when
-  /// securityProvider returns null but envelope.GetCurrentScope() has data.
+  /// <para>Fix: PerspectiveWorker should manually invoke callbacks with the envelope's scope when
+  /// securityProvider returns null but envelope.GetCurrentScope() has data.</para>
   /// </remarks>
   [Test]
   public async Task EstablishSecurityContext_WhenExtractorFailsButEnvelopeHasScope_InvokesCallbacksWithEnvelopeScopeAsync() {
     // Arrange: Envelope WITH scope in hops (GetCurrentScope returns valid data)
-    var expectedTenantId = "hop-tenant-callback";
-    var expectedUserId = "hop-user-callback";
+    const string expectedTenantId = "hop-tenant-callback";
+    const string expectedUserId = "hop-user-callback";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -905,8 +965,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -925,24 +983,31 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
     // Register callback - this is the key: callbacks should be invoked even when extraction fails
     services.AddSingleton<ISecurityContextCallback>(testCallback);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -1014,8 +1079,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task FakeEventStore_GetEventsBetweenPolymorphic_ReturnsEnvelopesWithScopeInHopsAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-from-hops";
-    var expectedUserId = "test-user-from-hops";
+    const string expectedTenantId = "test-tenant-from-hops";
+    const string expectedUserId = "test-user-from-hops";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -1057,8 +1122,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task EstablishSecurityContext_WhenEnvelopeHasScope_WrapsInImmutableScopeContextWithPropagationAsync() {
     // Arrange: Create envelope with scope in hops (like real events in database)
-    var expectedTenantId = "propagation-test-tenant";
-    var expectedUserId = "propagation-test-user";
+    const string expectedTenantId = "propagation-test-tenant";
+    const string expectedUserId = "propagation-test-user";
 
     var scopeDelta = ScopeDelta.FromSecurityContext(new Whizbang.Core.Observability.SecurityContext {
       TenantId = expectedTenantId,
@@ -1072,7 +1137,8 @@ public class PerspectiveWorkerSecurityContextTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act: Simulate what PerspectiveWorker._establishSecurityContextAsync does when extraction fails
@@ -1148,8 +1214,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -1167,24 +1231,31 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
     services.AddSingleton<ISecurityContextCallback>(testCallback);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      lifecycleInvoker,
-      eventTypeProvider
+      eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -1206,19 +1277,26 @@ public class PerspectiveWorkerSecurityContextTests {
 
   private sealed record TestEvent(Guid Id, string Data) : IEvent;
 
-  private sealed class CapturingLifecycleInvoker : ILifecycleInvoker {
-    private readonly Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? _onInvoke;
-
-    public CapturingLifecycleInvoker(
-        Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? onInvoke = null) {
-      _onInvoke = onInvoke;
-    }
+  private sealed class CapturingLifecycleInvoker(
+      Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? onInvoke = null,
+      IServiceProvider? scopedProvider = null) : IReceptorInvoker {
+    private readonly Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? _onInvoke = onInvoke;
+    private readonly IServiceProvider? _scopedProvider = scopedProvider;
 
     public ValueTask InvokeAsync(
         IMessageEnvelope envelope,
         LifecycleStage stage,
         ILifecycleContext? context = null,
         CancellationToken cancellationToken = default) {
+      // Mirror the real ReceptorInvoker.InvokeAsync: synchronously (re-)establish the message context
+      // from the envelope in THIS frame, so it reaches the callback across the AsyncLocal boundary. The
+      // worker's async _establishSecurityContextAsync write is lost across its ConfigureAwait(false)
+      // boundary (AsyncLocal sets inside a child async method don't flow back) — production relies on the
+      // inline invoker re-establishing here. Only wired when a scopedProvider is supplied (opt-in); the
+      // other 11 usages keep the plain no-op behavior.
+      if (_scopedProvider is not null) {
+        Whizbang.Core.Security.SecurityContextHelper.SetMessageContextFromEnvelope(envelope, _scopedProvider);
+      }
       _onInvoke?.Invoke(envelope, stage, context);
       return ValueTask.CompletedTask;
     }
@@ -1272,7 +1350,8 @@ public class PerspectiveWorkerSecurityContextTests {
               Type = HopType.Current,
               ServiceInstance = ServiceInstanceInfo.Unknown,
               Scope = scopeDelta
-            }]
+            }],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
           };
 
           result.Add(envelope);
@@ -1285,6 +1364,8 @@ public class PerspectiveWorkerSecurityContextTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
       return Task.FromResult(-1L);
     }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   /// <summary>
@@ -1336,7 +1417,8 @@ public class PerspectiveWorkerSecurityContextTests {
               Type = HopType.Current,
               ServiceInstance = ServiceInstanceInfo.Unknown,
               Scope = null  // NO SCOPE - GetCurrentScope() will return null
-            }]
+            }],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
           };
 
           result.Add(envelope);
@@ -1349,6 +1431,8 @@ public class PerspectiveWorkerSecurityContextTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
       return Task.FromResult(-1L);
     }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   private sealed class TestScopeContext : IScopeContext {
@@ -1371,19 +1455,13 @@ public class PerspectiveWorkerSecurityContextTests {
     public bool IsMemberOfAll(params SecurityPrincipalId[] principals) => false;
   }
 
-  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly string? _userId;
-    private readonly bool _returnsNull;
-    private readonly IScopeContextAccessor? _scopeContextAccessor;
-
-    public TestSecurityContextProvider(
-        string? userId = null,
-        bool returnsNull = false,
-        IScopeContextAccessor? scopeContextAccessor = null) {
-      _userId = userId;
-      _returnsNull = returnsNull;
-      _scopeContextAccessor = scopeContextAccessor;
-    }
+  private sealed class TestSecurityContextProvider(
+      string? userId = null,
+      bool returnsNull = false,
+      IScopeContextAccessor? scopeContextAccessor = null) : IMessageSecurityContextProvider {
+    private readonly string? _userId = userId;
+    private readonly bool _returnsNull = returnsNull;
+    private readonly IScopeContextAccessor? _scopeContextAccessor = scopeContextAccessor;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -1396,9 +1474,7 @@ public class PerspectiveWorkerSecurityContextTests {
       var context = new TestScopeContext { UserId = _userId ?? "default-user" };
 
       // Set the accessor if provided (simulates what happens in real implementation)
-      if (_scopeContextAccessor is not null) {
-        _scopeContextAccessor.Current = context;
-      }
+      _scopeContextAccessor?.Current = context;
 
       return ValueTask.FromResult<IScopeContext?>(context);
     }
@@ -1408,19 +1484,13 @@ public class PerspectiveWorkerSecurityContextTests {
   /// Security provider that returns scope with BOTH UserId AND TenantId.
   /// Used to test that extractor result is properly used in MessageContext.
   /// </summary>
-  private sealed class TestSecurityContextProviderWithTenant : IMessageSecurityContextProvider {
-    private readonly string _tenantId;
-    private readonly string _userId;
-    private readonly IScopeContextAccessor? _scopeContextAccessor;
-
-    public TestSecurityContextProviderWithTenant(
-        string tenantId,
-        string userId,
-        IScopeContextAccessor? scopeContextAccessor = null) {
-      _tenantId = tenantId;
-      _userId = userId;
-      _scopeContextAccessor = scopeContextAccessor;
-    }
+  private sealed class TestSecurityContextProviderWithTenant(
+      string tenantId,
+      string userId,
+      IScopeContextAccessor? scopeContextAccessor = null) : IMessageSecurityContextProvider {
+    private readonly string _tenantId = tenantId;
+    private readonly string _userId = userId;
+    private readonly IScopeContextAccessor? _scopeContextAccessor = scopeContextAccessor;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -1432,9 +1502,7 @@ public class PerspectiveWorkerSecurityContextTests {
       };
 
       // Set the accessor if provided (simulates what happens in real implementation)
-      if (_scopeContextAccessor is not null) {
-        _scopeContextAccessor.Current = context;
-      }
+      _scopeContextAccessor?.Current = context;
 
       return ValueTask.FromResult<IScopeContext?>(context);
     }
@@ -1467,13 +1535,9 @@ public class PerspectiveWorkerSecurityContextTests {
   /// <summary>
   /// Test callback that captures invocations for assertions.
   /// </summary>
-  private sealed class TestSecurityContextCallback : ISecurityContextCallback {
-    private readonly Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask>? _onContextEstablished;
-
-    public TestSecurityContextCallback(
-        Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask>? onContextEstablished = null) {
-      _onContextEstablished = onContextEstablished;
-    }
+  private sealed class TestSecurityContextCallback(
+      Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask>? onContextEstablished = null) : ISecurityContextCallback {
+    private readonly Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask>? _onContextEstablished = onContextEstablished;
 
     public ValueTask OnContextEstablishedAsync(
         IScopeContext context,
@@ -1484,12 +1548,8 @@ public class PerspectiveWorkerSecurityContextTests {
     }
   }
 
-  private sealed class EnvelopeAwareSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly IScopeContextAccessor _scopeContextAccessor;
-
-    public EnvelopeAwareSecurityContextProvider(IScopeContextAccessor scopeContextAccessor) {
-      _scopeContextAccessor = scopeContextAccessor;
-    }
+  private sealed class EnvelopeAwareSecurityContextProvider(IScopeContextAccessor scopeContextAccessor) : IMessageSecurityContextProvider {
+    private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -1506,14 +1566,10 @@ public class PerspectiveWorkerSecurityContextTests {
     }
   }
 
-  private sealed class TestScopeContextAccessor : IScopeContextAccessor {
-    private readonly Action? _onSet;
+  private sealed class TestScopeContextAccessor(Action? onSet = null) : IScopeContextAccessor {
+    private readonly Action? _onSet = onSet;
     private IScopeContext? _current;
     private IMessageContext? _initiatingContext;
-
-    public TestScopeContextAccessor(Action? onSet = null) {
-      _onSet = onSet;
-    }
 
     public IScopeContext? Current {
       get => _current;
@@ -1529,16 +1585,30 @@ public class PerspectiveWorkerSecurityContextTests {
     }
   }
 
+  // Plain shared field. Fine for single-envelope tests: the Detached stage re-establishes the SAME
+  // envelope's context, so even if it clobbers Current from a Task.Run thread the value is unchanged.
+  // Multi-envelope tests must use AsyncLocalMessageContextAccessor instead (see that type's remarks).
   private sealed class TestMessageContextAccessor : IMessageContextAccessor {
     public IMessageContext? Current { get; set; }
   }
 
-  private sealed class TestEventTypeProvider : IEventTypeProvider {
-    private readonly IReadOnlyList<Type> _eventTypes;
-
-    public TestEventTypeProvider(IReadOnlyList<Type> eventTypes) {
-      _eventTypes = eventTypes;
+  // Mirrors the production MessageContextAccessor, which backs Current with AsyncLocal precisely so that
+  // a write in a child flow (e.g. a Detached lifecycle stage fired via Task.Run, which re-establishes the
+  // security context on a threadpool thread) does NOT bleed into the parent/sibling flow that runs the
+  // Inline stage. With a plain shared field, a detached stage's Current write clobbered what a later
+  // envelope's inline capture read, non-deterministically. AsyncLocal gives each async flow its own view.
+  // Required by MultipleEnvelopes_EstablishesContextForEachEnvelope, whose invoker re-establishes the
+  // context synchronously in-frame (like the real ReceptorInvoker) so the write reaches the callback (L5).
+  private sealed class AsyncLocalMessageContextAccessor : IMessageContextAccessor {
+    private readonly AsyncLocal<IMessageContext?> _current = new();
+    public IMessageContext? Current {
+      get => _current.Value;
+      set => _current.Value = value;
     }
+  }
+
+  private sealed class TestEventTypeProvider(IReadOnlyList<Type> eventTypes) : IEventTypeProvider {
+    private readonly IReadOnlyList<Type> _eventTypes = eventTypes;
 
     public IReadOnlyList<Type> GetEventTypes() => _eventTypes;
   }
@@ -1557,37 +1627,30 @@ public class PerspectiveWorkerSecurityContextTests {
       }
     }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-        ProcessWorkBatchRequest request,
-        CancellationToken cancellationToken = default) {
-      var work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
-      PerspectiveWorkToReturn.Clear();
-
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = work
-      });
-    }
-
     public Task ReportPerspectiveCompletionAsync(
-        PerspectiveCheckpointCompletion completion,
+        PerspectiveCursorCompletion completion,
         CancellationToken cancellationToken = default) {
       _completionReported.TrySetResult();
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-        PerspectiveCheckpointFailure failure,
+        PerspectiveCursorFailure failure,
         CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
         Guid streamId,
         string perspectiveName,
         CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -1606,15 +1669,6 @@ public class PerspectiveWorkerSecurityContextTests {
       };
     }
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; } = true;
-
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(IsReady);
-    }
-  }
-
   private sealed class FakePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) {
       return new FakePerspectiveRunner();
@@ -1625,21 +1679,30 @@ public class PerspectiveWorkerSecurityContextTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [typeof(TestEvent)];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
-    public Task<PerspectiveCheckpointCompletion> RunAsync(
+    public Type PerspectiveType => typeof(object); // Fake — no real perspective type
+
+    public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
         CancellationToken cancellationToken) {
-      return Task.FromResult(new PerspectiveCheckpointCompletion {
+      return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.CreateVersion7(),
         Status = PerspectiveProcessingStatus.Completed
       });
     }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 
   #endregion

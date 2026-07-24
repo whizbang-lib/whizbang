@@ -10,14 +10,14 @@ using Whizbang.Core.Tests.Generated;
 namespace Whizbang.Core.Tests.Common;
 
 /// <summary>
-/// Base class for tests that want to display build diagnostics on demand.
+/// <para>Base class for tests that want to display build diagnostics on demand.
 /// Diagnostics are shown:
 /// - Once before the first test in the class (if enabled via env var or CLI param)
-/// - After each failing test (if enabled via env var or CLI param)
+/// - After each failing test (if enabled via env var or CLI param)</para>
 ///
-/// To enable diagnostics, use either:
+/// <para>To enable diagnostics, use either:
 /// - Environment variable: WHIZBANG_SHOW_DIAGNOSTICS=1
-/// - Command-line parameter: dotnet test -- --test-parameter ShowDiagnostics=true
+/// - Command-line parameter: dotnet test -- --test-parameter ShowDiagnostics=true</para>
 /// </summary>
 public class DiagnosticTestBase {
   private static readonly ConcurrentDictionary<Type, bool> _diagnosticsPrintedByClass = new();
@@ -26,7 +26,7 @@ public class DiagnosticTestBase {
   /// Override this property to specify which diagnostic categories to display.
   /// Default is ReceptorDiscovery.
   /// </summary>
-  protected virtual DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected virtual DiagnosticCategories DiagnosticCategories => DiagnosticCategories.ReceptorDiscovery;
 
   [Before(Class)]
   public static void ClassSetup() {

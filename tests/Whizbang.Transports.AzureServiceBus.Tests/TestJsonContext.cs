@@ -16,6 +16,7 @@ public sealed record TestMessage(string Content);
 /// </summary>
 [JsonSerializable(typeof(TestMessage))]
 [JsonSerializable(typeof(MessageEnvelope<TestMessage>))]
+[JsonSerializable(typeof(ServiceInstanceInfo))]
 [JsonSourceGenerationOptions(
   PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
   DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull

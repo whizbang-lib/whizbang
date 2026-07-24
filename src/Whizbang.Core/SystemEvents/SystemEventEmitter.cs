@@ -1,6 +1,9 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
@@ -22,24 +25,21 @@ namespace Whizbang.Core.SystemEvents;
 /// infinite loops.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/system-events#emitter</docs>
-public sealed class SystemEventEmitter : ISystemEventEmitter {
-  private readonly SystemEventOptions _options;
-  private readonly IEventStore _systemEventStore;
-  private readonly JsonSerializerOptions _jsonOptions;
-
-  /// <summary>
-  /// Creates a new system event emitter.
-  /// </summary>
-  /// <param name="options">System event configuration options.</param>
-  /// <param name="systemEventStore">Event store for persisting system events.</param>
-  public SystemEventEmitter(
-      IOptions<SystemEventOptions> options,
-      IEventStore systemEventStore) {
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
-    _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-  }
+/// <docs>fundamentals/events/system-events#emitter</docs>
+/// <remarks>
+/// Creates a new system event emitter.
+/// </remarks>
+/// <param name="options">System event configuration options.</param>
+/// <param name="systemEventStore">Event store for persisting system events.</param>
+public sealed class SystemEventEmitter(
+    IOptions<SystemEventOptions> options,
+    IEventStore systemEventStore,
+    ILogger<SystemEventEmitter>? logger = null) : ISystemEventEmitter {
+  private const string SCOPE_TENANT_ID = "TenantId";
+  private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly IEventStore _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
+  private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+  private readonly ILogger<SystemEventEmitter> _logger = logger ?? NullLogger<SystemEventEmitter>.Instance;
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(
@@ -69,7 +69,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
     // Build scope dictionary from scope context
     var scope = new Dictionary<string, string?>();
     if (scopeContext?.Scope?.TenantId != null) {
-      scope["TenantId"] = scopeContext.Scope.TenantId;
+      scope[SCOPE_TENANT_ID] = scopeContext.Scope.TenantId;
     }
     if (scopeContext?.Scope?.UserId != null) {
       scope["UserId"] = scopeContext.Scope.UserId;
@@ -78,8 +78,15 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       scope["CorrelationId"] = correlationId.ToString();
     }
 
+    // Add all claims to scope dictionary (includes name, email, etc.)
+    if (scopeContext?.Claims is not null) {
+      foreach (var claim in scopeContext.Claims) {
+        scope[claim.Key] = claim.Value;
+      }
+    }
+
     // Serialize payload to JsonElement in AOT-compatible way
-    var payloadJson = _serializeToJsonElement(envelope.Payload);
+    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger);
 
     // Create the audit event with generic scope
     var auditEvent = new EventAudited {
@@ -120,8 +127,8 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
 
     // Build scope dictionary from context metadata
     var scope = new Dictionary<string, string?>();
-    if (context?.Metadata.TryGetValue("TenantId", out var tenantId) == true) {
-      scope["TenantId"] = tenantId?.ToString();
+    if (context?.Metadata.TryGetValue(SCOPE_TENANT_ID, out var tenantId) == true) {
+      scope[SCOPE_TENANT_ID] = tenantId?.ToString();
     }
     if (context?.UserId != null) {
       scope["UserId"] = context.UserId;
@@ -131,7 +138,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
     }
 
     // Serialize command to JsonElement in AOT-compatible way
-    var commandJson = _serializeToJsonElement(command);
+    var commandJson = AuditJsonSerializer.SerializeToJsonElement(command, _jsonOptions, _logger);
 
     // Create the audit event with generic scope
     var auditEvent = new CommandAudited {
@@ -142,7 +149,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       ReceptorName = receptorName,
       ResponseType = typeof(TResponse).Name,
       // Store individual properties for backward compatibility
-      TenantId = scope.TryGetValue("TenantId", out var t) ? t : null,
+      TenantId = scope.TryGetValue(SCOPE_TENANT_ID, out var t) ? t : null,
       UserId = context?.UserId,
       CorrelationId = context?.CorrelationId.ToString(),
       // Store full scope for generic access
@@ -158,12 +165,11 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       TSystemEvent systemEvent,
       CancellationToken cancellationToken = default) where TSystemEvent : ISystemEvent {
     // Check if this specific system event type is enabled
-    if (!_options.IsEnabled<TSystemEvent>()) {
-      // Always allow audit events if any audit is enabled
-      if (!_options.AuditEnabled ||
-          (typeof(TSystemEvent) != typeof(EventAudited) && typeof(TSystemEvent) != typeof(CommandAudited))) {
-        return;
-      }
+    // Always allow audit events if any audit is enabled
+    if (!_options.IsEnabled<TSystemEvent>() &&
+        (!_options.AuditEnabled ||
+         (typeof(TSystemEvent) != typeof(EventAudited) && typeof(TSystemEvent) != typeof(CommandAudited)))) {
+      return;
     }
 
     // Create envelope for the system event
@@ -175,9 +181,10 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
+          TraceParent = System.Diagnostics.Activity.Current?.Id,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
     // Append to the system stream
@@ -194,29 +201,4 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
     return attribute?.Exclude == true;
   }
 
-  /// <summary>
-  /// Serializes an object to JsonElement in an AOT-compatible way.
-  /// Uses the registered JsonTypeInfo from JsonContextRegistry.
-  /// </summary>
-  private JsonElement _serializeToJsonElement<T>(T value) {
-    if (value is null) {
-      return default;
-    }
-
-    // Get TypeInfo from combined options
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(T));
-    if (typeInfo is null) {
-      // Fallback: serialize as object (less efficient but works)
-      typeInfo = _jsonOptions.GetTypeInfo(value.GetType());
-    }
-
-    if (typeInfo is null) {
-      // Last resort: return empty object
-      return JsonDocument.Parse("{}").RootElement.Clone();
-    }
-
-    // Serialize to string then parse to JsonElement
-    var json = JsonSerializer.Serialize(value, typeInfo);
-    return JsonDocument.Parse(json).RootElement.Clone();
-  }
 }

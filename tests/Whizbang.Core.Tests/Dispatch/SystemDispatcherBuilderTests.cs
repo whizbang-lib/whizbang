@@ -38,8 +38,9 @@ public class SystemDispatcherBuilderTests {
   [Test]
   public async Task AsSystem_ForAllTenants_SetsTenantIdToAllTenantsConstantAsync() {
     // Arrange
-    var scopeContextAccessor = new ScopeContextAccessor();
-    scopeContextAccessor.Current = null; // No ambient context
+    _ = new ScopeContextAccessor {
+      Current = null // No ambient context
+    };
 
     var mockDispatcher = new MockDispatcher();
     var systemBuilder = new SystemDispatcherBuilder(
@@ -128,7 +129,7 @@ public class SystemDispatcherBuilderTests {
   [Test]
   public async Task AsSystem_KeepTenant_PreservesAmbientTenantIdAsync() {
     // Arrange
-    var ambientTenantId = "ambient-tenant-456";
+    const string ambientTenantId = "ambient-tenant-456";
     var mockDispatcher = new MockDispatcher();
     var systemBuilder = new SystemDispatcherBuilder(
         mockDispatcher,
@@ -309,8 +310,11 @@ public class SystemDispatcherBuilderTests {
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
         Task.FromResult(_emptyReceipt);
 
+    public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) =>
+        Task.FromResult(true);
+
     // CascadeMessageAsync
-    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
     // Batch operations
@@ -322,6 +326,25 @@ public class SystemDispatcherBuilderTests {
 
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
         ValueTask.FromResult(Enumerable.Empty<TResult>());
+
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
+        throw new NotImplementedException();
+
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) =>
+        throw new NotImplementedException();
+
+    public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull =>
+        throw new NotImplementedException();
+
+    public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
+        throw new NotImplementedException();
+
+    // LocalInvokeWithReceiptAsync overloads
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message) => throw new NotImplementedException();
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
 
     /// <summary>
     /// Minimal mock delivery receipt for testing.

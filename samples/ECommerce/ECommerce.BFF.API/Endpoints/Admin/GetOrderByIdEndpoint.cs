@@ -8,7 +8,6 @@ namespace ECommerce.BFF.API.Endpoints.Admin;
 /// Get a specific order by ID (admin view)
 /// </summary>
 public class GetOrderByIdEndpoint(IOrderLens orderLens) : EndpointWithoutRequest<OrderReadModel> {
-  private readonly IOrderLens _orderLens = orderLens;
 
   public override void Configure() {
     Get("/admin/orders/{orderId}");
@@ -25,7 +24,7 @@ public class GetOrderByIdEndpoint(IOrderLens orderLens) : EndpointWithoutRequest
       ThrowError("TenantId is required");
     }
 
-    var order = await _orderLens.GetByIdAsync(orderId, ct);
+    var order = await orderLens.GetByIdAsync(orderId, ct);
 
     if (order == null) {
       HttpContext.Response.StatusCode = 404;

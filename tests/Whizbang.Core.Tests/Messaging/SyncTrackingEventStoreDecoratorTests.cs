@@ -1,4 +1,5 @@
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
@@ -50,7 +51,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = messageId,
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     await decorator.AppendAsync(streamId, envelope);
@@ -72,7 +74,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     await decorator.AppendAsync(streamId, envelope);
@@ -96,7 +99,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Should not throw
@@ -149,7 +153,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = messageId,
       Payload = message,
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     envelopeRegistry.Register(envelope);
 
@@ -175,13 +180,15 @@ public class SyncTrackingEventStoreDecoratorTests {
     await decorator.AppendAsync(streamId, new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("event1"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     });
 
     await decorator.AppendAsync(streamId, new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("event2"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     });
 
     var trackedEvents = tracker.GetEmittedEvents();
@@ -202,7 +209,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     await decorator.AppendAsync(streamId, new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     });
 
     var events = new List<MessageEnvelope<TestEvent>>();
@@ -224,7 +232,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     await decorator.AppendAsync(streamId, new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     });
 
     var lastSequence = await decorator.GetLastSequenceAsync(streamId);
@@ -257,7 +266,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = messageId,
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     await decorator.AppendAsync(streamId, envelope);
@@ -319,7 +329,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     await decorator.AppendAsync(streamId, envelope);
@@ -349,7 +360,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = messageId,
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     await decorator.AppendAsync(streamId, envelope);
@@ -388,7 +400,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Should not throw
@@ -412,7 +425,8 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Should not throw

@@ -15,6 +15,8 @@ namespace Whizbang.Testing.Async;
 /// </list>
 /// </remarks>
 public static class AsyncTestHelpers {
+  private const string CONDITION_BECAME_TRUE_MESSAGE = "Condition became true when it should have remained false";
+
   /// <summary>
   /// Default poll interval for condition checks.
   /// </summary>
@@ -131,7 +133,7 @@ public static class AsyncTestHelpers {
 
       if (condition()) {
         throw new AssertionException(
-          failureMessage ?? "Condition became true when it should have remained false");
+          failureMessage ?? CONDITION_BECAME_TRUE_MESSAGE);
       }
 
       // Don't wait past the deadline
@@ -145,7 +147,7 @@ public static class AsyncTestHelpers {
     // Final check at deadline
     if (condition()) {
       throw new AssertionException(
-        failureMessage ?? "Condition became true when it should have remained false");
+        failureMessage ?? CONDITION_BECAME_TRUE_MESSAGE);
     }
   }
 
@@ -174,7 +176,7 @@ public static class AsyncTestHelpers {
 
       if (await condition()) {
         throw new AssertionException(
-          failureMessage ?? "Condition became true when it should have remained false");
+          failureMessage ?? CONDITION_BECAME_TRUE_MESSAGE);
       }
 
       var remaining = deadline - DateTime.UtcNow;
@@ -187,7 +189,7 @@ public static class AsyncTestHelpers {
     // Final check at deadline
     if (await condition()) {
       throw new AssertionException(
-        failureMessage ?? "Condition became true when it should have remained false");
+        failureMessage ?? CONDITION_BECAME_TRUE_MESSAGE);
     }
   }
 
@@ -228,9 +230,10 @@ public static class AsyncTestHelpers {
     cts.CancelAfter(timeout);
 
     try {
-      T value;
-      while (!predicate(value = getValue())) {
+      var value = getValue();
+      while (!predicate(value)) {
         await Task.Delay(interval, cts.Token);
+        value = getValue();
       }
       return value;
     } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {

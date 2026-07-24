@@ -16,10 +16,10 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// which happens before <c>AddWhizbang()</c> is called.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#auto-registration</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#auto-registration</docs>
 public static class SyncEventTypeRegistrations {
   private static readonly ConcurrentDictionary<Type, HashSet<string>> _mappings = new();
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   /// <summary>
   /// Registers an event type to perspective mapping.
@@ -30,8 +30,6 @@ public static class SyncEventTypeRegistrations {
   public static void Register(Type eventType, string perspectiveName) {
     ArgumentNullException.ThrowIfNull(eventType);
     ArgumentNullException.ThrowIfNull(perspectiveName);
-
-    Console.WriteLine($"[SyncEventTypeRegistrations] Register called: EventType={eventType.Name}, Perspective={perspectiveName}");
 
     _mappings.AddOrUpdate(
         eventType,
@@ -44,7 +42,6 @@ public static class SyncEventTypeRegistrations {
         }
     );
 
-    Console.WriteLine($"[SyncEventTypeRegistrations] Registered. Total mappings count: {_mappings.Count}");
   }
 
   /// <summary>
@@ -53,17 +50,13 @@ public static class SyncEventTypeRegistrations {
   /// </summary>
   /// <returns>A dictionary mapping event types to perspective names.</returns>
   internal static Dictionary<Type, string[]> GetMappings() {
-    Console.WriteLine($"[SyncEventTypeRegistrations] GetMappings called. Current _mappings count: {_mappings.Count}");
-
     var result = new Dictionary<Type, string[]>();
     foreach (var kvp in _mappings) {
       lock (_lock) {
-        result[kvp.Key] = kvp.Value.ToArray();
-        Console.WriteLine($"[SyncEventTypeRegistrations] GetMappings: {kvp.Key.Name} -> [{string.Join(", ", kvp.Value)}]");
+        result[kvp.Key] = [.. kvp.Value];
       }
     }
 
-    Console.WriteLine($"[SyncEventTypeRegistrations] GetMappings returning {result.Count} mappings");
     return result;
   }
 

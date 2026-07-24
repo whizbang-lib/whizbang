@@ -10,7 +10,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// emitted (before they reach the database) until they are confirmed processed.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#tracked-events</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#tracked-events</docs>
 public sealed record TrackedSyncEvent(
     Type EventType,
     Guid EventId,

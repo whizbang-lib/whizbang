@@ -6,7 +6,7 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// <summary>
 /// Plugin that registers Whizbang's custom method call translators with Npgsql.
 /// </summary>
-/// <docs>core-concepts/security#principal-filtering</docs>
+/// <docs>fundamentals/security/security#principal-filtering</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/Functions/WhizbangMethodCallTranslatorPluginTests.cs</tests>
 public class WhizbangMethodCallTranslatorPlugin : IMethodCallTranslatorPlugin {
   public WhizbangMethodCallTranslatorPlugin(ISqlExpressionFactory sqlExpressionFactory) {
@@ -15,7 +15,9 @@ public class WhizbangMethodCallTranslatorPlugin : IMethodCallTranslatorPlugin {
       ?? throw new InvalidOperationException(
           "WhizbangMethodCallTranslatorPlugin requires Npgsql provider. " +
           $"Expected NpgsqlSqlExpressionFactory but got {sqlExpressionFactory.GetType().Name}");
-    Translators = [new JsonArrayContainsAnyTranslator(npgsqlFactory)];
+    Translators = [
+      new JsonArrayContainsAnyTranslator(npgsqlFactory),
+    ];
   }
 
   public IEnumerable<IMethodCallTranslator> Translators { get; }

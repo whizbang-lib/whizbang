@@ -25,7 +25,7 @@ public class ImmediateUnitOfWorkStrategy : IUnitOfWorkStrategy {
   /// <inheritdoc />
   public async Task<Guid> QueueMessageAsync(
     object message,
-    LifecycleStage lifecycleStage = LifecycleStage.ImmediateAsync,
+    LifecycleStage lifecycleStage = LifecycleStage.ImmediateDetached,
     CancellationToken ct = default
   ) {
     if (OnFlushRequested == null) {
@@ -67,7 +67,7 @@ public class ImmediateUnitOfWorkStrategy : IUnitOfWorkStrategy {
     if (_units.TryGetValue(unitId, out var unit)) {
       return unit.Messages.AsReadOnly();
     }
-    return Array.Empty<object>();
+    return [];
   }
 
   /// <inheritdoc />

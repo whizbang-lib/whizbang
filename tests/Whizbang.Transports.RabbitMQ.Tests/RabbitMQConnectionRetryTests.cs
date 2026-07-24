@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
 using Rocks;
@@ -15,6 +16,39 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// Verifies retry logic, exponential backoff, and error handling.
 /// </summary>
 public class RabbitMQConnectionRetryTests {
+
+  /// <summary>
+  /// Recording logger that lets a test observe retry log arms. When
+  /// <see cref="CancelOnStillRetrying"/> is set, the logger cancels that source the first
+  /// time the "still retrying" warning (attempt % 10 == 0) is emitted — a deterministic,
+  /// delay-free way to break out of the otherwise-infinite indefinite-retry loop exactly
+  /// once the periodic-status branch has executed.
+  /// </summary>
+  private sealed class RecordingLogger : ILogger {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public CancellationTokenSource? CancelOnStillRetrying { get; set; }
+
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      var message = formatter(state, exception);
+      Entries.Add((logLevel, message));
+      if (CancelOnStillRetrying is not null && message.Contains("still failing", StringComparison.Ordinal)) {
+        CancelOnStillRetrying.Cancel();
+      }
+    }
+
+    private sealed class NullScope : IDisposable {
+      public static readonly NullScope Instance = new();
+      public void Dispose() { }
+    }
+  }
   #region Constructor Tests
 
   [Test]
@@ -136,7 +170,7 @@ public class RabbitMQConnectionRetryTests {
     var retry = new RabbitMQConnectionRetry(options);
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync((string)null!); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync((string)null!))
       .Throws<ArgumentException>();
   }
 
@@ -147,7 +181,7 @@ public class RabbitMQConnectionRetryTests {
     var retry = new RabbitMQConnectionRetry(options);
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync(""); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(""))
       .Throws<ArgumentException>();
   }
 
@@ -162,7 +196,7 @@ public class RabbitMQConnectionRetryTests {
     var retry = new RabbitMQConnectionRetry(options);
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync((ConnectionFactory)null!); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync((ConnectionFactory)null!))
       .Throws<ArgumentNullException>();
   }
 
@@ -179,7 +213,7 @@ public class RabbitMQConnectionRetryTests {
     cts.Cancel();
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync(factory, cts.Token); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(factory, cts.Token))
       .Throws<OperationCanceledException>();
   }
 
@@ -195,7 +229,7 @@ public class RabbitMQConnectionRetryTests {
     var factory = new ConnectionFactory { Uri = new Uri("amqp://invalid-host:5672") };
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync(factory); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(factory))
       .Throws<BrokerUnreachableException>();
   }
 
@@ -297,6 +331,94 @@ public class RabbitMQConnectionRetryTests {
     await Assert.That(delay4).IsEqualTo(TimeSpan.FromSeconds(8));
     await Assert.That(delay5).IsEqualTo(TimeSpan.FromSeconds(10));  // Capped
     await Assert.That(delay6).IsEqualTo(TimeSpan.FromSeconds(10));  // Stays capped
+  }
+
+  #endregion
+
+  #region Retry Loop Coverage Tests
+
+  [Test]
+  public async Task CreateConnectionWithRetryAsync_WithValidConnectionString_BuildsFactoryAndAttemptsConnectionAsync() {
+    // Exercises the connection-string overload: it must build a ConnectionFactory from the URI
+    // and delegate to the factory overload. With RetryIndefinitely=false and an unreachable host,
+    // the initial attempts are exhausted and a BrokerUnreachableException surfaces.
+    var options = new RabbitMQOptions {
+      InitialRetryAttempts = 1,
+      InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+      RetryIndefinitely = false
+    };
+    var retry = new RabbitMQConnectionRetry(options);
+
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync("amqp://invalid-host:5672"))
+      .Throws<BrokerUnreachableException>();
+  }
+
+  [Test]
+  public async Task CreateConnectionWithRetryAsync_WithinInitialWindow_LogsRetryAttemptAsync() {
+    // attempt <= InitialRetryAttempts → the warning-level "Retrying in {DelayMs}ms" log fires
+    // for each failing attempt inside the initial window (exercises _logRetryAttempt with a
+    // present logger). RetryIndefinitely=false ends the loop after the window.
+    var options = new RabbitMQOptions {
+      InitialRetryAttempts = 2,
+      InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+      RetryIndefinitely = false
+    };
+    var logger = new RecordingLogger();
+    var retry = new RabbitMQConnectionRetry(options, logger);
+    var factory = new ConnectionFactory { Uri = new Uri("amqp://invalid-host:5672") };
+
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(factory))
+      .Throws<BrokerUnreachableException>();
+
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning && e.Message.Contains("Retrying in", StringComparison.Ordinal)))
+      .IsTrue();
+  }
+
+  [Test]
+  public async Task CreateConnectionWithRetryAsync_WhenExhaustedWithLogger_LogsFinalFailureAndRethrowsAsync() {
+    // attempt > InitialRetryAttempts && !RetryIndefinitely → _logAndRethrowConnectionFailure:
+    // logs the error-level "Giving up" message (with a present logger) and rethrows via
+    // ExceptionDispatchInfo.Throw.
+    var options = new RabbitMQOptions {
+      InitialRetryAttempts = 1,
+      InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+      RetryIndefinitely = false
+    };
+    var logger = new RecordingLogger();
+    var retry = new RabbitMQConnectionRetry(options, logger);
+    var factory = new ConnectionFactory { Uri = new Uri("amqp://invalid-host:5672") };
+
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(factory))
+      .Throws<BrokerUnreachableException>();
+
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error && e.Message.Contains("Giving up", StringComparison.Ordinal)))
+      .IsTrue();
+  }
+
+  [Test]
+  public async Task CreateConnectionWithRetryAsync_IndefiniteRetry_LogsPeriodicStatusAtTenthAttemptAsync() {
+    // RetryIndefinitely=true with a tiny delay spins the loop; at attempt % 10 == 0 the
+    // periodic "still failing ... Continuing to retry" warning fires (exercises
+    // _logIndefiniteRetry). The recording logger cancels the token the first time that warning
+    // is seen, so the otherwise-infinite loop terminates deterministically with an
+    // OperationCanceledException — no polling, no Task.Delay in the test itself.
+    var options = new RabbitMQOptions {
+      InitialRetryAttempts = 1,
+      InitialRetryDelay = TimeSpan.FromTicks(1),
+      MaxRetryDelay = TimeSpan.FromTicks(1),
+      BackoffMultiplier = 1.0,
+      RetryIndefinitely = true
+    };
+    using var cts = new CancellationTokenSource();
+    var logger = new RecordingLogger { CancelOnStillRetrying = cts };
+    var retry = new RabbitMQConnectionRetry(options, logger);
+    var factory = new ConnectionFactory { Uri = new Uri("amqp://invalid-host:5672") };
+
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(factory, cts.Token))
+      .Throws<OperationCanceledException>();
+
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning && e.Message.Contains("still failing", StringComparison.Ordinal)))
+      .IsTrue();
   }
 
   #endregion

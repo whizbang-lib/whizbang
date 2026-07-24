@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -304,7 +306,7 @@ public class EFCorePostgresPerspectiveStoreTests {
     var context = CreateInMemoryDbContext();
     var strategy = new InMemoryUpsertStrategy();
     var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
-    var partitionKey = "tenant-123";
+    const string partitionKey = "tenant-123";
     var model = new StoreTestModel { Name = "TenantData", Value = 555 };
 
     // Create a record using string partition key
@@ -399,7 +401,7 @@ public class EFCorePostgresPerspectiveStoreTests {
     var context = CreateInMemoryDbContext();
     var strategy = new InMemoryUpsertStrategy();
     var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
-    var partitionKey = "tenant-to-delete";
+    const string partitionKey = "tenant-to-delete";
 
     // Create a record using string partition key
     await store.UpsertByPartitionKeyAsync(partitionKey, new StoreTestModel { Name = "TenantData", Value = 777 });
@@ -487,6 +489,247 @@ public class EFCorePostgresPerspectiveStoreTests {
   }
 
   #endregion
+
+  // === Scope-Aware Upsert Tests ===
+
+  [Test]
+  public async Task UpsertAsync_WithScope_PassesScopeToStrategyAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var model = new StoreTestModel { Name = "Scoped", Value = 42 };
+    var testId = _idProvider.NewGuid();
+    var scope = new PerspectiveScope { TenantId = "tenant-scope", UserId = "user-scope" };
+
+    // Act
+    await store.UpsertAsync(testId, model, scope);
+
+    // Assert - verify record was created with scope
+    var row = await context.Set<PerspectiveRow<StoreTestModel>>()
+        .FirstOrDefaultAsync(r => r.Id == testId);
+
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Data.Name).IsEqualTo("Scoped");
+    await Assert.That(row.Scope.TenantId).IsEqualTo("tenant-scope");
+    await Assert.That(row.Scope.UserId).IsEqualTo("user-scope");
+  }
+
+  [Test]
+  public async Task UpsertByPartitionKeyAsync_WithScope_StoresModelSuccessfullyAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var model = new StoreTestModel { Name = "PartitionScoped", Value = 99 };
+    var partitionKey = _idProvider.NewGuid();
+    var scope = new PerspectiveScope { TenantId = "pk-tenant", OrganizationId = "pk-org" };
+
+    // Act - scope-aware overload should succeed and store the model
+    await store.UpsertByPartitionKeyAsync(partitionKey, model, scope);
+
+    // Assert - verify model was stored correctly
+    var result = await store.GetByPartitionKeyAsync(partitionKey);
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Name).IsEqualTo("PartitionScoped");
+    await Assert.That(result.Value).IsEqualTo(99);
+  }
+
+  [Test]
+  public async Task UpsertAsync_WithoutScope_UsesEmptyPerspectiveScopeAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var model = new StoreTestModel { Name = "NoScope", Value = 0 };
+    var testId = _idProvider.NewGuid();
+
+    // Act - use the no-scope overload
+    await store.UpsertAsync(testId, model);
+
+    // Assert - scope should exist but be empty
+    var row = await context.Set<PerspectiveRow<StoreTestModel>>()
+        .FirstOrDefaultAsync(r => r.Id == testId);
+
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Scope.TenantId).IsNull();
+    await Assert.That(row.Scope.UserId).IsNull();
+  }
+
+  // === E2-4d: TtlRow upsert-stamp (expires_at) ===
+
+  [Test]
+  public async Task UpsertAsync_TtlRowModel_StampsExpiresAtSlidingWindowAsync() {
+    // A perspective whose model is registered in PerspectiveTtlRegistry (its [Ephemeral] events chose
+    // TransientStorage.TtlRow) stamps expires_at = now + ttl on upsert. Dedicated model so the process-wide
+    // registration never leaks onto other tests' rows.
+    var context = CreateInMemoryDbContext();
+    var store = new EFCorePostgresPerspectiveStore<TtlRowStoreModel>(context, "ttl_row_perspective", new InMemoryUpsertStrategy());
+    PerspectiveTtlRegistry.Register(typeof(TtlRowStoreModel), 3600);
+    var testId = _idProvider.NewGuid();
+
+    await store.UpsertAsync(testId, new TtlRowStoreModel { Name = "chat" });
+
+    var row = await context.Set<PerspectiveRow<TtlRowStoreModel>>().FirstOrDefaultAsync(r => r.Id == testId);
+    await Assert.That(row).IsNotNull();
+    var expiresAt = (DateTime?)context.Entry(row!).Property("expires_at").CurrentValue;
+    await Assert.That(expiresAt).IsNotNull()
+      .Because("A TtlRow perspective stamps the expires_at shadow property on upsert.");
+    var expected = DateTime.UtcNow.AddSeconds(3600);
+    await Assert.That(Math.Abs((expiresAt!.Value - expected).TotalSeconds)).IsLessThanOrEqualTo(60)
+      .Because("expires_at = now + the registered TTL (a sliding last-activity window).");
+  }
+
+  [Test]
+  public async Task UpsertAsync_NonTtlRowModel_LeavesExpiresAtNullAsync() {
+    // StoreTestModel is never registered — its rows never expire (the PersistedRow default).
+    var context = CreateInMemoryDbContext();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", new InMemoryUpsertStrategy());
+    var testId = _idProvider.NewGuid();
+
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "persisted", Value = 1 });
+
+    var row = await context.Set<PerspectiveRow<StoreTestModel>>().FirstOrDefaultAsync(r => r.Id == testId);
+    var expiresAt = (DateTime?)context.Entry(row!).Property("expires_at").CurrentValue;
+    await Assert.That(expiresAt).IsNull()
+      .Because("A model with no TtlRow registration never expires — expires_at stays NULL.");
+  }
+
+  [Test]
+  public async Task GetMetadataByStreamIdAsync_WhenRowDoesNotExist_ReturnsNullAsync() {
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+
+    var metadata = await store.GetMetadataByStreamIdAsync(_idProvider.NewGuid());
+
+    await Assert.That(metadata).IsNull();
+  }
+
+  [Test]
+  public async Task UpsertAsync_WithMetadata_PersistsEventIdForIdempotencyAsync() {
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    Guid testId = _idProvider.NewGuid();
+    Guid eventId = _idProvider.NewGuid();
+
+    var metadata = new PerspectiveMetadata {
+      EventId = eventId.ToString("D"),
+      EventType = "TestNamespace.OrderCreatedEvent",
+      Timestamp = DateTime.UtcNow
+    };
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "Idempotent", Value = 1 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        metadata);
+
+    var roundtripped = await store.GetMetadataByStreamIdAsync(testId);
+    await Assert.That(roundtripped).IsNotNull();
+    await Assert.That(roundtripped!.EventId).IsEqualTo(eventId.ToString("D"));
+    await Assert.That(roundtripped.EventType).IsEqualTo("TestNamespace.OrderCreatedEvent");
+  }
+
+  [Test]
+  public async Task UpsertAsync_WithMetadata_OverwritesPreviousMetadataOnEachCallAsync() {
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    Guid testId = _idProvider.NewGuid();
+    Guid firstEventId = _idProvider.NewGuid();
+    Guid secondEventId = _idProvider.NewGuid();
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "v1", Value = 1 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        new PerspectiveMetadata {
+          EventId = firstEventId.ToString("D"),
+          EventType = "ev.First",
+          Timestamp = DateTime.UtcNow
+        });
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "v2", Value = 2 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        new PerspectiveMetadata {
+          EventId = secondEventId.ToString("D"),
+          EventType = "ev.Second",
+          Timestamp = DateTime.UtcNow
+        });
+
+    var metadata = await store.GetMetadataByStreamIdAsync(testId);
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.EventId).IsEqualTo(secondEventId.ToString("D"));
+    await Assert.That(metadata.EventType).IsEqualTo("ev.Second");
+  }
+
+  [Test]
+  public async Task UpsertAsync_WithMetadata_PersistsCommitSequenceForOrderedIdempotencyAsync() {
+    // production regression: late-delivered events with smaller event_id but larger commit_sequence
+    // were being dropped by the runner's filter because metadata.CommitSequence didn't exist.
+    // Locks the invariant: commit_sequence roundtrips through the perspective row's JSON metadata
+    // column so the runner can compare incoming commit_sequence vs. the persisted floor.
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    Guid testId = _idProvider.NewGuid();
+    Guid eventId = _idProvider.NewGuid();
+    const long expectedCommitSequence = 234198L;
+
+    var metadata = new PerspectiveMetadata {
+      EventId = eventId.ToString("D"),
+      EventType = "TestNamespace.OrderCreatedEvent",
+      Timestamp = DateTime.UtcNow,
+      CommitSequence = expectedCommitSequence,
+    };
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "WithCommitSeq", Value = 1 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        metadata);
+
+    var roundtripped = await store.GetMetadataByStreamIdAsync(testId);
+    await Assert.That(roundtripped).IsNotNull();
+    await Assert.That(roundtripped!.CommitSequence).IsEqualTo(expectedCommitSequence);
+  }
+
+  [Test]
+  public async Task UpsertAsync_WithMetadata_NullCommitSequence_RoundtripsAsNullAsync() {
+    // First-ever apply for a stream may have no commit_sequence yet (cursor not stamped).
+    // Locks the invariant: null commit_sequence persists and reads back as null (NOT 0L).
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    Guid testId = _idProvider.NewGuid();
+    Guid eventId = _idProvider.NewGuid();
+
+    var metadata = new PerspectiveMetadata {
+      EventId = eventId.ToString("D"),
+      EventType = "TestNamespace.OrderCreatedEvent",
+      Timestamp = DateTime.UtcNow,
+      CommitSequence = null,
+    };
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "NullCS", Value = 1 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        metadata);
+
+    var roundtripped = await store.GetMetadataByStreamIdAsync(testId);
+    await Assert.That(roundtripped).IsNotNull();
+    await Assert.That(roundtripped!.CommitSequence).IsNull();
+  }
 }
 
 /// <summary>
@@ -505,4 +748,12 @@ public class SoftDeletableModel {
   public required string Name { get; init; }
   public required int Value { get; init; }
   public DateTimeOffset? DeletedAt { get; init; }
+}
+
+/// <summary>
+/// Dedicated model for the E2-4d TtlRow upsert-stamp tests. Kept separate so registering it in the
+/// process-wide <see cref="PerspectiveTtlRegistry"/> cannot leak an <c>expires_at</c> onto other tests' rows.
+/// </summary>
+public class TtlRowStoreModel {
+  public required string Name { get; init; }
 }

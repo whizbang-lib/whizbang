@@ -5,6 +5,7 @@ using Azure.Messaging.ServiceBus;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
+using ECommerce.Integration.TestUtilities.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Medo;
@@ -14,6 +15,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -152,12 +154,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     using (var initScope = _inventoryHost.Services.CreateScope()) {
       var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
-      await inventoryDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
+      await inventoryDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken: cancellationToken);
     }
     using (var initScope = _bffHost.Services.CreateScope()) {
       var bffDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
-      await bffDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
+      await bffDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken: cancellationToken);
     }
     Console.WriteLine("[AspireFixture] Database schema initialized.");
 
@@ -347,26 +349,27 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[InventoryHost] Registered SHARED ServiceBusClient in DI");
 
     // Register Azure Service Bus transport (will resolve shared client from DI)
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
-
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
-    var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnectionString);
-    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    inventoryDataSourceBuilder.EnableDynamicJson();
-    var inventoryDataSource = inventoryDataSourceBuilder.Build();
-    builder.Services.AddSingleton(inventoryDataSource);
-
-    builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options => {
-      options.UseNpgsql(inventoryDataSource);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString, opts => {
+      // Emulator config has RequiresSession=false on every subscription — match that here.
+      opts.EnableSessions = false;
     });
+
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<InventoryDbContext> with UseNpgsql
+    // - IDbContextFactory<InventoryDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
@@ -402,31 +405,29 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
+    // override in test fixture so the safety-net poll catches up promptly when NOTIFY
+    // delivery doesn't align with cascade-write timing.
+    // Centralized test-side timing overrides (ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, SlidingWindow* MaxWait). See
+    // TestWorkerTimingOverrides XML doc — PR #251 forensic for rationale.
+    builder.Services.ApplyTestTimings();
+
     // Register OrderedStreamProcessor for message ordering
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
         sp.GetRequiredService<ITransport>(),
@@ -486,7 +487,10 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[BFFHost] Registered SHARED ServiceBusClient in DI");
 
     // Register Azure Service Bus transport (will resolve shared client from DI)
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString, opts => {
+      // Emulator config has RequiresSession=false on every subscription — match that here.
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -494,24 +498,22 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register OrderedStreamProcessor for message ordering
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
-    var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnectionString);
-    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    bffDataSourceBuilder.EnableDynamicJson();
-    var bffDataSource = bffDataSourceBuilder.Build();
-    builder.Services.AddSingleton(bffDataSource);
-
-    builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
-      options.UseNpgsql(bffDataSource));
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<BffDbContext> with UseNpgsql
+    // - IDbContextFactory<BffDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:bff-db" above)
 
     // Register Whizbang with EFCore infrastructure
-
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
@@ -520,15 +522,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
@@ -559,15 +552,14 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer with actual topic names matching BFF.API
     var consumerOptions = new ServiceBusConsumerOptions();
@@ -596,7 +588,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Waits for all event processing to complete by querying database tables directly.
-  /// Checks for any uncompleted outbox/inbox messages and perspective checkpoints.
+  /// Checks for any uncompleted outbox/inbox messages and perspective cursors.
   /// This is more reliable than using ProcessWorkBatchAsync which only shows available (not in-progress) work.
   /// Default timeout reduced to 15s thanks to warmup eliminating cold starts.
   /// </summary>
@@ -627,8 +619,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0";
       var pendingInbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
-      // Check perspective checkpoints: any not marked as Completed (status & 2 = 0) AND not Failed (status & 4 = 0)
-      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
+      // Check perspective cursors: any not marked as Completed (status & 2 = 0) AND not Failed (status & 4 = 0)
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0";
       var pendingPerspectives = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
       // CRITICAL: Also check that perspective ROWS exist in materialized tables
@@ -652,7 +644,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
             status,
             COALESCE(last_event_id::text, 'NULL') as last_event_id,
             COALESCE(error, 'NULL') as error
-          FROM inventory.wh_perspective_checkpoints
+          FROM inventory.wh_perspective_cursors
           LIMIT 10";
         await using var reader = await cmd.ExecuteReaderAsync();
         Console.WriteLine("[DIAGNOSTIC] Perspective checkpoints in database:");
@@ -697,7 +689,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0";
     var finalInbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
-    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0";
     var finalPerspectives = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
     Console.WriteLine($"[AspireFixture] Final state - Batch {_batchIndex}, Topics {_topicA}/{_topicB}: Outbox={finalOutbox}, Inbox={finalInbox}, Perspectives={finalPerspectives}");
@@ -717,18 +709,18 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
     // Gracefully handle connection failures (container may have stopped after test completion)
     try {
-      using (var scope = _inventoryHost!.Services.CreateScope()) {
-        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+      using var scope = _inventoryHost!.Services.CreateScope();
+      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-        // Truncate Whizbang core tables, perspective tables, and checkpoints
-        // CASCADE ensures all dependent data is cleared
-        // Use DO block to gracefully handle case where tables don't exist
-        // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
-        await dbContext.Database.ExecuteSqlRawAsync(@"
+      // Truncate Whizbang core tables, perspective tables, and checkpoints
+      // CASCADE ensures all dependent data is cleared
+      // Use DO block to gracefully handle case where tables don't exist
+      // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
+      await dbContext.Database.ExecuteSqlRawAsync(@"
           DO $$
           BEGIN
             -- Truncate core infrastructure tables (INVENTORY schema)
-            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
 
             -- Truncate all perspective tables (INVENTORY schema)
             TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
@@ -736,7 +728,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
             TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
 
             -- Truncate core infrastructure tables (BFF schema)
-            TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+            TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
 
             -- Truncate all perspective tables (BFF schema)
             TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
@@ -748,7 +740,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
               NULL;
           END $$;
         ", cancellationToken);
-      }
     } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
       // Database container has been stopped - this is expected during test teardown
       // Silently ignore connection failures since cleanup is not critical after tests complete
@@ -804,12 +795,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       Console.WriteLine($"[DIAGNOSTIC] Found {count} message_type values in wh_message_associations");
     }
 
-    // Query perspective checkpoints created
+    // Query perspective cursors created
     await using (var cmd = connection.CreateCommand()) {
-      cmd.CommandText = "SELECT COUNT(*)::int FROM inventory.wh_perspective_checkpoints";
+      cmd.CommandText = "SELECT COUNT(*)::int FROM inventory.wh_perspective_cursors";
       var checkpointCount = (int)(await cmd.ExecuteScalarAsync(cancellationToken) ?? 0);
-      output.AppendLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
-      Console.WriteLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
+      output.AppendLine($"[DIAGNOSTIC] Found {checkpointCount} perspective cursors in wh_perspective_cursors");
+      Console.WriteLine($"[DIAGNOSTIC] Found {checkpointCount} perspective cursors in wh_perspective_cursors");
     }
 
     output.AppendLine("[DIAGNOSTIC] ===== END DIAGNOSTIC =====");

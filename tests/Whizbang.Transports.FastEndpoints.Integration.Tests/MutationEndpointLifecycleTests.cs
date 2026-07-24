@@ -20,7 +20,7 @@ public class MutationEndpointLifecycleTests {
     var command = new TrackingCommand { Value = "test" };
 
     // Act
-    var result = await endpoint.TestExecuteAsync(command, CancellationToken.None);
+    _ = await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
     await Assert.That(executionOrder).Count().IsEqualTo(3);
@@ -52,7 +52,7 @@ public class MutationEndpointLifecycleTests {
     var command = new NotifiableCommand { OrderId = Guid.NewGuid() };
 
     // Act
-    var result = await endpoint.TestExecuteAsync(command, CancellationToken.None);
+    _ = await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
     await Assert.That(notifications).Count().IsEqualTo(1);
@@ -169,7 +169,7 @@ public class NotifiableResult {
   public Guid OrderId { get; init; }
 }
 
-public class RecoverableCommand : ICommand { }
+public class RecoverableCommand : ICommand;
 
 public class RecoveryResult {
   public bool Recovered { get; init; }
@@ -201,9 +201,9 @@ public class CreateOrderResult {
   public string ProductId { get; init; } = string.Empty;
 }
 
-public class CancellableCommand : ICommand { }
+public class CancellableCommand : ICommand;
 
-public class CancellableResult { }
+public class CancellableResult;
 
 public class LoggableCommand : ICommand {
   public string Action { get; init; } = string.Empty;
@@ -223,12 +223,8 @@ public class ValidationException : Exception {
 
 #region Test Endpoints
 
-public class OrderTrackingMutationEndpoint : RestMutationEndpointBase<TrackingCommand, TrackingResult> {
-  private readonly List<string> _executionOrder;
-
-  public OrderTrackingMutationEndpoint(List<string> executionOrder) {
-    _executionOrder = executionOrder;
-  }
+public class OrderTrackingMutationEndpoint(List<string> executionOrder) : RestMutationEndpointBase<TrackingCommand, TrackingResult> {
+  private readonly List<string> _executionOrder = executionOrder;
 
   protected override ValueTask OnBeforeExecuteAsync(
       TrackingCommand command,
@@ -283,12 +279,8 @@ public class ValidatingMutationEndpoint : RestMutationEndpointBase<ValidatableCo
       => ExecuteAsync(cmd, ct);
 }
 
-public class NotifyingMutationEndpoint : RestMutationEndpointBase<NotifiableCommand, NotifiableResult> {
-  private readonly List<string> _notifications;
-
-  public NotifyingMutationEndpoint(List<string> notifications) {
-    _notifications = notifications;
-  }
+public class NotifyingMutationEndpoint(List<string> notifications) : RestMutationEndpointBase<NotifiableCommand, NotifiableResult> {
+  private readonly List<string> _notifications = notifications;
 
   protected override ValueTask<NotifiableResult> DispatchCommandAsync(
       NotifiableCommand command,
@@ -367,7 +359,7 @@ public class ContextSharingMutationEndpoint : RestMutationEndpointBase<ContextCo
   public async ValueTask<ContextResult> TestExecuteAsync(ContextCommand cmd, CancellationToken ct) {
     var context = new MutationContext(ct);
     await OnBeforeExecuteAsync(cmd, context, ct);
-    var result = await DispatchCommandAsync(cmd, ct);
+    _ = await DispatchCommandAsync(cmd, ct);
 
     // Create final result with context data
     var finalResult = new ContextResult {
@@ -420,12 +412,8 @@ public class CancellationAwareMutationEndpoint : RestMutationEndpointBase<Cancel
       => ExecuteAsync(cmd, ct);
 }
 
-public class LoggingMutationEndpoint : RestMutationEndpointBase<LoggableCommand, LoggableResult> {
-  private readonly List<string> _logs;
-
-  public LoggingMutationEndpoint(List<string> logs) {
-    _logs = logs;
-  }
+public class LoggingMutationEndpoint(List<string> logs) : RestMutationEndpointBase<LoggableCommand, LoggableResult> {
+  private readonly List<string> _logs = logs;
 
   protected override ValueTask OnBeforeExecuteAsync(
       LoggableCommand command,

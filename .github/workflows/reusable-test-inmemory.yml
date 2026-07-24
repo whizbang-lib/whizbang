@@ -78,13 +78,13 @@ jobs:
 
       - name: Run InMemory Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag InMemory -NoBuild
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag InMemory -NoBuild -ReportTrx
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
       - name: Run InMemory Integration Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag InMemory
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag InMemory -ReportTrx
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
@@ -95,6 +95,17 @@ jobs:
           dotnet-coverage shutdown "$SESSION_ID" || true
           echo "=== Coverage file contents ==="
           ls -la TestResults/ || true
+
+      - name: Upload TRX Results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trx-inmemory
+          path: |
+            tests/**/TestResults/*.trx
+            samples/**/TestResults/*.trx
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Upload Coverage (pre-built)
         if: success() && inputs.artifact-name != ''

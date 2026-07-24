@@ -27,10 +27,10 @@ public class DispatcherRpcExtractionTests {
   }
 
   // Side effect events that should cascade (not return to RPC caller)
-  [DefaultRouting(DispatchMode.Local)] // Local for test verification
+  [DefaultRouting(DispatchModes.Local)] // Local for test verification
   public record InventoryReserved([property: StreamId] Guid OrderId, int Quantity) : IEvent;
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record PaymentInitiated([property: StreamId] Guid OrderId, decimal Amount) : IEvent;
 
 
@@ -40,7 +40,7 @@ public class DispatcherRpcExtractionTests {
 
   public static class CascadedEventTracker {
     private static readonly List<IEvent> _cascadedEvents = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {
@@ -56,7 +56,7 @@ public class DispatcherRpcExtractionTests {
 
     public static IReadOnlyList<IEvent> GetCascadedEvents() {
       lock (_lock) {
-        return _cascadedEvents.ToList();
+        return [.. _cascadedEvents];
       }
     }
 

@@ -1,15 +1,14 @@
 using System.Text.Json;
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Pgvector;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Testing.Containers;
@@ -25,18 +24,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <remarks>
 /// Uses NotInParallel to prevent database contention when multiple tests
 /// compete for the shared PostgreSQL container connections.
-/// Dapper type handlers are registered via <see cref="DapperTypeHandlers"/> module initializer.
 /// </remarks>
 [NotInParallel("EFCorePostgresTests")]
 public abstract class EFCoreTestBase : IAsyncDisposable {
   static EFCoreTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
-
-    // Force Whizbang.Data.Dapper.Custom assembly to load, which triggers its module initializer
-    // to register TrackedGuidHandler with Dapper. Without this, the assembly might not load
-    // until too late, causing TrackedGuid parameters to fail.
-    _ = typeof(TrackedGuidHandler).Assembly;
   }
 
   private string? _testDatabaseName;
@@ -75,7 +68,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
 
       // CRITICAL CONFIGURATION FOR POCO JSON MAPPING:
       // All entities (infrastructure + perspectives) now use custom POCO types with .HasColumnType("jsonb")
-      // - Infrastructure: InboxMessageData, OutboxMessageData, EnvelopeMetadata, MessageScope, ServiceInstanceMetadata
+      // - Infrastructure: InboxMessageData, OutboxMessageData, EnvelopeMetadata, PerspectiveScope, ServiceInstanceMetadata
       // - Perspectives: PerspectiveRow<T>.Data, Metadata, Scope
       // - Test types: Order, SampleOrderCreatedEvent (registered via TestJsonContext)
       //
@@ -174,6 +167,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
   protected static MessageEnvelope<JsonElement> CreateTestEnvelope(Guid messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
       Payload = JsonDocument.Parse("{}").RootElement  // Empty JSON object for testing
     };

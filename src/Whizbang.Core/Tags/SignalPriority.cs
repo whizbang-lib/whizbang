@@ -4,7 +4,7 @@ namespace Whizbang.Core.Tags;
 /// Defines the priority level for real-time signals.
 /// Higher priority signals may be delivered more prominently or with different visual treatments.
 /// </summary>
-/// <docs>core-concepts/message-tags#signal-priority</docs>
+/// <docs>fundamentals/messages/message-tags#signal-priority</docs>
 public enum SignalPriority {
   /// <summary>
   /// Low priority notifications for background or non-urgent updates.

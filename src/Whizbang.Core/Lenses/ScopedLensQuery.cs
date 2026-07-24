@@ -1,3 +1,5 @@
+#pragma warning disable CS0618
+
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -8,7 +10,7 @@ namespace Whizbang.Core.Lenses;
 /// Ensures DbContext isolation and prevents stale data when used from singleton services.
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
-/// <docs>lenses/scoped-queries</docs>
+/// <docs>fundamentals/lenses/scoped-queries</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs</tests>
 public class ScopedLensQuery<TModel> : IScopedLensQuery<TModel> where TModel : class {
   private readonly IServiceScopeFactory _scopeFactory;
@@ -23,11 +25,24 @@ public class ScopedLensQuery<TModel> : IScopedLensQuery<TModel> where TModel : c
   }
 
   /// <inheritdoc/>
-  public async IAsyncEnumerable<PerspectiveRow<TModel>> QueryAsync(
+  public IAsyncEnumerable<PerspectiveRow<TModel>> QueryAsync(
       Func<ILensQuery<TModel>, IQueryable<PerspectiveRow<TModel>>> queryBuilder,
-      [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(queryBuilder);
+    return _queryAsyncCore(queryBuilder, cancellationToken);
+  }
 
+  /// <inheritdoc/>
+  public IAsyncEnumerable<TResult> QueryAsync<TResult>(
+      Func<ILensQuery<TModel>, IQueryable<TResult>> queryBuilder,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(queryBuilder);
+    return _queryAsyncCore(queryBuilder, cancellationToken);
+  }
+
+  private async IAsyncEnumerable<PerspectiveRow<TModel>> _queryAsyncCore(
+      Func<ILensQuery<TModel>, IQueryable<PerspectiveRow<TModel>>> queryBuilder,
+      [EnumeratorCancellation] CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     var lensQuery = scope.ServiceProvider.GetRequiredService<ILensQuery<TModel>>();
 
@@ -43,12 +58,9 @@ public class ScopedLensQuery<TModel> : IScopedLensQuery<TModel> where TModel : c
     }
   }
 
-  /// <inheritdoc/>
-  public async IAsyncEnumerable<TResult> QueryAsync<TResult>(
+  private async IAsyncEnumerable<TResult> _queryAsyncCore<TResult>(
       Func<ILensQuery<TModel>, IQueryable<TResult>> queryBuilder,
-      [EnumeratorCancellation] CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(queryBuilder);
-
+      [EnumeratorCancellation] CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     var lensQuery = scope.ServiceProvider.GetRequiredService<ILensQuery<TModel>>();
 
@@ -68,7 +80,7 @@ public class ScopedLensQuery<TModel> : IScopedLensQuery<TModel> where TModel : c
     await using var scope = _scopeFactory.CreateAsyncScope();
     var lensQuery = scope.ServiceProvider.GetRequiredService<ILensQuery<TModel>>();
 
-    return await lensQuery.GetByIdAsync(id, cancellationToken);
+    return await lensQuery.DefaultScope.GetByIdAsync(id, cancellationToken);
   }
 
   /// <inheritdoc/>

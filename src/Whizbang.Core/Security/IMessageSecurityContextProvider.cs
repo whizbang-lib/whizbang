@@ -7,17 +7,17 @@ namespace Whizbang.Core.Security;
 /// Invoked ONCE per message scope, BEFORE any receptors run.
 /// </summary>
 /// <remarks>
-/// This is the primary hook point for security context establishment in message-based scenarios.
+/// <para>This is the primary hook point for security context establishment in message-based scenarios.
 /// Unlike HTTP middleware (WhizbangScopeMiddleware), this works for messages arriving via transports
-/// like Service Bus or Kafka where there is no HTTP context.
+/// like Service Bus or Kafka where there is no HTTP context.</para>
 ///
-/// The provider:
+/// <para>The provider:
 /// 1. Iterates through registered ISecurityContextExtractor instances in priority order
 /// 2. Stops at the first successful extraction
 /// 3. Calls all ISecurityContextCallback instances after context is established
-/// 4. Returns an ImmutableScopeContext that cannot be modified
+/// 4. Returns an ImmutableScopeContext that cannot be modified</para>
 /// </remarks>
-/// <docs>core-concepts/message-security</docs>
+/// <docs>fundamentals/security/message-security</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
 /// <example>
 /// // Register the provider

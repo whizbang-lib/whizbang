@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security;
 /// Named collection of permissions for Role-Based Access Control (RBAC).
 /// Roles aggregate permissions into logical groups that can be assigned to users.
 /// </summary>
-/// <docs>core-concepts/security#roles</docs>
+/// <docs>fundamentals/security/security#roles</docs>
 /// <tests>Whizbang.Core.Tests/Security/RoleTests.cs</tests>
 /// <example>
 /// // Define a role with specific permissions

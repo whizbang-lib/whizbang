@@ -1,8 +1,11 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.Tests;
 
@@ -33,7 +36,7 @@ public class ITransportTests {
     var destination = new TransportDestination("test-topic");
 
     // Act & Assert - Should not throw
-    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: CancellationToken.None);
   }
 
   [Test]
@@ -47,21 +50,23 @@ public class ITransportTests {
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>
-      await transport.PublishAsync(envelope, destination, envelopeType: null, cts.Token)
+      await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: cts.Token)
     );
   }
 
   [Test]
-  public async Task ITransport_SubscribeAsync_RegistersHandler_ReturnsSubscriptionAsync() {
+  public async Task ITransport_SubscribeBatchAsync_RegistersHandler_ReturnsSubscriptionAsync() {
     // Arrange
     var transport = _createTestTransport();
     var destination = new TransportDestination("test-topic");
-    Task handler(IMessageEnvelope env, string? envelopeType, CancellationToken ct) {
-      return Task.CompletedTask;
-    }
 
     // Act
-    var subscription = await transport.SubscribeAsync(handler, destination, CancellationToken.None);
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
+      CancellationToken.None
+    );
 
     // Assert
     await Assert.That(subscription).IsNotNull();
@@ -82,6 +87,61 @@ public class ITransportTests {
         cts.Token
       )
     );
+  }
+
+  [Test]
+  public async Task ITransport_PublishBatchAsync_WithoutBulkPublishCapability_ThrowsNotSupportedExceptionAsync() {
+    // Arrange - InProcessTransport does NOT have BulkPublish capability
+    // Must use ITransport interface type to invoke the default interface method
+#pragma warning disable CA1859
+    ITransport transport = _createTestTransport();
+#pragma warning restore CA1859
+    var items = new List<BulkPublishItem> {
+      new() {
+        Envelope = _createTestEnvelope(),
+        EnvelopeType = "TestType, TestAssembly",
+        MessageId = Guid.NewGuid()
+      }
+    };
+    var destination = new TransportDestination("test-topic");
+
+    // Act & Assert - Default interface method should throw NotSupportedException
+    await Assert.ThrowsAsync<NotSupportedException>(async () =>
+      await transport.PublishBatchAsync(items, destination, CancellationToken.None)
+    );
+  }
+
+  [Test]
+  public async Task ITransport_PublishBatchAsync_InProcessTransport_DoesNotHaveBulkPublishCapabilityAsync() {
+    // Arrange
+    var transport = _createTestTransport();
+
+    // Act
+    var capabilities = transport.Capabilities;
+
+    // Assert - InProcessTransport should NOT declare BulkPublish
+    await Assert.That(capabilities.HasFlag(TransportCapabilities.BulkPublish)).IsFalse();
+  }
+
+  /// <summary>
+  /// Surfaces the per-transport hard ceiling on wire-message size so size-aware
+  /// strategies (composite events, body offload) can decide pre-flight whether
+  /// a message fits the wire. <c>null</c> means the transport has no enforced
+  /// limit (e.g., in-process, RabbitMQ at 128 MB default). Non-null transports
+  /// (e.g., Azure Service Bus Standard at 256 KB) drive offload-strategy
+  /// decisions in <c>OutboxPublishWorker</c>.
+  /// </summary>
+  /// <remarks>
+  /// InProcessTransport carries no wire so it has no size ceiling — returns null.
+  /// </remarks>
+  [Test]
+  public async Task ITransport_MaxMessageSizeBytes_InProcessTransport_ReturnsNullAsync() {
+    var transport = _createTestTransport();
+
+    var max = transport.MaxMessageSizeBytes;
+
+    await Assert.That(max).IsNull()
+      .Because("InProcessTransport is in-memory; no wire size ceiling. Null signals to size-aware strategies that no offload pre-flight is required for this transport.");
   }
 
   // Helper methods
@@ -106,7 +166,8 @@ public class ITransportTests {
           },
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

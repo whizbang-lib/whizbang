@@ -31,7 +31,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var services = new ServiceCollection();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(
-      new RoutingOptions().OwnDomains(ownedDomains.ToArray())));
+      new RoutingOptions().OwnDomains([.. ownedDomains])));
     var serviceProvider = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();
@@ -145,7 +145,7 @@ public class TransportConsumerWorkerProvisioningTests {
         parallelizeStreams: false,
         logger: NullLoggerFactory.Instance.CreateLogger<OrderedStreamProcessor>()),
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
+      metrics: null,
       logger: NullLoggerFactory.Instance.CreateLogger<TransportConsumerWorker>()
     );
   }
@@ -197,8 +197,19 @@ public class TransportConsumerWorkerProvisioningTests {
         IMessageEnvelope envelope,
         TransportDestination destination,
         string? envelopeType = null,
+        ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      SubscribeCalledAt ??= DateTimeOffset.UtcNow;
+      return Task.FromResult<ISubscription>(new NoOpSubscription());
     }
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(

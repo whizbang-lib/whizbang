@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
@@ -54,10 +53,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// DbContext that configures physical fields as shadow properties for PostgreSQL.
   /// </summary>
-  private sealed class PhysicalFieldIntegrationDbContext : DbContext {
-    public PhysicalFieldIntegrationDbContext(DbContextOptions<PhysicalFieldIntegrationDbContext> options)
-        : base(options) { }
-
+  private sealed class PhysicalFieldIntegrationDbContext(DbContextOptions<PhysicalFieldIntegrationTests.PhysicalFieldIntegrationDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
 
@@ -401,7 +397,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results.Count).IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).OrderBy(n => n).ToList();
+    var names = results.Select(r => r.Data.Name).Order().ToList();
     await Assert.That(names).IsEquivalentTo(["Widget Alpha", "Widget Beta"]);
   }
 
@@ -413,12 +409,12 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
 
     // Act - query by physical boolean column
     var results = await _context!.Set<PerspectiveRow<ProductSearchModel>>()
-        .Where(r => EF.Property<bool>(r, "is_active") == true)
+        .Where(r => EF.Property<bool>(r, "is_active"))
         .ToListAsync(cancellationToken);
 
     // Assert - Alpha and Beta are active, Gamma is not
     await Assert.That(results.Count).IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).OrderBy(n => n).ToList();
+    var names = results.Select(r => r.Data.Name).Order().ToList();
     await Assert.That(names).IsEquivalentTo(["Widget Alpha", "Widget Beta"]);
   }
 
@@ -495,7 +491,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
     };
 
     // Act
-    await store.UpsertWithPhysicalFieldsAsync(testId, model, physicalFieldValues, cancellationToken);
+    await store.UpsertWithPhysicalFieldsAsync(testId, model, physicalFieldValues, scope: null, cancellationToken);
 
     // Assert - query back via store
     var retrieved = await store.GetByStreamIdAsync(testId, cancellationToken);
@@ -535,7 +531,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
         { "category", model.Category },
         { "is_active", model.IsActive }
       };
-      await store.UpsertWithPhysicalFieldsAsync(testId, model, physicalFieldValues, cancellationToken);
+      await store.UpsertWithPhysicalFieldsAsync(testId, model, physicalFieldValues, scope: null, cancellationToken);
     }
 
     // Assert - final version should be persisted
@@ -573,7 +569,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
           Category = "Electronics",
           IsActive = true,
           Description = "Entry-level widget for beginners",
-          Tags = new List<string> { "basic", "entry" }
+          Tags = ["basic", "entry"]
         }
       },
       new {
@@ -584,7 +580,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
           Category = "Electronics",
           IsActive = true,
           Description = "Professional widget for advanced users",
-          Tags = new List<string> { "professional", "advanced" }
+          Tags = ["professional", "advanced"]
         }
       },
       new {
@@ -595,7 +591,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
           Category = "Premium",
           IsActive = false,  // Discontinued
           Description = "Premium discontinued widget",
-          Tags = new List<string> { "premium", "discontinued" }
+          Tags = ["premium", "discontinued"]
         }
       }
     };

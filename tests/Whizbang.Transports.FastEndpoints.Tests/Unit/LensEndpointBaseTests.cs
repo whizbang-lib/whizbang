@@ -43,7 +43,7 @@ public class LensEndpointBaseTests {
     var request = new LensRequest { Page = 1, PageSize = null };
 
     // Act
-    var (skip, take) = endpoint.TestCalculatePaging(request, defaultPageSize: 15, maxPageSize: 100);
+    var (_, take) = endpoint.TestCalculatePaging(request, defaultPageSize: 15, maxPageSize: 100);
 
     // Assert
     await Assert.That(take).IsEqualTo(15);
@@ -56,7 +56,7 @@ public class LensEndpointBaseTests {
     var request = new LensRequest { Page = 1, PageSize = 500 };
 
     // Act
-    var (skip, take) = endpoint.TestCalculatePaging(request, defaultPageSize: 10, maxPageSize: 100);
+    var (_, take) = endpoint.TestCalculatePaging(request, defaultPageSize: 10, maxPageSize: 100);
 
     // Assert - should be clamped to max 100
     await Assert.That(take).IsEqualTo(100);
@@ -69,7 +69,7 @@ public class LensEndpointBaseTests {
     var request = new LensRequest { Page = 0, PageSize = 10 };
 
     // Act
-    var (skip, take) = endpoint.TestCalculatePaging(request, defaultPageSize: 10, maxPageSize: 100);
+    var (skip, _) = endpoint.TestCalculatePaging(request, defaultPageSize: 10, maxPageSize: 100);
 
     // Assert - page 0 should be treated as page 1
     await Assert.That(skip).IsEqualTo(0);
@@ -82,7 +82,7 @@ public class LensEndpointBaseTests {
     var request = new LensRequest { Page = -5, PageSize = 10 };
 
     // Act
-    var (skip, take) = endpoint.TestCalculatePaging(request, defaultPageSize: 10, maxPageSize: 100);
+    var (skip, _) = endpoint.TestCalculatePaging(request, defaultPageSize: 10, maxPageSize: 100);
 
     // Assert
     await Assert.That(skip).IsEqualTo(0);

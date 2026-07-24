@@ -3,7 +3,7 @@ namespace Whizbang.Data.Postgres;
 /// <summary>
 /// Configuration options for PostgreSQL connections.
 /// </summary>
-/// <docs>components/data/postgres</docs>
+/// <docs>data/postgres</docs>
 public class PostgresOptions {
   #region Connection Retry Options
 
@@ -14,14 +14,14 @@ public class PostgresOptions {
   /// Set to 0 to skip initial warning phase and go directly to indefinite retry.
   /// Default: 5
   /// </summary>
-  /// <docs>components/data/postgres#connection-retry</docs>
+  /// <docs>data/postgres#connection-retry</docs>
   public int InitialRetryAttempts { get; set; } = 5;
 
   /// <summary>
   /// Initial delay before the first retry attempt.
   /// Default: 1 second
   /// </summary>
-  /// <docs>components/data/postgres#connection-retry</docs>
+  /// <docs>data/postgres#connection-retry</docs>
   public TimeSpan InitialRetryDelay { get; set; } = TimeSpan.FromSeconds(1);
 
   /// <summary>
@@ -29,7 +29,7 @@ public class PostgresOptions {
   /// Once this delay is reached, retries continue at this interval indefinitely.
   /// Default: 120 seconds
   /// </summary>
-  /// <docs>components/data/postgres#connection-retry</docs>
+  /// <docs>data/postgres#connection-retry</docs>
   public TimeSpan MaxRetryDelay { get; set; } = TimeSpan.FromSeconds(120);
 
   /// <summary>
@@ -37,7 +37,7 @@ public class PostgresOptions {
   /// Each retry delay = previous delay * multiplier (capped at MaxRetryDelay).
   /// Default: 2.0
   /// </summary>
-  /// <docs>components/data/postgres#connection-retry</docs>
+  /// <docs>data/postgres#connection-retry</docs>
   public double BackoffMultiplier { get; set; } = 2.0;
 
   /// <summary>
@@ -45,8 +45,53 @@ public class PostgresOptions {
   /// If false, throw after InitialRetryAttempts.
   /// Default: true (critical infrastructure - always retry)
   /// </summary>
-  /// <docs>components/data/postgres#connection-retry</docs>
+  /// <docs>data/postgres#connection-retry</docs>
   public bool RetryIndefinitely { get; set; } = true;
+
+  #endregion
+
+  #region Command Timeout Options
+
+  /// <summary>
+  /// Command timeout in seconds for database operations like process_work_batch.
+  /// Controls how long a single SQL command can run before being cancelled.
+  /// Default: 5 seconds
+  /// </summary>
+  /// <docs>data/postgres#command-timeout</docs>
+  public int CommandTimeoutSeconds { get; set; } = 5;
+
+  #endregion
+
+  #region Concurrency Cap
+
+  /// <summary>
+  /// Defense-in-depth cap on concurrent <c>IWorkCoordinator</c> calls per process.
+  /// Prevents runaway pool draw if Npgsql config drifts. When the cap is hit, callers wait
+  /// on a semaphore rather than erroring. Set to 0 to disable the cap entirely.
+  /// Default: 50 (matches the recommended Npgsql Maximum Pool Size).
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/configuration-reference#max-in-flight-commands</docs>
+  public int MaxInFlightCommands { get; set; } = 50;
+
+  #endregion
+
+  #region Collective Apply
+
+  /// <summary>
+  /// Rows mutated per batched collective-apply UPDATE (keyset <c>LIMIT</c>). Keeps each batch a short
+  /// transaction so lock hold stays brief. Default 1000.
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  public int CollectiveApplyBatchSize { get; set; } = 1000;
+
+  /// <summary>
+  /// Server-side <c>statement_timeout</c> (seconds) applied to each collective-apply batch transaction (via
+  /// the transaction-local <c>set_config('statement_timeout', …, true)</c> — the only form that survives
+  /// PgBouncer transaction pooling). Null leaves the server/role default; when set, a runaway batch is
+  /// cancelled by Postgres itself, so a client timeout can never leave a zombie query.
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  public int? CollectiveApplyStatementTimeoutSeconds { get; set; }
 
   #endregion
 }

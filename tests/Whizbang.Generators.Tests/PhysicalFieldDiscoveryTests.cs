@@ -13,7 +13,7 @@ public class PhysicalFieldDiscoveryTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPhysicalField_DiscoverFieldAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -46,7 +46,7 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should generate schema with physical column
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("price");
+    await Assert.That(generatedSource).Contains("price");
     await Assert.That(generatedSource).Contains("DECIMAL");
   }
 
@@ -54,7 +54,7 @@ public class PhysicalFieldDiscoveryTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithVectorField_DiscoversVectorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -87,7 +87,7 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should generate schema with vector column
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("embedding");
+    await Assert.That(generatedSource).Contains("embedding");
     await Assert.That(generatedSource).Contains("vector(1536)");
   }
 
@@ -95,7 +95,7 @@ public class PhysicalFieldDiscoveryTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultiplePhysicalFields_DiscoversAllAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -134,7 +134,7 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should discover all physical fields
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("customer_name");
+    await Assert.That(generatedSource).Contains("customer_name");
     await Assert.That(generatedSource).Contains("total_amount");
     await Assert.That(generatedSource).Contains("is_active");
   }
@@ -143,7 +143,7 @@ public class PhysicalFieldDiscoveryTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPhysicalFieldMaxLength_GeneratesConstraintAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -174,14 +174,14 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should include VARCHAR with max length
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("VARCHAR(200)");
+    await Assert.That(generatedSource).Contains("VARCHAR(200)");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithVectorHNSWIndex_GeneratesIndexAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -212,7 +212,7 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should include HNSW index
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("USING hnsw");
+    await Assert.That(generatedSource).Contains("USING hnsw");
     await Assert.That(generatedSource).Contains("vector_cosine_ops");
   }
 
@@ -220,7 +220,7 @@ public class PhysicalFieldDiscoveryTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNoPhysicalFields_GeneratesStandardSchemaAsync() {
     // Arrange - No physical fields, just standard JSONB
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -248,7 +248,7 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should generate standard JSONB-only schema
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("model_data JSONB NOT NULL");
+    await Assert.That(generatedSource).Contains("model_data JSONB NOT NULL");
     // Should NOT contain physical column definitions
     await Assert.That(generatedSource).DoesNotContain("VARCHAR(");
     await Assert.That(generatedSource).DoesNotContain("vector(");
@@ -258,7 +258,7 @@ public class PhysicalFieldDiscoveryTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPhysicalFieldCustomColumnName_UsesCustomNameAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -289,14 +289,14 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should use custom column name
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("product_price");
+    await Assert.That(generatedSource).Contains("product_price");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithVectorFieldIVFFlatIndex_GeneratesIVFFlatIndexAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -327,7 +327,7 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should include IVFFlat index
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("USING ivfflat");
+    await Assert.That(generatedSource).Contains("USING ivfflat");
     await Assert.That(generatedSource).Contains("vector_l2_ops");
   }
 
@@ -335,7 +335,7 @@ public class PhysicalFieldDiscoveryTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPhysicalFieldUnique_GeneratesUniqueConstraintAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -366,14 +366,14 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should include UNIQUE constraint or unique index
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("UNIQUE");
+    await Assert.That(generatedSource).Contains("UNIQUE");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithInnerProductMetric_GeneratesCorrectOpsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -404,14 +404,14 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should use inner product operator class
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("vector_ip_ops");
+    await Assert.That(generatedSource).Contains("vector_ip_ops");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ReportsDiagnostic_WhenPhysicalFieldsDiscoveredAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;

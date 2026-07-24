@@ -5,6 +5,7 @@ using DotNet.Testcontainers.Networks;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.Contracts.Lenses;
+using ECommerce.Integration.TestUtilities.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.EntityFrameworkCore;
@@ -16,6 +17,7 @@ using Npgsql;
 using Testcontainers.MsSql;
 using Testcontainers.ServiceBus;
 using Whizbang.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -33,7 +35,10 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// This fixture is shared across ALL integration tests to avoid container startup overhead.
 /// Tests are isolated using unique product IDs and database cleanup between test classes.
 /// </summary>
-public sealed class SharedIntegrationFixture : IAsyncDisposable {
+public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
+  [System.Text.RegularExpressions.GeneratedRegex(@":\d+/;")]
+  private static partial System.Text.RegularExpressions.Regex _portSlashSemiRegex();
+
   private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
   private string? _connectionString;  // Connection string pointing to the fixture's unique database
   private readonly INetwork _network;  // Network for Service Bus + SQL Server
@@ -228,7 +233,10 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Register Azure Service Bus transport (will reuse the shared client registered above)
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, opts => {
+      // Emulator config has RequiresSession=false on every subscription — match that here.
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -239,17 +247,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register JsonSerializerOptions for Npgsql JSONB serialization
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers WhizbangId JSON converters for JSONB serialization
-    var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
-    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    inventoryDataSourceBuilder.EnableDynamicJson();
-    var inventoryDataSource = inventoryDataSourceBuilder.Build();
-    builder.Services.AddSingleton(inventoryDataSource);
-
-    builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options =>
-      options.UseNpgsql(inventoryDataSource));
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<InventoryDbContext> with UseNpgsql
+    // - IDbContextFactory<InventoryDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
 
     // Register Whizbang with EFCore infrastructure
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
@@ -261,19 +263,15 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
 
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
+
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
 
@@ -317,15 +315,22 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
+    // override in test fixture so the safety-net poll catches up promptly when NOTIFY
+    // delivery doesn't align with cascade-write timing.
+    // Centralized test-side timing overrides (ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, SlidingWindow* MaxWait). See
+    // TestWorkerTimingOverrides XML doc — PR #251 forensic for rationale.
+    builder.Services.ApplyTestTimings();
+
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
         sp.GetRequiredService<ITransport>(),
@@ -364,7 +369,10 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(_sharedServiceBusClient ?? throw new InvalidOperationException("Shared ServiceBusClient not initialized"));
 
     // Register Azure Service Bus transport (will reuse the shared client registered above)
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, opts => {
+      // Emulator config has RequiresSession=false on every subscription — match that here.
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -375,17 +383,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register JsonSerializerOptions for Npgsql JSONB serialization
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers WhizbangId JSON converters for JSONB serialization
-    var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
-    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    bffDataSourceBuilder.EnableDynamicJson();
-    var bffDataSource = bffDataSourceBuilder.Build();
-    builder.Services.AddSingleton(bffDataSource);
-
-    builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
-      options.UseNpgsql(bffDataSource));
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<BffDbContext> with UseNpgsql
+    // - IDbContextFactory<BffDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:bff-db" above)
 
     // Register Whizbang with EFCore infrastructure
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
@@ -397,6 +399,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
 
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
+
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
 
@@ -404,15 +411,6 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
@@ -443,15 +441,22 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
+    // v0.502 default NotifyHealthyPollingIntervalMilliseconds=30_000 is production-tuned;
+    // override in test fixture so the safety-net poll catches up promptly when NOTIFY
+    // delivery doesn't align with cascade-write timing.
+    // Centralized test-side timing overrides (ClaimWorker poll cadence,
+    // BackupTickCoordinator wake cadence, SlidingWindow* MaxWait). See
+    // TestWorkerTimingOverrides XML doc — PR #251 forensic for rationale.
+    builder.Services.ApplyTestTimings();
+
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Register Service Bus consumer to receive events
     var consumerOptions = new ServiceBusConsumerOptions();
@@ -487,7 +492,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // CRITICAL: Remove trailing slash from endpoint (sb://localhost:PORT/; → sb://localhost:PORT;)
     // The Azure Service Bus client silently fails to receive messages if the trailing slash is present
-    result = System.Text.RegularExpressions.Regex.Replace(result, @":\d+/;", m => m.Value.Replace("/;", ";"));
+    result = _portSlashSemiRegex().Replace(result, m => m.Value.Replace("/;", ";"));
 
     return result;
   }
@@ -497,7 +502,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// Polls up to 60 times (60 seconds total) with 1 second delay between attempts.
   /// Increased from 30 to 60 to handle slow container startup on busy systems.
   /// </summary>
-  private async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
+  private static async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
     var maxAttempts = 60; // 60 seconds total (increased from 30 for reliability)
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -573,14 +578,14 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for InventoryWorker
     using (var scope = _inventoryHost!.Services.CreateScope()) {
       var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
-      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger: null, cancellationToken);
+      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger: null, cancellationToken: cancellationToken);
     }
 
     // Initialize BFF schema using EFCore
     // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for BFF
     using (var scope = _bffHost!.Services.CreateScope()) {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
-      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken);
+      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken: cancellationToken);
     }
   }
 
@@ -591,139 +596,68 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// Falls back to timeout if idle state is not reached within the specified time.
   /// </summary>
   public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 30000) {
-    // Get WorkCoordinatorPublisherWorker instances (outbox/inbox processing)
-    var inventoryPublisher = _inventoryHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
-      .FirstOrDefault();
+    // Phase H step 4b: the drain workers are the active outbox/inbox path; the legacy
+    // OutboxPublishWorker defaults to disabled and reports IsIdle=true instantly. Wait
+    // on every idle-capable worker registered per host so the fixture truly knows the
+    // pipeline has quiesced before truncating tables.
+    var waits = new List<Task>();
+    var unsubscribers = new List<Action>();
 
-    var bffPublisher = _bffHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
-      .FirstOrDefault();
-
-    // Get PerspectiveWorker instances (perspective materialization)
-    var inventoryPerspectiveWorker = _inventoryHost!.Services.GetServices<IHostedService>()
-      .OfType<PerspectiveWorker>()
-      .FirstOrDefault();
-
-    var bffPerspectiveWorker = _bffHost!.Services.GetServices<IHostedService>()
-      .OfType<PerspectiveWorker>()
-      .FirstOrDefault();
-
-    // Create TaskCompletionSources for all 4 workers
-    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
-    var inventoryPublisherTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var bffPublisherTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var inventoryPerspectiveTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var bffPerspectiveTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    // Wire up one-time idle callbacks
-    WorkProcessingIdleHandler? inventoryPublisherHandler = null;
-    WorkProcessingIdleHandler? bffPublisherHandler = null;
-    WorkProcessingIdleHandler? inventoryPerspectiveHandler = null;
-    WorkProcessingIdleHandler? bffPerspectiveHandler = null;
-
-    inventoryPublisherHandler = () => {
-      inventoryPublisherTcs.TrySetResult(true);
-      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
-        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
-      }
-    };
-
-    bffPublisherHandler = () => {
-      bffPublisherTcs.TrySetResult(true);
-      if (bffPublisher != null && bffPublisherHandler != null) {
-        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
-      }
-    };
-
-    inventoryPerspectiveHandler = () => {
-      inventoryPerspectiveTcs.TrySetResult(true);
-      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
-        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
-      }
-    };
-
-    bffPerspectiveHandler = () => {
-      bffPerspectiveTcs.TrySetResult(true);
-      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
-        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
-      }
-    };
-
-    // Register WorkCoordinatorPublisherWorker callbacks
-    if (inventoryPublisher != null) {
-      inventoryPublisher.OnWorkProcessingIdle += inventoryPublisherHandler;
-      if (inventoryPublisher.IsIdle) {
-        inventoryPublisherTcs.TrySetResult(true);
-      }
-    } else {
-      inventoryPublisherTcs.TrySetResult(true);
+    void WireOnce<TWorker>(
+        TWorker? w,
+        Func<TWorker, bool> idleGetter,
+        Action<TWorker, WorkProcessingIdleHandler> subscribe,
+        Action<TWorker, WorkProcessingIdleHandler> unsubscribe)
+      where TWorker : class {
+      if (w is null) { return; }
+      var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+      waits.Add(tcs.Task);
+      if (idleGetter(w)) { tcs.TrySetResult(true); return; }
+      void Handler() { tcs.TrySetResult(true); unsubscribe(w, Handler); }
+      subscribe(w, Handler);
+      unsubscribers.Add(() => unsubscribe(w, Handler));
+      if (idleGetter(w)) { tcs.TrySetResult(true); }
     }
 
-    if (bffPublisher != null) {
-      bffPublisher.OnWorkProcessingIdle += bffPublisherHandler;
-      if (bffPublisher.IsIdle) {
-        bffPublisherTcs.TrySetResult(true);
-      }
-    } else {
-      bffPublisherTcs.TrySetResult(true);
+    void WireOutboxPublish(OutboxPublishWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WireOutboxDrain(OutboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WireInboxDrain(InboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WirePerspective(PerspectiveWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+
+    var inventoryHostedServices = _inventoryHost!.Services.GetServices<IHostedService>().ToList();
+    var bffHostedServices = _bffHost!.Services.GetServices<IHostedService>().ToList();
+
+    WireOutboxPublish(inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
+    WireOutboxPublish(bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
+    WireOutboxDrain(inventoryHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireOutboxDrain(bffHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain(inventoryHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain(bffHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WirePerspective(inventoryHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+    WirePerspective(bffHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+
+    if (waits.Count == 0) {
+      Console.WriteLine("[SharedFixture] No idle-capable workers found — proceeding");
+      return;
     }
 
-    // Register PerspectiveWorker callbacks
-    if (inventoryPerspectiveWorker != null) {
-      inventoryPerspectiveWorker.OnWorkProcessingIdle += inventoryPerspectiveHandler;
-      if (inventoryPerspectiveWorker.IsIdle) {
-        inventoryPerspectiveTcs.TrySetResult(true);
-      }
-    } else {
-      inventoryPerspectiveTcs.TrySetResult(true);
-    }
-
-    if (bffPerspectiveWorker != null) {
-      bffPerspectiveWorker.OnWorkProcessingIdle += bffPerspectiveHandler;
-      if (bffPerspectiveWorker.IsIdle) {
-        bffPerspectiveTcs.TrySetResult(true);
-      }
-    } else {
-      bffPerspectiveTcs.TrySetResult(true);
-    }
-
-    // Wait for all 4 workers to become idle (or timeout)
     using var cts = new CancellationTokenSource(timeoutMilliseconds);
 
     try {
-      await Task.WhenAll(
-        inventoryPublisherTcs.Task,
-        bffPublisherTcs.Task,
-        inventoryPerspectiveTcs.Task,
-        bffPerspectiveTcs.Task
-      ).WaitAsync(cts.Token);
-
-      Console.WriteLine("[SharedFixture] Event processing idle - all workers have no pending work (2 publishers + 2 perspective workers)");
+      await Task.WhenAll(waits).WaitAsync(cts.Token);
+      Console.WriteLine($"[SharedFixture] Event processing idle ({waits.Count} signals)");
     } catch (OperationCanceledException) {
       Console.WriteLine($"[SharedFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
-      Console.WriteLine($"[SharedFixture] InventoryWorker Publisher idle: {inventoryPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {inventoryPerspectiveWorker?.IsIdle ?? true}");
-      Console.WriteLine($"[SharedFixture] BFF Publisher idle: {bffPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {bffPerspectiveWorker?.IsIdle ?? true}");
     } finally {
-      // Clean up handlers
-      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
-        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
-      }
-      if (bffPublisher != null && bffPublisherHandler != null) {
-        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
-      }
-      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
-        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
-      }
-      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
-        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
+      foreach (var unsubscribe in unsubscribers) {
+        try { unsubscribe(); } catch { /* best effort */ }
       }
     }
   }
 
   /// <summary>
   /// Performs SQL diagnostics for event and perspective checkpoint debugging.
-  /// Queries inbox, event store, and perspective checkpoints for a specific event type.
+  /// Queries inbox, event store, and perspective cursors for a specific event type.
   /// Controlled by WHIZBANG_DEBUG environment variable or debug parameter.
   /// </summary>
   /// <param name="eventTypeName">Simple event type name (e.g., "InventoryRestockedEvent")</param>
@@ -787,12 +721,12 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
-    // Query 3: Check perspective checkpoints (should exist for streams that have events)
+    // Query 3: Check perspective cursors (should exist for streams that have events)
     if (eventStoreResults.Count > 0) {
       var streamIds = string.Join(", ", eventStoreResults.Select(e => $"'{e.StreamId}'"));
       var checkpointQuery = $@"
         SELECT perspective_name, stream_id, last_event_id, status
-        FROM inventory.wh_perspective_checkpoints
+        FROM inventory.wh_perspective_cursors
         WHERE stream_id IN ({streamIds})
         ORDER BY perspective_name, stream_id";
 
@@ -832,12 +766,12 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
-    // Query 5: Check BFF perspective checkpoints
+    // Query 5: Check BFF perspective cursors
     if (bffEventStoreResults.Count > 0) {
       var bffStreamIds = string.Join(", ", bffEventStoreResults.Select(e => $"'{e.StreamId}'"));
       var bffCheckpointQuery = $@"
         SELECT perspective_name, stream_id, last_event_id, status
-        FROM bff.wh_perspective_checkpoints
+        FROM bff.wh_perspective_cursors
         WHERE stream_id IN ({bffStreamIds})
         ORDER BY perspective_name, stream_id";
 
@@ -845,12 +779,14 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         .SqlQueryRaw<CheckpointDiagnosticResult>(bffCheckpointQuery)
         .ToListAsync(cancellationToken);
 
-      logger.LogDebug("[SQL Diagnostic] BFF perspective checkpoints for streams with {EventType}: {Count} checkpoints found",
-        eventTypeName, bffCheckpointResults.Count);
+      if (logger.IsEnabled(LogLevel.Debug)) {
+        logger.LogDebug("[SQL Diagnostic] BFF perspective cursors for streams with {EventType}: {Count} checkpoints found",
+          eventTypeName, bffCheckpointResults.Count);
 
-      foreach (var row in bffCheckpointResults) {
-        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
-          row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        foreach (var row in bffCheckpointResults) {
+          logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
+            row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        }
       }
     }
   }
@@ -866,17 +802,17 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Truncate all Whizbang tables in the shared database
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    using (var scope = _inventoryHost!.Services.CreateScope()) {
-      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+    using var scope = _inventoryHost!.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-      // Truncate Whizbang core tables, perspective tables, and checkpoints
-      // CASCADE ensures all dependent data is cleared
-      // Use DO block to gracefully handle case where tables don't exist
-      await dbContext.Database.ExecuteSqlRawAsync(@"
+    // Truncate Whizbang core tables, perspective tables, and checkpoints
+    // CASCADE ensures all dependent data is cleared
+    // Use DO block to gracefully handle case where tables don't exist
+    await dbContext.Database.ExecuteSqlRawAsync(@"
         DO $$
         BEGIN
           -- Truncate core infrastructure tables
-          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_message_deduplication CASCADE;
+          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_message_deduplication CASCADE;
 
           -- Truncate all perspective tables (pattern: wh_per_*)
           -- This clears materialized views from both InventoryWorker and BFF
@@ -889,7 +825,6 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
             NULL;
         END $$;
       ", cancellationToken);
-    }
   }
 
   public async ValueTask DisposeAsync() {
@@ -950,7 +885,7 @@ internal class InboxDiagnosticResult {
   public string MessageType { get; set; } = string.Empty;
   public Guid StreamId { get; set; }
   public bool IsEvent { get; set; }
-  public string Status { get; set; } = string.Empty;
+  public int Status { get; set; }
   public DateTimeOffset ReceivedAt { get; set; }
 }
 
@@ -968,7 +903,7 @@ internal class EventStoreDiagnosticResult {
 
 /// <summary>
 /// Diagnostic result type for perspective checkpoint queries.
-/// Maps to wh_perspective_checkpoints table columns for perspective processing debugging.
+/// Maps to wh_perspective_cursors table columns for perspective processing debugging.
 /// </summary>
 internal class CheckpointDiagnosticResult {
   public string PerspectiveName { get; set; } = string.Empty;

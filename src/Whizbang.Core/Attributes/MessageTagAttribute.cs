@@ -14,7 +14,6 @@ namespace Whizbang.Core.Attributes;
 /// The payload sent to hooks is built from:
 /// <list type="bullet">
 /// <item><description>Extracted properties from the <see cref="Properties"/> array as JSON key/value pairs</description></item>
-/// <item><description>Full event under "__event" key when <see cref="IncludeEvent"/> is true</description></item>
 /// <item><description>Merged content from <see cref="ExtraJson"/> if specified</description></item>
 /// </list>
 /// </para>
@@ -31,7 +30,7 @@ namespace Whizbang.Core.Attributes;
 /// public sealed record OrderCreatedEvent(Guid OrderId, Guid CustomerId);
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags</docs>
+/// <docs>fundamentals/messages/message-tags</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
 public abstract class MessageTagAttribute : Attribute {
   /// <summary>
@@ -58,26 +57,9 @@ public abstract class MessageTagAttribute : Attribute {
   public string[]? Properties { get; init; }
 
   /// <summary>
-  /// Gets or sets whether to include the entire event object in the payload under the "__event" key.
-  /// This avoids conflicts with other extracted properties.
-  /// </summary>
-  /// <remarks>
-  /// When true, the full serialized event is included, allowing hooks to access any property.
-  /// Useful when the set of needed properties varies or is determined at runtime.
-  /// </remarks>
-  /// <example>
-  /// <code>
-  /// [TelemetryTag(Tag = "order-completed", IncludeEvent = true)]
-  /// public sealed record OrderCompletedEvent(...);
-  /// // Payload includes: { "__event": { full event JSON } }
-  /// </code>
-  /// </example>
-  public bool IncludeEvent { get; init; }
-
-  /// <summary>
   /// Gets or sets arbitrary JSON to merge into the payload.
   /// Can reference event properties with {PropertyName} syntax for template expansion.
-  /// Merged with Properties and __event (if IncludeEvent is true).
+  /// Merged with values extracted from <see cref="Properties"/>.
   /// </summary>
   /// <remarks>
   /// The JSON is parsed and merged at runtime. Invalid JSON will cause a runtime exception.

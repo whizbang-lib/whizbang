@@ -11,8 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// No perspectives needed - just the core infrastructure entities.
 /// </summary>
 [WhizbangDbContext(Schema = "public")]
-public partial class WorkCoordinationDbContext : DbContext {
-  public WorkCoordinationDbContext(DbContextOptions<WorkCoordinationDbContext> options) : base(options) { }
+public partial class WorkCoordinationDbContext(DbContextOptions<WorkCoordinationDbContext> options) : DbContext(options) {
 
   // DbSet properties for infrastructure entities not auto-generated
   // These are needed so EF Core creates the tables (otherwise only migrations create them)

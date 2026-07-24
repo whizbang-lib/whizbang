@@ -4,11 +4,14 @@
 --              Returns event work IDs for marking as "NewlyStored" in orchestrator response.
 -- Dependencies: 001-021 (requires wh_perspective_events table from migration 009)
 
+SELECT __SCHEMA__.drop_all_overloads('store_perspective_events');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_perspective_events(
   p_events JSONB,
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
-  p_now TIMESTAMPTZ
+  p_now TIMESTAMPTZ,
+  p_partition_count INTEGER DEFAULT 10000
 ) RETURNS TABLE(
   event_work_id UUID,
   stream_id UUID,
@@ -20,6 +23,8 @@ DECLARE
   v_was_new BOOLEAN;
   v_work_id UUID;
 BEGIN
+  IF jsonb_array_length(p_events) = 0 THEN RETURN; END IF;
+
   FOR v_event IN
     SELECT
       (elem->>'StreamId')::UUID as v_stream_id,
@@ -30,12 +35,14 @@ BEGIN
     -- Generate work item ID
     v_work_id := gen_random_uuid();
 
-    -- Insert perspective event with immediate lease (ON CONFLICT for idempotency)
-    INSERT INTO wh_perspective_events (
+    -- Insert perspective event with immediate lease (ON CONFLICT for idempotency).
+    -- Phase H step 6 slice 2: populate partition_number for symmetric load balancing.
+    INSERT INTO __SCHEMA__.wh_perspective_events (
       event_work_id,
       stream_id,
       perspective_name,
       event_id,
+      partition_number,
       status,
       attempts,
       created_at,
@@ -46,6 +53,7 @@ BEGIN
       v_event.v_stream_id,
       v_event.v_perspective_name,
       v_event.v_event_id,
+      __SCHEMA__.compute_partition(v_event.v_stream_id, p_partition_count),
       1,  -- Stored flag
       0,  -- Initial attempts
       p_now,
@@ -60,10 +68,30 @@ BEGIN
     -- If conflict occurred, get existing work_id
     IF NOT v_was_new THEN
       SELECT pe.event_work_id INTO v_work_id
-      FROM wh_perspective_events pe
+      FROM __SCHEMA__.wh_perspective_events pe
       WHERE pe.stream_id = v_event.v_stream_id
         AND pe.perspective_name = v_event.v_perspective_name
         AND pe.event_id = v_event.v_event_id;
+    END IF;
+
+    -- Out-of-order detection: if event_id is older than cursor's last_event_id,
+    -- the perspective missed this event and needs a rewind from snapshot.
+    -- UUID7 comparison works because UUID7 encodes timestamp in the most significant bits.
+    IF v_was_new THEN
+      IF EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_perspective_cursors pc
+        WHERE pc.stream_id = v_event.v_stream_id
+          AND pc.perspective_name = v_event.v_perspective_name
+          AND pc.last_event_id IS NOT NULL
+          AND v_event.v_event_id < pc.last_event_id
+      ) THEN
+        UPDATE __SCHEMA__.wh_perspective_cursors
+        SET status = status | 32,  -- RewindRequired flag (1 << 5)
+            rewind_trigger_event_id = v_event.v_event_id
+        WHERE stream_id = v_event.v_stream_id
+          AND perspective_name = v_event.v_perspective_name
+          AND (rewind_trigger_event_id IS NULL OR v_event.v_event_id < rewind_trigger_event_id);
+      END IF;
     END IF;
 
     RETURN QUERY SELECT v_work_id, v_event.v_stream_id, v_event.v_perspective_name, v_was_new;

@@ -4,13 +4,13 @@ using System.Text.RegularExpressions;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
-/// Pattern matching for message type namespaces.
-/// Supports wildcards (*) for flexible type discovery.
+/// <para>Pattern matching for message type namespaces.
+/// Supports wildcards (*) for flexible type discovery.</para>
 ///
-/// Examples:
+/// <para>Examples:
 /// - "MyApp.Orders.*" matches MyApp.Orders.OrderCreated, MyApp.Orders.OrderUpdated
 /// - "*.Events" matches MyApp.Orders.Events, MyApp.Payments.Events
-/// - "MyApp.*.*" matches MyApp.Orders.OrderCreated, MyApp.Payments.PaymentProcessed
+/// - "MyApp.*.*" matches MyApp.Orders.OrderCreated, MyApp.Payments.PaymentProcessed</para>
 /// </summary>
 /// <remarks>
 /// Creates a new namespace pattern.

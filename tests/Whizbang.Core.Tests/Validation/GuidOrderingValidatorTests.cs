@@ -116,7 +116,7 @@ public class GuidOrderingValidatorTests {
     var trackedGuid = TrackedGuid.NewRandom(); // v4 GUID
 
     // Act & Assert
-    var act = () => validator.ValidateForTimeOrdering(trackedGuid, "TestContext");
+    void act() => validator.ValidateForTimeOrdering(trackedGuid, "TestContext");
     await Assert.That(act).Throws<GuidOrderingException>();
   }
 

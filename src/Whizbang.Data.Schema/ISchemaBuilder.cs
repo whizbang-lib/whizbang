@@ -1,22 +1,22 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
-/// Interface for database-specific schema builders.
+/// <para>Interface for database-specific schema builders.
 /// Implementations generate DDL (Data Definition Language) from database-agnostic schema definitions.
-/// Each database engine (Postgres, SQLite, MySQL, etc.) must implement this interface.
+/// Each database engine (Postgres, SQLite, MySQL, etc.) must implement this interface.</para>
 ///
-/// Pattern:
+/// <para>Pattern:
 /// 1. Read schema definitions from Whizbang.Data.Schema.Schemas (InboxSchema, OutboxSchema, etc.)
 /// 2. Transform to database-specific DDL syntax
-/// 3. Return complete SQL scripts
+/// 3. Return complete SQL scripts</para>
 ///
-/// Consumers:
+/// <para>Consumers:
 /// - EF Core generators (AOT-compatible schema initialization)
 /// - Dapper implementations (embedded schema resources)
 /// - CLI tools (schema generation/validation)
-/// - Tests (schema verification)
+/// - Tests (schema verification)</para>
 /// </summary>
-/// <docs>data-access/schema-generation-pattern</docs>
+/// <docs>data/schema-generation-pattern</docs>
 public interface ISchemaBuilder {
   /// <summary>
   /// Database engine name (e.g., "Postgres", "SQLite", "MySQL").

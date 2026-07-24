@@ -28,6 +28,8 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(CorrelationId))]
 [JsonSerializable(typeof(MessageHop))]
 [JsonSerializable(typeof(List<MessageHop>))]
+[JsonSerializable(typeof(ReceptorInvocationRecord))]
+[JsonSerializable(typeof(List<ReceptorInvocationRecord>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
 [JsonSerializable(typeof(ServiceInstanceInfo))]
 [JsonSerializable(typeof(ServiceInstanceMetadata))]
@@ -93,6 +95,13 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(MessageEnvelope<ICommand>))]
 [JsonSerializable(typeof(MessageEnvelope<IMessage>))]
 [JsonSerializable(typeof(MessageEnvelope<object>))]
+// Body offload (claim-check) envelope — wire-side substitute when the
+// post-serialize hook chain decides a message body should be uploaded
+// to an IMessageBodyStore. Receivers deserialize the wire bytes as this
+// type when whizbang.is-claim header is present, then rehydrate.
+[JsonSerializable(typeof(MessageEnvelope<Whizbang.Core.Offloads.BodyClaimEnvelopePayload>))]
+[JsonSerializable(typeof(Whizbang.Core.Offloads.BodyClaimEnvelopePayload))]
+[JsonSerializable(typeof(Whizbang.Core.Offloads.MessageBodyClaim))]
 // Work coordinator types
 [JsonSerializable(typeof(OutboxMessage))]
 [JsonSerializable(typeof(OutboxMessage[]))]
@@ -106,10 +115,12 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(ReceptorProcessingCompletion[]))]
 [JsonSerializable(typeof(ReceptorProcessingFailure))]
 [JsonSerializable(typeof(ReceptorProcessingFailure[]))]
-[JsonSerializable(typeof(PerspectiveCheckpointCompletion))]
-[JsonSerializable(typeof(PerspectiveCheckpointCompletion[]))]
-[JsonSerializable(typeof(PerspectiveCheckpointFailure))]
-[JsonSerializable(typeof(PerspectiveCheckpointFailure[]))]
+[JsonSerializable(typeof(PerspectiveCursorCompletion))]
+[JsonSerializable(typeof(PerspectiveCursorCompletion[]))]
+[JsonSerializable(typeof(PerspectiveCursorFailure))]
+[JsonSerializable(typeof(PerspectiveCursorFailure[]))]
+[JsonSerializable(typeof(PerspectiveEventCompletion))]
+[JsonSerializable(typeof(PerspectiveEventCompletion[]))]
 [JsonSerializable(typeof(Guid[]))]
 [JsonSerializable(typeof(Guid?[]))]  // Array of nullable Guids
 // Sync inquiry types (for perspective sync awaiter)
@@ -140,5 +151,4 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(List<ICommand>))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
-public partial class InfrastructureJsonContext : JsonSerializerContext {
-}
+public partial class InfrastructureJsonContext : JsonSerializerContext;

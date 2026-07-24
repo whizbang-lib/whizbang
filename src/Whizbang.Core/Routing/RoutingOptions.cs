@@ -15,10 +15,11 @@ namespace Whizbang.Core.Routing;
 /// Use SubscribeTo() for additional manual subscriptions beyond auto-discovery.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#routing-options</docs>
+/// <docs>fundamentals/dispatcher/routing#routing-options</docs>
 public sealed class RoutingOptions {
   private readonly HashSet<string> _ownedDomains = new(StringComparer.OrdinalIgnoreCase);
   private readonly HashSet<string> _subscribedNamespaces = new(StringComparer.OrdinalIgnoreCase);
+  private readonly HashSet<string> _absorbedNamespaces = new(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>
   /// Gets the command namespaces owned by this service.
@@ -35,6 +36,13 @@ public sealed class RoutingOptions {
   /// These are combined with auto-discovered subscriptions from perspectives/receptors.
   /// </summary>
   public IReadOnlySet<string> SubscribedNamespaces => _subscribedNamespaces;
+
+  /// <summary>
+  /// Gets the event namespaces this service <b>absorbs</b>: every event on these topics is persisted to the
+  /// local event store even when no receptor or perspective currently consumes it, so a later-added
+  /// perspective/feature can rebuild from data that was already captured. See <see cref="AbsorbNamespaces"/>.
+  /// </summary>
+  public IReadOnlySet<string> AbsorbedNamespaces => _absorbedNamespaces;
 
   /// <summary>
   /// Gets or sets the inbox routing strategy.
@@ -84,11 +92,8 @@ public sealed class RoutingOptions {
   public RoutingOptions OwnDomains(params string[] namespaces) {
     ArgumentNullException.ThrowIfNull(namespaces);
 
-    foreach (var ns in namespaces) {
-      if (!string.IsNullOrWhiteSpace(ns)) {
-        _ownedDomains.Add(ns.ToLowerInvariant());
-      }
-    }
+    _ownedDomains.UnionWith(
+        namespaces.Where(ns => !string.IsNullOrWhiteSpace(ns)).Select(ns => ns.ToLowerInvariant()));
 
     return this;
   }
@@ -103,13 +108,35 @@ public sealed class RoutingOptions {
   /// <example>
   /// opts.OwnNamespaceOf&lt;CreateUserCommand&gt;(); // Owns "myapp.users.commands"
   /// </example>
-  /// <docs>core-concepts/routing#own-namespace-of</docs>
+  /// <docs>fundamentals/dispatcher/routing#own-namespace-of</docs>
   /// <tests>Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:OwnNamespaceOf</tests>
   public RoutingOptions OwnNamespaceOf<T>() {
     var ns = typeof(T).Namespace
       ?? throw new InvalidOperationException($"Type {typeof(T).Name} has no namespace");
     return OwnDomains(ns);
   }
+
+  /// <summary>
+  /// Subscribes to the audit topic and enables the built-in audit perspective.
+  /// The perspective materializes <see cref="SystemEvents.EventAudited"/> into
+  /// <see cref="SystemEvents.Audit.AuditEventModel"/> automatically.
+  /// </summary>
+  /// <param name="autoGeneratePerspective">
+  /// When <c>true</c> (default), Whizbang's built-in <see cref="SystemEvents.Audit.AuditEventProjection"/>
+  /// is used. Set to <c>false</c> to provide a custom perspective for EventAudited.
+  /// </param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <docs>fundamentals/events/system-events#subscribe-to-audit</docs>
+  public RoutingOptions SubscribeToAudit(bool autoGeneratePerspective = true) {
+    _subscribedNamespaces.Add(SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
+    AuditPerspectiveEnabled = autoGeneratePerspective;
+    return this;
+  }
+
+  /// <summary>
+  /// Gets whether the built-in audit perspective is enabled via <see cref="SubscribeToAudit"/>.
+  /// </summary>
+  public bool AuditPerspectiveEnabled { get; private set; }
 
   /// <summary>
   /// Subscribes to event namespaces for receiving events from other services.
@@ -132,11 +159,8 @@ public sealed class RoutingOptions {
   public RoutingOptions SubscribeTo(params string[] namespaces) {
     ArgumentNullException.ThrowIfNull(namespaces);
 
-    foreach (var ns in namespaces) {
-      if (!string.IsNullOrWhiteSpace(ns)) {
-        _subscribedNamespaces.Add(ns.ToLowerInvariant());
-      }
-    }
+    _subscribedNamespaces.UnionWith(
+        namespaces.Where(ns => !string.IsNullOrWhiteSpace(ns)).Select(ns => ns.ToLowerInvariant()));
 
     return this;
   }
@@ -151,12 +175,33 @@ public sealed class RoutingOptions {
   /// <example>
   /// opts.SubscribeToNamespaceOf&lt;OrderCreatedEvent&gt;(); // Subscribes to "myapp.orders.events"
   /// </example>
-  /// <docs>core-concepts/routing#subscribe-to-namespace-of</docs>
+  /// <docs>fundamentals/dispatcher/routing#subscribe-to-namespace-of</docs>
   /// <tests>Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToNamespaceOf</tests>
   public RoutingOptions SubscribeToNamespaceOf<T>() {
     var ns = typeof(T).Namespace
       ?? throw new InvalidOperationException($"Type {typeof(T).Name} has no namespace");
     return SubscribeTo(ns);
+  }
+
+  /// <summary>
+  /// <b>Absorbs</b> every event on the given topic/namespace into this service's local event store, even when
+  /// no receptor or perspective consumes the type. Normally an inbound event with no local consumer is dropped
+  /// at the transport receive edge (never stored), so a perspective/feature added later cannot rebuild from it.
+  /// Marking a namespace absorbed keeps those events: the subscription binding is created and the receive
+  /// discard gates no longer drop unconsumed types on this namespace, so each lands in the inbox and is
+  /// persisted (perspective materialization is still gated on there being a perspective — absorbed-only events
+  /// simply sit in the store until something rebuilds from them). Namespace-scoped, additive to auto-discovery.
+  /// </summary>
+  /// <param name="namespaces">Event namespaces to absorb (e.g. <c>"a consumer.contracts.job"</c>). Case-insensitive.</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when <paramref name="namespaces"/> is null.</exception>
+  public RoutingOptions AbsorbNamespaces(params string[] namespaces) {
+    ArgumentNullException.ThrowIfNull(namespaces);
+
+    _absorbedNamespaces.UnionWith(
+        namespaces.Where(ns => !string.IsNullOrWhiteSpace(ns)).Select(ns => ns.ToLowerInvariant()));
+
+    return this;
   }
 
   /// <summary>

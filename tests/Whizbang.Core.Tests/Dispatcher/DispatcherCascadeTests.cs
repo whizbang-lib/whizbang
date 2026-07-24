@@ -26,11 +26,11 @@ public class DispatcherCascadeTests {
 
   // Events use [DefaultRouting(Local)] for local cascade test verification.
   // (System default is Outbox for cross-service delivery)
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record OrderCreatedEvent([property: StreamId] Guid OrderId, Guid CustomerId) : IEvent;
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record OrderShippedEvent([property: StreamId] Guid OrderId) : IEvent;
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record NotificationSentEvent([property: StreamId] Guid OrderId, string Type) : IEvent;
 
   // ========================================
@@ -43,7 +43,7 @@ public class DispatcherCascadeTests {
   /// </summary>
   public static class PublishedEventTracker {
     private static readonly List<IEvent> _publishedEvents = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {
@@ -59,7 +59,7 @@ public class DispatcherCascadeTests {
 
     public static IReadOnlyList<IEvent> GetPublishedEvents() {
       lock (_lock) {
-        return _publishedEvents.ToList();
+        return [.. _publishedEvents];
       }
     }
 

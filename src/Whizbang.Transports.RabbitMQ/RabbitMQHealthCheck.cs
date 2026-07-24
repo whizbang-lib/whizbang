@@ -8,7 +8,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// Health check for RabbitMQ connectivity.
 /// Verifies that the transport is available and can communicate with RabbitMQ.
 /// </summary>
-/// <docs>components/transports/rabbitmq</docs>
+/// <docs>messaging/transports/rabbitmq</docs>
 public class RabbitMQHealthCheck : IHealthCheck {
   private readonly ITransport _transport;
   private readonly IConnection _connection;

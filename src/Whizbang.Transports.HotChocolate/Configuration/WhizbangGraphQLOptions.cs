@@ -5,12 +5,12 @@ namespace Whizbang.Transports.HotChocolate;
 /// These options provide system-wide defaults that can be overridden per-lens
 /// using <see cref="GraphQLLensAttribute"/>.
 /// </summary>
-/// <docs>graphql/setup#configuration</docs>
+/// <docs>apis/graphql/setup#configuration</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/WhizbangGraphQLOptionsTests.cs</tests>
 /// <example>
 /// services.AddGraphQLServer()
 ///     .AddWhizbangLenses(options => {
-///         options.DefaultScope = GraphQLLensScope.Data | GraphQLLensScope.SystemFields;
+///         options.DefaultScope = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields;
 ///         options.DefaultPageSize = 25;
 ///         options.MaxPageSize = 200;
 ///     });
@@ -18,10 +18,10 @@ namespace Whizbang.Transports.HotChocolate;
 public class WhizbangGraphQLOptions {
   /// <summary>
   /// Default scope when <see cref="GraphQLLensAttribute.Scope"/> is set to
-  /// <see cref="GraphQLLensScope.Default"/>.
-  /// Default: <see cref="GraphQLLensScope.DataOnly"/>
+  /// <see cref="GraphQLLensScopes.None"/>.
+  /// Default: <see cref="GraphQLLensScopes.DataOnly"/>
   /// </summary>
-  public GraphQLLensScope DefaultScope { get; set; } = GraphQLLensScope.DataOnly;
+  public GraphQLLensScopes DefaultScope { get; set; } = GraphQLLensScopes.DataOnly;
 
   /// <summary>
   /// Default page size for cursor-based paging when not specified on the lens.
@@ -37,14 +37,14 @@ public class WhizbangGraphQLOptions {
 
   /// <summary>
   /// Whether to include metadata fields in filter and sort types by default.
-  /// Only applies when the lens scope includes <see cref="GraphQLLensScope.Metadata"/>.
+  /// Only applies when the lens scope includes <see cref="GraphQLLensScopes.Metadata"/>.
   /// Default: true
   /// </summary>
   public bool IncludeMetadataInFilters { get; set; } = true;
 
   /// <summary>
   /// Whether to include scope fields in filter and sort types by default.
-  /// Only applies when the lens scope includes <see cref="GraphQLLensScope.Scope"/>.
+  /// Only applies when the lens scope includes <see cref="GraphQLLensScopes.Scope"/>.
   /// Default: true
   /// </summary>
   public bool IncludeScopeInFilters { get; set; } = true;

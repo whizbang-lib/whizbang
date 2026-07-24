@@ -4,9 +4,11 @@
 #endregion
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,7 +23,8 @@ namespace Whizbang.Core.Generated;
 /// Generated IReceptorRegistry implementation with zero-reflection routing for {{RECEPTOR_COUNT}} receptor(s).
 /// Pre-categorizes ALL receptors by lifecycle stage at compile time:
 /// - Receptors WITH [FireAt(X)] are registered at stage X only
-/// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, and PostInboxInline
+/// - Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached, PreOutboxDetached, and PostInboxDetached
+/// Also supports runtime registration for integration test synchronization.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,7 +34,7 @@ namespace Whizbang.Core.Generated;
 /// (like IEventStore, DbContext) to be resolved correctly even when called from singleton services.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.IReceptorRegistry {
@@ -39,9 +42,12 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
   private static readonly IReadOnlyList<global::Whizbang.Core.Messaging.ReceptorInfo> _emptyList =
       Array.Empty<global::Whizbang.Core.Messaging.ReceptorInfo>();
 
+  // Runtime registrations: keyed by (MessageType, LifecycleStage)
+  private readonly ConcurrentDictionary<(Type MessageType, LifecycleStage Stage), List<(object Instance, global::Whizbang.Core.Messaging.ReceptorInfo Info)>> _runtimeRegistrations = new();
+
   /// <summary>
   /// Gets all receptors registered to handle the specified message type at the specified lifecycle stage.
-  /// This is a compile-time generated switch statement for optimal performance.
+  /// Returns compile-time entries concatenated with any runtime-registered entries.
   /// </summary>
   [DebuggerStepThrough]
   public IReadOnlyList<global::Whizbang.Core.Messaging.ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
@@ -49,11 +55,185 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
       throw new ArgumentNullException(nameof(messageType));
     }
 
+    // Get compile-time entries
+    global::Whizbang.Core.Messaging.ReceptorInfo[]? compileTimeEntries = null;
+
     // Generated routing: switch on (messageType, stage) combinations
     #region RECEPTOR_ROUTING
     // This region will be replaced with generated routing code
     #endregion
 
-    return _emptyList;
+    // Get runtime entries
+    var key = (messageType, stage);
+    List<(object Instance, global::Whizbang.Core.Messaging.ReceptorInfo Info)>? runtimeList = null;
+    _runtimeRegistrations.TryGetValue(key, out runtimeList);
+
+    // Fast paths: no runtime registrations
+    if (runtimeList is null || runtimeList.Count == 0) {
+      return compileTimeEntries ?? (IReadOnlyList<global::Whizbang.Core.Messaging.ReceptorInfo>)_emptyList;
+    }
+
+    // Concatenate compile-time + runtime entries
+    global::Whizbang.Core.Messaging.ReceptorInfo[] runtimeInfos;
+    lock (runtimeList) {
+      runtimeInfos = runtimeList.Select(x => x.Info).ToArray();
+    }
+
+    if (compileTimeEntries is null || compileTimeEntries.Length == 0) {
+      return runtimeInfos;
+    }
+
+    var combined = new global::Whizbang.Core.Messaging.ReceptorInfo[compileTimeEntries.Length + runtimeInfos.Length];
+    compileTimeEntries.CopyTo(combined, 0);
+    runtimeInfos.CopyTo(combined, compileTimeEntries.Length);
+    return combined;
+  }
+
+  /// <summary>
+  /// Registers a void receptor at a specific lifecycle stage for runtime invocation.
+  /// AOT-compatible: all types known at compile time via generic parameters.
+  /// </summary>
+  public void Register<TMessage>(global::Whizbang.Core.IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : global::Whizbang.Core.IMessage {
+    ArgumentNullException.ThrowIfNull(receptor);
+
+    var info = new global::Whizbang.Core.Messaging.ReceptorInfo(
+      MessageType: typeof(TMessage),
+      // Build a stable, unique ID for the runtime receptor:
+      //  - FullName (namespace + class) instead of just Name so two receptor types that
+      //    happen to share a class name in different namespaces don't share an ID.
+      //  - Suffix the lifecycle stage so the ReceptorInvoker's double-fire guardrail (which
+      //    dedups by (envelope, ReceptorId), per-receptor not per-stage) doesn't collide
+      //    when the SAME receptor instance is registered at multiple stages — common in
+      //    integration tests that register one wait helper at each of Pre/Post Inbox.
+      //    Without the stage suffix all four registrations share one ID, so once
+      //    PreInboxDetached fires the dedup store rejects the same receptor at PostInbox.
+      // Compile-time receptors keep their attribute-derived ID — they have a [FireAt] stage
+      // baked in so the collision can't happen.
+      ReceptorId: "runtime_" + (receptor.GetType().FullName ?? receptor.GetType().Name) + "_" + stage,
+      InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
+        // IAcceptsLifecycleContext via compile-time pattern match (not reflection)
+        if (receptor is global::Whizbang.Core.Messaging.IAcceptsLifecycleContext contextAware) {
+          var ctxAccessor = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleContextAccessor>();
+          if (ctxAccessor?.Current is not null) contextAware.SetLifecycleContext(ctxAccessor.Current);
+        }
+        await receptor.HandleAsync((TMessage)msg, ct);
+        return null;
+      },
+      SyncAttributes: null
+    );
+    _addRuntime(typeof(TMessage), stage, receptor, info);
+  }
+
+  /// <summary>
+  /// Unregisters a previously registered void receptor.
+  /// </summary>
+  public bool Unregister<TMessage>(global::Whizbang.Core.IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : global::Whizbang.Core.IMessage {
+    ArgumentNullException.ThrowIfNull(receptor);
+    return _removeRuntime(typeof(TMessage), stage, receptor);
+  }
+
+  /// <summary>
+  /// Registers a response receptor at a specific lifecycle stage for runtime invocation.
+  /// Enables event cascading from runtime-registered receptors.
+  /// </summary>
+  public void Register<TMessage, TResponse>(global::Whizbang.Core.IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : global::Whizbang.Core.IMessage {
+    ArgumentNullException.ThrowIfNull(receptor);
+
+    var info = new global::Whizbang.Core.Messaging.ReceptorInfo(
+      MessageType: typeof(TMessage),
+      // Build a stable, unique ID for the runtime receptor:
+      //  - FullName (namespace + class) instead of just Name so two receptor types that
+      //    happen to share a class name in different namespaces don't share an ID.
+      //  - Suffix the lifecycle stage so the ReceptorInvoker's double-fire guardrail (which
+      //    dedups by (envelope, ReceptorId), per-receptor not per-stage) doesn't collide
+      //    when the SAME receptor instance is registered at multiple stages — common in
+      //    integration tests that register one wait helper at each of Pre/Post Inbox.
+      //    Without the stage suffix all four registrations share one ID, so once
+      //    PreInboxDetached fires the dedup store rejects the same receptor at PostInbox.
+      // Compile-time receptors keep their attribute-derived ID — they have a [FireAt] stage
+      // baked in so the collision can't happen.
+      ReceptorId: "runtime_" + (receptor.GetType().FullName ?? receptor.GetType().Name) + "_" + stage,
+      InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
+        if (receptor is global::Whizbang.Core.Messaging.IAcceptsLifecycleContext contextAware) {
+          var ctxAccessor = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleContextAccessor>();
+          if (ctxAccessor?.Current is not null) contextAware.SetLifecycleContext(ctxAccessor.Current);
+        }
+        var result = await receptor.HandleAsync((TMessage)msg, ct);
+        return result;
+      },
+      SyncAttributes: null
+    );
+    _addRuntime(typeof(TMessage), stage, receptor, info);
+  }
+
+  /// <summary>
+  /// Unregisters a previously registered response receptor.
+  /// </summary>
+  public bool Unregister<TMessage, TResponse>(global::Whizbang.Core.IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : global::Whizbang.Core.IMessage {
+    ArgumentNullException.ThrowIfNull(receptor);
+    return _removeRuntime(typeof(TMessage), stage, receptor);
+  }
+
+  /// <summary>
+  /// True when any runtime-registered receptor exists for the given message-type string at any
+  /// lifecycle stage. Used by the receive-boundary drop gate in TransportConsumerWorker (and
+  /// ServiceBusConsumerWorker) to keep messages that runtime registrations are listening for
+  /// even when the compile-time consumer registry reports nothing for the type. Without this,
+  /// integration tests that register a runtime receptor for a type the service has no
+  /// compile-time consumer for would have their messages silently dropped before any inbox
+  /// row is written.
+  /// </summary>
+  public bool HasAnyRuntimeReceptors(string messageType) {
+    if (_runtimeRegistrations.IsEmpty || string.IsNullOrEmpty(messageType)) {
+      return false;
+    }
+    var normalized = _normalizeRuntimeTypeName(messageType);
+    foreach (var key in _runtimeRegistrations.Keys) {
+      var typeFullName = key.MessageType.FullName;
+      if (typeFullName is null) {
+        continue;
+      }
+      if (string.Equals(_normalizeRuntimeTypeName(typeFullName), normalized, System.StringComparison.Ordinal)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static string _normalizeRuntimeTypeName(string typeName) {
+    // Strip assembly qualifier (everything after first ", ")
+    var commaIdx = typeName.IndexOf(", ", System.StringComparison.Ordinal);
+    var nameOnly = commaIdx >= 0 ? typeName.Substring(0, commaIdx) : typeName;
+    // CLR nested-type separator (+) → C# display format (.) so envelope strings (which use
+    // ".") match Type.FullName (which uses "+" for nested types).
+    return nameOnly.Contains('+') ? nameOnly.Replace('+', '.') : nameOnly;
+  }
+
+  private void _addRuntime(Type messageType, LifecycleStage stage, object receptor, global::Whizbang.Core.Messaging.ReceptorInfo info) {
+    var key = (messageType, stage);
+    _runtimeRegistrations.AddOrUpdate(
+      key,
+      _ => [(receptor, info)],
+      (_, existingList) => {
+        lock (existingList) {
+          existingList.Add((receptor, info));
+          return existingList;
+        }
+      }
+    );
+  }
+
+  private bool _removeRuntime(Type messageType, LifecycleStage stage, object receptor) {
+    var key = (messageType, stage);
+    if (_runtimeRegistrations.TryGetValue(key, out var list)) {
+      lock (list) {
+        var index = list.FindIndex(x => ReferenceEquals(x.Instance, receptor));
+        if (index >= 0) {
+          list.RemoveAt(index);
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }

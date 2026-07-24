@@ -22,7 +22,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// };
 /// </code>
 /// </remarks>
-/// <docs>perspectives/sync</docs>
+/// <docs>fundamentals/perspectives/sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs</tests>
 public sealed record SyncInquiry {
   /// <summary>
@@ -79,7 +79,7 @@ public sealed record SyncInquiry {
   /// </para>
   /// </remarks>
   /// <value>Default: <c>false</c>.</value>
-  /// <docs>core-concepts/perspectives/perspective-sync#explicit-event-tracking</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync#explicit-event-tracking</docs>
   public bool IncludeProcessedEventIds { get; init; }
 
   /// <summary>
@@ -100,7 +100,7 @@ public sealed record SyncInquiry {
   /// </para>
   /// </remarks>
   /// <value>Default: <c>false</c>.</value>
-  /// <docs>core-concepts/perspectives/perspective-sync#cross-scope-sync</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync#cross-scope-sync</docs>
   public bool DiscoverPendingFromOutbox { get; init; }
 
   /// <summary>

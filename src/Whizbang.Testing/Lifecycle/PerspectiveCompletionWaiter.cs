@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
@@ -11,34 +10,33 @@ namespace Whizbang.Testing.Lifecycle;
 /// </summary>
 /// <typeparam name="TEvent">The event type to wait for.</typeparam>
 /// <remarks>
-/// This class is designed for integration tests that need to wait for perspectives to complete
-/// across multiple hosts before making assertions.
+/// <para>This class is designed for integration tests that need to wait for perspectives to complete
+/// across multiple hosts before making assertions.</para>
 ///
-/// Usage:
+/// <para>Usage:
 /// <code>
 /// using var waiter = new PerspectiveCompletionWaiter&lt;ProductCreatedEvent&gt;(
 ///   inventoryRegistry, bffRegistry,
-///   inventoryPerspectives: 2, bffPerspectives: 1);
+///   inventoryPerspectives: 2, bffPerspectives: 1);</para>
 ///
-/// // Send command that triggers event
-/// await dispatcher.SendAsync(new CreateProductCommand());
+/// <para>// Send command that triggers event
+/// await dispatcher.SendAsync(new CreateProductCommand());</para>
 ///
-/// // Wait for perspectives to process
+/// <para>// Wait for perspectives to process
 /// await waiter.WaitAsync();
-/// </code>
+/// </code></para>
 /// </remarks>
 public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   where TEvent : IEvent {
 
-  private readonly ILifecycleReceptorRegistry _inventoryRegistry;
-  private readonly ILifecycleReceptorRegistry _bffRegistry;
+  private readonly IReceptorRegistry _inventoryRegistry;
+  private readonly IReceptorRegistry _bffRegistry;
   private readonly CountingPerspectiveReceptor<TEvent> _inventoryReceptor;
   private readonly CountingPerspectiveReceptor<TEvent> _bffReceptor;
   private readonly TaskCompletionSource<bool> _inventoryCompletionSource;
   private readonly TaskCompletionSource<bool> _bffCompletionSource;
   private readonly int _inventoryPerspectives;
   private readonly int _bffPerspectives;
-  private readonly ILogger<PerspectiveCompletionWaiter<TEvent>>? _logger;
 
   /// <summary>
   /// Creates a new perspective completion waiter for two hosts (inventory and BFF pattern).
@@ -48,19 +46,16 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   /// <param name="bffRegistry">Lifecycle registry for the BFF/frontend host.</param>
   /// <param name="inventoryPerspectives">Number of perspectives expected on inventory host.</param>
   /// <param name="bffPerspectives">Number of perspectives expected on BFF host.</param>
-  /// <param name="logger">Optional logger.</param>
   public PerspectiveCompletionWaiter(
-    ILifecycleReceptorRegistry inventoryRegistry,
-    ILifecycleReceptorRegistry bffRegistry,
+    IReceptorRegistry inventoryRegistry,
+    IReceptorRegistry bffRegistry,
     int inventoryPerspectives,
-    int bffPerspectives,
-    ILogger<PerspectiveCompletionWaiter<TEvent>>? logger = null) {
+    int bffPerspectives) {
 
     _inventoryRegistry = inventoryRegistry ?? throw new ArgumentNullException(nameof(inventoryRegistry));
     _bffRegistry = bffRegistry ?? throw new ArgumentNullException(nameof(bffRegistry));
     _inventoryPerspectives = inventoryPerspectives;
     _bffPerspectives = bffPerspectives;
-    _logger = logger;
 
     var totalPerspectives = inventoryPerspectives + bffPerspectives;
     Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {typeof(TEvent).Name} (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives})");
@@ -109,14 +104,15 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   /// <param name="timeoutMilliseconds">Timeout in milliseconds (default: 45000ms for transport latency).</param>
   /// <exception cref="TimeoutException">Thrown if perspectives don't complete within timeout.</exception>
   public async Task WaitAsync(int timeoutMilliseconds = 45000) {
+    var effectiveTimeout = TestTimeouts.Scale(timeoutMilliseconds);
     var totalPerspectives = _inventoryPerspectives + _bffPerspectives;
-    Console.WriteLine($"[PerspectiveWaiter] Waiting for {typeof(TEvent).Name} processing (Inventory={_inventoryPerspectives}, BFF={_bffPerspectives}, Total={totalPerspectives}, timeout={timeoutMilliseconds}ms)");
+    Console.WriteLine($"[PerspectiveWaiter] Waiting for {typeof(TEvent).Name} processing (Inventory={_inventoryPerspectives}, BFF={_bffPerspectives}, Total={totalPerspectives}, timeout={effectiveTimeout}ms{(TestTimeouts.Multiplier > 1 ? $" [x{TestTimeouts.Multiplier}]" : "")})");
 
     try {
       // Wait for BOTH hosts to complete their perspectives
       await Task.WhenAll(
-        _inventoryCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds)),
-        _bffCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds))
+        _inventoryCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout)),
+        _bffCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout))
       );
       Console.WriteLine($"[PerspectiveWaiter] All {totalPerspectives} perspectives completed for {typeof(TEvent).Name}!");
     } catch (TimeoutException) {

@@ -13,7 +13,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <item><description><see cref="FireOnEachEvent"/>: Future streaming mode for event-by-event processing.</description></item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#fire-behavior</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#fire-behavior</docs>
 public enum SyncFireBehavior {
   /// <summary>
   /// Only invoke handler if sync completes successfully. Throw on timeout.

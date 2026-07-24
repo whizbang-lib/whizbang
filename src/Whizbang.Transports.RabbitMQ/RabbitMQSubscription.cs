@@ -9,7 +9,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// RabbitMQ implementation of ISubscription.
 /// Manages subscription lifecycle (pause, resume, dispose) for a RabbitMQ consumer.
 /// </summary>
-/// <docs>components/transports/rabbitmq</docs>
+/// <docs>messaging/transports/rabbitmq</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Subscription lifecycle management - simple logging where LoggerMessage overhead isn't justified")]
 public sealed class RabbitMQSubscription : ISubscription {
   private readonly IChannel _channel;

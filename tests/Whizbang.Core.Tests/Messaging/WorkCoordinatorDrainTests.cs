@@ -1,6 +1,7 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -26,13 +27,13 @@ public class WorkCoordinatorDrainTests {
     var strategy = _createStrategy(workCoordinator, deferredChannel);
 
     // Act
-    var batch = await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Deferred messages included in batch request
-    await Assert.That(workCoordinator.LastRequest).IsNotNull();
-    await Assert.That(workCoordinator.LastRequest!.NewOutboxMessages).Count().IsEqualTo(2);
-    await Assert.That(workCoordinator.LastRequest!.NewOutboxMessages[0].MessageId).IsEqualTo(message1.MessageId);
-    await Assert.That(workCoordinator.LastRequest!.NewOutboxMessages[1].MessageId).IsEqualTo(message2.MessageId);
+    await Assert.That(workCoordinator.LastStoredOutbox).IsNotNull();
+    await Assert.That(workCoordinator.LastStoredOutbox).Count().IsEqualTo(2);
+    await Assert.That(workCoordinator.LastStoredOutbox[0].MessageId).IsEqualTo(message1.MessageId);
+    await Assert.That(workCoordinator.LastStoredOutbox[1].MessageId).IsEqualTo(message2.MessageId);
     // Channel should be empty after drain
     await Assert.That(deferredChannel.HasPending).IsFalse();
   }
@@ -47,11 +48,11 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(_createTestOutboxMessage(Guid.NewGuid()));
 
     // Act
-    var batch = await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Still works without deferred channel
-    await Assert.That(workCoordinator.LastRequest).IsNotNull();
-    await Assert.That(workCoordinator.LastRequest!.NewOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(workCoordinator.LastStoredOutbox).IsNotNull();
+    await Assert.That(workCoordinator.LastStoredOutbox).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -66,12 +67,12 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
-    var batch = await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Only the directly queued message
-    await Assert.That(workCoordinator.LastRequest).IsNotNull();
-    await Assert.That(workCoordinator.LastRequest!.NewOutboxMessages).Count().IsEqualTo(1);
-    await Assert.That(workCoordinator.LastRequest!.NewOutboxMessages[0].MessageId).IsEqualTo(directMessage.MessageId);
+    await Assert.That(workCoordinator.LastStoredOutbox).IsNotNull();
+    await Assert.That(workCoordinator.LastStoredOutbox).Count().IsEqualTo(1);
+    await Assert.That(workCoordinator.LastStoredOutbox[0].MessageId).IsEqualTo(directMessage.MessageId);
   }
 
   [Test]
@@ -88,13 +89,13 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
-    var batch = await strategy.FlushAsync(WorkBatchFlags.None);
+    var batch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert: Both messages included
-    await Assert.That(workCoordinator.LastRequest).IsNotNull();
-    await Assert.That(workCoordinator.LastRequest!.NewOutboxMessages).Count().IsEqualTo(2);
+    await Assert.That(workCoordinator.LastStoredOutbox).IsNotNull();
+    await Assert.That(workCoordinator.LastStoredOutbox).Count().IsEqualTo(2);
     // Deferred messages should come first (prepended)
-    var messageIds = workCoordinator.LastRequest!.NewOutboxMessages.Select(m => m.MessageId).ToList();
+    var messageIds = workCoordinator.LastStoredOutbox.Select(m => m.MessageId).ToList();
     await Assert.That(messageIds).Contains(deferredMessage.MessageId);
     await Assert.That(messageIds).Contains(directMessage.MessageId);
   }
@@ -109,17 +110,17 @@ public class WorkCoordinatorDrainTests {
     var strategy = _createStrategy(workCoordinator, deferredChannel);
 
     // Act - first flush
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Queue another deferred message
     await deferredChannel.QueueAsync(_createTestOutboxMessage(Guid.NewGuid()));
 
     // Act - second flush
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Second flush got the second message
     await Assert.That(workCoordinator.FlushCount).IsEqualTo(2);
-    await Assert.That(workCoordinator.LastRequest!.NewOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(workCoordinator.LastStoredOutbox).Count().IsEqualTo(1);
   }
 
   // ========================================
@@ -127,12 +128,11 @@ public class WorkCoordinatorDrainTests {
   // ========================================
 
   private sealed class StubWorkCoordinator : IWorkCoordinator {
-    public ProcessWorkBatchRequest? LastRequest { get; private set; }
+    public OutboxMessage[] LastStoredOutbox { get; private set; } = [];
     public int FlushCount { get; private set; }
 
-    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
-      LastRequest = request;
-      FlushCount++;
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
+      // Legacy fallback (not in live path).
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -140,16 +140,31 @@ public class WorkCoordinatorDrainTests {
       });
     }
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCheckpointCompletion completion, CancellationToken ct = default) {
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      FlushCount++;
+      LastStoredOutbox = messages;
       return Task.CompletedTask;
     }
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCheckpointFailure failure, CancellationToken ct = default) {
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      FlushCount++;
+      return Task.CompletedTask;
+    }
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -165,7 +180,7 @@ public class WorkCoordinatorDrainTests {
       new ServiceInstanceProvider(configuration: null),
       new WorkCoordinatorOptions(),
       logger: null,
-      lifecycleInvoker: null,
+      scopeFactory: null,
       lifecycleMessageDeserializer: null,
       tracingOptions: null,
       deferredChannel: deferredChannel
@@ -190,7 +205,8 @@ public class WorkCoordinatorDrainTests {
     return new MessageEnvelope<System.Text.Json.JsonElement> {
       MessageId = new MessageId(messageId),
       Payload = json,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 }

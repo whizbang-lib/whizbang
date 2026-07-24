@@ -41,7 +41,7 @@ namespace Whizbang.Core.Perspectives;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/perspectives-with-actions</docs>
+/// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
 public interface IPerspectiveWithActionsFor<TModel> where TModel : class {
   // Marker interface - no methods required
   // Specific event handling enforced by IPerspectiveWithActionsFor<TModel, TEvent> variants
@@ -64,8 +64,8 @@ public interface IPerspectiveWithActionsFor<TModel> where TModel : class {
 /// <item>No change via <c>ApplyResult&lt;TModel&gt;.None()</c></item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/perspectives-with-actions</docs>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1> : IPerspectiveWithActionsFor<TModel>
+/// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1>
   where TModel : class
   where TEvent1 : IEvent {
   /// <summary>
@@ -85,63 +85,77 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1> : IPerspectiveWithA
 /// <summary>
 /// Perspective with action support for two event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
 }
 
 /// <summary>
 /// Perspective with action support for three event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
 }
 
 /// <summary>
 /// Perspective with action support for four event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent
   where TEvent4 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
 }
 
 /// <summary>
 /// Perspective with action support for five event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent
   where TEvent4 : IEvent
   where TEvent5 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
 }
 
 /// <summary>
 /// Perspective with action support for six event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -149,18 +163,24 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent4 : IEvent
   where TEvent5 : IEvent
   where TEvent6 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
 }
 
 /// <summary>
 /// Perspective with action support for seven event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -169,19 +189,26 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent5 : IEvent
   where TEvent6 : IEvent
   where TEvent7 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent7 eventData);
 }
 
 /// <summary>
 /// Perspective with action support for eight event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -191,20 +218,28 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent6 : IEvent
   where TEvent7 : IEvent
   where TEvent8 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent8 eventData);
 }
 
 /// <summary>
 /// Perspective with action support for nine event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -215,21 +250,30 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent7 : IEvent
   where TEvent8 : IEvent
   where TEvent9 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent9 eventData);
 }
 
 /// <summary>
 /// Perspective with action support for ten event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -241,14 +285,24 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent8 : IEvent
   where TEvent9 : IEvent
   where TEvent10 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent10 eventData);
 }

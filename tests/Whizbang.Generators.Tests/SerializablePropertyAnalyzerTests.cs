@@ -23,7 +23,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithObjectProperty_ReportsWHIZ060Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -47,7 +47,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_EventWithObjectProperty_ReportsWHIZ060Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -70,7 +70,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithNullableObjectProperty_ReportsWHIZ060Async() {
     // Arrange - Note: object? in records is still just object in IL
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -95,7 +95,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_EventWithDynamicProperty_ReportsWHIZ061Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -121,7 +121,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithNonGenericIEnumerable_ReportsWHIZ062Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System.Collections;
             using Whizbang.Core;
 
@@ -148,7 +148,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithNonGenericIList_ReportsWHIZ062Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System.Collections;
             using Whizbang.Core;
 
@@ -174,7 +174,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithCustomInterface_ReportsWHIZ062Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -205,7 +205,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithGenericIEnumerable_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System.Collections.Generic;
             using Whizbang.Core;
 
@@ -231,7 +231,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithGenericIList_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System.Collections.Generic;
             using Whizbang.Core;
 
@@ -257,7 +257,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithListOfString_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System.Collections.Generic;
             using Whizbang.Core;
 
@@ -281,7 +281,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithConcreteCustomType_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -311,7 +311,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithPrimitiveProperties_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -346,7 +346,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NestedTypeWithObjectProperty_ReportsWHIZ063Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -376,7 +376,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_DeeplyNestedTypeWithObjectProperty_ReportsWHIZ063Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -413,7 +413,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ListOfNestedTypeWithObjectProperty_ReportsWHIZ063Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System.Collections.Generic;
             using Whizbang.Core;
 
@@ -443,7 +443,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ArrayOfNestedTypeWithObjectProperty_ReportsWHIZ063Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -476,7 +476,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CircularReference_NoInfiniteLoopAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -509,7 +509,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_SelfReferencingType_NoInfiniteLoopAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -540,7 +540,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_DiamondDependency_ChecksOnceAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -582,7 +582,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NonMessageClassWithObjectProperty_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             namespace TestApp;
 
             public class RegularClass {
@@ -605,7 +605,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_WhizbangSerializableWithObjectProperty_ReportsWHIZ060Async() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang;
 
             namespace TestApp;
@@ -631,7 +631,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_InternalMessageType_IgnoredAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -660,7 +660,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_StaticObjectProperty_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -686,7 +686,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_PrivateObjectProperty_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -712,7 +712,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_InternalObjectProperty_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -742,7 +742,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_StringProperty_NotRecursedAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -767,7 +767,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MultipleNonSerializableProperties_ReportsAllAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System.Collections;
             using Whizbang.Core;
 
@@ -797,7 +797,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NullableIntProperty_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
@@ -823,7 +823,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_DictionaryProperty_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System.Collections.Generic;
             using Whizbang.Core;
 
@@ -850,7 +850,7 @@ public class SerializablePropertyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_CommandWithNoProperties_NoErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace TestApp;

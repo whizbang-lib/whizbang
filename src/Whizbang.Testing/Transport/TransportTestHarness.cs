@@ -1,3 +1,5 @@
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -18,36 +20,30 @@ namespace Whizbang.Testing.Transport;
 /// </para>
 /// </remarks>
 /// <typeparam name="TPayload">The message payload type being tested.</typeparam>
-public sealed class TransportTestHarness<TPayload> : IAsyncDisposable
+/// <remarks>
+/// Creates a new transport test harness.
+/// </remarks>
+/// <param name="transport">The transport to test.</param>
+/// <param name="envelopeFactory">
+/// Factory to create envelopes. The string parameter is the content/warmup ID.
+/// </param>
+/// <param name="contentSelector">
+/// Function to extract content string from payload for warmup detection.
+/// </param>
+public sealed class TransportTestHarness<TPayload>(
+  ITransport transport,
+  Func<string, IMessageEnvelope<TPayload>> envelopeFactory,
+  Func<TPayload, string> contentSelector
+  ) : IAsyncDisposable
   where TPayload : class {
-  private readonly ITransport _transport;
-  private readonly Func<string, IMessageEnvelope<TPayload>> _envelopeFactory;
-  private readonly Func<TPayload, string> _contentSelector;
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly Func<string, IMessageEnvelope<TPayload>> _envelopeFactory = envelopeFactory ?? throw new ArgumentNullException(nameof(envelopeFactory));
+  private readonly Func<TPayload, string> _contentSelector = contentSelector ?? throw new ArgumentNullException(nameof(contentSelector));
   private readonly List<IDisposable> _subscriptions = [];
 
   private string? _currentWarmupId;
   private SignalAwaiter? _warmupAwaiter;
   private MessageAwaiter<IMessageEnvelope>? _testAwaiter;
-
-  /// <summary>
-  /// Creates a new transport test harness.
-  /// </summary>
-  /// <param name="transport">The transport to test.</param>
-  /// <param name="envelopeFactory">
-  /// Factory to create envelopes. The string parameter is the content/warmup ID.
-  /// </param>
-  /// <param name="contentSelector">
-  /// Function to extract content string from payload for warmup detection.
-  /// </param>
-  public TransportTestHarness(
-    ITransport transport,
-    Func<string, IMessageEnvelope<TPayload>> envelopeFactory,
-    Func<TPayload, string> contentSelector
-  ) {
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _envelopeFactory = envelopeFactory ?? throw new ArgumentNullException(nameof(envelopeFactory));
-    _contentSelector = contentSelector ?? throw new ArgumentNullException(nameof(contentSelector));
-  }
 
   /// <summary>
   /// Sets up a subscription with automatic warmup handling.
@@ -73,9 +69,14 @@ public sealed class TransportTestHarness<TPayload> : IAsyncDisposable
       );
 
     // Subscribe
-    var subscription = await _transport.SubscribeAsync(
-      handler,
+    var subscription = await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await handler(msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       subscribeDestination,
+      new Whizbang.Core.Workers.TransportBatchOptions(),
       cancellationToken
     );
     _subscriptions.Add(subscription);
@@ -163,7 +164,8 @@ public static class TransportTestHarness {
             ServiceInstance = ServiceInstanceInfo.Unknown,
             TraceParent = System.Diagnostics.Activity.Current?.Id
           }
-        ]
+        ],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       },
       contentSelector
     );

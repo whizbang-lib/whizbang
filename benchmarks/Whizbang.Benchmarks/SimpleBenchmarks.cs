@@ -1,5 +1,7 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Sequencing;
 using Whizbang.Core.ValueObjects;
@@ -90,6 +92,7 @@ public class SimpleBenchmarks {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
     envelope.AddHop(new MessageHop {
@@ -118,6 +121,6 @@ public class SimpleBenchmarks {
   public async Task TraceStore_StoreAndRetrieveAsync() {
     var envelope = CreateEnvelope();
     await _traceStore.StoreAsync(envelope);
-    var retrieved = await _traceStore.GetByMessageIdAsync(envelope.MessageId);
+    _ = await _traceStore.GetByMessageIdAsync(envelope.MessageId);
   }
 }

@@ -205,12 +205,10 @@ public static class DomainOwnershipDetector {
     // Traverse from end, skipping generic segments
     for (var i = parts.Length - 1; i >= 0; i--) {
       var segment = parts[i];
-      if (!_genericSegments.Contains(segment)) {
-        // Found a potential domain segment
-        // But don't use the root namespace (typically company name)
-        if (i > 0) {
-          return segment.ToLowerInvariant();
-        }
+      // Found a potential domain segment
+      // But don't use the root namespace (typically company name)
+      if (!_genericSegments.Contains(segment) && i > 0) {
+        return segment.ToLowerInvariant();
       }
     }
 

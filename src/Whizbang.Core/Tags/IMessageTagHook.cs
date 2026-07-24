@@ -38,7 +38,7 @@ namespace Whizbang.Core.Tags;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#hooks</docs>
+/// <docs>fundamentals/messages/message-tags#hooks</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagHookTests.cs</tests>
 public interface IMessageTagHook<TAttribute> where TAttribute : MessageTagAttribute {
   /// <summary>

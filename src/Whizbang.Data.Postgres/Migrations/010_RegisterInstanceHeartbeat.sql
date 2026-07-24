@@ -4,6 +4,8 @@
 --              Used by process_work_batch orchestrator to maintain instance liveness tracking.
 -- Dependencies: 001-009 (requires wh_service_instances table)
 
+SELECT __SCHEMA__.drop_all_overloads('register_instance_heartbeat');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.register_instance_heartbeat(
   p_instance_id UUID,
   p_service_name VARCHAR(200),
@@ -14,9 +16,16 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.register_instance_heartbeat(
   p_lease_expiry TIMESTAMPTZ
 ) RETURNS VOID AS $$
 BEGIN
-  -- Insert or update instance heartbeat
-  -- ON CONFLICT ensures idempotency for repeated calls
-  INSERT INTO wh_service_instances (
+  -- Insert or update instance heartbeat.
+  -- ON CONFLICT ensures idempotency for repeated calls.
+  --
+  -- Freshness guard: the UPDATE path is skipped when the existing
+  -- last_heartbeat_at is within 10 seconds of p_now. This avoids a WAL-heavy
+  -- write-per-tick pattern observed in a consumer production (millions of UPDATEs
+  -- on a tiny wh_service_instances table). 10 s leaves 20 s of safety margin
+  -- before cleanup_stale_instances (default p_stale_threshold_seconds = 30 s)
+  -- would mark this instance stale.
+  INSERT INTO __SCHEMA__.wh_service_instances (
     instance_id,
     service_name,
     host_name,
@@ -35,7 +44,8 @@ BEGIN
   )
   ON CONFLICT (instance_id) DO UPDATE SET
     last_heartbeat_at = p_now,
-    metadata = COALESCE(EXCLUDED.metadata, wh_service_instances.metadata);
+    metadata = COALESCE(EXCLUDED.metadata, wh_service_instances.metadata)
+    WHERE wh_service_instances.last_heartbeat_at < p_now - interval '10 seconds';
 END;
 $$ LANGUAGE plpgsql;
 

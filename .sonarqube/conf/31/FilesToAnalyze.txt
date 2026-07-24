@@ -1,2 +1,0 @@
-﻿/Users/philcarbone/src/whizbang/tools/Whizbang.CLI/Program.cs
-/Users/philcarbone/src/whizbang/README.md

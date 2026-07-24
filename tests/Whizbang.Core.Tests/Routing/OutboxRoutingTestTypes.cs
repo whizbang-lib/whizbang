@@ -23,6 +23,6 @@ namespace OutboxTestTypes.Users.Events {
 }
 
 // Type without namespace for edge case testing
-#pragma warning disable CA1050 // Declare types in namespaces
+#pragma warning disable CA1050, RCS1110 // Intentional: edge case test for a type declared without any namespace.
 public sealed record TypeWithoutNamespace;
-#pragma warning restore CA1050
+#pragma warning restore CA1050, RCS1110

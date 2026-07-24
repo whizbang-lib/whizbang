@@ -32,7 +32,7 @@ public class FireAtAttributeTests {
 
     // Assert
     await Assert.That(attributes.Count).IsEqualTo(1);
-    await Assert.That(attributes[0].Stage).IsEqualTo(LifecycleStage.PostPerspectiveAsync);
+    await Assert.That(attributes[0].Stage).IsEqualTo(LifecycleStage.PostPerspectiveDetached);
   }
 
   /// <summary>
@@ -49,8 +49,8 @@ public class FireAtAttributeTests {
 
     // Assert
     await Assert.That(attributes.Count).IsEqualTo(3);
-    await Assert.That(attributes[0].Stage).IsEqualTo(LifecycleStage.ImmediateAsync);
-    await Assert.That(attributes[1].Stage).IsEqualTo(LifecycleStage.PostPerspectiveAsync);
+    await Assert.That(attributes[0].Stage).IsEqualTo(LifecycleStage.ImmediateDetached);
+    await Assert.That(attributes[1].Stage).IsEqualTo(LifecycleStage.PostPerspectiveDetached);
     await Assert.That(attributes[2].Stage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
   }
 
@@ -87,15 +87,15 @@ public class FireAtAttributeTests {
   }
 
   // Test receptors for attribute discovery tests
-  [FireAt(LifecycleStage.PostPerspectiveAsync)]
+  [FireAt(LifecycleStage.PostPerspectiveDetached)]
   internal sealed class TestReceptorWithFireAt : IReceptor<TestMessage> {
     public ValueTask HandleAsync(TestMessage message, CancellationToken cancellationToken = default) {
       return ValueTask.CompletedTask;
     }
   }
 
-  [FireAt(LifecycleStage.ImmediateAsync)]
-  [FireAt(LifecycleStage.PostPerspectiveAsync)]
+  [FireAt(LifecycleStage.ImmediateDetached)]
+  [FireAt(LifecycleStage.PostPerspectiveDetached)]
   [FireAt(LifecycleStage.PostPerspectiveInline)]
   internal sealed class TestReceptorWithMultipleFireAt : IReceptor<TestMessage> {
     public ValueTask HandleAsync(TestMessage message, CancellationToken cancellationToken = default) {

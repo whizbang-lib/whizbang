@@ -36,6 +36,7 @@ namespace Whizbang.Core.Generated {
     internal static void Initialize() {
       // Register dispatcher callback - includes receptors, registry, and all dispatcher infrastructure
       global::Whizbang.Core.ServiceRegistrationCallbacks.Dispatcher = services => {
+        services.AddReceptors();
         services.AddWhizbangDispatcher();
       };
     }
@@ -109,7 +110,6 @@ namespace Whizbang.Core.Generated {
         var envelopeSerializer = sp.GetService<IEnvelopeSerializer>();
         var envelopeRegistry = sp.GetService<IEnvelopeRegistry>();
         var outboxRoutingStrategy = sp.GetService<IOutboxRoutingStrategy>();
-        var lifecycleInvoker = sp.GetService<ILifecycleInvoker>();
         // IReceptorRegistry is singleton - safe to resolve here
         // IReceptorInvoker is scoped - resolved by workers per-message, not by Dispatcher
         var receptorRegistry = sp.GetService<IReceptorRegistry>();
@@ -121,21 +121,9 @@ namespace Whizbang.Core.Generated {
 
         // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, receptorRegistry, scopedEventTracker: null, syncEventTracker, trackedEventTypeRegistry);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, receptorRegistry, scopedEventTracker: null, syncEventTracker, trackedEventTypeRegistry);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
-      return services;
-    }
-
-    /// <summary>
-    /// Registers the generated zero-reflection lifecycle invoker.
-    /// Stateless routing component registered as Singleton for optimal performance.
-    /// Routes lifecycle invocations based on message type and lifecycle stage from [FireAt] attributes.
-    /// </summary>
-    [ExcludeFromCodeCoverage]
-    [DebuggerNonUserCode]
-    public static IServiceCollection AddWhizbangLifecycleInvoker(this IServiceCollection services) {
-      services.AddSingleton<ILifecycleInvoker, GeneratedLifecycleInvoker>();
       return services;
     }
 
@@ -158,7 +146,7 @@ namespace Whizbang.Core.Generated {
     /// Registers the generated zero-reflection receptor registry and invoker.
     /// Pre-categorizes ALL receptors by lifecycle stage at compile time:
     /// - Receptors WITH [FireAt(X)] are registered at stage X only
-    /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, PostInboxInline
+    /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached, PreOutboxDetached, PostInboxDetached
     /// </summary>
     /// <remarks>
     /// <para>
@@ -175,6 +163,12 @@ namespace Whizbang.Core.Generated {
     public static IServiceCollection AddWhizbangReceptorRegistry(this IServiceCollection services) {
       services.AddSingleton<IReceptorRegistry, GeneratedReceptorRegistry>();
       services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
+      // Default dedup store: records receptor invocations on the envelope itself.
+      // TryAddSingleton lets a consumer replace this with a DB-backed implementation.
+      services.TryAddSingleton<IReceptorDedupStore, EnvelopeReceptorDedupStore>();
+      // ChaosInjectorInvoker resolves an optional IChaosInjector and gates it behind
+      // WhizbangOptions.Guardrails.EnableChaosHooks. No production cost when disabled.
+      services.TryAddSingleton<ChaosInjectorInvoker>();
       return services;
     }
   }

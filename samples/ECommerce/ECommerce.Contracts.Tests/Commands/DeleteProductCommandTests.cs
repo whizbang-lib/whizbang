@@ -9,7 +9,7 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for DeleteProductCommand
 /// </summary>
 public class DeleteProductCommandTests {
-  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private static readonly Uuid7IdProvider _idProvider = new();
   [Test]
   public async Task DeleteProductCommand_WithValidProductId_InitializesSuccessfullyAsync() {
     // Arrange & Act

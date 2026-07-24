@@ -7,7 +7,7 @@
     <WhizbangTestType>Unit</WhizbangTestType>
     <!-- Enable viewing generated files -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
     <!-- Don't capture test output so Console.WriteLine appears in terminal -->
     <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
     <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
@@ -28,6 +28,7 @@
     <PackageReference Include="Rocks" />
     <PackageReference Include="Bogus" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />

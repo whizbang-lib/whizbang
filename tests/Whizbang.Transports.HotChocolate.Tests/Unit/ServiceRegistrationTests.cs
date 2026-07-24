@@ -45,9 +45,9 @@ public class ServiceRegistrationTests {
   [Test]
   public async Task AddWhizbangLenses_WithOptions_ShouldApplyConfigurationAsync() {
     // Arrange
-    var configuredScope = GraphQLLensScope.All;
-    var configuredPageSize = 25;
-    var configuredMaxPageSize = 200;
+    const GraphQLLensScopes configuredScope = GraphQLLensScopes.All;
+    const int configuredPageSize = 25;
+    const int configuredMaxPageSize = 200;
 
     // Act
     var serviceProvider = new ServiceCollection()
@@ -92,7 +92,7 @@ public class ServiceRegistrationTests {
 
     // Assert - should use defaults
     await Assert.That(options).IsNotNull();
-    await Assert.That(options!.DefaultScope).IsEqualTo(GraphQLLensScope.DataOnly);
+    await Assert.That(options!.DefaultScope).IsEqualTo(GraphQLLensScopes.DataOnly);
     await Assert.That(options.DefaultPageSize).IsEqualTo(10);
     await Assert.That(options.MaxPageSize).IsEqualTo(100);
   }
@@ -176,7 +176,7 @@ public class ServiceRegistrationTests {
   [Test]
   public async Task AddWhizbangLenses_WithCustomScope_ShouldPersistAsync() {
     // Arrange
-    var customScope = GraphQLLensScope.Data | GraphQLLensScope.SystemFields;
+    const GraphQLLensScopes customScope = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields;
 
     // Act
     var serviceProvider = new ServiceCollection()
@@ -196,10 +196,10 @@ public class ServiceRegistrationTests {
     await Assert.That(options).IsNotNull();
     await Assert.That(options!.DefaultScope).IsEqualTo(customScope);
 
-    var hasData = options.DefaultScope.HasFlag(GraphQLLensScope.Data);
-    var hasSystemFields = options.DefaultScope.HasFlag(GraphQLLensScope.SystemFields);
-    var hasMetadata = options.DefaultScope.HasFlag(GraphQLLensScope.Metadata);
-    var hasScope = options.DefaultScope.HasFlag(GraphQLLensScope.Scope);
+    var hasData = options.DefaultScope.HasFlag(GraphQLLensScopes.Data);
+    var hasSystemFields = options.DefaultScope.HasFlag(GraphQLLensScopes.SystemFields);
+    var hasMetadata = options.DefaultScope.HasFlag(GraphQLLensScopes.Metadata);
+    var hasScope = options.DefaultScope.HasFlag(GraphQLLensScopes.Scope);
 
     await Assert.That(hasData).IsTrue();
     await Assert.That(hasSystemFields).IsTrue();

@@ -2,6 +2,20 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
+  <!--
+    NuGetAudit suppressions. Scoped to specific advisories with no available upstream fix, so the
+    build's TreatWarningsAsErrors does not block on unactionable transitive CVEs. Every other
+    advisory still fails the build. Revisit each when the upstream ships a patched release.
+  -->
+  <ItemGroup>
+    <!--
+      CVE-2025-6965 (GHSA-2m69-gcr7-jv3q) — SQLitePCLRaw.lib.e_sqlite3 <= 2.1.11 bundles a SQLite
+      older than 3.50.2. Transitive via Microsoft.Data.Sqlite; the latest published e_sqlite3 is
+      still 2.1.11, so there is no fixed version to bump to yet. Remove this suppression once
+      SQLitePCLRaw ships a build bundling SQLite >= 3.50.2.
+    -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+  </ItemGroup>
   <ItemGroup>
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.1.0" />
     <PackageVersion Include="Aspire.Hosting.Azure.ServiceBus" Version="13.1.0" />
@@ -9,6 +23,7 @@
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.1.0" />
     <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.1.0" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
+    <PackageVersion Include="Azure.Storage.Blobs" Version="12.24.0" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageVersion Include="Bogus" Version="35.6.5" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4">
@@ -18,11 +33,17 @@
     <PackageVersion Include="Dapper" Version="2.1.66" />
     <PackageVersion Include="FastEndpoints" Version="7.2.0" />
     <PackageVersion Include="FastEndpoints.Swagger" Version="7.2.0" />
-    <PackageVersion Include="HotChocolate.AspNetCore" Version="15.1.12" />
-    <PackageVersion Include="HotChocolate.Data" Version="15.1.12" />
+    <PackageVersion Include="HotChocolate.AspNetCore" Version="15.1.14" />
+    <PackageVersion Include="HotChocolate.Data" Version="15.1.14" />
     <PackageVersion Include="ILRepack.Lib.MSBuild.Task" Version="2.0.44.1" />
     <PackageVersion Include="Medo.Uuid7" Version="3.2.0" />
+    <!-- Transitive via Aspire.Hosting -> StreamJsonRpc. Pinned to patch CVE-2026-48109
+         (GHSA-hv8m-jj95-wg3x, LZ4 OOB read); 2.5.192 is vulnerable, 2.5.301 is the patched
+         2.x release. Consumed via direct PackageReferences in the Whizbang.Hosting.* projects. -->
+    <PackageVersion Include="MessagePack" Version="2.5.301" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.2" />
+    <!-- Transitively pinned to patch GHSA-v5pm-xwqc-g5wc (CVE-2026-49451): Microsoft.AspNetCore.OpenApi 10.0.2 pulls Microsoft.OpenApi 2.0.0, which is vulnerable. 2.7.5 is the first patched 2.x release. -->
+    <PackageVersion Include="Microsoft.OpenApi" Version="2.7.5" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="4.14.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
@@ -45,18 +66,19 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.2" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.2.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.1.0" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.2.0" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.3.2" />
     <PackageVersion Include="Microsoft.Testing.Extensions.Retry" Version="2.0.2" />
     <PackageVersion Include="Npgsql" Version="10.0.1" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <PackageVersion Include="Pgvector.EntityFrameworkCore" Version="0.3.0" />
-    <PackageVersion Include="OpenTelemetry.Api" Version="1.15.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.0" />
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
     <PackageVersion Include="PolySharp" Version="1.15.0" />
     <PackageVersion Include="RabbitMQ.Client" Version="7.2.0" />
     <PackageVersion Include="Rocks" Version="10.0.0" />
@@ -67,10 +89,17 @@
     <PackageVersion Include="Testcontainers.Azurite" Version="4.10.0" />
     <PackageVersion Include="TUnit" Version="1.12.125" />
     <PackageVersion Include="TUnit.Assertions" Version="1.12.125" />
+    <PackageVersion Include="TUnit.Core" Version="1.12.125" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.2" />
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.2" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="13.1.0" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
     <PackageVersion Include="LibGit2Sharp" Version="0.31.0" />
+    <!-- Language Server Protocol -->
+    <PackageVersion Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />
+    <!-- Full-text search -->
+    <PackageVersion Include="Lucene.Net" Version="4.8.0-beta00017" />
+    <PackageVersion Include="Lucene.Net.Analysis.Common" Version="4.8.0-beta00017" />
+    <PackageVersion Include="Lucene.Net.QueryParser" Version="4.8.0-beta00017" />
   </ItemGroup>
 </Project>

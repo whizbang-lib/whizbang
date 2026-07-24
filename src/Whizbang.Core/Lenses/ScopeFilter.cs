@@ -4,20 +4,20 @@ namespace Whizbang.Core.Lenses;
 /// Composable scope filters for lens queries.
 /// Combine with bitwise OR to apply multiple filters.
 /// </summary>
-/// <docs>core-concepts/scoping#composable-filters</docs>
+/// <docs>fundamentals/security/scoping#composable-filters</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs</tests>
 /// <example>
 /// // Single filter
-/// var tenantFilter = ScopeFilter.Tenant;
+/// var tenantFilter = ScopeFilters.Tenant;
 ///
 /// // Combined filters (all conditions must match)
-/// var userFilter = ScopeFilter.Tenant | ScopeFilter.User;
+/// var userFilter = ScopeFilters.Tenant | ScopeFilters.User;
 ///
 /// // User OR Principal access (special OR logic)
-/// var sharedFilter = ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal;
+/// var sharedFilter = ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal;
 /// </example>
 [Flags]
-public enum ScopeFilter {
+public enum ScopeFilters {
   /// <summary>
   /// No filtering - full access to all data (admin/global).
   /// </summary>
@@ -51,28 +51,28 @@ public enum ScopeFilter {
 }
 
 /// <summary>
-/// Extension methods and common filter patterns for ScopeFilter.
+/// Extension methods and common filter patterns for ScopeFilters.
 /// </summary>
-/// <docs>core-concepts/scoping#filter-patterns</docs>
+/// <docs>fundamentals/security/scoping#filter-patterns</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs</tests>
 public static class ScopeFilterExtensions {
   /// <summary>
   /// Common pattern: Tenant + User isolation.
   /// WHERE TenantId = ? AND UserId = ?
   /// </summary>
-  public static ScopeFilter TenantUser => ScopeFilter.Tenant | ScopeFilter.User;
+  public static ScopeFilters TenantUser => ScopeFilters.Tenant | ScopeFilters.User;
 
   /// <summary>
   /// Common pattern: Tenant + Principal-based access.
   /// WHERE TenantId = ? AND AllowedPrincipals ?| [...]
   /// </summary>
-  public static ScopeFilter TenantPrincipal => ScopeFilter.Tenant | ScopeFilter.Principal;
+  public static ScopeFilters TenantPrincipal => ScopeFilters.Tenant | ScopeFilters.Principal;
 
   /// <summary>
   /// Common pattern: Tenant + User's own OR shared with them.
   /// Note: User + Principal are OR'd, not AND'd.
   /// WHERE TenantId = ? AND (UserId = ? OR AllowedPrincipals ?| [...])
   /// </summary>
-  public static ScopeFilter TenantUserOrPrincipal =>
-    ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal;
+  public static ScopeFilters TenantUserOrPrincipal =>
+    ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal;
 }

@@ -54,7 +54,7 @@ public class PerspectiveRowTypeTests {
     var schema = await new ServiceCollection()
         .AddGraphQL()
         .AddQueryType<DataOnlyQuery>()
-        .AddWhizbangLenses(options => options.DefaultScope = GraphQLLensScope.DataOnly)
+        .AddWhizbangLenses(options => options.DefaultScope = GraphQLLensScopes.DataOnly)
         .BuildSchemaAsync();
 
     // Act - Print schema to check structure
@@ -145,7 +145,7 @@ public class PerspectiveRowTypeTests {
     var schema = await new ServiceCollection()
         .AddGraphQL()
         .AddQueryType<TestQuery>()
-        .AddWhizbangLenses(options => options.DefaultScope = GraphQLLensScope.All)
+        .AddWhizbangLenses(options => options.DefaultScope = GraphQLLensScopes.All)
         .BuildSchemaAsync();
 
     // Assert
@@ -158,7 +158,7 @@ public class PerspectiveRowTypeTests {
     var schema = await new ServiceCollection()
         .AddGraphQL()
         .AddQueryType<TestQuery>()
-        .AddWhizbangLenses(options => options.DefaultScope = GraphQLLensScope.NoData)
+        .AddWhizbangLenses(options => options.DefaultScope = GraphQLLensScopes.NoData)
         .BuildSchemaAsync();
 
     // Assert
@@ -171,7 +171,7 @@ public class PerspectiveRowTypeTests {
     var schema = await new ServiceCollection()
         .AddGraphQL()
         .AddQueryType<TestQuery>()
-        .AddWhizbangLenses(options => options.DefaultScope = GraphQLLensScope.Data | GraphQLLensScope.SystemFields)
+        .AddWhizbangLenses(options => options.DefaultScope = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields)
         .BuildSchemaAsync();
 
     // Assert

@@ -36,7 +36,7 @@ public static class WhizbangModelBuilderExtensions {
       _configureServiceInstance(modelBuilder);
       _configureMessageDeduplication(modelBuilder);
       _configureMessageAssociations(modelBuilder);
-      _configurePerspectiveCheckpoints(modelBuilder);
+      _configurePerspectiveCursors(modelBuilder);
       return modelBuilder;
     }
   }
@@ -113,15 +113,33 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.AggregateType).HasColumnName("aggregate_type").IsRequired();
       entity.Property(e => e.Version).HasColumnName("version").IsRequired();
       entity.Property(e => e.EventType).HasColumnName("event_type").IsRequired();
-      entity.Property(e => e.EventData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
-      entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      // Full split (#13b4-3 / 078): the inline body COLUMNS ARE DROPPED — every body lives in
+      // wh_event_body (EventBodyRecord). The CLR properties remain on the shared EventStoreRecord for
+      // inline-body providers (SQLite/Dapper-SQLite) but are unmapped here.
+      entity.Ignore(e => e.EventData);
+      entity.Ignore(e => e.Metadata);
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+      // Slice 26.
+      entity.Property(e => e.CommitSequence).HasColumnName("commit_sequence");
+      entity.Property(e => e.OriginServiceId).HasColumnName("origin_service_id");
+      entity.Property(e => e.OriginCommitSequence).HasColumnName("origin_commit_sequence");
 
       entity.HasIndex(e => new { e.StreamId, e.Version }).IsUnique();  // Required for ON CONFLICT in process_work_batch
       entity.HasIndex(e => new { e.AggregateId, e.Version }).IsUnique();
       entity.HasIndex(e => e.StreamId);
       entity.HasIndex(e => e.CreatedAt);
+    });
+
+    // E1 #13b: the body half of the pointer/body split. Holds offloaded (payload, metadata) keyed by
+    // event_id; readers resolve body-first with inline fallback. Created by migration 072.
+    modelBuilder.Entity<EventBodyRecord>(entity => {
+      entity.ToTable("wh_event_body");
+      entity.HasKey(e => e.EventId);
+
+      entity.Property(e => e.EventId).HasColumnName("event_id");
+      entity.Property(e => e.EventData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
     });
   }
 
@@ -181,10 +199,10 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configurePerspectiveCheckpoints(ModelBuilder modelBuilder) {
-    modelBuilder.Entity<PerspectiveCheckpointRecord>(entity => {
+  private static void _configurePerspectiveCursors(ModelBuilder modelBuilder) {
+    modelBuilder.Entity<PerspectiveCursorRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
-      entity.ToTable("wh_perspective_checkpoints");
+      entity.ToTable("wh_perspective_cursors");
       entity.HasKey(e => new { e.StreamId, e.PerspectiveName });
 
       entity.Property(e => e.StreamId).HasColumnName(COLUMN_NAME_STREAM_ID).IsRequired();
@@ -195,8 +213,8 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.Error).HasColumnName("error");
 
       // Indexes
-      entity.HasIndex(e => e.Status).HasDatabaseName("idx_perspective_checkpoints_status");
-      entity.HasIndex(e => e.ProcessedAt).HasDatabaseName("idx_perspective_checkpoints_processed_at");
+      entity.HasIndex(e => e.Status).HasDatabaseName("idx_perspective_cursors_status");
+      entity.HasIndex(e => e.ProcessedAt).HasDatabaseName("idx_perspective_cursors_processed_at");
     });
   }
 }

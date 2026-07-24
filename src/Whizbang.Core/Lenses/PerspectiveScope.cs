@@ -43,7 +43,7 @@ public class ScopeExtension {
 /// Multi-tenancy and security scope for perspective rows.
 /// Stored as JSONB/JSON in scope column using EF Core ComplexProperty().ToJson().
 /// </summary>
-/// <docs>core-concepts/scoping#perspective-scope</docs>
+/// <docs>fundamentals/security/scoping#perspective-scope</docs>
 /// <tests>Whizbang.Core.Tests/Scoping/PerspectiveScopeTests.cs</tests>
 /// <example>
 /// var scope = new PerspectiveScope {
@@ -180,5 +180,75 @@ public class PerspectiveScope {
   public bool RemoveExtension(string key) {
     var existing = Extensions.FirstOrDefault(e => e.Key == key);
     return existing is not null && Extensions.Remove(existing);
+  }
+
+  /// <summary>
+  /// Returns a NEW <see cref="PerspectiveScope"/> containing only the fields named by
+  /// <paramref name="fields"/>. Fields not in the set are left at their type defaults
+  /// (null for the four ID strings, empty list for AllowedPrincipals and Extensions).
+  /// Used by the perspective projection runner to honor <see cref="InheritScopeAttribute"/>
+  /// — the runner takes the envelope's full scope and filters it through the perspective
+  /// model's declared inheritance flags before persisting.
+  /// </summary>
+  /// <param name="fields">Bitwise combination of fields to retain.</param>
+  /// <returns>A new scope containing only the requested fields.</returns>
+  /// <remarks>
+  /// Returns an empty scope (all defaults) when <paramref name="fields"/> is
+  /// <see cref="ScopeFields.None"/>. Lists are shallow-copied — mutating the returned
+  /// scope's lists does not affect the source.
+  /// </remarks>
+  public PerspectiveScope FilterByFields(ScopeFields fields) {
+    return new PerspectiveScope {
+      TenantId = (fields & ScopeFields.Tenant) != 0 ? TenantId : null,
+      CustomerId = (fields & ScopeFields.Customer) != 0 ? CustomerId : null,
+      UserId = (fields & ScopeFields.User) != 0 ? UserId : null,
+      OrganizationId = (fields & ScopeFields.Organization) != 0 ? OrganizationId : null,
+      AllowedPrincipals = (fields & ScopeFields.AllowedPrincipals) != 0
+        ? [.. AllowedPrincipals]
+        : [],
+      Extensions = (fields & ScopeFields.Extensions) != 0
+        ? [.. Extensions]
+        : [],
+    };
+  }
+
+  /// <summary>
+  /// Returns a NEW <see cref="PerspectiveScope"/> that merges <paramref name="other"/>
+  /// into this scope field-by-field: non-null/non-empty fields on <paramref name="other"/>
+  /// overwrite this instance's corresponding field; null/empty fields on
+  /// <paramref name="other"/> preserve this instance's value.
+  /// <see cref="AllowedPrincipals"/> and <see cref="Extensions"/> are concatenated and
+  /// deduplicated (extensions by <see cref="ScopeExtension.Key"/>).
+  /// </summary>
+  /// <remarks>
+  /// Used by <see cref="UpdateStreamScopeCommand"/> with <c>ScopeMutationMode.Merge</c>.
+  /// Neither input is mutated.
+  /// </remarks>
+  public PerspectiveScope MergeWith(PerspectiveScope other) {
+    var mergedExtensions = new List<ScopeExtension>(Extensions);
+    foreach (var ext in other.Extensions) {
+      var existing = mergedExtensions.FirstOrDefault(e => e.Key == ext.Key);
+      if (existing is not null) {
+        existing.Value = ext.Value;
+      } else {
+        mergedExtensions.Add(new ScopeExtension(ext.Key, ext.Value));
+      }
+    }
+
+    var mergedPrincipals = new List<string>(AllowedPrincipals);
+    foreach (var p in other.AllowedPrincipals) {
+      if (!mergedPrincipals.Contains(p)) {
+        mergedPrincipals.Add(p);
+      }
+    }
+
+    return new PerspectiveScope {
+      TenantId = !string.IsNullOrEmpty(other.TenantId) ? other.TenantId : TenantId,
+      UserId = !string.IsNullOrEmpty(other.UserId) ? other.UserId : UserId,
+      CustomerId = !string.IsNullOrEmpty(other.CustomerId) ? other.CustomerId : CustomerId,
+      OrganizationId = !string.IsNullOrEmpty(other.OrganizationId) ? other.OrganizationId : OrganizationId,
+      AllowedPrincipals = mergedPrincipals,
+      Extensions = mergedExtensions,
+    };
   }
 }

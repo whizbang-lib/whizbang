@@ -51,11 +51,9 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   private static RestLensInfo? _extractLensInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -87,7 +85,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     var maxPageSize = AttributeUtilities.GetIntValue(restLensAttr, "MaxPageSize", 100);
 
     // Generate endpoint class name from interface name
-    var endpointClassName = _getEndpointClassName(symbol.Name, modelType.Name);
+    var endpointClassName = _getEndpointClassName(symbol.Name);
 
     return new RestLensInfo(
         InterfaceName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -107,10 +105,10 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   /// Generate endpoint class name from interface name and model name.
   /// E.g., "IOrderLens" + "OrderReadModel" -> "OrderLensEndpoint"
   /// </summary>
-  private static string _getEndpointClassName(string interfaceName, string modelTypeName) {
+  private static string _getEndpointClassName(string interfaceName) {
     // Remove 'I' prefix if present
     var baseName = interfaceName.StartsWith("I", StringComparison.Ordinal)
-        ? interfaceName.Substring(1)
+        ? interfaceName[1..]
         : interfaceName;
 
     // Ensure it ends with "Endpoint"
@@ -185,58 +183,58 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   private static string _generateEndpointClass(RestLensInfo lens) {
     var sb = new StringBuilder();
 
-    sb.AppendLine($"/// <summary>");
+    sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// Generated REST endpoint for {lens.InterfaceName}.");
     sb.AppendLine($"/// Route: {lens.Route}");
-    sb.AppendLine($"/// </summary>");
+    sb.AppendLine("/// </summary>");
     sb.AppendLine($"public partial class {lens.EndpointClassName} : Endpoint<LensRequest, LensResponse<{lens.ModelTypeName}>> {{");
     sb.AppendLine($"  private readonly {lens.InterfaceName} _lens;");
     sb.AppendLine();
-    sb.AppendLine($"  /// <summary>");
+    sb.AppendLine("  /// <summary>");
     sb.AppendLine($"  /// Creates a new instance of {lens.EndpointClassName}.");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine("  /// </summary>");
     sb.AppendLine($"  public {lens.EndpointClassName}({lens.InterfaceName} lens) {{");
-    sb.AppendLine($"    _lens = lens;");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("    _lens = lens;");
+    sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine($"  /// <inheritdoc />");
-    sb.AppendLine($"  public override void Configure() {{");
+    sb.AppendLine("  /// <inheritdoc />");
+    sb.AppendLine("  public override void Configure() {");
     sb.AppendLine($"    Get(\"{lens.Route}\");");
-    sb.AppendLine($"    AllowAnonymous();");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("    AllowAnonymous();");
+    sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine($"  /// <inheritdoc />");
-    sb.AppendLine($"  public override async Task HandleAsync(LensRequest req, CancellationToken ct) {{");
-    sb.AppendLine($"    // Calculate paging");
-    sb.AppendLine($"    var page = Math.Max(1, req.Page);");
+    sb.AppendLine("  /// <inheritdoc />");
+    sb.AppendLine("  public override async Task HandleAsync(LensRequest req, CancellationToken ct) {");
+    sb.AppendLine("    // Calculate paging");
+    sb.AppendLine("    var page = Math.Max(1, req.Page);");
     sb.AppendLine($"    var pageSize = req.PageSize ?? {lens.DefaultPageSize};");
     sb.AppendLine($"    pageSize = Math.Min(pageSize, {lens.MaxPageSize});");
-    sb.AppendLine($"    pageSize = Math.Max(1, pageSize);");
-    sb.AppendLine($"    var skip = (page - 1) * pageSize;");
+    sb.AppendLine("    pageSize = Math.Max(1, pageSize);");
+    sb.AppendLine("    var skip = (page - 1) * pageSize;");
     sb.AppendLine();
-    sb.AppendLine($"    // Build query with default ordering by Id for consistent pagination");
-    sb.AppendLine($"    var query = _lens.Query.Select(r => r.Data).OrderBy(x => x.Id);");
+    sb.AppendLine("    // Build query with default ordering by Id for consistent pagination");
+    sb.AppendLine("    var query = _lens.Query.Select(r => r.Data).OrderBy(x => x.Id);");
     sb.AppendLine();
-    sb.AppendLine($"    // TODO: Apply filtering based on req.Filter");
-    sb.AppendLine($"    // TODO: Apply sorting based on req.Sort (should override default OrderBy)");
+    sb.AppendLine("    // TODO: Apply filtering based on req.Filter");
+    sb.AppendLine("    // TODO: Apply sorting based on req.Sort (should override default OrderBy)");
     sb.AppendLine();
-    sb.AppendLine($"    // Get total count before paging");
-    sb.AppendLine($"    var totalCount = await query.CountAsync(ct);");
+    sb.AppendLine("    // Get total count before paging");
+    sb.AppendLine("    var totalCount = await query.CountAsync(ct);");
     sb.AppendLine();
-    sb.AppendLine($"    // Apply paging");
-    sb.AppendLine($"    var items = await query.Skip(skip).Take(pageSize).ToListAsync(ct);");
+    sb.AppendLine("    // Apply paging");
+    sb.AppendLine("    var items = await query.Skip(skip).Take(pageSize).ToListAsync(ct);");
     sb.AppendLine();
-    sb.AppendLine($"    // Build response");
+    sb.AppendLine("    // Build response");
     sb.AppendLine($"    var response = new LensResponse<{lens.ModelTypeName}> {{");
-    sb.AppendLine($"      Data = items,");
-    sb.AppendLine($"      TotalCount = totalCount,");
-    sb.AppendLine($"      Page = page,");
-    sb.AppendLine($"      PageSize = pageSize");
-    sb.AppendLine($"    }};");
+    sb.AppendLine("      Data = items,");
+    sb.AppendLine("      TotalCount = totalCount,");
+    sb.AppendLine("      Page = page,");
+    sb.AppendLine("      PageSize = pageSize");
+    sb.AppendLine("    };");
     sb.AppendLine();
-    sb.AppendLine($"    await SendAsync(response, cancellation: ct);");
-    sb.AppendLine($"  }}");
-    sb.AppendLine($"}}");
+    sb.AppendLine("    await SendAsync(response, cancellation: ct);");
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
 
     return sb.ToString();
   }
@@ -245,10 +243,12 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   /// Generate a lens info property for diagnostics.
   /// </summary>
   private static string _generateLensInfoProperty(RestLensInfo lens) {
-    return $@"  /// <summary>
+    return $"""
+  /// <summary>
   /// Information about the {lens.EndpointClassName} lens endpoint.
   /// </summary>
   public static (string Route, string InterfaceName, string ModelType) {lens.EndpointClassName}Info =>
-      (""{lens.Route}"", ""{lens.InterfaceName}"", ""{lens.ModelTypeName}"");";
+      ("{lens.Route}", "{lens.InterfaceName}", "{lens.ModelTypeName}");
+""";
   }
 }

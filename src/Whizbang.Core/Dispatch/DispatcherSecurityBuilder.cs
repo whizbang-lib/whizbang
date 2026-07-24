@@ -41,7 +41,7 @@ namespace Whizbang.Core.Dispatch;
 /// await dispatcher.RunAs("target-user").WithTenant("target-tenant").SendAsync(command);
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-security#explicit-security-context-api</docs>
+/// <docs>fundamentals/security/message-security#explicit-security-context-api</docs>
 /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
 public sealed partial class DispatcherSecurityBuilder {
   private readonly IDispatcher _dispatcher;
@@ -51,7 +51,9 @@ public sealed partial class DispatcherSecurityBuilder {
   private readonly string? _tenantId;
 
   // Lazy-resolved logger for security warnings
+#pragma warning disable S4487 // Backing field for _Logger lazy property
   private ILogger? _logger;
+#pragma warning restore S4487
 #pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
   private ILogger _Logger => _logger ??= (_dispatcher as Dispatcher)?.InternalServiceProvider
     .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatch.DispatcherSecurityBuilder")
@@ -97,10 +99,10 @@ public sealed partial class DispatcherSecurityBuilder {
   /// await dispatcher.RunAs("target-user").WithTenant("target-tenant").SendAsync(command);
   /// </code>
   /// </example>
-  /// <docs>core-concepts/message-security#cross-tenant-operations</docs>
+  /// <docs>fundamentals/security/message-security#cross-tenant-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:WithTenant_SetsTenantIdOnContextAsync</tests>
   public DispatcherSecurityBuilder WithTenant(string tenantId) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(tenantId, nameof(tenantId));
+    ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
     return new DispatcherSecurityBuilder(
       _dispatcher,
@@ -119,6 +121,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// <param name="callerFilePath">Caller file path (auto-captured).</param>
   /// <param name="callerLineNumber">Caller line number (auto-captured).</param>
   /// <returns>Delivery receipt with correlation information.</returns>
+#pragma warning disable RCS1163, IDE0060 // Caller info is part of public API surface and reserved for future correlation propagation
   public async Task<IDeliveryReceipt> SendAsync<TMessage>(
     TMessage message,
     [CallerMemberName] string callerMemberName = "",
@@ -137,6 +140,7 @@ public sealed partial class DispatcherSecurityBuilder {
       ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
     }
   }
+#pragma warning restore RCS1163, IDE0060
 
   /// <summary>
   /// Sends a typed message with explicit security context and message context.
@@ -291,6 +295,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// Uses compile-time LoggerMessage source generator for zero-allocation, high-performance logging.
   /// </summary>
   private static partial class Log {
+    /// <summary>Logs a warning when an explicit security context has an empty GUID as ActualPrincipal.</summary>
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Warning,

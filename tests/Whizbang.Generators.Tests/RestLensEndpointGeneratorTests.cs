@@ -20,7 +20,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithRestLensAttribute_GeneratesEndpointAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -39,7 +39,7 @@ public class RestLensEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("OrderLensEndpoint");
+    await Assert.That(code).Contains("OrderLensEndpoint");
     await Assert.That(code).Contains("IOrderLens");
   }
 
@@ -50,7 +50,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleLenses_GeneratesAllEndpointsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -77,7 +77,7 @@ public class RestLensEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("OrderLensEndpoint");
+    await Assert.That(code).Contains("OrderLensEndpoint");
     await Assert.That(code).Contains("ProductLensEndpoint");
     await Assert.That(code).Contains("CustomerLensEndpoint");
   }
@@ -89,7 +89,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithoutRestLensAttribute_DoesNotGenerateAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
 
@@ -115,7 +115,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithCustomRoute_UsesRouteFromAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -134,7 +134,7 @@ public class RestLensEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("/api/v2/custom-orders");
+    await Assert.That(code).Contains("/api/v2/custom-orders");
   }
 
   /// <summary>
@@ -144,7 +144,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithCustomPageSize_UsesPageSizeFromAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -163,7 +163,7 @@ public class RestLensEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("25"); // DefaultPageSize
+    await Assert.That(code).Contains("25"); // DefaultPageSize
     await Assert.That(code).Contains("200"); // MaxPageSize
   }
 
@@ -174,7 +174,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithoutExplicitRoute_UsesDefaultRouteAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -194,7 +194,7 @@ public class RestLensEndpointGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
     // Should derive "/api/orders" from "OrderReadModel"
-    await Assert.That(code!).Contains("/api/orders");
+    await Assert.That(code).Contains("/api/orders");
   }
 
   /// <summary>
@@ -204,7 +204,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_ProducesCompilableCodeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -235,7 +235,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithClassHavingRestLens_GeneratesEndpointAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -254,7 +254,7 @@ public class RestLensEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("ProductLensEndpoint");
+    await Assert.That(code).Contains("ProductLensEndpoint");
     await Assert.That(code).Contains("ProductLens");
   }
 
@@ -265,7 +265,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_UsesConsumerNamespaceAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -284,7 +284,7 @@ public class RestLensEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("namespace MyCompany.OrderService.Generated");
+    await Assert.That(code).Contains("namespace MyCompany.OrderService.Generated");
   }
 
   /// <summary>
@@ -294,7 +294,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesDiagnosticsClassAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -313,7 +313,7 @@ public class RestLensEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("WhizbangRestLensDiagnostics");
+    await Assert.That(code).Contains("WhizbangRestLensDiagnostics");
     await Assert.That(code).Contains("DiscoveredLensCount");
   }
 
@@ -324,7 +324,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesGetEndpointAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -343,7 +343,7 @@ public class RestLensEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Get(");
+    await Assert.That(code).Contains("Get(");
   }
 
   /// <summary>
@@ -353,7 +353,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesPartialClassAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -372,7 +372,7 @@ public class RestLensEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("public partial class");
+    await Assert.That(code).Contains("public partial class");
   }
 
   /// <summary>
@@ -382,7 +382,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_DerivesRouteFromModelSuffixAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -402,7 +402,7 @@ public class RestLensEndpointGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
     // Should derive "/api/customers" from "CustomerModel"
-    await Assert.That(code!).Contains("/api/customers");
+    await Assert.That(code).Contains("/api/customers");
   }
 
   /// <summary>
@@ -412,7 +412,7 @@ public class RestLensEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_DerivesRouteFromDtoSuffixAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.FastEndpoints;
@@ -432,6 +432,6 @@ public class RestLensEndpointGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
     // Should derive "/api/invoices" from "InvoiceDto"
-    await Assert.That(code!).Contains("/api/invoices");
+    await Assert.That(code).Contains("/api/invoices");
   }
 }

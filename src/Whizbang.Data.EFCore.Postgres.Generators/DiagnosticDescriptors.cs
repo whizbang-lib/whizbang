@@ -36,7 +36,7 @@ internal static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "Add <PackageReference Include=\"Pgvector.EntityFrameworkCore\" /> to use vector columns with EF Core. This package provides the UseVector() extension for DbContextOptionsBuilder.",
-      customTags: [WellKnownDiagnosticTags.CompilationEnd]
+      customTags: WellKnownDiagnosticTags.CompilationEnd
   );
 
   /// <summary>
@@ -52,14 +52,14 @@ internal static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "Add <PackageReference Include=\"Pgvector\" /> for NpgsqlDataSourceBuilder.UseVector() support. This is the base package for pgvector types.",
-      customTags: [WellKnownDiagnosticTags.CompilationEnd]
+      customTags: WellKnownDiagnosticTags.CompilationEnd
   );
 
   /// <summary>
   /// WHIZ811: Info - Perspective model contains polymorphic type property.
   /// The model uses JSONB storage with System.Text.Json polymorphic serialization.
   /// </summary>
-  /// <docs>perspectives/polymorphic-types</docs>
+  /// <docs>fundamentals/perspectives/polymorphic-types</docs>
   public static readonly DiagnosticDescriptor PerspectiveModelPolymorphicProperty = new(
       id: "WHIZ811",
       title: "Perspective model contains polymorphic type",

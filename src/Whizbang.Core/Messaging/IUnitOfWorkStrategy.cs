@@ -16,39 +16,39 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
 public interface IUnitOfWorkStrategy : IAsyncDisposable {
   /// <summary>
-  /// Called by strategy when it autonomously decides to flush a unit.
-  /// Dispatcher/Worker wires this to IWorkBatchCoordinator.ProcessAndDistributeAsync.
+  /// <para>Called by strategy when it autonomously decides to flush a unit.
+  /// Dispatcher/Worker wires this to IWorkBatchCoordinator.ProcessAndDistributeDetached.</para>
   ///
-  /// Handler signature: async (Guid unitId, CancellationToken ct) => { ... }
+  /// <para>Handler signature: async (Guid unitId, CancellationToken ct) => { ... }</para>
   ///
-  /// The callback receives:
+  /// <para>The callback receives:
   /// - unitId: Unit to flush
-  /// - ct: Cancellation token
+  /// - ct: Cancellation token</para>
   ///
-  /// The callback should:
+  /// <para>The callback should:
   /// 1. Call GetMessagesForUnit(unitId)
-  /// 2. Call IWorkBatchCoordinator.ProcessAndDistributeAsync with messages
+  /// 2. Call IWorkBatchCoordinator.ProcessAndDistributeDetached with messages
   /// 3. Process returned work (distribute to channels)
-  /// 4. Report completions/failures back
+  /// 4. Report completions/failures back</para>
   /// </summary>
   event Func<Guid, CancellationToken, Task>? OnFlushRequested;
 
   /// <summary>
-  /// Queue a message asynchronously.
-  /// Returns the unit ID (time-ordered Uuid7).
+  /// <para>Queue a message asynchronously.
+  /// Returns the unit ID (time-ordered Uuid7).</para>
   ///
-  /// Behavior by strategy:
+  /// <para>Behavior by strategy:
   /// - Immediate: Creates new unit, triggers OnFlushRequested, awaits completion, returns unit ID
   /// - Scoped: Adds to current unit, returns immediately (flush on DisposeAsync)
-  /// - Interval: Adds to current unit, returns immediately (flush on timer)
+  /// - Interval: Adds to current unit, returns immediately (flush on timer)</para>
   /// </summary>
   /// <param name="message">Message to queue (Command or Event)</param>
-  /// <param name="lifecycleStage">Lifecycle stage for this message (default: ImmediateAsync)</param>
+  /// <param name="lifecycleStage">Lifecycle stage for this message (default: ImmediateDetached)</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>Unit ID (Uuid7-based GUID)</returns>
   Task<Guid> QueueMessageAsync(
     object message,
-    LifecycleStage lifecycleStage = LifecycleStage.ImmediateAsync,
+    LifecycleStage lifecycleStage = LifecycleStage.ImmediateDetached,
     CancellationToken ct = default
   );
 

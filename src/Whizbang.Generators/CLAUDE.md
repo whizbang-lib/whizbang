@@ -588,7 +588,7 @@ Whizbang.Generators/
 
   <!-- Enable viewing generated files (for debugging) -->
   <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-  <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+  <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
 
   <!-- Enable performance reporting -->
   <ReportAnalyzer>true</ReportAnalyzer>

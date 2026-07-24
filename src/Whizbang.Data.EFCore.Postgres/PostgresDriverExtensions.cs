@@ -1,11 +1,20 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Health;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.RunControl;
+using Whizbang.Data.EFCore.Postgres.Dispatch;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -22,10 +31,9 @@ public static class PostgresDriverExtensions {
   extension(IDriverOptions options) {
     /// <summary>
     /// Configures PostgreSQL as the database driver for EF Core perspectives.
-    /// Registers IPerspectiveStore&lt;T&gt;, ILensQuery&lt;T&gt;, IInbox, IOutbox, IEventStore,
-    /// and IDatabaseReadinessCheck for all discovered perspective models via source-generated AOT-compatible code.
+    /// Registers IPerspectiveStore&lt;T&gt;, ILensQuery&lt;T&gt;, IInbox, IOutbox, and IEventStore
+    /// for all discovered perspective models via source-generated AOT-compatible code.
     /// Uses PostgresUpsertStrategy for native PostgreSQL ON CONFLICT support.
-    /// Automatically registers database readiness check for resilient worker startup.
     /// </summary>
     /// <returns>A WhizbangPerspectiveBuilder for further configuration.</returns>
     /// <exception cref="InvalidOperationException">Thrown if Postgres driver is used with non-EF Core storage.</exception>
@@ -40,6 +48,8 @@ public static class PostgresDriverExtensions {
     /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync</tests>
     /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_ReturnedBuilder_HasSameServicesAsync</tests>
     /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync</tests>
+    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_RegistersIClaimedEmissionStore_ScopedAsync</tests>
+    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async</tests>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension property - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
     public WhizbangPerspectiveBuilder Postgres {
@@ -70,37 +80,186 @@ public static class PostgresDriverExtensions {
         // before they reach the database (cross-scope sync support)
         selector.Services.DecorateEventStoreWithSyncTracking();
 
+        // TURNKEY: Register IPerspectiveCheckpointCompleter so PerspectiveRebuilder can
+        // persist cursor checkpoints after rebuild. Without this, rebuild would still update
+        // projection tables but wh_perspective_cursors would stay at whatever live processing
+        // last wrote. Resolves the consumer's DbContext via the captured DbContextType.
+        var dbContextType = selector.DbContextType;
+        selector.Services.TryAddScoped<IPerspectiveCheckpointCompleter>(sp =>
+            new EFCorePostgresPerspectiveCheckpointCompleter(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
+
+        // TURNKEY: Register IClaimedEmissionStore so PublishOnceAsync (saga completion via
+        // SagaCompletionGuard.EmitOnceAsync, idempotent receptor emissions, etc.) doesn't
+        // throw at runtime. EFCoreClaimedEmissionStore writes ON CONFLICT DO NOTHING against
+        // wh_unique_emission_claims through the consumer's DbContext. Without this, every
+        // Postgres consumer had to wire it manually — observed on a consumer production where saga
+        // 019f000e couldn't dispatch SagaCompletedEvent until the registration was added
+        // (CompletionEventDispatched stayed false despite items being durably terminal).
+        selector.Services.TryAddScoped<IClaimedEmissionStore>(sp =>
+            new EFCoreClaimedEmissionStore(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType)));
+
+        // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
+        // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
+        // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
+        // so a built-in receptor shipped from this assembly needs runtime registration.
+        selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
+
+        // TURNKEY: A1 scheduled close — runtime-register ScheduledStreamCloseReceptor so a fired
+        // "close the books" schedule occurrence drives IStreamCloser.CloseAsync. Same rationale as above.
+        selector.Services.AddHostedService<ScheduledStreamCloseReceptorRegistrar>();
+
+        // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
+        // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
+        // initializer's registration order in the IHostedService chain doesn't matter — even
+        // if a worker's StartAsync runs first, it blocks on the gate until the initializer
+        // calls MarkReady() at the end of migrations.
+        selector.Services.TryAddSingleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>();
+        selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
+
+        // Message type registry populator — reconciles wh_message_type_registry against the
+        // compile-time IMessageTypeCatalog at startup. Uses NpgsqlDataSource directly so it
+        // works without the Dapper driver being installed. WhizbangDatabaseInitializerService
+        // invokes it after schema init.
+        selector.Services.TryAddSingleton<IMessageTypeRegistryPopulator>(sp => {
+          var catalog = sp.GetRequiredService<IMessageTypeCatalog>();
+          var dataSource = sp.GetRequiredService<NpgsqlDataSource>();
+          var populatorLogger = sp.GetService<ILogger<EFCoreMessageTypeRegistryPopulator>>();
+          return new EFCoreMessageTypeRegistryPopulator(catalog, dataSource, populatorLogger);
+        });
+
         // TURNKEY: Invoke perspective runner registration callbacks
         // This is registered by source-generated module initializer in consumer assembly
         // Automatically registers IPerspectiveRunnerRegistry, all runners, and PerspectiveWorker
         PerspectiveRunnerCallbackRegistry.InvokeRegistration(selector.Services);
 
-        // Register IDatabaseReadinessCheck - CRITICAL for resilient worker startup
-        // Uses NpgsqlDataSource directly to create connections (avoids password stripping bug)
-        // This ensures workers wait for database schema to be ready before processing
-        selector.Services.TryAddSingleton<IDatabaseReadinessCheck>(sp => {
-          var dataSource = sp.GetService<NpgsqlDataSource>();
-          if (dataSource == null) {
-            // Fallback: return default check that always returns true
-            // User should register NpgsqlDataSource for proper readiness checking
-            var fallbackLogger = sp.GetService<ILogger<DefaultDatabaseReadinessCheck>>();
-#pragma warning disable CA1848 // Use the LoggerMessage delegates - startup logging doesn't need high performance
-            fallbackLogger?.LogWarning(
-              "NpgsqlDataSource not registered. Database readiness check will always return true. " +
-              "For proper startup resilience, register NpgsqlDataSource before AddDbContext.");
-#pragma warning restore CA1848
-            return new DefaultDatabaseReadinessCheck();
-          }
+        // TURNKEY: Register perspective snapshot and rewind options
+        selector.Services.AddOptions<PerspectiveSnapshotOptions>();
+        selector.Services.AddOptions<PerspectiveRewindOptions>();
 
-          // IMPORTANT: Pass NpgsqlDataSource directly instead of extracting ConnectionString.
-          // NpgsqlDataSource.ConnectionString strips passwords for security, causing auth failures.
-          // DataSource.CreateConnection() properly retains credentials internally.
-          var logger = sp.GetRequiredService<ILogger<PostgresDatabaseReadinessCheck>>();
-          return new PostgresDatabaseReadinessCheck(dataSource, logger);
+        // TURNKEY: Register perspective snapshot store for efficient rewind
+        // Uses NpgsqlDataSource for connection management (same as readiness check)
+        selector.Services.TryAddSingleton<IPerspectiveSnapshotStore>(sp => {
+          var ds = sp.GetRequiredService<NpgsqlDataSource>();
+          var snapshotLogger = sp.GetService<ILogger<EFCorePerspectiveSnapshotStore>>();
+          return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
         });
+
+        // TURNKEY: managed-resource health for the event-store DB. AlwaysRequired — a DB fault is a
+        // real fault even during a migration (the migration needs it), so this replaces a consumer's
+        // naive readiness check (no SELECT count(*) that a migration would make time out). The probe
+        // is a lightweight SELECT 1 via the same NpgsqlDataSource; ConnectivityHealthSource combines
+        // it with the lifecycle phase (Starting => not probed, Connecting => still warming, else probe).
+        selector.Services.AddSingleton<IWhizbangHealthSource>(sp =>
+          ConnectivityHealthSource.AlwaysRequired(
+            "event-store",
+            ct => _pingEventStoreAsync(sp.GetRequiredService<NpgsqlDataSource>(), ct),
+            sp.GetRequiredService<IWhizbangLifecycleState>(),
+            "event-store database unreachable"));
+
+        // TURNKEY: Register table statistics provider + collector for OTel metrics.
+        // The provider schema-qualifies its queries — pass the model's default schema so
+        // multi-schema services report THEIR tables instead of probing a bare public schema.
+        selector.Services.TryAddSingleton<ITableStatisticsProvider>(sp => {
+          var ds = sp.GetRequiredService<NpgsqlDataSource>();
+          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
+          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
+          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          return new PostgresTableStatisticsProvider(ds, schema);
+        });
+        selector.Services.TryAddSingleton<TableStatisticsMetrics>();
+        selector.Services.AddHostedService<TableStatisticsCollector>();
+
+        // v0.502 DLQ — register IDeadLetterStore + IDeadLetterRecoveryService so the
+        // dispatch worker can move failed inbox rows into wh_dead_letters and the
+        // recovery worker can drain them back out. Without these the dispatch path's
+        // _deadLetterStore field is null and the DLQ branch silently falls back to
+        // mark-Published (observed on a consumer production: wh_dead_letters empty even with
+        // WRN dead-letter logs firing).
+        //
+        // IDeadLetterStore is a SINGLETON (dispatch worker is singleton, can't inject
+        // a scoped service). The adapter opens a fresh scope per MoveAsync so the
+        // underlying EF Core path uses a properly-scoped DbContext / connection.
+        //
+        // IDeadLetterRecoveryService is SCOPED — DeadLetterRecoveryWorker explicitly
+        // creates a scope per scan and resolves from it (see DeadLetterRecoveryWorker.cs).
+        selector.Services.TryAddSingleton<IDeadLetterStore>(sp =>
+          new ScopedEFCoreDeadLetterStore(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            dbContextType,
+            sp.GetService<ILogger<EFCoreDeadLetterStore<Microsoft.EntityFrameworkCore.DbContext>>>()
+              ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<EFCoreDeadLetterStore<Microsoft.EntityFrameworkCore.DbContext>>.Instance,
+            sp.GetService<WorkCoordinatorGate>()));
+        selector.Services.TryAddScoped<IDeadLetterRecoveryService>(sp =>
+          new EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>(
+            (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+            sp.GetService<ILogger<EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>>>()
+              ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>>.Instance,
+            sp.GetService<WorkCoordinatorGate>()));
+
+        // TURNKEY: DbContext-backed fallback so the LISTEN/NOTIFY listener + commit-order
+        // stamper + app-signal channel use the same connection string EF Core already has,
+        // when neither Whizbang:Database:DirectConnectionString nor ConnectionStringKey is
+        // configured. Operators only need the explicit notification config when they want a
+        // bypass-pgbouncer "-direct" variant.
+        selector.Services.TryAddSingleton<INotificationConnectionStringFallback>(sp =>
+          new DbContextNotificationConnectionStringFallback(sp, dbContextType));
+
+        // TURNKEY: Register Postgres LISTEN/NOTIFY listener. Binds WhizbangNotificationOptions
+        // from "Whizbang:Database" so users only need to set ConnectionStringKey +
+        // SignalingMode in appsettings; the listener resolves <key>-direct → <key> at startup.
+        // SignalingMode.Polling makes the listener a no-op; SignalingMode.ListenNotify throws
+        // at startup if no connection string can be resolved.
+        selector.Services.AddWhizbangPostgresNotifications();
+
+        // TURNKEY: Apply the same connection-string-name convention to the
+        // notification options that .WithDriver.Postgres already uses for EF
+        // Core (derived from TDbContext via WithEFCore<T>(...) — e.g.,
+        // BffServiceDbContext → "appservice-db"). The resolver will then try
+        // ConnectionStrings:{name}-direct first (the bypass-pgbouncer variant
+        // that a consumer-style deployments already configure) and fall back to
+        // ConnectionStrings:{name}. Operators only need to override this in
+        // config when they want a different key per-environment.
+        //
+        // Late-binding via PostConfigure so an explicit
+        // Whizbang:Database:ConnectionStringKey in appsettings still wins.
+        var derivedConnectionStringName = selector.ConnectionStringName
+          ?? _deriveConnectionStringName(selector.DbContextType.Name);
+        if (!string.IsNullOrWhiteSpace(derivedConnectionStringName)) {
+          selector.Services.PostConfigure<WhizbangNotificationOptions>(options => {
+            if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
+              options.ConnectionStringKey = derivedConnectionStringName;
+            }
+          });
+        }
 
         return new WhizbangPerspectiveBuilder(selector.Services);
       }
     }
+  }
+
+  /// <summary>
+  /// Thin shim around <see cref="Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName"/>
+  /// so existing call sites and tests don't need to change. The actual convention
+  /// lives in <c>Whizbang.Core</c> so it can be referenced from any consumer code
+  /// (and re-used by the source generator's regression test) without taking a
+  /// runtime dependency on this assembly.
+  /// </summary>
+  internal static string _deriveConnectionStringName(string dbContextClassName)
+    => Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName(dbContextClassName);
+
+  /// <summary>
+  /// Lightweight event-store DB reachability probe: opens a pooled connection and runs <c>SELECT 1</c>.
+  /// Throwing (connection refused, auth, timeout) is caught by <see cref="ConnectivityHealthSource"/>
+  /// and read as unreachable. Deliberately trivial so it never queries a mid-migration table.
+  /// </summary>
+  private static async ValueTask<bool> _pingEventStoreAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) {
+    await using var connection = await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT 1";
+    await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return true;
   }
 }

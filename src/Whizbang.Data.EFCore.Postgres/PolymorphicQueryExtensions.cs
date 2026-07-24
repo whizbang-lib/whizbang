@@ -13,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Use [PolymorphicDiscriminator] attribute on a string property that stores the type name.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/polymorphic-types</docs>
+/// <docs>fundamentals/perspectives/polymorphic-types</docs>
 /// <example>
 /// <code>
 /// // Query via discriminator property with type-safe helper
@@ -27,17 +27,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 ///     .ToListAsync();
 /// </code>
 /// </example>
+#pragma warning disable S1144 // All private members are used; WhereDiscriminatorEquals is a public extension method
 public static class PolymorphicQueryExtensions {
-  // AOT-safe: Cache MemberInfo for common operations using compile-time expressions
-  private static readonly System.Reflection.MethodInfo _stringEqualsMethod =
-      _getStringEqualsMethod();
-
-  private static System.Reflection.MethodInfo _getStringEqualsMethod() {
-    Expression<Func<string, string, bool>> expr = (a, b) => a == b;
-    var binaryExpr = (BinaryExpression)expr.Body;
-    return binaryExpr.Method!;
-  }
-
+#pragma warning restore S1144
   /// <summary>
   /// Filters rows where the discriminator property equals the type name of TDerived.
   /// Uses the indexed physical discriminator column for efficient queries.
@@ -201,8 +193,11 @@ public static class PolymorphicQueryExtensions {
       _getContainsMethod();
 
   private static System.Reflection.MethodInfo _getContainsMethod() {
-    // Use Enumerable.Contains explicitly to avoid MemoryExtensions.Contains(ReadOnlySpan<T>)
+    // Use Enumerable.Contains explicitly to avoid MemoryExtensions.Contains(ReadOnlySpan<T>).
+    // Instance-call form (arr.Contains(val)) would bind to the span overload in some contexts.
+#pragma warning disable RCS1196 // Call extension method as instance method
     Expression<Func<IEnumerable<string>, string, bool>> expr = (arr, val) => Enumerable.Contains(arr, val);
+#pragma warning restore RCS1196
     var callExpr = (MethodCallExpression)expr.Body;
     return callExpr.Method;
   }

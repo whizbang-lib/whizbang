@@ -16,22 +16,8 @@ public sealed class RabbitMqFixtureSanityTests {
 
   [Before(Test)]
   public async Task SetupAsync() {
-    // Initialize shared containers (first test only)
-    await SharedRabbitMqFixtureSource.InitializeAsync();
-
-    // Get separate database connections for each host (eliminates lock contention)
-    var inventoryDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
-    var bffDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
-
-    // Create and initialize test fixture with separate databases
-    _fixture = new RabbitMqIntegrationFixture(
-      SharedRabbitMqFixtureSource.RabbitMqConnectionString,
-      inventoryDbConnection,
-      bffDbConnection,
-      SharedRabbitMqFixtureSource.ManagementApiUri,
-      testId: Guid.NewGuid().ToString("N")[..12]
-    );
-    await _fixture.InitializeAsync();
+    _fixture = await SharedRabbitMqFixtureSource.GetFixtureAsync();
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [Test]
@@ -72,9 +58,8 @@ public sealed class RabbitMqFixtureSanityTests {
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
-    if (_fixture != null) {
-      await _fixture.DisposeAsync();
-    }
+  public Task CleanupAsync() {
+    // Shared fixture is reused across tests — don't dispose
+    return Task.CompletedTask;
   }
 }

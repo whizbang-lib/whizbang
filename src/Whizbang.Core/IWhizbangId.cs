@@ -5,7 +5,7 @@ namespace Whizbang.Core;
 /// All generated [WhizbangId] types implement this interface.
 /// Enables generic constraints on APIs that require IDs with specific properties.
 /// </summary>
-/// <docs>core-concepts/whizbang-ids</docs>
+/// <docs>fundamentals/identity/whizbang-ids</docs>
 public interface IWhizbangId : IEquatable<IWhizbangId>, IComparable<IWhizbangId> {
   /// <summary>
   /// Converts this ID to its underlying Guid representation.

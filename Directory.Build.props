@@ -14,6 +14,10 @@
     <!-- This makes IDE1006 (naming violations) fail compilation when severity = error -->
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 
+    <!-- Generate XML documentation files for IntelliSense in VSCode, Visual Studio, and Rider -->
+    <!-- XML files are included in NuGet packages automatically when this is enabled -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
     <!-- Enable comprehensive code analysis with latest rules (CA warnings) -->
     <!-- Uses compound value: latest = SDK version, Recommended = curated rule set -->
     <!-- Options: latest-minimum, latest-recommended, latest-all -->
@@ -36,7 +40,8 @@
   <PropertyGroup>
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
-    <Version>0.9.3-local.256-debug</Version>
+    <!-- Local-only version — CI/CD build server overrides this. Do NOT commit non-local versions. -->
+    <Version>0.958.0</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
@@ -89,6 +94,25 @@
     <!-- IL2046: RequiresUnreferencedCode mismatch in implementations -->
     <!-- IL2075: DynamicallyAccessedMembers mismatch -->
     <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075</WarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- XML documentation warnings suppression -->
+  <!-- CS1570/CS1573/CS1574/CS0419 are XML doc quality warnings that need separate cleanup -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CS1570;CS1573;CS1574;CS0419</NoWarn>
+  </PropertyGroup>
+
+  <!-- Pinned identity rollout: WHIZ110/WHIZ111 are warnings enforcing [PinnedId] on concrete -->
+  <!-- IMessage / IPerspectiveFor<> types. Suppressed here during the Whizbang-internal rollout -->
+  <!-- so downstream consumers still see the warnings. Remove once all internal types are tagged. -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn)</NoWarn>
+  </PropertyGroup>
+
+  <!-- CS1591 enforcement: Whizbang.Core and Whizbang.Generators enforce XML docs on all public members -->
+  <!-- Other source projects still suppress CS1591 until their docs are completed -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' != 'Whizbang.Core' and '$(MSBuildProjectName)' != 'Whizbang.Generators'">
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <!-- BannedApiAnalyzers - Ban reflection attributes (except in test and benchmark projects) -->

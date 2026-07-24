@@ -9,14 +9,12 @@ namespace ECommerce.ShippingWorker.Receptors;
 /// Handles CreateShipmentCommand and publishes ShipmentCreatedEvent
 /// </summary>
 public class CreateShipmentReceptor(IDispatcher dispatcher, ILogger<CreateShipmentReceptor> logger) : IReceptor<CreateShipmentCommand, ShipmentCreatedEvent> {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<CreateShipmentReceptor> _logger = logger;
 
   public async ValueTask<ShipmentCreatedEvent> HandleAsync(
     CreateShipmentCommand message,
     CancellationToken cancellationToken = default) {
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Creating shipment for order {OrderId} to address: {Address}",
       message.OrderId,
       message.ShippingAddress);
@@ -30,9 +28,9 @@ public class CreateShipmentReceptor(IDispatcher dispatcher, ILogger<CreateShipme
     };
 
     // Publish the event
-    await _dispatcher.PublishAsync(shipmentCreated);
+    await dispatcher.PublishAsync(shipmentCreated);
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Shipment created for order {OrderId} with tracking number {TrackingNumber}",
       message.OrderId,
       shipmentCreated.TrackingNumber);

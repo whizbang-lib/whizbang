@@ -5,7 +5,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// The source generator discovers this attribute and generates GraphQL type extensions,
 /// query resolvers, and schema registrations.
 /// </summary>
-/// <docs>graphql/lens-integration</docs>
+/// <docs>apis/graphql/lens-integration</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/GraphQLLensAttributeTests.cs</tests>
 /// <example>
 /// // Simple - uses system default scope
@@ -13,17 +13,17 @@ namespace Whizbang.Transports.HotChocolate;
 /// public interface IOrderLens : ILensQuery&lt;OrderReadModel&gt; { }
 ///
 /// // Data only - just TModel properties
-/// [GraphQLLens(QueryName = "products", Scope = GraphQLLensScope.DataOnly)]
+/// [GraphQLLens(QueryName = "products", Scope = GraphQLLensScopes.DataOnly)]
 /// public interface IProductLens : ILensQuery&lt;ProductReadModel&gt; { }
 ///
 /// // Full audit trail - Data + Metadata + SystemFields (no Scope/tenancy)
 /// [GraphQLLens(
 ///     QueryName = "auditLog",
-///     Scope = GraphQLLensScope.Data | GraphQLLensScope.Metadata | GraphQLLensScope.SystemFields)]
+///     Scope = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata | GraphQLLensScopes.SystemFields)]
 /// public interface IAuditLens : ILensQuery&lt;AuditReadModel&gt; { }
 ///
 /// // Admin view - everything
-/// [GraphQLLens(QueryName = "adminOrders", Scope = GraphQLLensScope.All)]
+/// [GraphQLLens(QueryName = "adminOrders", Scope = GraphQLLensScopes.All)]
 /// public interface IAdminOrderLens : ILensQuery&lt;OrderReadModel&gt; { }
 ///
 /// // Customized paging and disabled sorting
@@ -45,9 +45,9 @@ public sealed class GraphQLLensAttribute : Attribute {
   /// <summary>
   /// Determines which parts of <see cref="Whizbang.Core.Lenses.PerspectiveRow{TModel}"/>
   /// are exposed in GraphQL queries.
-  /// Default: <see cref="GraphQLLensScope.Default"/> (uses system configuration).
+  /// Default: <see cref="GraphQLLensScopes.None"/> (uses system configuration).
   /// </summary>
-  public GraphQLLensScope Scope { get; set; } = GraphQLLensScope.Default;
+  public GraphQLLensScopes Scope { get; set; } = GraphQLLensScopes.None;
 
   /// <summary>
   /// Enable GraphQL filtering on this lens.

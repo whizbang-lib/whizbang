@@ -1,4 +1,3 @@
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
@@ -81,10 +80,7 @@ public class FullLinqSupportTests : IAsyncDisposable {
   /// - Collection queries (Any, Contains, Count) translated to server-side SQL
   /// - String methods (Contains, StartsWith)
   /// </remarks>
-  private sealed class LinqTestDbContext : DbContext {
-    public LinqTestDbContext(DbContextOptions<LinqTestDbContext> options)
-        : base(options) { }
-
+  private sealed class LinqTestDbContext(DbContextOptions<FullLinqSupportTests.LinqTestDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
 

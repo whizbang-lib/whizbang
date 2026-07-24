@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Security;
@@ -26,6 +28,7 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 42),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -51,6 +54,35 @@ public class SerializationTests {
     await Assert.That(deserialized!.GetCorrelationId()).IsEqualTo(original.GetCorrelationId());
     await Assert.That(deserialized!.Payload.Value).IsEqualTo("test");
     await Assert.That(deserialized!.Payload.Count).IsEqualTo(42);
+  }
+
+  [Test]
+  public async Task MessageHop_WithExternalV4Correlation_RoundTripsAsync() {
+    // A client-supplied correlation token (browser crypto.randomUUID = UUIDv4) must survive the hop
+    // serialize→deserialize round-trip; the read side no longer enforces UUIDv7.
+    var v4 = Guid.NewGuid();
+    var original = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("t", 1),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Origin", InstanceId = Guid.NewGuid(), HostName = "h", ProcessId = 1
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          CorrelationId = CorrelationId.FromExternal(v4)
+        }
+      ]
+    };
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
+    var json = JsonSerializer.Serialize(original, typeInfo);
+    var deserialized = JsonSerializer.Deserialize(json, typeInfo) as MessageEnvelope<TestMessage>;
+
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.GetCorrelationId()).IsEqualTo(CorrelationId.FromExternal(v4))
+      .Because("A v4 correlation must round-trip through a hop unchanged.");
   }
 
   [Test]
@@ -80,6 +112,7 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 1),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [hop1, hop2]
     };
 
@@ -124,6 +157,7 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 1),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [causationHop, currentHop]
     };
 
@@ -148,6 +182,7 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 1),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -177,6 +212,7 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 1),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -215,6 +251,7 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("complex test", 999),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {

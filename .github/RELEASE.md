@@ -200,7 +200,7 @@ baseline-test-results.txt
 test-results.txt
 
 # Generator outputs
-**/.whizbang-generated/
+**/.whizbang/cache/
 
 # Temporary files
 *.tmp
@@ -2089,7 +2089,7 @@ sonar.sources=src
 sonar.tests=tests
 
 # Exclusions
-sonar.exclusions=**/*.Generated.cs,**/.whizbang-generated/**
+sonar.exclusions=**/*.Generated.cs,**/.whizbang/cache/**
 
 # Coverage
 sonar.cs.opencover.reportsPaths=**/coverage.opencover.xml
@@ -2176,7 +2176,7 @@ comment:
 
 ignore:
   - "**/*.Generated.cs"
-  - "**/.whizbang-generated/**"
+  - "**/.whizbang/cache/**"
   - "**/samples/**"
   - "**/benchmarks/**"
 ```

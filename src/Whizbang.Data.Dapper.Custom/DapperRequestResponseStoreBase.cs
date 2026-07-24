@@ -15,10 +15,6 @@ namespace Whizbang.Data.Dapper.Custom;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
 public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly IDbExecutor _executor;
-  private readonly JsonSerializerOptions _jsonOptions;
-
   protected DapperRequestResponseStoreBase(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
@@ -28,14 +24,14 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
     ArgumentNullException.ThrowIfNull(executor);
     ArgumentNullException.ThrowIfNull(jsonOptions);
 
-    _connectionFactory = connectionFactory;
-    _executor = executor;
-    _jsonOptions = jsonOptions;
+    ConnectionFactory = connectionFactory;
+    Executor = executor;
+    JsonOptions = jsonOptions;
   }
 
-  protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
-  protected IDbExecutor Executor => _executor;
-  protected JsonSerializerOptions JsonOptions => _jsonOptions;
+  protected IDbConnectionFactory ConnectionFactory { get; }
+  protected IDbExecutor Executor { get; }
+  protected JsonSerializerOptions JsonOptions { get; }
 
   /// <summary>
   /// Ensures the connection is open. Handles both pre-opened and closed connections.

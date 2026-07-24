@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
@@ -81,7 +83,8 @@ public class CommandAuditingIntegrationTests {
     var envelope = new MessageEnvelope<CmdAuditTestOrderCreated> {
       MessageId = MessageId.New(),
       Payload = new CmdAuditTestOrderCreated(Guid.NewGuid(), Guid.NewGuid()),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, envelope, default);
 
@@ -210,7 +213,8 @@ public class CommandAuditingIntegrationTests {
     var envelope = new MessageEnvelope<CmdAuditTestOrderCreated> {
       MessageId = MessageId.New(),
       Payload = new CmdAuditTestOrderCreated(Guid.NewGuid(), Guid.NewGuid()),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, envelope, default);
 

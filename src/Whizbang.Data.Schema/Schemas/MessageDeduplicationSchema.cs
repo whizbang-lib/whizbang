@@ -23,26 +23,26 @@ public static class MessageDeduplicationSchema {
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_FirstSeenAtColumn_ShouldNotBeNullableAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "message_deduplication",
-    Columns: ImmutableArray.Create(
+    Columns:
+    [
       new ColumnDefinition(
-        Name: "message_id",
-        DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
-        Nullable: false
-      ),
+            Name: "message_id",
+            DataType: WhizbangDataType.UUID,
+            Nullable: false
+,
+            PrimaryKey: true),
       new ColumnDefinition(
         Name: "first_seen_at",
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
-    ),
-    Indexes: ImmutableArray.Create(
-      new IndexDefinition(
+,
+    ],
+    Indexes: [new IndexDefinition(
         Name: "idx_message_dedup_first_seen",
-        Columns: ImmutableArray.Create("first_seen_at")
-      )
-    )
+        Columns: ["first_seen_at"]
+      )]
   );
 
   /// <summary>

@@ -4,6 +4,8 @@
 --              Returns stream IDs for downstream stream cleanup. Supports debug mode retention.
 -- Dependencies: 001-013 (requires wh_inbox table)
 
+SELECT __SCHEMA__.drop_all_overloads('process_inbox_completions');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.process_inbox_completions(
   p_completions JSONB,
   p_now TIMESTAMPTZ,
@@ -19,6 +21,8 @@ DECLARE
   v_new_status INTEGER;
   v_stream_id UUID;
 BEGIN
+  IF jsonb_array_length(p_completions) = 0 THEN RETURN; END IF;
+
   FOR v_completion IN
     SELECT
       (elem->>'MessageId')::UUID as msg_id,
@@ -28,7 +32,7 @@ BEGIN
     -- Get current status and stream_id
     SELECT i.status, i.stream_id
     INTO v_current_status, v_stream_id
-    FROM wh_inbox i
+    FROM __SCHEMA__.wh_inbox i
     WHERE i.message_id = v_completion.msg_id;
 
     -- Skip if message not found (already deleted or never existed)
@@ -40,7 +44,7 @@ BEGIN
 
     IF p_debug_mode THEN
       -- Debug mode: Retain message for troubleshooting
-      UPDATE wh_inbox i
+      UPDATE __SCHEMA__.wh_inbox i
       SET status = v_new_status,
           processed_at = p_now,
           instance_id = NULL,
@@ -52,11 +56,11 @@ BEGIN
     ELSE
       -- Production: Delete if EventStored flag set (inbox completion = event stored)
       IF (v_new_status & 2) = 2 THEN
-        DELETE FROM wh_inbox i WHERE i.message_id = v_completion.msg_id;
+        DELETE FROM __SCHEMA__.wh_inbox i WHERE i.message_id = v_completion.msg_id;
         RETURN QUERY SELECT v_completion.msg_id AS message_id, v_stream_id AS stream_id, TRUE AS was_deleted;
       ELSE
         -- Event not yet stored, retain with updated status
-        UPDATE wh_inbox i
+        UPDATE __SCHEMA__.wh_inbox i
         SET status = v_new_status,
             processed_at = p_now,
             instance_id = NULL,

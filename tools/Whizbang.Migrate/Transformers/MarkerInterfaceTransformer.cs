@@ -40,8 +40,7 @@ public sealed class MarkerInterfaceTransformer : ICodeTransformer {
     }
 
     // Check if file has using Wolverine
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return Task.FromResult(new TransformationResult(
           sourceCode,
           sourceCode,

@@ -55,7 +55,7 @@ namespace Whizbang.Core.Attributes;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/perspectives#pure-services</docs>
+/// <docs>fundamentals/perspectives/perspectives#pure-services</docs>
 /// <tests>Whizbang.Core.Tests/Attributes/PureServiceAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, AllowMultiple = false, Inherited = true)]
 public sealed class PureServiceAttribute : Attribute {

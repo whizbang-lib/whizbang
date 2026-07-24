@@ -11,42 +11,38 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// The scope is tracked internally and disposed when the DbContext is disposed.
 /// </summary>
 /// <remarks>
-/// This factory is used instead of AddPooledDbContextFactory to avoid scope validation issues.
+/// <para>This factory is used instead of AddPooledDbContextFactory to avoid scope validation issues.
 /// AddPooledDbContextFactory registers scoped option configurations internally, which causes
-/// "Cannot resolve scoped service from root provider" errors when scope validation is enabled.
+/// "Cannot resolve scoped service from root provider" errors when scope validation is enabled.</para>
 ///
-/// This implementation:
+/// <para>This implementation:
 /// - Is registered as singleton (safe for parallel resolvers)
 /// - Creates scopes for each CreateDbContext() call
 /// - Tracks scopes using ConditionalWeakTable to dispose them when contexts are GC'd
-/// - Works correctly with scope validation enabled
+/// - Works correctly with scope validation enabled</para>
 ///
-/// For HotChocolate parallel resolvers, each resolver gets its own DbContext + scope,
-/// providing the same thread-safety as AddPooledDbContextFactory but without the scope issues.
+/// <para>For HotChocolate parallel resolvers, each resolver gets its own DbContext + scope,
+/// providing the same thread-safety as AddPooledDbContextFactory but without the scope issues.</para>
 /// </remarks>
 /// <typeparam name="TContext">The DbContext type</typeparam>
-/// <docs>lenses/lens-query-factory</docs>
+/// <docs>fundamentals/lenses/lens-query-factory</docs>
+/// <remarks>
+/// Creates a new ScopedDbContextFactory.
+/// </remarks>
+/// <param name="scopeFactory">The service scope factory for creating scopes</param>
 public sealed class ScopedDbContextFactory<[DynamicallyAccessedMembers(
     DynamicallyAccessedMemberTypes.PublicConstructors |
     DynamicallyAccessedMemberTypes.NonPublicConstructors |
-    DynamicallyAccessedMemberTypes.PublicProperties)] TContext> : IDbContextFactory<TContext>
+    DynamicallyAccessedMemberTypes.PublicProperties)] TContext>(IServiceScopeFactory scopeFactory) : IDbContextFactory<TContext>
     where TContext : DbContext {
 
-  private readonly IServiceScopeFactory _scopeFactory;
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
 
   /// <summary>
   /// Tracks scopes associated with DbContext instances.
   /// When the DbContext is GC'd, the scope will be disposed via the weak reference cleanup.
   /// </summary>
-  private readonly ConditionalWeakTable<TContext, IServiceScope> _scopes = new();
-
-  /// <summary>
-  /// Creates a new ScopedDbContextFactory.
-  /// </summary>
-  /// <param name="scopeFactory">The service scope factory for creating scopes</param>
-  public ScopedDbContextFactory(IServiceScopeFactory scopeFactory) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  }
+  private readonly ConditionalWeakTable<TContext, IServiceScope> _scopes = [];
 
   /// <summary>
   /// Creates a new DbContext instance within a new service scope.

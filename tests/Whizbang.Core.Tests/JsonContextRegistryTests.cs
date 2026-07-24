@@ -3,6 +3,8 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
@@ -37,7 +39,7 @@ public partial class JsonContextRegistryTests {
   public async Task RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync() {
     // Arrange
     var converter = new TestIdJsonConverter();
-    var initialCount = JsonContextRegistry.RegisteredCount;
+    _ = JsonContextRegistry.RegisteredCount;
 
     // Act
     JsonContextRegistry.RegisterConverter(converter);
@@ -135,7 +137,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task RegisterTypeName_WithValidArguments_RegistersSuccessfullyAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var resolver = TestMessageJsonContext.Default;
     var initialCount = JsonContextRegistry.RegisteredTypeNameCount;
 
@@ -164,7 +166,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task RegisterTypeName_WithNullType_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var resolver = TestMessageJsonContext.Default;
 
     // Act & Assert
@@ -178,7 +180,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task RegisterTypeName_WithNullResolver_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
 
     // Act & Assert
     var exception = await Assert.That(() =>
@@ -191,7 +193,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithRegisteredType_ReturnsJsonTypeInfoAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var resolver = TestMessageJsonContext.Default;
     JsonContextRegistry.RegisterTypeName(typeName, typeof(TestMessage), resolver);
     var options = JsonContextRegistry.CreateCombinedOptions();
@@ -207,13 +209,13 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithFuzzyMatch_MatchesShortFormToFullFormAsync() {
     // Arrange - Register with short form
-    var shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var resolver = TestMessageJsonContext.Default;
     JsonContextRegistry.RegisterTypeName(shortForm, typeof(TestMessage), resolver);
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act - Lookup with full AssemblyQualifiedName (includes Version, Culture, PublicKeyToken)
-    var fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(fullForm, options);
 
     // Assert - Should match despite different formats
@@ -224,13 +226,13 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithFuzzyMatch_MatchesFullFormToShortFormAsync() {
     // Arrange - Register with full AssemblyQualifiedName
-    var fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
     var resolver = TestMessageJsonContext.Default;
     JsonContextRegistry.RegisterTypeName(fullForm, typeof(TestMessage), resolver);
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act - Lookup with short form
-    var shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(shortForm, options);
 
     // Assert - Should match despite different formats
@@ -241,7 +243,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithUnregisteredType_ReturnsNullAsync() {
     // Arrange
-    var typeName = "SomeUnregisteredType, SomeAssembly";
+    const string typeName = "SomeUnregisteredType, SomeAssembly";
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act
@@ -278,7 +280,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithNullOptions_ReturnsNullAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
 
     // Act
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(typeName, null!);
@@ -308,8 +310,8 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithEnvelopeType_ReturnsEnvelopeJsonTypeInfoAsync() {
     // Arrange - Register both payload type and envelope type (simulating MessageJsonContextGenerator)
-    var payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
-    var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    const string payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
+    const string envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
     var resolver = TestEventJsonContext.Default;
 
     // Register the resolver itself (needed for CreateCombinedOptions to include it)
@@ -337,8 +339,8 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task EnvelopeType_CanBeDeserializedFromJson_WithRegisteredTypeInfoAsync() {
     // Arrange - Register both payload type and envelope type
-    var payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
-    var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    const string payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
+    const string envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
     var resolver = TestEventJsonContext.Default;
 
     // Register the resolver itself (needed for CreateCombinedOptions to include it)
@@ -376,7 +378,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task EnvelopeType_WithFullAssemblyQualifiedName_MatchesFuzzilyAsync() {
     // Arrange - Register with short form (what generator produces)
-    var shortForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    const string shortForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
     var resolver = TestEventJsonContext.Default;
 
     JsonContextRegistry.RegisterTypeName(
@@ -388,7 +390,7 @@ public partial class JsonContextRegistryTests {
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act - Lookup with full AssemblyQualifiedName (what AzureServiceBusTransport sends)
-    var fullForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string fullForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(fullForm, options);
 
     // Assert - Should match despite different formats (fuzzy matching)
@@ -422,6 +424,309 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(TestOrderShippedEvent))]
   [JsonSerializable(typeof(TestCreateOrderCommand))]
   internal sealed partial class PolymorphicTestJsonContext : JsonSerializerContext {
+  }
+
+  /// <summary>
+  /// Test composite event — bundles inner events that all inherit the composite's stream at the
+  /// receiver. A composite implements ICompositeEvent (IMessage), never IEvent.
+  /// </summary>
+  internal sealed record TestBulkImportComposite(List<IMessage> Items) : ICompositeEvent {
+    public IEnumerable<IMessage> InnerEvents => Items;
+  }
+
+  /// <summary>
+  /// Test JsonSerializerContext for composite round-trip: the composite, its inner event, the
+  /// IMessage-payload envelope, and the inner-event list (mirrors what MessageJsonContextGenerator
+  /// now emits for ICompositeEvent types).
+  /// </summary>
+  [JsonSerializable(typeof(TestBulkImportComposite))]
+  [JsonSerializable(typeof(TestOrderPlacedEvent))]
+  [JsonSerializable(typeof(MessageEnvelope<IMessage>))]
+  [JsonSerializable(typeof(List<IMessage>))]
+  internal sealed partial class CompositeRoundTripJsonContext : JsonSerializerContext {
+  }
+
+  /// <summary>Plain (non-composite) event carrying a polymorphic IMessage collection.</summary>
+  internal sealed record TestEventWithMessageList(Guid Id, List<IMessage> Items) : IEvent;
+
+  /// <summary>Plain event carrying a polymorphic IEvent collection (exercises the IEvent resolver branch).</summary>
+  internal sealed record TestEventWithEventList(Guid Id, List<IEvent> Events) : IEvent;
+
+  /// <summary>Plain event carrying a polymorphic ICommand collection (exercises the ICommand resolver branch).</summary>
+  internal sealed record TestEventWithCommandList(Guid Id, List<ICommand> Commands) : IEvent;
+
+  /// <summary>
+  /// Comprehensive context for the polymorphic-collection round-trip tests: the composite, the three
+  /// collection-carrying events, the inner event/command types, the IMessage-payload envelope, and the
+  /// closed interface-list types.
+  /// </summary>
+  [JsonSerializable(typeof(TestBulkImportComposite))]
+  [JsonSerializable(typeof(TestEventWithMessageList))]
+  [JsonSerializable(typeof(TestEventWithEventList))]
+  [JsonSerializable(typeof(TestEventWithCommandList))]
+  [JsonSerializable(typeof(TestOrderPlacedEvent))]
+  [JsonSerializable(typeof(TestOrderShippedEvent))]
+  [JsonSerializable(typeof(TestCreateOrderCommand))]
+  [JsonSerializable(typeof(MessageEnvelope<IMessage>))]
+  [JsonSerializable(typeof(List<IMessage>))]
+  [JsonSerializable(typeof(List<IEvent>))]
+  [JsonSerializable(typeof(List<ICommand>))]
+  internal sealed partial class PolymorphicCollectionTestJsonContext : JsonSerializerContext {
+  }
+
+  /// <summary>One-line consumer composite built on the turnkey <see cref="CompositeEventBase"/> helper.
+  /// Public so the source generator discovers it and auto-registers its wire metadata — exactly as a
+  /// real consumer's composite is registered (single generated context, no hand-written one).</summary>
+  public sealed class HelperRoundTripComposite : Whizbang.Core.Messaging.CompositeEventBase;
+
+  /// <summary>Public inner event so it is auto-registered as an IEvent/IMessage wire type, like a real
+  /// one. Carries its own [StreamId] (a public IEvent requires one); inside a composite the receiver
+  /// overrides it with the composite's stream, but the type still needs it to satisfy WHIZ009.</summary>
+  public sealed record HelperInnerEvent : IEvent {
+    [StreamId]
+    public Guid StreamId { get; init; }
+    public string Note { get; init; } = string.Empty;
+  }
+
+
+  [Test]
+  public async Task MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync() {
+    // End-to-end "serialization works" gate for the turnkey composite feature: a composite serializes
+    // and deserializes as an IMessage-polymorphic envelope payload, and its inner events survive the
+    // round-trip as their concrete types. The composite registers ONLY as IMessage (never IEvent),
+    // exactly as MessageJsonContextGenerator now emits.
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestBulkImportComposite>("TestBulkImportComposite");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(CompositeRoundTripJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var orderId = Guid.NewGuid();
+    var inner = new TestOrderPlacedEvent(orderId, "Composite Customer");
+    var composite = new TestBulkImportComposite([inner]);
+    var messageId = MessageId.New();
+    var envelope = new MessageEnvelope<IMessage>(messageId, composite, []);
+
+    // Serialize
+    var envelopeTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(envelope, envelopeTypeInfo!);
+
+    // Act - deserialize the wire payload polymorphically
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, envelopeTypeInfo!);
+
+    // Assert - composite returns as the concrete type with its inner event intact
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.MessageId).IsEqualTo(messageId);
+    await Assert.That(deserialized.Payload).IsTypeOf<TestBulkImportComposite>();
+    var roundTripped = (TestBulkImportComposite)deserialized.Payload;
+    var innerList = roundTripped.InnerEvents.ToList();
+    await Assert.That(innerList.Count).IsEqualTo(1);
+    await Assert.That(innerList[0]).IsTypeOf<TestOrderPlacedEvent>();
+    await Assert.That(((TestOrderPlacedEvent)innerList[0]).OrderId).IsEqualTo(orderId);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────────────────────────
+  // REPRO — composite NAME-resolution gap (a consuming service's "Failed to resolve message type" storm).
+  // The generator registers a composite for POLYMORPHIC serialization (RegisterDerivedType<IMessage>) but
+  // NEVER emits RegisterTypeName for it (MessageJsonContextGenerator.cs:1638 filters IsCommand||IsEvent||
+  // IsSerializable — a composite is none). So GetTypeInfoByName — the by-name lookup the outbox-flush and
+  // inbox fan-out lifecycle deserializers use — returns null for every composite, and the deserialize throws.
+  // A normal event resolves by name; a composite must too. HelperRoundTripComposite/HelperInnerEvent are
+  // PUBLIC so the real source generator registers them exactly as a consumer's composite is registered.
+  // ───────────────────────────────────────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task GetTypeInfoByName_GeneratorRegisteredComposite_IsNameResolvableLikeAnEventAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Control: a generator-registered IEvent IS name-resolvable (the generator emits RegisterTypeName for it).
+    var eventInfo = JsonContextRegistry.GetTypeInfoByName(
+      typeof(HelperInnerEvent).AssemblyQualifiedName!, options);
+    await Assert.That(eventInfo).IsNotNull()
+      .Because("A generator-registered IEvent is name-resolvable via RegisterTypeName — the control for this repro.");
+
+    // The composite MUST be name-resolvable too: the outbox-flush lifecycle (LifecycleInvocationHelper.
+    // _processOutboxMessagesAsync) and the inbox fan-out (InboxDispatchWorker._resolveTypedEnvelope)
+    // deserialize each row BY NAME via GetTypeInfoByName. The generator emits only RegisterDerivedType<IMessage>
+    // (polymorphism) for a composite, never RegisterTypeName, so this returns null → "Failed to resolve
+    // message type" and the composite never fans out (its inner events never persist).
+    var compositeInfo = JsonContextRegistry.GetTypeInfoByName(
+      typeof(HelperRoundTripComposite).AssemblyQualifiedName!, options);
+    await Assert.That(compositeInfo).IsNotNull()
+      .Because("A CompositeEventBase is deserialized by name during outbox flush / inbox fan-out; excluding composites from RegisterTypeName makes GetTypeInfoByName return null → the resolve-storm and no fan-out.");
+  }
+
+  [Test]
+  public async Task LifecycleDeserializer_GeneratorRegisteredComposite_ResolvesByName_NotFailedToResolveAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var deserializer = new Whizbang.Core.Messaging.JsonLifecycleMessageDeserializer(options);
+    using var payload = System.Text.Json.JsonDocument.Parse("{}");
+
+    // Exactly what the outbox-flush lifecycle does per outbox row: deserialize the payload BY NAME. For a
+    // composite this currently throws InvalidOperationException "Failed to resolve message type '…'" (the
+    // production resolve-retry storm). Once the composite is name-resolvable it deserializes instead.
+    await Assert.That(() => deserializer.DeserializeFromJsonElement(
+        payload.RootElement, typeof(HelperRoundTripComposite).AssemblyQualifiedName!))
+      .ThrowsNothing()
+      .Because("The outbox-flush / inbox lifecycle deserializes every row by name; a composite must resolve, not throw 'Failed to resolve message type'.");
+  }
+
+  [Test]
+  public async Task MessageEnvelope_CompositeContainingComposite_RoundTripsCycleSafeAsync() {
+    // Cycle-safety proof: a composite's inner list contains ANOTHER composite (a composite is itself
+    // an IMessage that contains IMessage). The lazy base resolver must build the IMessage typeinfo
+    // without recursing/stack-overflowing. Both nesting levels must return as concrete types.
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestBulkImportComposite>("TestBulkImportComposite");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(CompositeRoundTripJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var orderId = Guid.NewGuid();
+    var leaf = new TestOrderPlacedEvent(orderId, "Nested Customer");
+    var innerComposite = new TestBulkImportComposite([leaf]);
+    var outerComposite = new TestBulkImportComposite([innerComposite]);
+    var messageId = MessageId.New();
+    var envelope = new MessageEnvelope<IMessage>(messageId, outerComposite, []);
+
+    var envelopeTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(envelope, envelopeTypeInfo!);
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, envelopeTypeInfo!);
+
+    // Outer composite -> inner composite -> leaf event, all concrete.
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Payload).IsTypeOf<TestBulkImportComposite>();
+    var outerInner = ((TestBulkImportComposite)deserialized.Payload).InnerEvents.ToList();
+    await Assert.That(outerInner.Count).IsEqualTo(1);
+    await Assert.That(outerInner[0]).IsTypeOf<TestBulkImportComposite>();
+    var leafList = ((TestBulkImportComposite)outerInner[0]).InnerEvents.ToList();
+    await Assert.That(leafList.Count).IsEqualTo(1);
+    await Assert.That(leafList[0]).IsTypeOf<TestOrderPlacedEvent>();
+    await Assert.That(((TestOrderPlacedEvent)leafList[0]).OrderId).IsEqualTo(orderId);
+  }
+
+  [Test]
+  public async Task PlainEventWithPolymorphicMessageList_RoundTripsAsync() {
+    // "Events with collections": a non-composite IEvent carrying a polymorphic IMessage list now
+    // round-trips — previously the nested IMessage wasn't polymorphic and failed to deserialize.
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestEventWithMessageList>("TestEventWithMessageList");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var ev = new TestEventWithMessageList(Guid.NewGuid(), [new TestOrderPlacedEvent(Guid.NewGuid(), "Child")]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), ev, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<TestEventWithMessageList>();
+    var items = ((TestEventWithMessageList)back.Payload).Items;
+    await Assert.That(items.Count).IsEqualTo(1);
+    await Assert.That(items[0]).IsTypeOf<TestOrderPlacedEvent>();
+  }
+
+  [Test]
+  public async Task NestedEventList_ExercisesIEventResolverBranch_RoundTripsAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestEventWithEventList>("TestEventWithEventList");
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var ev = new TestEventWithEventList(Guid.NewGuid(), [new TestOrderPlacedEvent(Guid.NewGuid(), "E")]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), ev, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<TestEventWithEventList>();
+    var events = ((TestEventWithEventList)back.Payload).Events;
+    await Assert.That(events.Count).IsEqualTo(1);
+    await Assert.That(events[0]).IsTypeOf<TestOrderPlacedEvent>();
+  }
+
+  [Test]
+  public async Task NestedCommandList_ExercisesICommandResolverBranch_RoundTripsAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestEventWithCommandList>("TestEventWithCommandList");
+    JsonContextRegistry.RegisterDerivedType<ICommand, TestCreateOrderCommand>("TestCreateOrderCommand");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var ev = new TestEventWithCommandList(Guid.NewGuid(), [new TestCreateOrderCommand("C", 9.99m)]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), ev, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<TestEventWithCommandList>();
+    var cmds = ((TestEventWithCommandList)back.Payload).Commands;
+    await Assert.That(cmds.Count).IsEqualTo(1);
+    await Assert.That(cmds[0]).IsTypeOf<TestCreateOrderCommand>();
+  }
+
+  [Test]
+  public async Task Composite_MultipleMixedInnerTypes_PreservesOrderAndTypesAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestBulkImportComposite>("TestBulkImportComposite");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderShippedEvent>("TestOrderShippedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var placed = new TestOrderPlacedEvent(Guid.NewGuid(), "P");
+    var shipped = new TestOrderShippedEvent(Guid.NewGuid(), "TRACK");
+    var composite = new TestBulkImportComposite([placed, shipped]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), composite, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    var inner = ((TestBulkImportComposite)back!.Payload).InnerEvents.ToList();
+    await Assert.That(inner.Count).IsEqualTo(2);
+    await Assert.That(inner[0]).IsTypeOf<TestOrderPlacedEvent>();   // producer-yielded order preserved
+    await Assert.That(inner[1]).IsTypeOf<TestOrderShippedEvent>();
+    await Assert.That(((TestOrderShippedEvent)inner[1]).TrackingNumber).IsEqualTo("TRACK");
+  }
+
+  [Test]
+  public async Task Composite_EmptyInnerEvents_RoundTripsAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestBulkImportComposite>("TestBulkImportComposite");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var composite = new TestBulkImportComposite([]);
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), composite, []);
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<TestBulkImportComposite>();
+    await Assert.That(((TestBulkImportComposite)back.Payload).InnerEvents.ToList().Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CompositeEventBaseSubclass_RoundTripsViaHelperShapeAsync() {
+    // Proves the turnkey CompositeEventBase shape (StreamId + List<IMessage> Inner + [JsonIgnore]
+    // computed InnerEvents) serializes and deserializes end to end via the SOURCE-GENERATED metadata
+    // (the composite + inner event are public, so the generator auto-registers them — exactly the
+    // production path; no hand-written JsonSerializableContext). StreamId + inner events survive.
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var streamId = Guid.NewGuid();
+    var inner = new HelperInnerEvent { StreamId = Guid.NewGuid(), Note = "Helper Customer" };
+    var composite = new HelperRoundTripComposite { StreamId = streamId, Inner = [inner] };
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), composite, []);
+
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Payload).IsTypeOf<HelperRoundTripComposite>();
+    var rt = (HelperRoundTripComposite)back.Payload;
+    await Assert.That(rt.StreamId).IsEqualTo(streamId);
+    var innerList = rt.InnerEvents.ToList();
+    await Assert.That(innerList.Count).IsEqualTo(1);
+    await Assert.That(innerList[0]).IsTypeOf<HelperInnerEvent>();
+    await Assert.That(((HelperInnerEvent)innerList[0]).Note).IsEqualTo("Helper Customer");
   }
 
   [Test]
@@ -1128,7 +1433,7 @@ public partial class JsonContextRegistryTests {
   public async Task GetTypeInfoByName_WithInterfaceEnvelopeTypeName_ReturnsNullAsync() {
     // Arrange - The exact type name sent by transports for interface-typed envelopes
     // This simulates what happens when a service publishes MessageEnvelope<IEvent>
-    var interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
+    const string interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act - GetTypeInfoByName won't find MessageEnvelope<IEvent> because only concrete types are registered
@@ -1180,7 +1485,7 @@ public partial class JsonContextRegistryTests {
     await Assert.That(json).Contains("\"$type\":\"PolymorphicFallbackTestEvent\"");
 
     // Simulate transport fallback: GetTypeInfoByName returns null...
-    var interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core]], Whizbang.Core";
+    const string interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core]], Whizbang.Core";
     var directLookup = JsonContextRegistry.GetTypeInfoByName(interfaceEnvelopeTypeName, options);
     await Assert.That(directLookup).IsNull(); // Confirms fallback is needed
 
@@ -1258,7 +1563,7 @@ public partial class JsonContextRegistryTests {
     var eventId = Guid.NewGuid();
     var messageId = MessageId.New();
     var payload = new PolymorphicFallbackTestEvent("test-data", eventId);
-    var envelope = new MessageEnvelope<IEvent>(messageId, payload, []);
+    _ = new MessageEnvelope<IEvent>(messageId, payload, []);
 
     // BROKEN: Serialize using CONCRETE type info (no $type discriminator)
     var concreteTypeInfo = options.GetTypeInfo(typeof(MessageEnvelope<PolymorphicFallbackTestEvent>));
@@ -1333,7 +1638,7 @@ public partial class JsonContextRegistryTests {
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Simulate outbox storing the interface envelope type name
-    var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
+    const string envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
 
     // Create envelope with concrete payload
     var eventId = Guid.NewGuid();

@@ -27,9 +27,9 @@ public static class RequestResponseSchema {
       new ColumnDefinition(
         Name: "request_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "correlation_id",
         DataType: WhizbangDataType.UUID,
@@ -38,9 +38,9 @@ public static class RequestResponseSchema {
       new ColumnDefinition(
         Name: "request_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "request_data",
         DataType: WhizbangDataType.JSON,
@@ -49,9 +49,9 @@ public static class RequestResponseSchema {
       new ColumnDefinition(
         Name: "response_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: true
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "response_data",
         DataType: WhizbangDataType.JSON,
@@ -60,8 +60,8 @@ public static class RequestResponseSchema {
       new ColumnDefinition(
         Name: "status",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 50,
         Nullable: false,
+        MaxLength: 50,
         DefaultValue: DefaultValue.String("Pending")
       ),
       new ColumnDefinition(
@@ -81,22 +81,24 @@ public static class RequestResponseSchema {
         Nullable: true
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+
+    [
       new IndexDefinition(
-        Name: "idx_request_response_correlation",
-        Columns: ImmutableArray.Create("correlation_id"),
-        Unique: true  // Required for ON CONFLICT(correlation_id) in Dapper code
-      ),
+            Name: "idx_request_response_correlation",
+            Columns: ["correlation_id"                                      ],
+            Unique: true  // Required for ON CONFLICT(correlation_id) in Dapper code
+          ),
       new IndexDefinition(
         Name: "idx_request_response_status_created",
-        Columns: ImmutableArray.Create("status", "created_at")
+        Columns: ["status", "created_at"]
       ),
       new IndexDefinition(
         Name: "idx_request_response_expires",
-        Columns: ImmutableArray.Create("expires_at")
+        Columns: ["expires_at"                              ]
       )
-    )
-  );
+,
+    ]);
 
   /// <summary>
   /// Column name constants for type-safe access.

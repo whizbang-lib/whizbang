@@ -1,42 +1,32 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Security.Extractors;
 
 /// <summary>
 /// Extracts security context from the message envelope's hop chain.
-/// Walks backwards through HopType.Current hops to find the most recent scope.
+/// Merges ScopeDelta from all HopType.Current hops to produce the full security context
+/// including roles, permissions, principals, and claims.
 /// </summary>
 /// <remarks>
-/// This is the default extractor for distributed message security propagation.
+/// <para>This is the default extractor for distributed message security propagation.
 /// When a message flows between services, the scope delta is preserved
-/// in the MessageHop.Scope property and can be extracted here.
+/// in the MessageHop.Scope property and can be extracted here.</para>
 ///
-/// Priority: 100 (runs first among default extractors)
+/// <para>Priority: 100 (runs first among default extractors)</para>
 ///
-/// The extractor maps the scope (TenantId, UserId) to the
-/// full SecurityExtraction, leaving roles, permissions, and claims empty
-/// (unless the delta contains them).
+/// <para>Uses <see cref="ScopeDelta.ApplyTo"/> to merge all hop deltas, producing a full
+/// <see cref="ScopeContext"/> with all security fields (scope, roles, permissions,
+/// principals, claims, actual/effective principal, context type).</para>
 /// </remarks>
-/// <docs>core-concepts/message-security#message-hop-extractor</docs>
+/// <docs>fundamentals/security/message-security#message-hop-extractor</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
-public sealed partial class MessageHopSecurityExtractor : ISecurityContextExtractor {
-  private static readonly HashSet<string> _emptyRoles = [];
-  private static readonly HashSet<Permission> _emptyPermissions = [];
-  private static readonly HashSet<SecurityPrincipalId> _emptyPrincipals = [];
-  private static readonly Dictionary<string, string> _emptyClaims = [];
-
-  private readonly ILogger<MessageHopSecurityExtractor>? _logger;
-
-  /// <summary>
-  /// Creates a new instance of MessageHopSecurityExtractor.
-  /// </summary>
-  /// <param name="logger">Optional logger for diagnostics.</param>
-  public MessageHopSecurityExtractor(ILogger<MessageHopSecurityExtractor>? logger = null) {
-    _logger = logger;
-  }
+/// <remarks>
+/// Creates a new instance of MessageHopSecurityExtractor.
+/// </remarks>
+/// <param name="logger">Optional logger for diagnostics.</param>
+public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecurityExtractor>? logger = null) : ISecurityContextExtractor {
+  private readonly ILogger<MessageHopSecurityExtractor>? _logger = logger;
 
   /// <summary>
   /// Default priority for MessageHopSecurityExtractor.
@@ -55,27 +45,30 @@ public sealed partial class MessageHopSecurityExtractor : ISecurityContextExtrac
     // Check for cancellation
     cancellationToken.ThrowIfCancellationRequested();
 
-    // Walk backwards through current hops to find the most recent scope
-    var scope = _getCurrentScope(envelope.Hops, _logger, envelope.MessageId);
+    // Merge ScopeDelta from all Current hops to produce the full ScopeContext
+    var scopeContext = _mergeScopeDeltas(envelope.Hops, _logger, envelope.MessageId);
 
     // No scope in hop chain
-    if (scope is null) {
+    if (scopeContext is null) {
       Log.NoScopeFound(_logger, envelope.MessageId, envelope.Hops?.Count ?? 0);
       return ValueTask.FromResult<SecurityExtraction?>(null);
     }
 
     // Empty scope (no TenantId or UserId)
-    if (string.IsNullOrEmpty(scope.TenantId) && string.IsNullOrEmpty(scope.UserId)) {
+    if (string.IsNullOrEmpty(scopeContext.Scope.TenantId) && string.IsNullOrEmpty(scopeContext.Scope.UserId)) {
       return ValueTask.FromResult<SecurityExtraction?>(null);
     }
 
-    // Map to SecurityExtraction
+    // Map to SecurityExtraction with full context from ScopeDelta
     var extraction = new SecurityExtraction {
-      Scope = scope,
-      Roles = _emptyRoles,
-      Permissions = _emptyPermissions,
-      SecurityPrincipals = _emptyPrincipals,
-      Claims = _emptyClaims,
+      Scope = scopeContext.Scope,
+      Roles = scopeContext.Roles,
+      Permissions = scopeContext.Permissions,
+      SecurityPrincipals = scopeContext.SecurityPrincipals,
+      Claims = scopeContext.Claims,
+      ActualPrincipal = scopeContext.ActualPrincipal,
+      EffectivePrincipal = scopeContext.EffectivePrincipal,
+      ContextType = scopeContext.ContextType,
       Source = "MessageHop"
     };
 
@@ -83,10 +76,11 @@ public sealed partial class MessageHopSecurityExtractor : ISecurityContextExtrac
   }
 
   /// <summary>
-  /// Gets the most recent scope from current hops by merging deltas.
-  /// Walks forward through HopType.Current hops only (ignores causation hops).
+  /// Merges ScopeDelta from all Current hops using <see cref="ScopeDelta.ApplyTo"/>.
+  /// This produces the full <see cref="ScopeContext"/> including roles, permissions,
+  /// principals, claims, and context type from the hop chain.
   /// </summary>
-  private static PerspectiveScope? _getCurrentScope(
+  private static ScopeContext? _mergeScopeDeltas(
       List<MessageHop>? hops,
       ILogger<MessageHopSecurityExtractor>? logger,
       ValueObjects.MessageId messageId) {
@@ -96,32 +90,28 @@ public sealed partial class MessageHopSecurityExtractor : ISecurityContextExtrac
       return null;
     }
 
-    PerspectiveScope? result = null;
+    ScopeContext? result = null;
     var currentHops = hops.Where(h => h.Type == HopType.Current).ToList();
 
     Log.ProcessingHops(logger, messageId, hops.Count, currentHops.Count);
 
+    // S3267: Loop has side effects (logging/state mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var hop in currentHops) {
       if (hop.Scope == null) {
         Log.HopScopeNull(logger, messageId);
         continue;
       }
 
-      if (hop.Scope.Values == null) {
+      if (!hop.Scope.HasChanges) {
         Log.HopScopeValuesNull(logger, messageId);
         continue;
       }
 
-      if (!hop.Scope.Values.TryGetValue(ScopeProp.Scope, out var scopeElement)) {
-        // Log available keys for debugging
-        var availableKeys = string.Join(", ", hop.Scope.Values.Keys.Select(k => k.ToString()));
-        Log.ScopePropNotFound(logger, messageId, availableKeys);
-        continue;
-      }
-
-      result = _deserializeScope(scopeElement);
-      Log.ScopeExtracted(logger, messageId, result.UserId, result.TenantId);
+      result = hop.Scope.ApplyTo(result);
+      Log.ScopeExtracted(logger, messageId, result.Scope.UserId, result.Scope.TenantId);
     }
+#pragma warning restore S3267
 
     return result;
   }
@@ -192,18 +182,6 @@ public sealed partial class MessageHopSecurityExtractor : ISecurityContextExtrac
     }
 
     [LoggerMessage(
-      EventId = 6,
-      Level = LogLevel.Warning,
-      Message = "MessageHopSecurityExtractor: ScopeProp.Scope not found in Values. MessageId={MessageId}, AvailableKeys=[{AvailableKeys}]")]
-    private static partial void ScopePropNotFoundInternal(ILogger logger, ValueObjects.MessageId messageId, string availableKeys);
-
-    public static void ScopePropNotFound(ILogger? logger, ValueObjects.MessageId messageId, string availableKeys) {
-      if (logger != null) {
-        ScopePropNotFoundInternal(logger, messageId, availableKeys);
-      }
-    }
-
-    [LoggerMessage(
       EventId = 7,
       Level = LogLevel.Debug,
       Message = "MessageHopSecurityExtractor: Scope extracted successfully. MessageId={MessageId}, UserId={UserId}, TenantId={TenantId}")]
@@ -216,30 +194,4 @@ public sealed partial class MessageHopSecurityExtractor : ISecurityContextExtrac
     }
   }
 
-  private static PerspectiveScope _deserializeScope(JsonElement element) {
-    var scope = new PerspectiveScope();
-
-    if (element.TryGetProperty("t", out var t) && t.ValueKind != JsonValueKind.Null) {
-      scope.TenantId = t.GetString();
-    }
-    if (element.TryGetProperty("u", out var u) && u.ValueKind != JsonValueKind.Null) {
-      scope.UserId = u.GetString();
-    }
-    if (element.TryGetProperty("c", out var c) && c.ValueKind != JsonValueKind.Null) {
-      scope.CustomerId = c.GetString();
-    }
-    if (element.TryGetProperty("o", out var o) && o.ValueKind != JsonValueKind.Null) {
-      scope.OrganizationId = o.GetString();
-    }
-    if (element.TryGetProperty("ap", out var ap) && ap.ValueKind == JsonValueKind.Array) {
-      foreach (var item in ap.EnumerateArray()) {
-        var val = item.GetString();
-        if (val != null) {
-          scope.AllowedPrincipals.Add(val);
-        }
-      }
-    }
-
-    return scope;
-  }
 }

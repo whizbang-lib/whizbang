@@ -1,7 +1,6 @@
 using Whizbang.Core.Messaging;
-using Whizbang.Core.Tests.Generated;
-using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Sqlite;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Tests;
 
@@ -25,7 +24,7 @@ public class DapperRequestResponseStoreTests : RequestResponseStoreContractTests
   }
 
   protected override Task<IRequestResponseStore> CreateStoreAsync() {
-    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var jsonOptions = JsonOptionsHelper.CreateOptions();
     var store = new DapperSqliteRequestResponseStore(_testBase.ConnectionFactory, _testBase.Executor, jsonOptions);
     return Task.FromResult<IRequestResponseStore>(store);
   }
@@ -35,5 +34,5 @@ public class DapperRequestResponseStoreTests : RequestResponseStoreContractTests
     GC.SuppressFinalize(this);
   }
 
-  private sealed class TestFixture : DapperTestBase { }
+  private sealed class TestFixture : DapperTestBase;
 }

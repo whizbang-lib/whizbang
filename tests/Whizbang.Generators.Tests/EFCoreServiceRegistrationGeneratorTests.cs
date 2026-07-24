@@ -83,7 +83,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithoutWhizbangDbContextAttribute_DoesNotDiscoverDbContextAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
 
       namespace TestApp;
@@ -140,7 +140,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithSingleKey_DiscoversDbContextWithKeyAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -183,7 +183,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -301,6 +301,57 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     // Should have ModuleInitializer attribute
     await Assert.That(sourceText).Contains("[ModuleInitializer]");
+  }
+
+  /// <summary>
+  /// Regression lock: EVERY generated AddDbContext registration must wire UseWhizbangFunctions() (the
+  /// JsonbSet etc. translators the collective-apply ExecuteUpdate depends on). The generator emits the
+  /// registration twice — the public AddDbContext method AND GeneratedModelRegistration.Initialize's
+  /// RemoveAll+re-add — and the second one previously omitted UseWhizbangFunctions. Since
+  /// ReassertGeneratedModelRegistration re-runs the second path, the live DbContext lost the translator and
+  /// collective-apply threw "could not be translated". Both paths now share one emission helper; this
+  /// asserts no registration can drift again.
+  /// </summary>
+  [Test]
+  public async Task Generator_EveryDbContextRegistration_WiresUseWhizbangFunctionsAsync() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var sawRegistration = false;
+    foreach (var generated in result.GeneratedSources) {
+      var text = generated.SourceText.ToString();
+      // Match real registrations only (services.AddDbContext<...>), not doc-comment mentions.
+      var addCount = System.Text.RegularExpressions.Regex.Count(text, @"services\.AddDbContext<");
+      if (addCount == 0) {
+        continue;
+      }
+      sawRegistration = true;
+      var useCount = System.Text.RegularExpressions.Regex.Count(text, @"UseWhizbangFunctions\(\)");
+      await Assert.That(useCount).IsGreaterThanOrEqualTo(addCount)
+        .Because($"every AddDbContext registration in {generated.HintName} must call UseWhizbangFunctions() so the "
+          + $"JsonbSet translator is wired for collective-apply ExecuteUpdate. Found {addCount} AddDbContext vs {useCount} UseWhizbangFunctions.");
+
+      // The call won't compile without the Functions namespace imported (CS1061) — a real consumer build
+      // catches it, but assert it here so the source generator can't ship an un-compilable registration.
+      await Assert.That(text).Contains("Whizbang.Data.EFCore.Postgres.Functions")
+        .Because($"{generated.HintName} calls UseWhizbangFunctions() so it must import Whizbang.Data.EFCore.Postgres.Functions.");
+    }
+
+    await Assert.That(sawRegistration).IsTrue()
+      .Because("the generator should emit at least one AddDbContext registration for a [WhizbangDbContext] type.");
   }
 
   /// <summary>
@@ -499,7 +550,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultipleDbContexts_GeneratesOnModelCreatingForEachAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -684,11 +735,11 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
-  /// Test that perspective_checkpoints table has composite primary key.
+  /// Test that perspective_cursors table has composite primary key.
   /// The PK should be (stream_id, perspective_name).
   /// </summary>
   [Test]
-  public async Task Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync() {
+  public async Task Generator_PerspectiveCursors_HasCompositePrimaryKeyAsync() {
     // Arrange
     var source = $$"""
       using Microsoft.EntityFrameworkCore;
@@ -757,6 +808,101 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("await ExecuteMigrationsAsync(dbContext");
   }
 
+  [Test]
+  public async Task Generator_SchemaExtensions_UsesXactLockWithTransactionAndRetryAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should use transaction-level advisory lock (PgBouncer-safe), NOT session-level
+    await Assert.That(sourceText).Contains("pg_try_advisory_xact_lock");
+    // Should NOT use session-level lock or manual unlock
+    await Assert.That(sourceText).DoesNotContain("SELECT pg_try_advisory_lock(");
+    await Assert.That(sourceText).DoesNotContain("pg_advisory_unlock");
+
+    // Should use BeginTransactionAsync for PgBouncer compatibility
+    await Assert.That(sourceText).Contains("BeginTransactionAsync");
+
+    // Should have fast path with bulk hash comparison
+    await Assert.That(sourceText).Contains("_bulkGetHashesAsync");
+    await Assert.That(sourceText).Contains("_compareHashes");
+
+    // Should have outer retry loop with _isRetryableError
+    await Assert.That(sourceText).Contains("_isRetryableError");
+
+    // Should set 600s command timeout for DDL
+    await Assert.That(sourceText).Contains("600");
+
+    // Should have owner column for migration categorization
+    await Assert.That(sourceText).Contains("owner");
+
+    // Should reference SchemaInitializationLog for structured logging
+    await Assert.That(sourceText).Contains("SchemaInitializationLog");
+
+    // Should accept initConnectionString parameter
+    await Assert.That(sourceText).Contains("initConnectionString");
+  }
+
+  [Test]
+  public async Task Generator_InitCallback_ResolvesInitConnectionStringAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var registration = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("EFCoreModelRegistration"));
+    await Assert.That(registration).IsNotNull();
+
+    var sourceText = registration!.SourceText.ToString();
+
+    // Should try {Name}-init connection string first (convention-based PgBouncer bypass)
+    await Assert.That(sourceText).Contains("-init");
+    await Assert.That(sourceText).Contains("GetConnectionString");
+
+    // Should resolve IConfiguration from the service provider
+    await Assert.That(sourceText).Contains("IConfiguration");
+
+    // Should handle null config gracefully (GetService, not GetRequiredService)
+    await Assert.That(sourceText).Contains("GetService<Microsoft.Extensions.Configuration.IConfiguration>");
+
+    // Should pass initConnStr to EnsureWhizbangDatabaseInitializedAsync
+    await Assert.That(sourceText).Contains("EnsureWhizbangDatabaseInitializedAsync");
+  }
+
   #endregion
 
   #region No Generators Diagnostic Tests
@@ -798,7 +944,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   public async Task Generator_SchemaExtensions_IncludesGinIndexesForJsonbColumnsAsync() {
     // Arrange - use explicit perspective that implements IPerspectiveFor<TModel>
     // The PERSPECTIVE_BOILERPLATE doesn't implement the interface, so we need a full definition
-    var source = """
+    const string source = """
       using System.Threading;
       using System.Threading.Tasks;
       using Microsoft.EntityFrameworkCore;
@@ -845,6 +991,51 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("_scope_gin");
   }
 
+  [Test]
+  public async Task Generator_SchemaExtensions_IncludesBtreeExpressionIndexForTenantScopeAsync() {
+    // §7: a gin(scope) index cannot serve `scope->>'t' = ?` btree equality — the tenant filter that both
+    // tenant-scoped lens queries AND every collective apply AND onto their WHERE. Without a btree EXPRESSION
+    // index over `((scope->>'t'))` those queries seq-scan the whole perspective table (the production hazard
+    // the apply-time index ensurer used to paper over). The schema generator must emit it at STARTUP so index
+    // creation never happens in a live apply path.
+    const string source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+      public record TestModel { public string Id { get; init; } = ""; }
+
+      public class TestPerspective : IPerspectiveFor<TestModel> {
+        private readonly IPerspectiveStore<TestModel> _store;
+        public TestPerspective(IPerspectiveStore<TestModel> store) => _store = store;
+        public Task UpdateAsync(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("(scope->>'t')")
+      .Because("A btree EXPRESSION index over scope->>'t' is what makes the planner index-scan the tenant " +
+        "filter (collective apply + lens) instead of seq-scanning; gin(scope) cannot serve ->> equality.");
+    await Assert.That(sourceText).Contains("_scope_tenant")
+      .Because("The tenant scope expression index follows the idx_<table>_scope_tenant naming convention.");
+  }
+
   /// <summary>
   /// Test that perspective DDL includes physical fields marked with [PhysicalField] attribute.
   /// Physical fields should be added as separate columns in the CREATE TABLE statement.
@@ -852,7 +1043,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_SchemaExtensions_IncludesPhysicalFieldsInDDLAsync() {
     // Arrange - Model with [PhysicalField] attributes
-    var source = """
+    const string source = """
       using System;
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;
@@ -912,13 +1103,314 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// Test that physical fields using C# keyword type aliases (string, int, bool, etc.)
+  /// map to the correct PostgreSQL column types instead of falling through to TEXT.
+  /// Roslyn's FullyQualifiedFormat with UseSpecialTypes outputs keyword aliases for
+  /// predefined types, so the type mapper must handle both forms.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_MapsKeywordTypeAliasesToCorrectPostgresTypesAsync() {
+    // Arrange - Model with physical fields using types that Roslyn outputs as keyword aliases
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record TypeMappingModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        [PhysicalField]
+        public int Count { get; init; }
+
+        [PhysicalField]
+        public long BigCount { get; init; }
+
+        [PhysicalField]
+        public short SmallCount { get; init; }
+
+        [PhysicalField]
+        public bool IsActive { get; init; }
+
+        [PhysicalField]
+        public string Label { get; init; } = "";
+
+        [PhysicalField]
+        public decimal Price { get; init; }
+
+        [PhysicalField]
+        public double Score { get; init; }
+
+        [PhysicalField]
+        public float Rating { get; init; }
+      }
+
+      public class TypeMappingPerspective : IPerspectiveFor<TypeMappingModel, TestEvent> {
+        public TypeMappingModel Apply(TypeMappingModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Each keyword alias type must map to its correct PostgreSQL type, NOT fall through to TEXT
+    await Assert.That(sourceText).Contains("count INTEGER")
+      .Because("int should map to INTEGER, not TEXT");
+    await Assert.That(sourceText).Contains("big_count BIGINT")
+      .Because("long should map to BIGINT, not TEXT");
+    await Assert.That(sourceText).Contains("small_count SMALLINT")
+      .Because("short should map to SMALLINT, not TEXT");
+    await Assert.That(sourceText).Contains("is_active BOOLEAN")
+      .Because("bool should map to BOOLEAN, not TEXT");
+    await Assert.That(sourceText).Contains("label TEXT")
+      .Because("string should map to TEXT");
+    await Assert.That(sourceText).Contains("price NUMERIC")
+      .Because("decimal should map to NUMERIC, not TEXT");
+    await Assert.That(sourceText).Contains("score DOUBLE PRECISION")
+      .Because("double should map to DOUBLE PRECISION, not TEXT");
+    await Assert.That(sourceText).Contains("rating REAL")
+      .Because("float should map to REAL, not TEXT");
+  }
+
+  /// <summary>
+  /// Test that physical fields using fully-qualified .NET type names (System.Guid, System.DateTime, etc.)
+  /// continue to map correctly. These are non-keyword types that Roslyn outputs with the global:: prefix.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_MapsFullyQualifiedTypesToCorrectPostgresTypesAsync() {
+    // Arrange - Model with physical fields using types that Roslyn outputs as global::System.X
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record DateTimeModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        [PhysicalField]
+        public Guid CorrelationId { get; init; }
+
+        [PhysicalField]
+        public DateTime CreatedAt { get; init; }
+
+        [PhysicalField]
+        public DateTimeOffset UpdatedAt { get; init; }
+
+        [PhysicalField]
+        public DateOnly BirthDate { get; init; }
+
+        [PhysicalField]
+        public TimeOnly StartTime { get; init; }
+      }
+
+      public class DateTimePerspective : IPerspectiveFor<DateTimeModel, TestEvent> {
+        public DateTimeModel Apply(DateTimeModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("correlation_id UUID")
+      .Because("Guid should map to UUID");
+    await Assert.That(sourceText).Contains("created_at TIMESTAMPTZ")
+      .Because("DateTime should map to TIMESTAMPTZ");
+    await Assert.That(sourceText).Contains("updated_at TIMESTAMPTZ")
+      .Because("DateTimeOffset should map to TIMESTAMPTZ");
+    await Assert.That(sourceText).Contains("birth_date DATE")
+      .Because("DateOnly should map to DATE");
+    await Assert.That(sourceText).Contains("start_time TIME")
+      .Because("TimeOnly should map to TIME");
+  }
+
+  /// <summary>
+  /// Test that physical fields using explicit global:: qualified types map correctly.
+  /// Users may write global::System.Guid or global::System.DateTime directly in their models.
+  /// The generator strips the global:: prefix before mapping, so these should work identically.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_MapsGlobalQualifiedTypesToCorrectPostgresTypesAsync() {
+    // Arrange - Model with explicit global:: qualified type names
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record GlobalQualifiedModel {
+        [StreamId]
+        public global::System.Guid Id { get; init; }
+
+        [PhysicalField]
+        public global::System.Guid CorrelationId { get; init; }
+
+        [PhysicalField]
+        public global::System.DateTime CreatedAt { get; init; }
+
+        [PhysicalField]
+        public global::System.Boolean IsActive { get; init; }
+
+        [PhysicalField]
+        public global::System.Int32 Count { get; init; }
+      }
+
+      public class GlobalQualifiedPerspective : IPerspectiveFor<GlobalQualifiedModel, TestEvent> {
+        public GlobalQualifiedModel Apply(GlobalQualifiedModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("correlation_id UUID")
+      .Because("global::System.Guid should map to UUID");
+    await Assert.That(sourceText).Contains("created_at TIMESTAMPTZ")
+      .Because("global::System.DateTime should map to TIMESTAMPTZ");
+    await Assert.That(sourceText).Contains("is_active BOOLEAN")
+      .Because("global::System.Boolean should map to BOOLEAN");
+    await Assert.That(sourceText).Contains("count INTEGER")
+      .Because("global::System.Int32 should map to INTEGER");
+  }
+
+  /// <summary>
+  /// Test that nullable physical fields with keyword type aliases map correctly.
+  /// The nullable suffix (?) is stripped before type mapping, so int? should map the same as int.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_MapsNullableKeywordTypesToCorrectPostgresTypesAsync() {
+    // Arrange - Model with nullable keyword-aliased types
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record NullableModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        [PhysicalField]
+        public int? Count { get; init; }
+
+        [PhysicalField]
+        public bool? IsActive { get; init; }
+
+        [PhysicalField]
+        public long? BigCount { get; init; }
+
+        [PhysicalField]
+        public decimal? Price { get; init; }
+
+        [PhysicalField]
+        public DateTime? CreatedAt { get; init; }
+      }
+
+      public class NullablePerspective : IPerspectiveFor<NullableModel, TestEvent> {
+        public NullableModel Apply(NullableModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("count INTEGER")
+      .Because("int? should map to INTEGER after stripping nullable suffix");
+    await Assert.That(sourceText).Contains("is_active BOOLEAN")
+      .Because("bool? should map to BOOLEAN after stripping nullable suffix");
+    await Assert.That(sourceText).Contains("big_count BIGINT")
+      .Because("long? should map to BIGINT after stripping nullable suffix");
+    await Assert.That(sourceText).Contains("price NUMERIC")
+      .Because("decimal? should map to NUMERIC after stripping nullable suffix");
+    await Assert.That(sourceText).Contains("created_at TIMESTAMPTZ")
+      .Because("DateTime? should map to TIMESTAMPTZ after stripping nullable suffix");
+  }
+
+  /// <summary>
   /// Test that perspective DDL includes vector fields marked with [VectorField] attribute.
   /// Vector fields should use pgvector's vector type with specified dimensions.
   /// </summary>
   [Test]
   public async Task Generator_SchemaExtensions_IncludesVectorFieldsInDDLAsync() {
     // Arrange - Model with [VectorField] attribute
-    var source = """
+    const string source = """
       using System;
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;
@@ -983,7 +1475,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedModelClasses_GeneratesUniqueDbSetNamesAsync() {
     // Arrange - Two perspectives with nested Model classes (the bug scenario)
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1063,7 +1555,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedModelClasses_GeneratesCorrectTableNamesAsync() {
     // Arrange - Same scenario as above
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1129,7 +1621,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_DiscoversPerspectiveAsync() {
     // Arrange - a consumer application pattern: static class with nested Model and Projection
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1187,7 +1679,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_GeneratesLensQueryRegistrationAsync() {
     // Arrange - Same a consumer application pattern
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1236,7 +1728,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_GeneratesCorrectRegistrationCodeAsync() {
     // Arrange - a consumer application pattern
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1290,7 +1782,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultipleNestedPerspectiveClasses_DiscoversAllAsync() {
     // Arrange - Multiple static classes with nested perspectives
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1356,7 +1848,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_SchemaExtensions_IncludesStep5_RegisterPerspectiveAssociationsAsync() {
     // Arrange - source with DbContext and a perspective
-    var source = """
+    const string source = """
       using System.Threading;
       using System.Threading.Tasks;
       using Microsoft.EntityFrameworkCore;
@@ -1601,6 +2093,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelA)] = \"wh_per_model_a\"");
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelB)] = \"wh_per_model_b\"");
 
+    // Should pass scopeContextAccessor and whizbangOptions to constructor
+    // (constructor requires 4 params: context, tableNames, scopeContextAccessor, whizbangOptions)
+    await Assert.That(sourceText).Contains("scopeContextAccessor")
+      .Because("Multi-model LensQuery constructor requires IScopeContextAccessor parameter");
+    await Assert.That(sourceText).Contains("whizbangOptions")
+      .Because("Multi-model LensQuery constructor requires IOptions<WhizbangCoreOptions> parameter");
+
     // Should have auto-detected comment
     await Assert.That(sourceText).Contains("Auto-detected: ILensQuery<TestApp.ModelA, TestApp.ModelB>");
   }
@@ -1751,6 +2250,12 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("ILensQuery<global::TestApp.ModelA, global::TestApp.ModelB, global::TestApp.ModelC>");
     await Assert.That(sourceText).Contains("EFCorePostgresLensQuery<global::TestApp.ModelA, global::TestApp.ModelB, global::TestApp.ModelC>");
 
+    // Should pass scopeContextAccessor and whizbangOptions to constructor
+    await Assert.That(sourceText).Contains("scopeContextAccessor")
+      .Because("Multi-model LensQuery constructor requires IScopeContextAccessor parameter");
+    await Assert.That(sourceText).Contains("whizbangOptions")
+      .Because("Multi-model LensQuery constructor requires IOptions<WhizbangCoreOptions> parameter");
+
     // Should include all three table name mappings
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelA)] = \"wh_per_model_a\"");
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelB)] = \"wh_per_model_b\"");
@@ -1799,6 +2304,114 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     // The table names in multi-model registration should be in a Dictionary
     await Assert.That(sourceText).Contains("System.Collections.Generic.Dictionary<System.Type, string>");
+  }
+
+  #endregion
+
+  #region PerspectiveDataCoalescer registration — WORKAROUND(dotnet/efcore#38625)
+
+  // EF Core 10's ComplexProperty().ToJson() materializes a JSON-absent complex collection as null (the CLR
+  // `= []` initializer is ignored), so rows written before a nested collection property was added are
+  // poison-on-touch. The generator emits a PerspectiveDataCoalescer registration per perspective model that
+  // restores every non-nullable List<T>/array in the Data graph (and PerspectiveScope.Extensions) to empty.
+  // These tests pin that emission; remove them with the workaround once a fixed EF Core release ships.
+
+  [Test]
+  public async Task Generator_ModelWithNestedCollections_EmitsRecursiveDataCoalescerRegistrationAsync() {
+    // Arrange - a model two complex-collection levels deep, with a nullable collection that must be skipped.
+    var source = """
+      #nullable enable
+      using System;
+      using System.Collections.Generic;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record NestedEvent : IEvent;
+
+      public class ItemEntry {
+        public string Label { get; set; } = "";
+        public List<Guid> TagIds { get; set; } = [];
+        public List<Guid>? OptionalIds { get; set; }
+      }
+
+      public class GroupEntry {
+        public string Title { get; set; } = "";
+        public List<ItemEntry> Items { get; set; } = [];
+      }
+
+      public class NestedModel {
+        public string Name { get; set; } = "";
+        public List<GroupEntry> Groups { get; set; } = [];
+      }
+
+      public class NestedPerspective : IPerspectiveFor<NestedModel, NestedEvent> {
+        public NestedModel Apply(NestedModel currentData, NestedEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var registration = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("EFCoreModelRegistration"));
+    await Assert.That(registration).IsNotNull();
+    var sourceText = registration!.SourceText.ToString();
+
+    // The registration is emitted, marked with the upstream-issue token for future removal.
+    await Assert.That(sourceText).Contains("PerspectiveDataCoalescer.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.NestedModel>)");
+    await Assert.That(sourceText).Contains("WORKAROUND(dotnet/efcore#38625)");
+
+    // The framework's Scope.Extensions is always coalesced (it null-materializes on complex-mode rows too).
+    await Assert.That(sourceText).Contains("row.Scope.Extensions ??=");
+
+    // The model graph is walked recursively: top-level, nested complex elements, and the deepest Guid list.
+    await Assert.That(sourceText).Contains("data.Groups ??= new global::System.Collections.Generic.List<global::TestApp.GroupEntry>();");
+    await Assert.That(sourceText).Contains(".Items ??= new global::System.Collections.Generic.List<global::TestApp.ItemEntry>();");
+    await Assert.That(sourceText).Contains(".TagIds ??= new global::System.Collections.Generic.List<global::System.Guid>();");
+
+    // Nullable-annotated collections are a legitimate null — never coalesced.
+    await Assert.That(sourceText).DoesNotContain("OptionalIds ??=");
+  }
+
+  [Test]
+  public async Task Generator_ModelWithoutCollections_EmitsScopeOnlyCoalescerRegistrationAsync() {
+    // Arrange - the flat boilerplate model (string Id only): no data-graph statements, but the registration
+    // still exists for the framework-level Scope.Extensions coalesce.
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var registration = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("EFCoreModelRegistration"));
+    await Assert.That(registration).IsNotNull();
+    var sourceText = registration!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("PerspectiveDataCoalescer.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.TestModel>)");
+    await Assert.That(sourceText).Contains("row.Scope.Extensions ??=");
+    // A model with no coalescible collections gets no data-graph walk.
+    await Assert.That(sourceText).DoesNotContain("var data = row.Data;");
   }
 
   #endregion

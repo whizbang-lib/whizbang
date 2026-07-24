@@ -9,7 +9,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// It is NOT provided for <see cref="SyncOutcome.NoPendingEvents"/> outcomes.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#callbacks</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#callbacks</docs>
 public sealed record SyncWaitingContext {
   /// <summary>
   /// The perspective type being waited for, or null if waiting for all perspectives.

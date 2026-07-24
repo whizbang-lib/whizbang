@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Perspectives.Sync;
 
@@ -11,10 +13,13 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// perspective synchronization. It uses a pub/sub pattern with perspective type filtering.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs</tests>
-public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
-  private readonly ConcurrentDictionary<Type, ConcurrentBag<Action<PerspectiveCheckpointSignal>>> _subscribers = new();
+public sealed partial class LocalSyncSignaler(ILogger<LocalSyncSignaler>? logger = null) : IPerspectiveSyncSignaler {
+  private readonly ConcurrentDictionary<Type, ConcurrentBag<Action<PerspectiveCursorSignal>>> _subscribers = new();
+  // Null-object default so the drop is ALWAYS logged: DI supplies a real logger in production; the
+  // NullLogger fallback only applies to manual construction / a deliberately log-free host.
+  private readonly ILogger<LocalSyncSignaler> _logger = logger ?? NullLogger<LocalSyncSignaler>.Instance;
   private bool _disposed;
 
   /// <inheritdoc />
@@ -25,7 +30,7 @@ public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
       return;
     }
 
-    var signal = new PerspectiveCheckpointSignal(
+    var signal = new PerspectiveCursorSignal(
         perspectiveType,
         streamId,
         lastEventId,
@@ -33,16 +38,16 @@ public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
 
     // Notify specific perspective subscribers
     if (_subscribers.TryGetValue(perspectiveType, out var handlers)) {
-      _notifyHandlers(handlers, signal);
+      _notifyHandlers(handlers, signal, _logger);
     }
   }
 
   /// <inheritdoc />
-  public IDisposable Subscribe(Type perspectiveType, Action<PerspectiveCheckpointSignal> onSignal) {
+  public IDisposable Subscribe(Type perspectiveType, Action<PerspectiveCursorSignal> onSignal) {
     ArgumentNullException.ThrowIfNull(perspectiveType);
     ArgumentNullException.ThrowIfNull(onSignal);
 
-    var handlers = _subscribers.GetOrAdd(perspectiveType, _ => new ConcurrentBag<Action<PerspectiveCheckpointSignal>>());
+    var handlers = _subscribers.GetOrAdd(perspectiveType, _ => []);
     handlers.Add(onSignal);
 
     return new Subscription(this, perspectiveType, onSignal);
@@ -59,32 +64,34 @@ public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
   }
 
   private static void _notifyHandlers(
-      ConcurrentBag<Action<PerspectiveCheckpointSignal>> handlers,
-      PerspectiveCheckpointSignal signal) {
+      ConcurrentBag<Action<PerspectiveCursorSignal>> handlers,
+      PerspectiveCursorSignal signal,
+      ILogger<LocalSyncSignaler> logger) {
     foreach (var handler in handlers) {
       try {
         handler(signal);
-      } catch {
-        // Swallow handler exceptions to prevent one failing handler from
-        // blocking others. In production, this should be logged.
+      } catch (Exception ex) {
+        // One failing handler must not block the others — but never silently. A dropped signal can
+        // leave a sync waiter blocked until its poll/timeout, so log it.
+        LogHandlerThrew(logger, ex, signal.PerspectiveType.Name);
       }
     }
   }
 
-  private sealed class Subscription : IDisposable {
-    private readonly LocalSyncSignaler _signaler;
-    private readonly Type _perspectiveType;
-    private readonly Action<PerspectiveCheckpointSignal> _handler;
-    private bool _disposed;
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "A perspective sync handler threw for {PerspectiveType}; continuing with the remaining handlers."
+  )]
+  private static partial void LogHandlerThrew(ILogger logger, Exception ex, string perspectiveType);
 
-    public Subscription(
-        LocalSyncSignaler signaler,
-        Type perspectiveType,
-        Action<PerspectiveCheckpointSignal> handler) {
-      _signaler = signaler;
-      _perspectiveType = perspectiveType;
-      _handler = handler;
-    }
+  private sealed class Subscription(
+      LocalSyncSignaler signaler,
+      Type perspectiveType,
+      Action<PerspectiveCursorSignal> handler) : IDisposable {
+    private readonly LocalSyncSignaler _signaler = signaler;
+    private readonly Type _perspectiveType = perspectiveType;
+    private readonly Action<PerspectiveCursorSignal> _handler = handler;
+    private bool _disposed;
 
     public void Dispose() {
       if (_disposed) {
@@ -96,7 +103,7 @@ public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
       // Remove handler from the bag
       // ConcurrentBag doesn't support removal, so we rebuild without this handler
       if (_signaler._subscribers.TryGetValue(_perspectiveType, out var handlers)) {
-        var newHandlers = new ConcurrentBag<Action<PerspectiveCheckpointSignal>>(
+        var newHandlers = new ConcurrentBag<Action<PerspectiveCursorSignal>>(
             handlers.Where(h => !ReferenceEquals(h, _handler)));
         _signaler._subscribers.TryUpdate(_perspectiveType, newHandlers, handlers);
       }

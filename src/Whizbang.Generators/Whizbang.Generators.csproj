@@ -9,7 +9,7 @@
     <LangVersion>latest</LangVersion>
     <!-- Enable viewing generated files -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
     <!-- Enable performance reporting -->
     <ReportAnalyzer>true</ReportAnalyzer>
     <!-- Suppress release tracking warnings for early development -->
@@ -30,11 +30,18 @@
     <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
     <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
   </PropertyGroup>
-  <!-- Target to add the merged analyzer DLL to the package -->
+  <!-- Target to add the merged analyzer DLL + the sibling CodeFixes analyzer DLL to the -->
+  <!-- package. Consumers referencing Whizbang.Generators load both as analyzers in one step. -->
+  <!-- CodeFixes DLL is picked up from its sibling bin/ output if already built (see note below). -->
   <Target Name="PackAnalyzerDll">
+    <PropertyGroup>
+      <_CodeFixesDll>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\Whizbang.Generators.CodeFixes\bin\$(Configuration)\netstandard2.0\Whizbang.Generators.CodeFixes.dll'))</_CodeFixesDll>
+    </PropertyGroup>
     <ItemGroup>
       <TfmSpecificPackageFile Include="$(TargetPath)" PackagePath="analyzers/dotnet/cs/" />
+      <TfmSpecificPackageFile Include="$(_CodeFixesDll)" PackagePath="analyzers/dotnet/cs/" Condition="Exists('$(_CodeFixesDll)')" />
     </ItemGroup>
+    <Warning Text="Whizbang.Generators.CodeFixes.dll not found at $(_CodeFixesDll); the PinnedIdCodeFixProvider will not be packaged. Build Whizbang.Generators.CodeFixes before packing Whizbang.Generators." Condition="!Exists('$(_CodeFixesDll)')" />
   </Target>
 
   <ItemGroup>
@@ -57,6 +64,13 @@
       <SetTargetFramework>TargetFramework=netstandard2.0</SetTargetFramework>
     </ProjectReference>
   </ItemGroup>
+  <!--
+    NOTE: Whizbang.Generators.CodeFixes is intentionally NOT referenced as a ProjectReference.
+    RS1038 forbids it (analyzer assemblies must not reference Workspaces), and Pack-LocalPackages.ps1
+    uses 'dotnet pack' with NoBuild which conflicts with ProjectReference-triggered rebuilds. The
+    PackAnalyzerDll target below bundles the CodeFixes DLL from its bin output if present —
+    callers must build CodeFixes before packing Generators (the repo's build order does this).
+  -->
   <ItemGroup>
     <!-- Template files - these are real C# code that gets full analyzer support -->
     <!-- BUT they must be excluded from compilation since they reference types not in this project -->
@@ -69,6 +83,16 @@
     <!-- SQL template files - embedded as resources for generator access -->
     <None Include="Templates\**\*.sql" />
     <EmbeddedResource Include="Templates\**\*.sql" />
+  </ItemGroup>
+
+  <!-- Pack MSBuild props/targets for NuGet consumers (build/ for direct, buildTransitive/ for transitive) -->
+  <ItemGroup>
+    <None Include="build\SoftwareExtravaganza.Whizbang.Generators.props" Pack="true" PackagePath="build\SoftwareExtravaganza.Whizbang.Generators.props" />
+    <None Include="build\SoftwareExtravaganza.Whizbang.Generators.targets" Pack="true" PackagePath="build\SoftwareExtravaganza.Whizbang.Generators.targets" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="build\SoftwareExtravaganza.Whizbang.Generators.props" Pack="true" PackagePath="buildTransitive\SoftwareExtravaganza.Whizbang.Generators.props" CopyToOutputDirectory="Never" />
+    <None Include="build\SoftwareExtravaganza.Whizbang.Generators.targets" Pack="true" PackagePath="buildTransitive\SoftwareExtravaganza.Whizbang.Generators.targets" CopyToOutputDirectory="Never" />
   </ItemGroup>
 
 </Project>

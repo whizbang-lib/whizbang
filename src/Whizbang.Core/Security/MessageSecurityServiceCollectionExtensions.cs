@@ -8,7 +8,7 @@ namespace Whizbang.Core.Security;
 /// <summary>
 /// Extension methods for registering message security services.
 /// </summary>
-/// <docs>core-concepts/message-security#registration</docs>
+/// <docs>fundamentals/security/message-security#registration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityServiceCollectionExtensionsTests.cs</tests>
 public static class MessageSecurityServiceCollectionExtensions {
   /// <summary>
@@ -18,19 +18,19 @@ public static class MessageSecurityServiceCollectionExtensions {
   /// <param name="configure">Optional configuration action for MessageSecurityOptions.</param>
   /// <returns>The service collection for chaining.</returns>
   /// <remarks>
-  /// This method registers:
+  /// <para>This method registers:
   /// - IMessageSecurityContextProvider (DefaultMessageSecurityContextProvider)
   /// - IScopeContextAccessor (scoped)
   /// - IScopeContext (scoped factory) - directly injectable, reads from accessor
   /// - IMessageContextAccessor (scoped) - provides access to current message context
   /// - IMessageContext (scoped) - injectable message context with UserId from security context
-  /// - MessageHopSecurityExtractor (default extractor, priority 100)
+  /// - MessageHopSecurityExtractor (default extractor, priority 100)</para>
   ///
-  /// Additional extractors can be registered using AddSecurityExtractor&lt;T&gt;().
-  /// Callbacks can be registered using AddSecurityContextCallback&lt;T&gt;().
+  /// <para>Additional extractors can be registered using AddSecurityExtractor&lt;T&gt;().
+  /// Callbacks can be registered using AddSecurityContextCallback&lt;T&gt;().</para>
   ///
-  /// By default, AllowAnonymous is FALSE (least privilege). Messages without
-  /// security context will be rejected unless explicitly configured otherwise.
+  /// <para>By default, AllowAnonymous is FALSE (least privilege). Messages without
+  /// security context will be rejected unless explicitly configured otherwise.</para>
   /// </remarks>
   /// <example>
   /// services.AddWhizbangMessageSecurity(options => {
@@ -54,8 +54,10 @@ public static class MessageSecurityServiceCollectionExtensions {
     var options = new MessageSecurityOptions();
     configure?.Invoke(options);
 
-    // Register options as singleton
-    services.AddSingleton(options);
+    // Register options as singleton (TryAdd so first registration wins)
+    // This allows user-configured options (e.g., ExemptMessageTypes) to take precedence
+    // over the default options registered by AddWhizbang()/AddWhizbangDispatcher()
+    services.TryAddSingleton(options);
 
     // Register scoped IScopeContextAccessor
     services.TryAddScoped<IScopeContextAccessor, ScopeContextAccessor>();

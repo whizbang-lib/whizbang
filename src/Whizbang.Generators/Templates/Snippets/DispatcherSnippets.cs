@@ -89,11 +89,13 @@ public class DispatcherSnippets {
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
 
-          var receptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
           var typedEvt = (__MESSAGE_TYPE__)(object)evt!;
-          foreach (var receptor in receptors) {
-            await receptor.HandleAsync(typedEvt);
-          }
+          // Default-stage receptors fire immediately from PublishAsync (Path 1, fast path).
+          // Explicit FireAt receptors are NOT emitted here — the generator omits them
+          // for the publish path. They fire at their declared lifecycle stage via
+          // ReceptorInvoker (from the registry). The cascade path below still emits
+          // them, gated by a runtime isDefaultDispatch flag derived from sourceEnvelope.
+          __RECEPTOR_INVOCATIONS__
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
             await asyncDisposable.DisposeAsync();
@@ -136,15 +138,10 @@ public class DispatcherSnippets {
             global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
           }
 
-          var receptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
-          var voidReceptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
           var typedEvt = (__MESSAGE_TYPE__)evt;
-          foreach (var receptor in receptors) {
-            await receptor.HandleAsync(typedEvt, cancellationToken);
-          }
-          foreach (var voidReceptor in voidReceptors) {
-            await voidReceptor.HandleAsync(typedEvt, cancellationToken);
-          }
+          // Cascade paths: null envelope OR IsDefaultDispatch flag = default dispatch (skip explicit [FireAt] receptors)
+          var isDefaultDispatch = sourceEnvelope is null || sourceEnvelope.DispatchContext.IsDefaultDispatch;
+          __RECEPTOR_INVOCATIONS__
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
             await asyncDisposable.DisposeAsync();
@@ -372,54 +369,6 @@ public class DispatcherSnippets {
   }
 
   /// <summary>
-  /// Example method showing snippet structure for lifecycle routing with void receptors.
-  /// Uses IServiceScopeFactory to create a scope for each invocation, enabling resolution
-  /// of scoped dependencies (e.g., DbContext, IOrchestratorAgent).
-  /// </summary>
-  protected async ValueTask LifecycleRoutingVoidExample(
-      object message,
-      LifecycleStage stage,
-      CancellationToken cancellationToken) {
-    #region LIFECYCLE_ROUTING_VOID_SNIPPET
-    if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
-      using var scope = _scopeFactory.CreateScope();
-      // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
-      // This enables receptors to access UserId, TenantId via IMessageContext
-      global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
-
-      // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-      var receptor = scope.ServiceProvider.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
-                  ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
-      await receptor.HandleAsync((__MESSAGE_TYPE__)message, cancellationToken);
-    }
-    #endregion
-  }
-
-  /// <summary>
-  /// Example method showing snippet structure for lifecycle routing with response receptors.
-  /// Uses IServiceScopeFactory to create a scope for each invocation, enabling resolution
-  /// of scoped dependencies (e.g., DbContext, IOrchestratorAgent).
-  /// </summary>
-  protected async ValueTask LifecycleRoutingResponseExample(
-      object message,
-      LifecycleStage stage,
-      CancellationToken cancellationToken) {
-    #region LIFECYCLE_ROUTING_RESPONSE_SNIPPET
-    if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
-      using var scope = _scopeFactory.CreateScope();
-      // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
-      // This enables receptors to access UserId, TenantId via IMessageContext
-      global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
-
-      // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-      var receptor = scope.ServiceProvider.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
-                  ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
-      await receptor.HandleAsync((__MESSAGE_TYPE__)message, cancellationToken);
-    }
-    #endregion
-  }
-
-  /// <summary>
   /// Example method showing snippet structure for receptor registry routing.
   /// Returns a list of ReceptorInfo for a given (messageType, stage) combination.
   /// Used for async receptors with response.
@@ -434,7 +383,7 @@ public class DispatcherSnippets {
         new global::Whizbang.Core.Messaging.ReceptorInfo(
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
-          InvokeAsync: async (sp, msg, ct) => {
+          InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
             var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
                         ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
@@ -445,7 +394,9 @@ public class DispatcherSnippets {
             }
             return result;
           },
-          SyncAttributes: __SYNC_ATTRIBUTES__
+          SyncAttributes: __SYNC_ATTRIBUTES__,
+          FireDuringReplay: __FIRE_DURING_REPLAY__,
+          IsIdempotent: __IS_IDEMPOTENT__
         )
       };
     }
@@ -469,14 +420,16 @@ public class DispatcherSnippets {
         new global::Whizbang.Core.Messaging.ReceptorInfo(
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
-          InvokeAsync: async (sp, msg, ct) => {
+          InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
             var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
                         ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
             await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
             return null;
           },
-          SyncAttributes: __SYNC_ATTRIBUTES__
+          SyncAttributes: __SYNC_ATTRIBUTES__,
+          FireDuringReplay: __FIRE_DURING_REPLAY__,
+          IsIdempotent: __IS_IDEMPOTENT__
         )
       };
     }
@@ -500,7 +453,7 @@ public class DispatcherSnippets {
         new global::Whizbang.Core.Messaging.ReceptorInfo(
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
-          InvokeAsync: async (sp, msg, ct) => {
+          InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Capture timing with debug-aware clock
             var clock = sp.GetService<global::Whizbang.Core.Diagnostics.IDebuggerAwareClock>();
             var startTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
@@ -549,7 +502,9 @@ public class DispatcherSnippets {
             }
             return result;
           },
-          SyncAttributes: __SYNC_ATTRIBUTES__
+          SyncAttributes: __SYNC_ATTRIBUTES__,
+          FireDuringReplay: __FIRE_DURING_REPLAY__,
+          IsIdempotent: __IS_IDEMPOTENT__
         )
       };
     }
@@ -573,7 +528,7 @@ public class DispatcherSnippets {
         new global::Whizbang.Core.Messaging.ReceptorInfo(
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
-          InvokeAsync: async (sp, msg, ct) => {
+          InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Capture timing with debug-aware clock
             var clock = sp.GetService<global::Whizbang.Core.Diagnostics.IDebuggerAwareClock>();
             var startTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
@@ -617,7 +572,9 @@ public class DispatcherSnippets {
             }
             return null;
           },
-          SyncAttributes: __SYNC_ATTRIBUTES__
+          SyncAttributes: __SYNC_ATTRIBUTES__,
+          FireDuringReplay: __FIRE_DURING_REPLAY__,
+          IsIdempotent: __IS_IDEMPOTENT__
         )
       };
     }

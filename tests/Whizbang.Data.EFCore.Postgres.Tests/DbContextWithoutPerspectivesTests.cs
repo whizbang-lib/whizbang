@@ -1,4 +1,3 @@
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
@@ -80,7 +79,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - Verify core Whizbang tables exist
     await using var connection = new NpgsqlConnection(_connectionString);
@@ -99,19 +98,19 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
   }
 
   [Test]
-  public async Task EnsureWhizbangDatabaseInitialized_WithNoPerspectives_CreatesProcessWorkBatchFunction() {
+  public async Task EnsureWhizbangDatabaseInitialized_WithNoPerspectives_CreatesClaimWorkFunction() {
     // Arrange
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
-    // Assert - Verify process_work_batch function exists
+    // Assert - Verify claim_work function exists (replaced process_work_batch in Phase A).
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
 
     await using var command = new NpgsqlCommand(
-      "SELECT EXISTS (SELECT FROM pg_proc WHERE proname = 'process_work_batch');",
+      "SELECT EXISTS (SELECT FROM pg_proc WHERE proname = 'claim_work');",
       connection);
 
     var exists = (bool)(await command.ExecuteScalarAsync())!;
@@ -124,8 +123,8 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema twice
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - No exception should be thrown
     // Verify tables still exist
@@ -146,7 +145,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - Verify wh_outbox has instance_id and lease_expiry columns (from migration 001)
     await using var connection = new NpgsqlConnection(_connectionString);
@@ -170,7 +169,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - Verify wh_inbox has instance_id, lease_expiry, and status columns (from migration 002)
     await using var connection = new NpgsqlConnection(_connectionString);
@@ -199,8 +198,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
 /// Used to test that core Whizbang tables are created even without custom perspectives.
 /// </summary>
 [WhizbangDbContext(Schema = "public")]
-public partial class MinimalDbContext : DbContext {
-  public MinimalDbContext(DbContextOptions<MinimalDbContext> options) : base(options) { }
+public partial class MinimalDbContext(DbContextOptions<MinimalDbContext> options) : DbContext(options) {
 
   // No user-defined DbSets or perspectives - only core Whizbang tables should be configured
 }

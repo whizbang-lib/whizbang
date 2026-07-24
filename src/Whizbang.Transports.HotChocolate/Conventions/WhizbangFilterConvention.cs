@@ -7,7 +7,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// Configures filtering support for <see cref="Whizbang.Core.Lenses.PerspectiveRow{TModel}"/> types
 /// with scope-aware field inclusion.
 /// </summary>
-/// <docs>graphql/filtering</docs>
+/// <docs>apis/graphql/filtering</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/FilterConventionTests.cs</tests>
 /// <example>
 /// services.AddGraphQLServer()

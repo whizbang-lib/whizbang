@@ -10,7 +10,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// actual waiting occurs.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#callbacks</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#callbacks</docs>
 public sealed record SyncDecisionContext {
   /// <summary>
   /// The perspective type that was waited for, or null if waiting for all perspectives.

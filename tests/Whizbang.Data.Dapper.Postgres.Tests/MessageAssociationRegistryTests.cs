@@ -79,7 +79,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task MessageAssociationsTable_Exists_WithCorrectSchemaAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
 
     // Act - Query table schema
@@ -122,7 +122,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task MessageAssociationsTable_HasUniqueConstraint_OnAssociationColumnsAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
 
     // Act - Query constraints
@@ -150,7 +150,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociationsFunction_Exists_WithCorrectSignatureAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
 
     // Act - Query function signature
@@ -175,17 +175,21 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociations_InsertsNewAssociations_SuccessfullyAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 
-    var associations = JsonSerializer.Serialize(new[] {
+    // Register each service's associations independently (orphan DELETE is scoped to p_service_name,
+    // so cross-service registration must happen in separate calls — each service owns its own rows).
+    var bffAssociations = JsonSerializer.Serialize(new[] {
       new {
         MessageType = "ProductCreatedEvent",
         AssociationType = "perspective",
         TargetName = "ProductCatalogPerspective",
         ServiceName = "BFF.API"
-      },
+      }
+    });
+    var inventoryAssociations = JsonSerializer.Serialize(new[] {
       new {
         MessageType = "ProductCreatedEvent",
         AssociationType = "perspective",
@@ -194,12 +198,19 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
       }
     });
 
-    // Act - Call function
-    await using var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations)", conn);
-    cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, associations);
-    await cmd.ExecuteNonQueryAsync();
+    // Act - Call function once per service
+    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations, @p_service_name)", conn)) {
+      cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, bffAssociations);
+      cmd.Parameters.AddWithValue("p_service_name", "BFF.API");
+      await cmd.ExecuteNonQueryAsync();
+    }
+    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations, @p_service_name)", conn)) {
+      cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, inventoryAssociations);
+      cmd.Parameters.AddWithValue("p_service_name", "InventoryWorker");
+      await cmd.ExecuteNonQueryAsync();
+    }
 
-    // Assert - Verify inserted
+    // Assert - Verify both inserted
     var count = await _getAssociationCountAsync(conn);
     await Assert.That(count).IsEqualTo(2);
   }
@@ -210,7 +221,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociations_UpdatesTimestamp_OnConflictAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 
@@ -224,8 +235,9 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     });
 
     // Act - Insert once
-    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations)", conn)) {
+    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations, @p_service_name)", conn)) {
       cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, associations);
+      cmd.Parameters.AddWithValue("p_service_name", "BFF.API");
       await cmd.ExecuteNonQueryAsync();
     }
 
@@ -235,8 +247,9 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     await Task.Delay(100);
 
     // Act - Insert again (should update updated_at)
-    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations)", conn)) {
+    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations, @p_service_name)", conn)) {
       cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, associations);
+      cmd.Parameters.AddWithValue("p_service_name", "BFF.API");
       await cmd.ExecuteNonQueryAsync();
     }
 
@@ -247,23 +260,35 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Tests that register_message_associations() deletes associations not in the input.
+  /// Tests that register_message_associations() deletes associations not in the input, scoped
+  /// to the calling p_service_name. Rows owned by other services must NOT be touched (that
+  /// scoping is the whole point of p_service_name — see migration 008).
   /// </summary>
   [Test]
   public async Task RegisterMessageAssociations_DeletesRemovedAssociations_CorrectlyAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 
-    // Insert 2 associations
-    var initialAssociations = JsonSerializer.Serialize(new[] {
+    // Seed: BFF.API owns two associations; InventoryWorker owns one.
+    // A subsequent BFF.API re-registration with one of its two must delete only BFF's orphan,
+    // not InventoryWorker's row — that's the defense-in-depth behavior the fix introduces.
+    var initialBffAssociations = JsonSerializer.Serialize(new[] {
       new {
         MessageType = "ProductCreatedEvent",
         AssociationType = "perspective",
         TargetName = "ProductCatalogPerspective",
         ServiceName = "BFF.API"
       },
+      new {
+        MessageType = "ProductUpdatedEvent",
+        AssociationType = "perspective",
+        TargetName = "ProductCatalogPerspective",
+        ServiceName = "BFF.API"
+      }
+    });
+    var initialInventoryAssociations = JsonSerializer.Serialize(new[] {
       new {
         MessageType = "ProductCreatedEvent",
         AssociationType = "perspective",
@@ -272,13 +297,20 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
       }
     });
 
-    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations)", conn)) {
-      cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, initialAssociations);
+    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations, @p_service_name)", conn)) {
+      cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, initialBffAssociations);
+      cmd.Parameters.AddWithValue("p_service_name", "BFF.API");
+      await cmd.ExecuteNonQueryAsync();
+    }
+    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations, @p_service_name)", conn)) {
+      cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, initialInventoryAssociations);
+      cmd.Parameters.AddWithValue("p_service_name", "InventoryWorker");
       await cmd.ExecuteNonQueryAsync();
     }
 
-    // Act - Register with only 1 association (should delete the other)
-    var updatedAssociations = JsonSerializer.Serialize(new[] {
+    // Act - BFF.API re-registers with only ProductCreatedEvent; ProductUpdatedEvent should be
+    // deleted as an orphan within BFF.API's scope. InventoryWorker's row must stay put.
+    var updatedBffAssociations = JsonSerializer.Serialize(new[] {
       new {
         MessageType = "ProductCreatedEvent",
         AssociationType = "perspective",
@@ -287,18 +319,18 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
       }
     });
 
-    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations)", conn)) {
-      cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, updatedAssociations);
+    await using (var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations, @p_service_name)", conn)) {
+      cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, updatedBffAssociations);
+      cmd.Parameters.AddWithValue("p_service_name", "BFF.API");
       await cmd.ExecuteNonQueryAsync();
     }
 
-    // Assert - Only 1 association remains
+    // Assert - BFF orphan deleted, BFF remaining row kept, InventoryWorker row untouched.
     var count = await _getAssociationCountAsync(conn);
-    await Assert.That(count).IsEqualTo(1);
-
-    // Assert - Correct one remains
-    var exists = await _associationExistsAsync(conn, "ProductCreatedEvent", "ProductCatalogPerspective");
-    await Assert.That(exists).IsTrue();
+    await Assert.That(count).IsEqualTo(2);
+    await Assert.That(await _associationExistsAsync(conn, "ProductCreatedEvent", "ProductCatalogPerspective")).IsTrue();
+    await Assert.That(await _associationExistsAsync(conn, "ProductCreatedEvent", "ProductInventoryPerspective")).IsTrue();
+    await Assert.That(await _associationExistsAsync(conn, "ProductUpdatedEvent", "ProductCatalogPerspective")).IsFalse();
   }
 
   /// <summary>
@@ -310,7 +342,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociations_DuplicateEntriesInJson_ThrowsPostgresExceptionAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 
@@ -331,8 +363,9 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     });
 
     // Act & Assert - Should throw PostgresException with SQLSTATE 21000
-    await using var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations)", conn);
+    await using var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations, @p_service_name)", conn);
     cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, associationsWithDuplicates);
+    cmd.Parameters.AddWithValue("p_service_name", "BFF.API");
 
     var exception = await Assert.ThrowsAsync<Npgsql.PostgresException>(
       async () => await cmd.ExecuteNonQueryAsync());
@@ -349,7 +382,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociations_CalledTwice_IsIdempotentAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 
@@ -370,8 +403,9 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
 
     // Act - Call twice
     for (int i = 0; i < 2; i++) {
-      await using var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations)", conn);
+      await using var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations, @p_service_name)", conn);
       cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, associations);
+      cmd.Parameters.AddWithValue("p_service_name", "BFF.API");
       await cmd.ExecuteNonQueryAsync();
     }
 
