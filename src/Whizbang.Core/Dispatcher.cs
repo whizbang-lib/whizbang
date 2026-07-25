@@ -241,8 +241,8 @@ public abstract partial class Dispatcher(
       return true;
     }
 
-    // Child namespace match: if owned is "a consumer.Contracts.Chat",
-    // then "a consumer.Contracts.Chat.Common" is also owned
+    // Child namespace match: if owned is "Consumer.Contracts.Chat",
+    // then "Consumer.Contracts.Chat.Common" is also owned
     foreach (var owned in _ownedDomains) {
       var prefix = owned.EndsWith('.') ? owned : owned + ".";
       if (ns.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
@@ -3121,9 +3121,9 @@ public abstract partial class Dispatcher(
 
       // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
       // the outbox-pickup query. Without this branch the local receptor fires inline despite the
-      // scheduled time being in the future — observed in production saga 019f000e-… (2026-06-25):
-      // the watchdog re-arm cascaded 5 ticks + SagaCompletionAbandonedEvent in 86 ms because the
-      // local SagaCompletionWatchdogTickEvent receptor re-armed synchronously each re-publish.
+      // scheduled time being in the future — observed in a production saga watchdog:
+      // the watchdog re-arm cascaded several ticks + a completion-abandoned event within
+      // milliseconds because the local watchdog-tick receptor re-armed synchronously each re-publish.
       // Past or null ScheduledFor preserves the historical immediate-dispatch semantics.
       var deferLocal = options.ScheduledFor is DateTimeOffset scheduledAt && scheduledAt > DateTimeOffset.UtcNow;
       if (!deferLocal) {

@@ -1009,7 +1009,7 @@ public class MessageTagProcessorTests {
     Whizbang.Core.Registry.AssemblyRegistry<IMessageTagHookDispatcher>.ClearForTesting();
   }
 
-  // Custom test attribute type (simulates a consumer application's custom attributes)
+  // Custom test attribute type (simulates a consumer's custom attributes)
   private sealed class CustomTestTagAttribute : MessageTagAttribute {
   }
 
@@ -1261,7 +1261,7 @@ public class MessageTagProcessorTests {
   [Test]
   [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_HookCanFilterByStage_OnlyActsOnPostPerspectiveDetachedAsync() {
-    // Arrange - simulates a consumer application's pattern of filtering for PostPerspective only
+    // Arrange - simulates a consumer's pattern of filtering for PostPerspective only
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
     registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "notification-test");
@@ -1452,7 +1452,7 @@ public class MessageTagProcessorTests {
     }
   }
 
-  // Hook that only acts on PostPerspectiveInline (simulates a consumer application notification pattern)
+  // Hook that only acts on PostPerspectiveInline (simulates a consumer notification pattern)
   private sealed class PostPerspectiveOnlyHook : IMessageTagHook<SignalTagAttribute> {
     public int TotalCallCount { get; private set; }
     public int ActedCount { get; private set; }
@@ -1463,7 +1463,7 @@ public class MessageTagProcessorTests {
         CancellationToken _) {
       TotalCallCount++;
 
-      // Only act on PostPerspectiveInline — the a consumer application pattern
+      // Only act on PostPerspectiveInline — the consumer pattern
       if (context.Stage == LifecycleStage.PostPerspectiveInline) {
         ActedCount++;
         ActedOnStage = context.Stage;

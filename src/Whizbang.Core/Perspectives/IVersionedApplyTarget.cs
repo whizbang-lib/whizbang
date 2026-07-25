@@ -15,8 +15,8 @@ namespace Whizbang.Core.Perspectives;
 /// <para>
 /// Per-item saga streams (<see cref="Whizbang.Sagas.Models.SagaItemModel"/>) ship
 /// <c>CommitSequence=null</c> by design (the stamper doesn't cover the per-item fan-out path)
-/// and saw the production cross-pod lost-update strand survive even with the stream-affinity
-/// gate (saga <c>019f03cd</c>, 2026-06-26: 2 of 350 per-item rows reverted to
+/// and saw a production cross-pod lost-update strand survive even with the stream-affinity
+/// gate (a small fraction of per-item rows in a saga reverted to
 /// <c>State=Running</c> after their <c>SagaItemCompletedEvent</c> was durable). The reconciler
 /// healed the saga but the projection drift persisted on the row.
 /// </para>

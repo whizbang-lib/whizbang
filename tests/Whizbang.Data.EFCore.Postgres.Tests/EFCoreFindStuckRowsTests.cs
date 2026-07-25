@@ -33,7 +33,7 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     Guid messageId = TrackedGuid.NewMedo();
     Guid streamId = TrackedGuid.NewMedo();
-    const string messageType = "a consumer.RemoveShellUserCommand";
+    const string messageType = "Consumer.RemoveUserCommand";
     await _insertOutboxRowAsync(conn, messageId, streamId, messageType, attempts: 992);
 
     var coordinator = _buildCoordinator(ctx);
@@ -56,7 +56,7 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     Guid messageId = TrackedGuid.NewMedo();
     Guid streamId = TrackedGuid.NewMedo();
-    await _insertInboxRowAsync(conn, messageId, streamId, "a consumer.SampleEvent", attempts: 15);
+    await _insertInboxRowAsync(conn, messageId, streamId, "Consumer.SampleEvent", attempts: 15);
 
     var coordinator = _buildCoordinator(ctx);
     var stuck = await coordinator.FindStuckInboxRowsAsync(maxAttempts: 10, limit: 50);

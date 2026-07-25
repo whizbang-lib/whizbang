@@ -11,7 +11,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// In-memory layer regression tests for the a consumer 2026-05-04 cursor-inversion symptom.
+/// In-memory layer regression tests for a production cursor-inversion symptom.
 /// Even if the producer (TrackedGuid) generates monotonic IDs, the event store must preserve
 /// that order on append + retrieval. These tests assert the in-memory <c>InMemoryEventStore</c>
 /// holds the ordering invariant for both single-threaded sequential appends and concurrent
@@ -68,7 +68,7 @@ public class EventStoreOrderingInvariantTests {
   /// concurrently. After all writes complete, GetStreamEvents must return events sorted
   /// such that earlier UUIDv7 IDs come first. RED here = either UUIDv7 isn't monotonic
   /// (caught by TrackedGuidMonotonicityTests) OR the store doesn't preserve insertion
-  /// order — both produce a consumer-shape symptoms.
+  /// order — both produce the same symptoms observed in production.
   /// </summary>
   [Test]
   public async Task ConcurrentAppendsToSameStream_RetrievedInMonotonicEventIdOrderAsync() {
@@ -105,7 +105,7 @@ public class EventStoreOrderingInvariantTests {
     }
 
     await Assert.That(inversions).IsEqualTo(0)
-      .Because($"After concurrent appends, GetStreamEvents must return events in monotonic event_id order. Found {inversions} inversions across {retrievedIds.Length} events. RED here = a consumer-shape ordering bug at the in-memory event store layer.");
+      .Because($"After concurrent appends, GetStreamEvents must return events in monotonic event_id order. Found {inversions} inversions across {retrievedIds.Length} events. RED here = the same ordering bug observed in production at the in-memory event store layer.");
   }
 
   /// <summary>

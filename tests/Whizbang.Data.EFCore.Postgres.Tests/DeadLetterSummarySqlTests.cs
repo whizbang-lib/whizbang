@@ -13,8 +13,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Slice 6 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis) — locks
 /// the <c>wh_dead_letter_summary</c> table + <c>aggregate_dead_letters()</c>
-/// function: an operator/AI-friendly view that collapses the raw 38k+ row DLQ
-/// queue into ~dozens of distinct fingerprint clusters with occurrence counts
+/// function: an operator/AI-friendly view that collapses a large raw DLQ
+/// queue into a much smaller set of distinct fingerprint clusters with occurrence counts
 /// and a representative error_text per cluster.
 ///
 /// <para>Locked invariants:</para>
@@ -37,7 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class DeadLetterSummarySqlTests : EFCoreTestBase {
 
   private const string _stackInvalidOp = """
-    System.InvalidOperationException: Could not open connection to 'jdx_bff'
+    System.InvalidOperationException: Could not open connection to 'appservice_db'
        at Whizbang.Data.EFCore.Postgres.Functions.OutboxClaim.LeaseAsync(Guid instanceId)
     """;
 
@@ -148,7 +148,7 @@ public class DeadLetterSummarySqlTests : EFCoreTestBase {
     await _aggregateAsync(conn);
 
     await Assert.That(await _summaryRowCountAsync(conn)).IsEqualTo(1)
-      .Because("Same error_text → same fingerprint → must collapse to one summary row. Anything more is the bug operators wanted to avoid — the 38k+ row pre-Slice-6 mess.");
+      .Because("Same error_text → same fingerprint → must collapse to one summary row. Anything more is the bug operators wanted to avoid — the large pre-Slice-6 mess.");
     var summary = await _summaryForFingerprintAsync(conn, _stackInvalidOp);
     await Assert.That(summary.Count).IsEqualTo(2L)
       .Because("occurrence_count = number of raw rows backing this cluster. Operators sort by count to find top failure modes.");
@@ -209,7 +209,7 @@ public class DeadLetterSummarySqlTests : EFCoreTestBase {
       cmd.Parameters.AddWithValue("err", msgRow3Text);
       var stored = (string?)await cmd.ExecuteScalarAsync();
       await Assert.That(stored).IsEqualTo("sentinel0123abcd")
-        .Because("Version-skip invariant: rows tagged with the current algorithm version MUST be left alone — otherwise every aggregation tick burns IO re-hashing 38k+ unchanged rows.");
+        .Because("Version-skip invariant: rows tagged with the current algorithm version MUST be left alone — otherwise every aggregation tick burns IO re-hashing many unchanged rows.");
     }
   }
 

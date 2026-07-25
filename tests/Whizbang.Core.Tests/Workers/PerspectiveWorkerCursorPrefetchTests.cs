@@ -11,7 +11,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// hydration helper used by <c>_prefetchMissingDrainModeCursorsAsync</c>. Both halves of
 /// <see cref="PerspectiveCursorCache"/> (event_id + commit_sequence) must be populated when
 /// the cursor info has them; otherwise the inversion detector falls through to the event_id
-/// path on cold caches and surfaces UUIDv7 same-millisecond false positives (the a consumer run-11
+/// path on cold caches and surfaces UUIDv7 same-millisecond false positives (a production
 /// regression).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>

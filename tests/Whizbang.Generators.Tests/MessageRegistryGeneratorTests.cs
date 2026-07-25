@@ -1107,7 +1107,7 @@ namespace TestNamespace {
   [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_SendAsyncOnNonDispatcherStaticClass_SkipsAsync() {
     // History: this test previously asserted "Generator discovers any SendAsync call,
-    // even non-IDispatcher ones" — codifying the bug that the 2026-06-15 Rocks-interop
+    // even non-IDispatcher ones" — codifying the bug that the Rocks-interop
     // fix corrects. Under the corrected semantic, only invocations whose method's
     // ContainingType IS, or implements, Whizbang.Core.IDispatcher are registered.
     // `SomeMethod.SendAsync(string)` is a static helper on a non-dispatcher class
@@ -1703,7 +1703,7 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
   [Test]
   [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_RocksLikeLookAlikePublishAsync_DoesNotCrashAsync() {
-    // Regression for Rocks-mock interop crash (2026-06-15).
+    // Regression for Rocks-mock interop crash.
     //
     // The generator's dispatcher discovery filtered invocations purely by method name
     // ("SendAsync" / "PublishAsync") and then assumed every match resolved to an
@@ -1715,7 +1715,7 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
     // ). When test code calls `exp.Setups.PublishAsync<SomeEvent>(...)`, Roslyn
     // legitimately resolves to that look-alike method (or to a candidate-set with no
     // best match). The `??-throw` then fired as CS8785 generator failure and broke
-    // every a consumer test project that uses Rocks against IDispatcher.
+    // every consumer test project that uses Rocks against IDispatcher.
     //
     // The fix is two-part: (1) treat an unresolved IMethodSymbol as "skip, not crash"
     // and (2) only register invocations whose containing type is (or implements)

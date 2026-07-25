@@ -103,7 +103,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
   /// <c>event_work_id</c> (the <c>complete_perspective_events</c> DELETE path — same as every standard
   /// perspective). Without this the row keeps <c>processed_at = NULL</c>, <c>claim_orphaned_perspective_events</c>
   /// re-leases it every tick, and each re-lease re-dispatches the whole-cohort collective UPDATE — the
-  /// self-sustaining re-dispatch loop that bloated <c>wh_per_draft_job</c> to ~95% dead tuples. The cursor
+  /// self-sustaining re-dispatch loop that bloated a perspective table to the vast majority dead tuples. The cursor
   /// advance alone does NOT delete the row (<c>complete_perspective_cursor_work</c> only advances the cursor
   /// and marks <c>processed_at</c> by <c>event_id</c>; that path is insufficient — the row lingers).
   /// RED before the fix: the sink never enqueues an event-work-id, so <see cref="CapturingPerspectiveCompletionChannel.FirstEventWorkId"/>

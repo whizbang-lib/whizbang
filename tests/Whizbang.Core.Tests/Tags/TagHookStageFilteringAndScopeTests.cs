@@ -15,9 +15,9 @@ using Whizbang.Core.Tags;
 namespace Whizbang.Core.Tests.Tags;
 
 /// <summary>
-/// <para>RED/GREEN tests reproducing the a consumer application tag notification failure.</para>
+/// <para>RED/GREEN tests reproducing a consumer tag notification failure.</para>
 ///
-/// <para>a consumer application registers tag hooks at PostAllPerspectivesDetached:
+/// <para>A consumer registers tag hooks at PostAllPerspectivesDetached:
 ///   options.Tags.UseHook&lt;NotificationTagAttribute, ConsumerNotificationTagHook&gt;(
 ///     fireAt: LifecycleStage.PostAllPerspectivesDetached);</para>
 ///
@@ -55,7 +55,7 @@ public class TagHookStageFilteringAndScopeTests {
   [Test]
   [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_HookRegisteredAtPostAllPerspectives_DoesNotFireAtAfterReceptorCompletionAsync() {
-    // Arrange — simulate a consumer application pattern: hook registered at PostAllPerspectivesDetached
+    // Arrange — simulate a consumer pattern: hook registered at PostAllPerspectivesDetached
     var registry = new TestTagRegistry();
     registry.AddTag<TaggedTestEvent>(typeof(SignalTagAttribute), "notifications");
     MessageTagRegistry.Register(registry, priority: 50);
@@ -165,7 +165,7 @@ public class TagHookStageFilteringAndScopeTests {
 
   // ─────────────────────────────────────────────────────────────────────
   // Test 5: Hook resolved from DI scope can read IScopeContextAccessor
-  //         (reproduces the exact a consumer application pattern)
+  //         (reproduces the exact consumer pattern)
   // ─────────────────────────────────────────────────────────────────────
 
   [Test]
@@ -238,18 +238,18 @@ public class TagHookStageFilteringAndScopeTests {
     // Assert — scope should be null (proves the silent failure mode)
     await Assert.That(ScopeCapturingHook.LastCapturedScope).IsNull()
       .Because("Without AsyncLocal scope, IScopeContextAccessor.ScopeContext returns null — " +
-               "this is the exact failure mode that causes a consumer application notifications to silently fail");
+               "this is the exact failure mode that causes consumer notifications to silently fail");
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // Test 7: Custom attribute type (like a consumer application's NotificationTagAttribute) goes through
+  // Test 7: Custom attribute type (like a consumer's NotificationTagAttribute) goes through
   //         dispatcher registry path. Hook must still fire with correct scope.
   // ─────────────────────────────────────────────────────────────────────
 
   [Test]
   [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_CustomAttribute_HookFiresViaDispatcherRegistryAsync() {
-    // Arrange — simulate a consumer application's custom NotificationTagAttribute
+    // Arrange — simulate a consumer's custom NotificationTagAttribute
     var registry = new TestTagRegistry();
     registry.AddCustomTag<TaggedTestEvent>(typeof(TestNotificationTagAttribute), "job-created");
     MessageTagRegistry.Register(registry, priority: 50);
@@ -339,7 +339,7 @@ public class TagHookStageFilteringAndScopeTests {
   }
 
   /// <summary>
-  /// Hook that reads scope from IScopeContextAccessor (exactly like a consumer application's ConsumerNotificationTagHook).
+  /// Hook that reads scope from IScopeContextAccessor (exactly like a consumer's notification tag hook).
   /// Uses static capture because the hook instance is resolved from DI and we need to inspect it.
   /// </summary>
   private sealed class ScopeCapturingHook(IScopeContextAccessor scopeContextAccessor) : IMessageTagHook<SignalTagAttribute> {
@@ -355,20 +355,20 @@ public class TagHookStageFilteringAndScopeTests {
         TagContext<SignalTagAttribute> context,
         CancellationToken _) {
       InvocationCount++;
-      // This is the exact pattern a consumer application uses — reads from accessor, NOT from context.Scope
+      // This is the exact pattern a consumer uses — reads from accessor, NOT from context.Scope
       LastCapturedScope = scopeContextAccessor.ScopeContext;
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
 
   /// <summary>
-  /// Custom tag attribute simulating a consumer application's NotificationTagAttribute.
+  /// Custom tag attribute simulating a consumer's NotificationTagAttribute.
   /// </summary>
   [AttributeUsage(AttributeTargets.Class)]
   private sealed class TestNotificationTagAttribute : MessageTagAttribute;
 
   /// <summary>
-  /// Hook for custom attribute (like a consumer application's ConsumerNotificationTagHook).
+  /// Hook for custom attribute (like a consumer's notification tag hook).
   /// </summary>
   private sealed class CustomAttributeCapturingHook : IMessageTagHook<TestNotificationTagAttribute> {
     public int InvocationCount { get; private set; }

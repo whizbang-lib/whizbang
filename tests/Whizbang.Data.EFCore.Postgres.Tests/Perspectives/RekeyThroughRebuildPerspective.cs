@@ -38,7 +38,7 @@ public class RekeyTestModel {
 /// otherwise <c>ResolveTargetStreamId</c> can't route a re-keyed event onto its target row.
 /// </summary>
 public record RekeyTestEventBase {
-  // Settable so the upcaster can re-key in place (mirrors BaseSagaItemEvent.StreamId in a consumer).
+  // Settable so the upcaster can re-key in place (mirrors BaseSagaItemEvent.StreamId for a consumer).
   // The [StreamId] lives on the base; only the derived type implements IEvent, so the generator
   // must walk the inheritance chain to find it (the regression this test guards).
   [StreamId]

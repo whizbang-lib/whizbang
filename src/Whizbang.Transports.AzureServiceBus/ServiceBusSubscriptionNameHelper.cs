@@ -18,8 +18,8 @@ public static class ServiceBusSubscriptionNameHelper {
   /// <summary>
   /// Generates a valid Azure Service Bus subscription name from subscriber and topic names.
   /// </summary>
-  /// <param name="subscriberName">The service/subscriber name (e.g., "bff-service").</param>
-  /// <param name="topicName">The topic name being subscribed to (e.g., "a consumer.contracts.chat").</param>
+  /// <param name="subscriberName">The service/subscriber name (e.g., "order-service").</param>
+  /// <param name="topicName">The topic name being subscribed to (e.g., "app.contracts.orders").</param>
   /// <returns>A valid Azure Service Bus subscription name in format: {subscriberName}-{topicName}</returns>
   /// <exception cref="ArgumentException">Thrown when subscriberName or topicName is null or whitespace.</exception>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs:GenerateSubscriptionNameWithValidNamesReturnsExpectedFormatAsync</tests>

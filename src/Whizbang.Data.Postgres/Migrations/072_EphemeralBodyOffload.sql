@@ -189,7 +189,7 @@ BEGIN
   -- the stream, lease to that owner regardless of which instance ran the commit — eliminates
   -- the cross-instance saga race (different instances commit to the same stream, each
   -- selfishly leasing to themselves, drainer races) that produced the residual ~1000 cursor
-  -- inversions in a consumer run 14. When no live owner is pinned yet (new stream OR stale owner),
+  -- inversions observed in production. When no live owner is pinned yet (new stream OR stale owner),
   -- fall back to the commit instance so sync paths (UI waiting on a perspective checkpoint)
   -- don't pay claim_orphaned-polling-interval latency on first-event-per-stream.
   INSERT INTO __SCHEMA__.wh_perspective_events (
@@ -319,8 +319,8 @@ BEGIN
   -- 311-329). Without these, two concurrent claim_work calls (e.g., NOTIFY-driven wake racing
   -- a heartbeat-driven poll) can both read MAX(version)=N from wh_event_store for the same
   -- stream and both attempt INSERT at version=N+1, violating idx_event_store_stream
-  -- UNIQUE(stream_id, version) (PG error 23505). Production reproduction observed on a consumer BFF
-  -- 2026-05-03 during job creation. Lock order is hashtext(stream_id::text), sorted ASC —
+  -- UNIQUE(stream_id, version) (PG error 23505). Production reproduction observed on a
+  -- consumer's service during job creation. Lock order is hashtext(stream_id::text), sorted ASC —
   -- ensures deadlock-free nesting between any pair of transactions touching overlapping stream
   -- sets. pg_advisory_xact_lock auto-releases at commit/rollback.
   PERFORM pg_advisory_xact_lock(hashtext('wh_event_store:' || sid::text))
@@ -643,7 +643,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.get_stream_events IS
-'Mig 059 — atomic per-stream claim+fetch with the grace-windowed unstamped gate (058) AND a single-writer ownership gate: a row whose stream is owned by a different live instance is not claimable, so two pods never apply one stream concurrently (the cross-pod lost-update that stranded production saga 019ee73d). Caller-owned / unowned / dead-owner streams stay claimable for clean failover. Supersedes mig 058.';
+'Mig 059 — atomic per-stream claim+fetch with the grace-windowed unstamped gate (058) AND a single-writer ownership gate: a row whose stream is owned by a different live instance is not claimable, so two pods never apply one stream concurrently (the cross-pod lost-update that stranded a saga in production). Caller-owned / unowned / dead-owner streams stay claimable for clean failover. Supersedes mig 058.';
 
 SELECT __SCHEMA__.drop_all_overloads('fetch_events_by_ids');
 

@@ -338,8 +338,8 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task GetPayloadNamespace_GenericEnvelope_ExtractsInnerTypeNamespaceAsync() {
     var result = TypeNameFormatter.GetPayloadNamespace(
-      "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, a consumer.Contracts]], Whizbang.Core");
-    await Assert.That(result).IsEqualTo("a consumer.Contracts.Chat");
+      "Whizbang.Core.Observability.MessageEnvelope`1[[ConsumerApp.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, ConsumerApp.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("ConsumerApp.Contracts.Chat");
   }
 
   [Test]
@@ -375,8 +375,8 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task GetPayloadFullName_GenericEnvelope_ExtractsInnerFullNameAsync() {
     var result = TypeNameFormatter.GetPayloadFullName(
-      "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, a consumer.Contracts]], Whizbang.Core");
-    await Assert.That(result).IsEqualTo("a consumer.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent");
+      "Whizbang.Core.Observability.MessageEnvelope`1[[ConsumerApp.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, ConsumerApp.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("ConsumerApp.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent");
   }
 
   [Test]
@@ -397,10 +397,10 @@ public class TypeNameFormatterTests {
 
   [Test]
   public async Task GetPayloadNamespace_RealWorldEnvelopeType_ExtractsCorrectlyAsync() {
-    // This is the actual format from RabbitMQ transport in a consumer application
+    // This is the actual format from a message transport in a consumer application
     var result = TypeNameFormatter.GetPayloadNamespace(
-      "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.SystemSeeding.SystemSeedContracts+ReseedSystemSucceededEvent, a consumer.Contracts]], Whizbang.Core");
-    await Assert.That(result).IsEqualTo("a consumer.Contracts.SystemSeeding");
+      "Whizbang.Core.Observability.MessageEnvelope`1[[ConsumerApp.Contracts.SystemSeeding.SystemSeedContracts+ReseedSystemSucceededEvent, ConsumerApp.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("ConsumerApp.Contracts.SystemSeeding");
   }
 
   // ==========================================================================

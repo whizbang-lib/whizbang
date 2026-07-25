@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// Slice 4 of plans/pump-then-process.md — InboxDispatchWorker gates lifecycle deserialize
 /// by <see cref="IReceptorRegistryQuery"/>. Without the gate the worker tries to deserialize
 /// every payload before discovering there's no receptor, which is wasted work for cross-
-/// service event types BFF receives where most have no local handler.
+/// service event types a consumer's service receives where most have no local handler.
 /// </summary>
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class InboxDispatchWorkerLifecycleGatingTests {
@@ -336,7 +336,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     // HasReceptors. A generic "gate when both detached + inline are false" would silently
     // skip those stages in production (registry IS injected by AddWhizbangWorkers).
     // Cross-service events with no local perspective would lose tag notifications because
-    // PostAllPerspectivesDetached / ConsumerNotificationTagHook would never fire.
+    // PostAllPerspectivesDetached / a consumer's notification tag hook would never fire.
     //
     // The gate must scope itself to stages the registry actually knows about. This test
     // injects a registry that returns false for every query (mimicking the unknown-stage
@@ -526,12 +526,12 @@ public class InboxDispatchWorkerLifecycleGatingTests {
   [Test]
   public async Task Process_RuntimeReceptorRegistered_ButCompileTimeEmpty_FiresLifecycleAsync() {
     // Regression lock for the integration-test failure where PreInboxDetached on
-    // ECommerce BFF.API never fired for ProductCreatedEvent: the BFF's source-generated
+    // a consumer's service never fired for ProductCreatedEvent: the service's source-generated
     // compile-time WhizbangReceptorRegistryQuery contribution emits EMPTY arrays for
-    // PreInboxDetached / PreInboxInline (BFF has no compile-time lifecycle receptors —
+    // PreInboxDetached / PreInboxInline (that service has no compile-time lifecycle receptors —
     // only a perspective consumer). The dispatch worker's HasReceptors gate consulted
     // ONLY that compile-time view, so it returned early and the runtime-registered
-    // test completion receptor never fired. Wait helper timed out at 2m 15s.
+    // test completion receptor never fired. Wait helper timed out.
     //
     // IReceptorRegistry.GetReceptorsFor's contract is explicit: "Returns compile-time
     // entries concatenated with any runtime-registered entries." The gate MUST consult

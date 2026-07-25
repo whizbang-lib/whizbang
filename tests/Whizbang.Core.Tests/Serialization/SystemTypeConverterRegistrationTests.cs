@@ -6,7 +6,7 @@ using Whizbang.Core.Serialization;
 namespace Whizbang.Core.Tests.Serialization;
 
 /// <summary>
-/// Sentinel test that locks the invariant established by the a consumer application -infinity outage:
+/// Sentinel test that locks the invariant established by the -infinity timestamp outage:
 /// any public sealed JsonConverter&lt;T&gt; in Whizbang.Core where T is NOT a Whizbang-owned
 /// type cannot be discovered via [JsonConverter] attribute on T (we don't own T). The
 /// only way consumers of JsonContextRegistry.CreateCombinedOptions() get such a converter

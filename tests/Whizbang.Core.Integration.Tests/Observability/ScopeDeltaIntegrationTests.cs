@@ -777,7 +777,7 @@ public class ScopeDeltaIntegrationTests {
   /// <summary>
   /// Verifies that JsonContextRegistry.CreateCombinedOptions() correctly deserializes
   /// ScopeDelta with both TenantId AND UserId from message hops.
-  /// This locks-in the a consumer application scenario where PostPerspectiveDetached handlers need TenantContext.
+  /// This locks-in the consumer scenario where PostPerspectiveDetached handlers need TenantContext.
   /// </summary>
   [Test]
   public async Task Envelope_WithTenantIdAndUserId_CombinedContextRoundTrip_ExtractsBothAsync() {
@@ -786,7 +786,7 @@ public class ScopeDeltaIntegrationTests {
 
     var serviceInstance = _createServiceInstance();
 
-    // Create scope with BOTH TenantId and UserId (like a consumer application BFF does)
+    // Create scope with BOTH TenantId and UserId (like a consumer's BFF does)
     var scopeDelta = _createScopeDelta(
       tenantId: "c0ffee00-cafe-f00d-face-feed12345678",
       userId: "925321d2-9635-49e5-abd8-87b43dcf7e19",
@@ -893,13 +893,13 @@ public class ScopeDeltaIntegrationTests {
   }
 
   /// <summary>
-  /// Verifies that the exact JSON format stored in PostgreSQL (from a consumer application)
+  /// Verifies that the exact JSON format stored in PostgreSQL (from a consumer)
   /// deserializes correctly using the combined context.
   /// This locks-in the wire format compatibility.
   /// </summary>
   [Test]
   public async Task ScopeDelta_DeserializesPostgresJsonbFormat_WithEnumStringKeysAsync() {
-    // Arrange - This is the exact JSON format stored in a consumer application PostgreSQL
+    // Arrange - This is the exact JSON format a consumer stores in PostgreSQL
     // Note: Enum keys are serialized as strings ("Scope") not integers (0)
     var postgresJson = """{"v":{"Scope":{"t":"tenant-abc","u":"user-xyz"}}}""";
 

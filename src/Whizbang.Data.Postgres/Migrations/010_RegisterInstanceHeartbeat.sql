@@ -21,7 +21,7 @@ BEGIN
   --
   -- Freshness guard: the UPDATE path is skipped when the existing
   -- last_heartbeat_at is within 10 seconds of p_now. This avoids a WAL-heavy
-  -- write-per-tick pattern observed in a consumer production (millions of UPDATEs
+  -- write-per-tick pattern observed in production (millions of UPDATEs
   -- on a tiny wh_service_instances table). 10 s leaves 20 s of safety margin
   -- before cleanup_stale_instances (default p_stale_threshold_seconds = 30 s)
   -- would mark this instance stale.

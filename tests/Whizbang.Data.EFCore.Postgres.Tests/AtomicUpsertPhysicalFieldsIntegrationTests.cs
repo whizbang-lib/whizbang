@@ -18,9 +18,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Locks the slice 22b.3e invariant: <see cref="BaseUpsertStrategy._tryAtomicUpsertAsync"/>
 /// now handles perspectives with physical-field shadow properties (denormalized scalar
 /// columns and vector embeddings). Before 22b.3e, the strategy fell back to the slice-19
-/// retry path whenever <c>PhysicalFieldValues</c> was non-null, leaving 412 23505 errors
-/// per a consumer import on JobService's physical-field perspectives. Now the column list,
-/// VALUES bindings, and DO UPDATE SET clause are extended dynamically.
+/// retry path whenever <c>PhysicalFieldValues</c> was non-null, leaving a burst of 23505
+/// errors per bulk import on a consumer service's physical-field perspectives. Now the
+/// column list, VALUES bindings, and DO UPDATE SET clause are extended dynamically.
 /// </summary>
 /// <remarks>
 /// Integration test against real Postgres: the InMemory provider lets us verify

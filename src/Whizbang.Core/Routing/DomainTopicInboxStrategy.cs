@@ -2,7 +2,7 @@ namespace Whizbang.Core.Routing;
 
 /// <summary>
 /// Each domain has its own inbox topic.
-/// a consumer application-style - explicit inbox per domain.
+/// Domain-specific style - explicit inbox per domain.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#domain-topic-inbox</docs>
 /// <remarks>

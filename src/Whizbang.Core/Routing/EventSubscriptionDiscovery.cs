@@ -64,7 +64,7 @@ public sealed class EventSubscriptionDiscovery {
       namespaces.Remove(ownedDomain);
 
       // Remove namespaces that are children of owned domains
-      // e.g., if owned is "a consumer.contracts.bff", remove "a consumer.contracts.bff.events"
+      // e.g., if owned is "app.contracts", remove "app.contracts.events"
       var ownedPrefix = ownedDomain.EndsWith('.')
         ? ownedDomain
         : ownedDomain + ".";

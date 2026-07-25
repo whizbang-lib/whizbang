@@ -163,7 +163,7 @@ BEGIN
   -- the stream, lease to that owner regardless of which instance ran the commit — eliminates
   -- the cross-instance saga race (different instances commit to the same stream, each
   -- selfishly leasing to themselves, drainer races) that produced the residual ~1000 cursor
-  -- inversions in a consumer run 14. When no live owner is pinned yet (new stream OR stale owner),
+  -- inversions in a production run. When no live owner is pinned yet (new stream OR stale owner),
   -- fall back to the commit instance so sync paths (UI waiting on a perspective checkpoint)
   -- don't pay claim_orphaned-polling-interval latency on first-event-per-stream.
   INSERT INTO __SCHEMA__.wh_perspective_events (
@@ -289,8 +289,8 @@ BEGIN
   -- 311-329). Without these, two concurrent claim_work calls (e.g., NOTIFY-driven wake racing
   -- a heartbeat-driven poll) can both read MAX(version)=N from wh_event_store for the same
   -- stream and both attempt INSERT at version=N+1, violating idx_event_store_stream
-  -- UNIQUE(stream_id, version) (PG error 23505). Production reproduction observed on a consumer BFF
-  -- 2026-05-03 during job creation. Lock order is hashtext(stream_id::text), sorted ASC —
+  -- UNIQUE(stream_id, version) (PG error 23505). Reproduced in production on a consumer's
+  -- service during job creation. Lock order is hashtext(stream_id::text), sorted ASC —
   -- ensures deadlock-free nesting between any pair of transactions touching overlapping stream
   -- sets. pg_advisory_xact_lock auto-releases at commit/rollback.
   PERFORM pg_advisory_xact_lock(hashtext('wh_event_store:' || sid::text))

@@ -11,7 +11,7 @@ namespace Whizbang.Core.Messaging;
 /// <code>
 /// public sealed class OrderBulkImportComposite : CompositeEventBase;
 /// // ...
-/// var composite = new OrderBulkImportComposite { StreamId = jobStreamId, Inner = jobFieldEvents };
+/// var composite = new OrderBulkImportComposite { StreamId = orderStreamId, Inner = orderFieldEvents };
 /// </code>
 /// </summary>
 /// <remarks>

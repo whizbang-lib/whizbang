@@ -135,7 +135,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   }
 
   /// <summary>
-  /// production G6: Dapper-side coverage for the <c>out_commit_sequence</c> projection. Without
+  /// Production forensic G6: Dapper-side coverage for the <c>out_commit_sequence</c> projection. Without
   /// this test the Dapper reader's commit_sequence path was uncovered by CI (the EFCore
   /// tests don't exercise the Dapper coordinator).
   /// </summary>

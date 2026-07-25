@@ -70,7 +70,7 @@ public static class TestConstants {
   ///
   /// <para>- 1 receptor from DispatcherScheduledForLocalReceptorTests.cs
   ///     (ScheduledForCascadeProbeReceptor — proves PublishAsync(event, options.ScheduledFor)
-  ///     gates local-receptor invocation on scheduled time, fixing the production saga watchdog
+  ///     gates local-receptor invocation on scheduled time, fixing a production saga watchdog
   ///     cascade-abandon)</para>
   ///
   /// <para>- 1 receptor from DispatcherErrorBranchTests.cs

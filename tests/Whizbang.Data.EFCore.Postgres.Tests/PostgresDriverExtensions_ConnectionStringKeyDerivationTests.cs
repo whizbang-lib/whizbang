@@ -14,8 +14,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// sync with the source generator's
 /// <c>EFCoreServiceRegistrationGenerator._deriveConnectionStringName</c>.
 ///
-/// <para>This is the convention a consumer (and any other Whizbang consumer) relies on:
-/// a service with a <c>BffServiceDbContext</c> automatically uses
+/// <para>This is the convention a consumer (or any other Whizbang consumer) relies on:
+/// a service with an <c>AppServiceDbContext</c> automatically uses
 /// <c>ConnectionStrings:appservice-db</c> (and, for notifications, the
 /// <c>-direct</c> variant) without having to set
 /// <c>Whizbang:Database:ConnectionStringKey</c> in appsettings. If a future
@@ -26,11 +26,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class PostgresDriverExtensions_ConnectionStringKeyDerivationTests {
 
   [Test]
-  public async Task BffServiceDbContext_DerivesToBffserviceDashDbAsync() {
-    // Direct match for the a consumer BFF production config:
+  public async Task AppServiceDbContext_DerivesToAppserviceDashDbAsync() {
+    // Direct match for a production consumer's app-service config:
     //   ConnectionStrings:appservice-db (pgbouncer)
     //   ConnectionStrings:appservice-db-direct (notifications)
-    await Assert.That(PostgresDriverExtensions._deriveConnectionStringName("BffServiceDbContext"))
+    await Assert.That(PostgresDriverExtensions._deriveConnectionStringName("AppServiceDbContext"))
       .IsEqualTo("appservice-db");
   }
 

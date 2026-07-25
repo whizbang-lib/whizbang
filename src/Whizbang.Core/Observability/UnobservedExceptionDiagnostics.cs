@@ -40,8 +40,9 @@ public sealed class UnobservedExceptionDiagnosticsWarmUp : IHostedService {
 /// </summary>
 /// <remarks>
 /// <para>
-/// Motivation (Jun 2026, production forensic): a stuck outbox row in a consumer BFF was retried 700+
-/// times across two days with <c>wh_outbox.error</c> staying NULL. Whizbang's worker-level
+/// Motivation (a production forensic investigation): a stuck outbox row in a consumer's
+/// service was retried hundreds of times across two days with <c>wh_outbox.error</c>
+/// staying NULL. Whizbang's worker-level
 /// catches all log on failure, but the OutboxDrainWorker's publish call is wrapped in a
 /// cooperative cancellation token — if the transport SDK ignores the token, the await
 /// never returns, no exception is thrown, and the worker silently sits. Adjacent issue: if

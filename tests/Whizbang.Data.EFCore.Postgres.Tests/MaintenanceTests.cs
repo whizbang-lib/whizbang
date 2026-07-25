@@ -345,7 +345,7 @@ public class MaintenanceTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// production forensic (Jun 2026): wh_active_streams accumulated 56k rows
+  /// Production forensic: wh_active_streams accumulated a large number of rows
   /// older than 7 days, 99% of them with <c>assigned_instance_id IS NULL</c>.
   /// Root cause: <c>cleanup_stale_instances</c> nulls
   /// <c>assigned_instance_id</c> when its owner instance dies, but
@@ -369,7 +369,7 @@ public class MaintenanceTests : EFCoreTestBase {
     await Assert.That(TaskName).IsNotNull();
     await Assert.That(Status).IsEqualTo("ok");
     await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1L)
-      .Because("A NULL-owner row whose last activity is past the grace period (1 hour) MUST be deleted — otherwise these rows accumulate forever (production hit 75k of them).");
+      .Because("A NULL-owner row whose last activity is past the grace period (1 hour) MUST be deleted — otherwise these rows accumulate forever (production accumulated a large backlog of them).");
 
     var remaining = await conn.ExecuteScalarAsync<long>(
       $"SELECT COUNT(*) FROM wh_active_streams WHERE stream_id = '{oldUnowned}'");

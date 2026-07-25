@@ -118,7 +118,7 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     var orphanStream = (Guid)TrackedGuid.NewMedo();
     await _registerInstanceAsync(conn, owner);
     // orphanStream exists in wh_active_streams but assigned_instance_id is NULL
-    // (post-cleanup_stale_instances state — pre-slice-6-fix a consumer baseline).
+    // (post-cleanup_stale_instances state — pre-slice-6-fix production baseline).
     await _upsertActiveStreamAsync(conn, orphanStream, partitionNumber: 0, ownerInstanceId: null);
 
     var received = await _captureNotificationsAsync(conn, [owner], async () =>

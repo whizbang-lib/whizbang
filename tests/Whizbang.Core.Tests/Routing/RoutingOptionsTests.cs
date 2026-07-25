@@ -835,15 +835,15 @@ public class RoutingOptionsTests {
     var options = new RoutingOptions();
 
     // Act - typical BFF usage pattern
-    options.OwnDomains("a consumer.contracts.bff")
+    options.OwnDomains("app.contracts.bff")
            .SubscribeToAudit()
-           .SubscribeTo("a consumer.contracts.job");
+           .SubscribeTo("app.contracts.job");
 
     // Assert
-    await Assert.That(options.OwnedDomains).Contains("a consumer.contracts.bff");
+    await Assert.That(options.OwnedDomains).Contains("app.contracts.bff");
     await Assert.That(options.SubscribedNamespaces)
         .Contains(Whizbang.Core.SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
-    await Assert.That(options.SubscribedNamespaces).Contains("a consumer.contracts.job");
+    await Assert.That(options.SubscribedNamespaces).Contains("app.contracts.job");
     await Assert.That(options.AuditPerspectiveEnabled).IsTrue();
   }
 

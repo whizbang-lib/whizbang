@@ -176,11 +176,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           // one window (rapid heartbeats during burst load). Each unique stream is drained once;
           // FetchOutboxBatchAsync returns all pending rows for it in stream-FIFO order.
           //
-          // production throughput fix: cross-stream draining is parallelized via Parallel.ForEachAsync
+          // A production throughput fix: cross-stream draining is parallelized via Parallel.ForEachAsync
           // capped by MaxConcurrentStreams. Per-stream FIFO is preserved inside _drainStreamAsync
           // (one task per stream); different streams have no ordering relationship and benefit
           // from N-wide concurrent draining. The pre-fix serial foreach + await collapsed
-          // throughput to ~5 msg/sec on a consumer production 350-job import (1,578 streams pending).
+          // throughput to a few msg/sec on a production bulk-job import (thousands of streams pending).
           var distinctStreams = new HashSet<Guid>(batch);
           var parallelOpts = new ParallelOptions {
             MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
@@ -251,7 +251,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     // The set is bounded by drain-session size and GC'd on return.
     var seen = new HashSet<Guid>();
     // Slice 31 PERF instrumentation: per-drain wall time + publish breakdown, mirroring
-    // the perspective worker pattern. a consumer run-23 analysis identified outbox/inbox as the
+    // the perspective worker pattern. A production analysis identified outbox/inbox as the
     // next hot path to characterize.
     var drainStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
     var totalPublishMs = 0.0;
@@ -304,8 +304,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             // wh_outbox.error column (the real exception text from the last
             // process_outbox_failures cycle) over the synthetic meta-message.
             // The meta-message collapses every DLQ row to one fingerprint cluster
-            // regardless of root cause (production Jun-2026: 38k+ rows in a single
-            // cluster). Using row.Error restores forensic diversity — Slice 2's
+            // regardless of root cause (observed in production: tens of thousands of
+            // rows in a single cluster). Using row.Error restores forensic diversity — Slice 2's
             // fingerprint algorithm extracts the real exception type + frames,
             // operators see distinct clusters per failure mode.
             var promotionErrorText = !string.IsNullOrWhiteSpace(row.Error)
@@ -336,7 +336,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }
       var newRows = newRowList.Count;
 
-      // production throughput fix: bulk publish path. When the transport reports
+      // A production throughput fix: bulk publish path. When the transport reports
       // SupportsBulkPublish, ship the stream's newly-claimed rows as one PublishBatchAsync
       // round-trip instead of looping PublishAsync per row. Azure Service Bus's
       // SenderClient.SendMessagesAsync packs up to ~1 MB / ~100 messages per network call,
@@ -397,7 +397,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   }
 
   /// <summary>
-  /// production throughput fix: bulk publish path. Serializes each row's <see cref="OutboxWork"/>
+  /// A production throughput fix: bulk publish path. Serializes each row's <see cref="OutboxWork"/>
   /// up front (deserialization failures are routed to the failure channel and excluded from
   /// the batch), fires Pre-Outbox lifecycle per row, sends the surviving works as one
   /// <see cref="IMessagePublishStrategy.PublishBatchAsync"/> call, then fans the per-row
@@ -463,7 +463,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // Slice 4 of release/v0.648.0-alpha.1, hardened in v0.651: wrap PublishBatchAsync
       // in a per-call timeout that fires GUARANTEED — not cooperatively. The v0.648
       // version used CancellationTokenSource.CancelAfter + cooperative catch, which only
-      // worked if the transport SDK observed the token. a consumer production forensic (Jun 2026)
+      // worked if the transport SDK observed the token. A production forensic investigation
       // confirmed the SDK can hang without observing cancellation: the timer fired but
       // the await sat there forever, no OCE thrown, no failure captured, attempts only
       // ticked up via claim_orphaned_outbox at the DB level. WaitAsync(TimeSpan, ct)
@@ -737,7 +737,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             // Slice 1 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis):
             // route the lifecycle exception through IFailureChannel so
             // process_outbox_failures populates wh_outbox.error with the full
-            // ex.ToString(). Without this, production-class faults retried forever with
+            // ex.ToString(). Without this, this class of fault retried forever with
             // an empty error column and operators had no triage signal.
             await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
               MessageId = work.MessageId,
@@ -758,7 +758,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // Slice 1 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis):
       // route the lifecycle exception through IFailureChannel so
       // process_outbox_failures populates wh_outbox.error with the full
-      // ex.ToString(). Without this, production-class faults retried forever with
+      // ex.ToString(). Without this, this class of fault retried forever with
       // an empty error column and operators had no triage signal.
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
         MessageId = work.MessageId,
@@ -908,8 +908,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Message = "OutboxDrainWorker transport publish timed out for batch of {RowCount} row(s) after {TimeoutSeconds}s — SDK call did not return; routing each row to failure channel with Reason=TransportException")]
   static partial void LogPublishTimedOut(ILogger logger, int rowCount, int timeoutSeconds);
 
-  // v0.656 forensic Debug instrumentation: production stuck-row diagnosis.
-  // Operator runs production with `Whizbang.Core.Workers.OutboxDrainWorker` overridden to Debug
+  // v0.656 forensic Debug instrumentation: stuck-row diagnosis.
+  // Operators override `Whizbang.Core.Workers.OutboxDrainWorker` to Debug
   // to surface which silent path is consumed between two-minute claim cycles. Keep at Debug
   // level so production logs aren't flooded; the Whizbang.Core.Workers default stays Information.
 
@@ -1022,7 +1022,7 @@ public sealed class OutboxDrainWorkerOptions {
   /// drain channel. Per-stream FIFO is preserved (rows within a stream still publish in
   /// order); ONLY cross-stream draining parallelizes. Default 16 — tuned for a single
   /// publisher pod against Azure Service Bus where round-trips dominate per-message cost.
-  /// Set to 1 to restore the pre-production serial behavior.
+  /// Set to 1 to restore the serial (pre-fix) behavior.
   /// </summary>
   /// <docs>fundamentals/work-coordinator/per-stream-drain#cross-stream-parallelism</docs>
   public int MaxConcurrentStreams { get; set; } = 16;
@@ -1047,8 +1047,8 @@ public sealed class OutboxDrainWorkerOptions {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Introduced in Slice 5a of release/v0.647.0-alpha.1 after the production BFF
-  /// stuck-row pattern was traced to a consumer's IMessageSecurityContextProvider
+  /// Introduced in Slice 5a of release/v0.647.0-alpha.1 after a consumer's production
+  /// stuck-row pattern was traced to the consumer's IMessageSecurityContextProvider
   /// hanging on a test-pattern tenant id (<c>c0ffee00-cafe-f00d-face-feed12345678</c>).
   /// Without this timeout, the publish path waits on the security context
   /// establishment indefinitely; <c>claim_orphaned_outbox</c> keeps re-leasing
@@ -1072,7 +1072,7 @@ public sealed class OutboxDrainWorkerOptions {
   /// <para>
   /// Introduced in Slice 4 of release/v0.648.0-alpha.1 (initially default 120 s,
   /// then briefly default 0 / opt-in). Slice 5a (v0.647) wrapped the
-  /// SecurityContext establishment in a timeout; the production-pattern stuck row
+  /// SecurityContext establishment in a timeout; the same class of stuck row
   /// still spun because the hang was one stack frame later — the transport
   /// SDK <c>PublishBatchAsync</c> call never returns AND never throws. Without
   /// this timeout, the worker waits for the SDK indefinitely;

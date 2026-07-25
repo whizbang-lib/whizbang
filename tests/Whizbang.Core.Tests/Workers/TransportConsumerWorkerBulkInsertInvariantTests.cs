@@ -148,8 +148,8 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
   public async Task BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync() {
     // The load-bearing slice 6 invariant: a 100-message batch lands as ONE
     // StoreInboxMessagesAsync call carrying all 100 messages — not 100 separate calls,
-    // not even 10 calls of 10. Critical for the a consumer BFF saga-fanout path where ~6,000
-    // events arrive in fast bursts; per-message inserts would saturate Postgres.
+    // not even 10 calls of 10. Critical for a consumer's saga-fanout path where large
+    // bursts of events arrive in quick succession; per-message inserts would saturate Postgres.
     var registry = new AlwaysConsumedRegistry();
     var (worker, transport, coordinator, sp) = _buildWorker(registry);
     await using (sp) {

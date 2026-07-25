@@ -94,7 +94,7 @@ public class ClaimWorkerTests {
     // wh_service_instances. HeartbeatWorker UPSERTs the row but ticks on its own
     // cadence — there's no ordering guarantee against ClaimWorker's first tick.
     // ClaimWorker must therefore perform an initial heartbeat itself before its
-    // first claim cycle so the rank lookup succeeds. a consumer prod surfaced the raw
+    // first claim cycle so the rank lookup succeeds. Production surfaced the raw
     // race as repeated "ClaimWorker tick failed; will back off and retry" warnings.
     var coord = new FakeCoordinator();
     var services = new ServiceCollection();
@@ -341,7 +341,7 @@ public class ClaimWorkerTests {
     // flag stuck — e.g., a hung handler that never returned from `_drainStreamInnerAsync`'s
     // try/finally. Once stuck, every subsequent claim_work emit was discarded for that stream,
     // forever, even though `claim_work` SQL kept reporting the row as eligible. Observed in
-    // production on a consumer BFF (3,545 unprocessed inbox rows leased to a healthy instance with
+    // production (thousands of unprocessed inbox rows leased to a healthy instance with
     // zero drain progress; only restart unstuck them).
     //
     // The new contract: writes always happen. The drainer's idempotent fetch_*_batch (filters
@@ -435,7 +435,7 @@ public class ClaimWorkerTests {
   [Test]
   public async Task Distribute_InboxDrainChannel_WritesStreamIds_EvenWhenIsInFlightTrueAsync() {
     // Regression lock for the inbox path — completes the symmetry across all three drain
-    // channels. a consumer production observed this exact failure mode on BFF: 3,545 inbox rows
+    // channels. Production observed this exact failure mode: thousands of inbox rows
     // leased to the healthy instance, claim_work emitting them on every poll, ClaimWorker
     // silently filtering them via IsInFlight, drain pipeline idle for hours.
     var streamA = (Guid)TrackedGuid.NewMedo();

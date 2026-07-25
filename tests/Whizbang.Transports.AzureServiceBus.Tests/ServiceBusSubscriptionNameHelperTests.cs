@@ -13,13 +13,13 @@ public class ServiceBusSubscriptionNameHelperTests {
   public async Task GenerateSubscriptionNameWithValidNamesReturnsExpectedFormatAsync() {
     // Arrange
     const string subscriberName = "bff-service";
-    const string topicName = "a consumer.contracts.chat";
+    const string topicName = "app.contracts.chat";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
 
     // Assert
-    await Assert.That(result).IsEqualTo("bff-service-a consumer.contracts.chat");
+    await Assert.That(result).IsEqualTo("bff-service-app.contracts.chat");
   }
 
   /// <summary>

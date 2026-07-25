@@ -16,9 +16,9 @@ namespace Whizbang.Core.Messaging;
 /// Singleton. Disabled if <see cref="MaxConcurrent"/> is &lt;= 0.
 /// </para>
 /// <para>
-/// v0.654 (Jun 2026) hardening: <see cref="AcquireAsync(CancellationToken)"/> now applies a
+/// v0.654 hardening: <see cref="AcquireAsync(CancellationToken)"/> now applies a
 /// deadline to its internal <see cref="SemaphoreSlim.WaitAsync(int, CancellationToken)"/>
-/// call. production forensic confirmed the cooperative-CT-only pattern (the v0.648 version
+/// call. A production forensic investigation confirmed the cooperative-CT-only pattern (the v0.648 version
 /// used <c>WaitAsync(ct)</c> with the worker's stoppingToken, which only fires at pod
 /// shutdown) lets a saturated gate hang every caller silently — no exception, no log,
 /// no timeout. With <see cref="AcquireTimeoutMilliseconds"/> set, the gate logs a Warning
@@ -113,7 +113,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// than that deadline, the call returns a degraded <see cref="Releaser"/> that holds no
   /// slot — the caller proceeds, the saturation is logged at Warning, and the gate
   /// becomes advisory for that call rather than blocking. The alternative (the
-  /// pre-v0.654 behavior) was to wait forever silently, which surfaced as the production
+  /// pre-v0.654 behavior) was to wait forever silently, which surfaced in production as the
   /// "stuck row that never DLQ-promotes" pattern.
   /// </remarks>
   public async ValueTask<Releaser> AcquireAsync(
@@ -196,7 +196,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     Message = "WorkCoordinatorGate.AcquireAsync timed out after {TimeoutMilliseconds} ms (MaxConcurrent={MaxConcurrent}) — gate is saturated; this call proceeds WITHOUT holding a slot. Persistent saturation indicates pool pressure or callers leaking slots; investigate the gated call site.")]
   static partial void LogAcquireTimedOut(ILogger logger, int timeoutMilliseconds, int maxConcurrent);
 
-  // v0.656 forensic Debug instrumentation: surface per-call gate decisions so production
+  // v0.656 forensic Debug instrumentation: surface per-call gate decisions so
   // operators can see whether the silent two-minute spin is being absorbed by the gate's
   // WaitAsync (saturation) vs by something downstream of acquire.
 

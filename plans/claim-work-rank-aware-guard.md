@@ -1,19 +1,19 @@
 # Plan: Rank-aware per-queue guards in `claim_work` (v0.688)
 
-> **Status (2026-06-13)**: First hot-swap attempt on production was rolled back
-> after finding a saga-completion regression. The DB-load reduction was
+> **Status (2026-06-13)**: First hot-swap attempt on the test cluster was rolled
+> back after finding a saga-completion regression. The DB-load reduction was
 > confirmed real (`claim_orphaned_inbox` calls -36%, ms -40%) but on 2 of 3
-> matched runs the BulkImport saga finished with 348-349/350 instead of
+> matched runs the bulk-import saga finished with 348-349/350 instead of
 > 350/350. v0.687 hit 350/350 on all 3 matched runs. The miss is NOT noise
-> at that ratio. See "production findings" section at the bottom for the full
+> at that ratio. See the "Findings" section at the bottom for the full
 > data and the proposed pre-requisite fix.
 
 
 
-## Observation (production, 2026-06-13, 3-BFF, post-v0.687 import)
+## Observation (test cluster, 2026-06-13, 3 replicas, post-v0.687 import)
 
-After `pg_stat_statements_reset()` and a 350-job bulk import on production with
-3 BFF replicas + 2 Job replicas, the BFF DB query mix:
+After `pg_stat_statements_reset()` and a 350-job bulk import on the test cluster
+with 3 service replicas + 2 worker replicas, the service DB query mix:
 
 | Bucket | % | ms_total | calls | ms_mean |
 |---|---|---|---|---|
@@ -58,7 +58,7 @@ unowned-path (`partition_number % p_active_instance_count = p_instance_rank`).
 In a multi-instance cluster, the guard's "any unowned row?" predicate
 returns true *very* often, but a large fraction of those rows belong to
 other ranks. `claim_orphaned_inbox` walks them and returns empty.
-**Measured: 5,290 calls × 9.6ms mean ≈ 51s of no-op walks on BFF.**
+**Measured: 5,290 calls × 9.6ms mean ≈ 51s of no-op walks on the service DB.**
 
 Confirmed not contention — the mean is steady (consistent with one instance
 walking rows). The waste is the call rate, not per-call cost.
@@ -211,7 +211,7 @@ implementation directly):
   (lock the guard's reaction to cluster topology change — stale instance
   shouldn't keep its rank claimed by the modulo.)
 
-### Slice 4 — Live experiment on production (hot-swap, no release)
+### Slice 4 — Live experiment on the test cluster (hot-swap, no release)
 
 **The function body is purely SQL — the C# coordinator calls
 `claim_work()` and is opaque to the inner predicate shape.** A v0.688
@@ -222,18 +222,16 @@ Sequence (matches `feedback_sql_experiment_in_isolation.md` — the
 
 1. **Baseline** (already captured 2026-06-13 ~08:11–08:18, see
    `plans/notes-track-3-execution.md` if archived). 5,290
-   `claim_orphaned_inbox` calls / 98s on BFF DB.
+   `claim_orphaned_inbox` calls / 98s on the service DB.
 
-2. **Apply** the new `claim_work` via `psql` against the production BFF DB
-   (`appservice_db_db_production`) and the production Job DB
-   (`jdx_job_service_db_production`) using `CREATE OR REPLACE FUNCTION` —
+2. **Apply** the new `claim_work` via `psql` against the service DB and the
+   worker-service DB in the test environment using `CREATE OR REPLACE FUNCTION` —
    atomic swap, no restart needed. Save the pre-swap function definition
    to `/tmp/claim_work_v0.687_backup.sql` first for rollback.
 
 3. **Reset stats**: `SELECT pg_stat_statements_reset()` on both DBs.
 
-4. **Re-run** the 350-job baseline import (same payload as prior run —
-   `healthcare-350.compcode-patched.json`).
+4. **Re-run** the 350-job baseline import (same payload as prior run).
 
 5. **Capture** the same pg_stat_statements query used today. Compare:
    - `claim_orphaned_inbox` call count: expect <500 (10× reduction).
@@ -241,13 +239,13 @@ Sequence (matches `feedback_sql_experiment_in_isolation.md` — the
    - `claim_work` ms_mean: expect drop from 61ms toward ~40ms (the inner
      orphan-claim walk was contributing ~20ms exclusive of guard work).
    - End-to-end saga time: small improvement expected (~5-15s), not
-     dramatic — BFF was no longer the bottleneck after v0.687, so this
+     dramatic — the service was no longer the bottleneck after v0.687, so this
      is a tax on a non-bottleneck path. The win is **less DB load, not
      faster saga**.
 
 6. **If results match expectations**: keep the hot-swap in place,
    commit the migration change to the Whizbang repo, cut v0.688 release
-   that ships the same migration as the in-place fix. production doesn't
+   that ships the same migration as the in-place fix. The test cluster doesn't
    need re-deploy.
 
 7. **If results don't match** (or unexpected regression): rollback via
@@ -299,7 +297,7 @@ session-level state is unaffected (no GUCs touched).
   adds a function call to every claim_work invocation for code factoring
   with no measurable benefit. Inline guard is plenty.
 - **Bulk-import event amplification fix (Option A)**. Tracked separately
-  in `a consumer application/plans/bulk-import-event-granularity.md`. Different repo,
+  in the consumer's plan repository. Different repo,
   different release cycle, different scope.
 
 ## Risk
@@ -326,14 +324,14 @@ session-level state is unaffected (no GUCs touched).
 - [ ] Slice 1: 5 RED tests committed, all FAILING on develop.
 - [ ] Slice 2: mig 029 updated, 5 tests now PASSING.
 - [ ] Slice 3: 4 additional edge-case tests, all PASSING.
-- [ ] Slice 4: production hot-swap applied; pg_stat_statements snapshot
+- [ ] Slice 4: test-cluster hot-swap applied; pg_stat_statements snapshot
       confirms ≥10× reduction in `claim_orphaned_inbox` calls + ms_total.
 - [ ] Slice 5: docs page added/updated, regenerated maps clean.
 - [ ] Slice 6: PR opened to `develop`, CI green, merged.
 
 ## Acceptance criteria
 
-After deploy-or-hot-swap on production, a repeated 350-job baseline import
+After deploy-or-hot-swap on the test cluster, a repeated 350-job baseline import
 produces:
 
 - `claim_orphaned_inbox` calls: **<500** (was 5,290).
@@ -344,21 +342,21 @@ produces:
 - Saga completion at 350/350 (already locked by v0.687, must remain).
 - No new flakiness in EFCore.Postgres integration tests.
 
-## production findings — 2026-06-13 hot-swap attempt (ROLLED BACK)
+## Findings — 2026-06-13 hot-swap attempt (ROLLED BACK)
 
 ### What we learned
 
 **The DB-load reduction is real and measurable.** On a matched cluster
-(3 BFFs + 3 Job pods, HPA pinned to minReplicas=3, production dev), three
-v0.687 baseline runs and three v0.688 hot-swap runs of the 350-job
-BulkImport file produced:
+(3 service replicas + 3 worker replicas, HPA pinned to minReplicas=3, test
+cluster), three v0.687 baseline runs and three v0.688 hot-swap runs of the
+350-job bulk-import file produced:
 
 | Run | Version | Cluster | Saga result | Duration |
 |---|---|---|---|---|
-| #1 | v0.687 | 3 BFFs (fresh) | 350/350 | 2m44s |
+| #1 | v0.687 | 3 replicas (fresh) | 350/350 | 2m44s |
 | #2 | v0.687 | HPA-thrashing 3↔2 | 350/350 | 3m13s |
 | #3 | v0.687 | sterile 3/3 | 350/350 | 3m05s |
-| #4 | **v0.688** | 3 BFFs (fresh) | **349/350** (line 254 missing) | 3m03s |
+| #4 | **v0.688** | 3 replicas (fresh) | **349/350** (line 254 missing) | 3m03s |
 | #5 | **v0.688** | sterile 3/3 | 350/350 | 3m21s |
 | #6 | **v0.688** | sterile 3/3 | **348/350** (lines 225, 309 missing) | 2m56s |
 
@@ -366,7 +364,7 @@ v0.687 = 3 wins. v0.688 = 1 win, 2 misses. At 2-of-3 miss rate on a
 matched cluster, this is **not run-to-run variance**. The guard change
 introduced a real saga-completion regression.
 
-Stat comparison (sterile v0.687 vs sterile v0.688, BFF DB):
+Stat comparison (sterile v0.687 vs sterile v0.688, service DB):
 
 | Bucket | v0.687 | v0.688 | Δ |
 |---|---|---|---|
@@ -406,9 +404,9 @@ Supporting evidence:
 
 ### Decision
 
-**Rolled back to v0.687 on production at 2026-06-13 10:01 EDT.** Backup files
-in `/tmp/production-claim-work-v0.688/claim_work_v0.687_{bff,job}.sql`. HPA
-minReplicas patches left at 3 for both BFF and Job services.
+**Rolled back to v0.687 on the test cluster at 2026-06-13 10:01 EDT.** Backup
+files were saved out-of-band before the swap. HPA minReplicas patches left at 3
+for both services.
 
 ### Pre-requisite before re-attempting v0.688
 
@@ -418,8 +416,9 @@ claim batches**. Sequence of work before retry:
 
 1. **Diagnose the saga-perspective race** under increased concurrent
    apply pressure. Specifically: what happens when N concurrent
-   `SagaItemCompletedEvent` apply calls hit `wh_per_bulk_job_import_orchestration_saga`
-   simultaneously? Trace the optimistic-concurrency retry path. Look
+   `SagaItemCompletedEvent` apply calls hit the saga perspective table
+   (`wh_per_bulk_import_saga`) simultaneously? Trace the optimistic-concurrency
+   retry path. Look
    for retries that re-read but don't re-apply *all* events that
    landed during their first attempt.
 2. **Fix the saga race**. Likely options:
@@ -436,23 +435,23 @@ claim batches**. Sequence of work before retry:
    - Extend the rewind catch-up to detect "ProcessedLineNumbers.Count
      < observed SagaItemCompletedEvent count" and force a replay
      from the gap point.
-3. **Lock the fix with an integration test** that reproduces the production
+3. **Lock the fix with an integration test** that reproduces the observed
    condition — many concurrent SagaItemCompletedEvents in a single
    claim batch, assert all lines land in ProcessedLineNumbers.
-4. **Re-attempt v0.688 hot-swap** on production once steps 1-3 ship.
+4. **Re-attempt v0.688 hot-swap** on the test cluster once steps 1-3 ship.
 
 ### What stays good from this attempt
 
-- `/tmp/production-claim-work-v0.688/claim_work_v0.688.sql` — patched function
-  body, ready to redeploy when prerequisites are met.
+- The patched `claim_work` v0.688 function body (saved out-of-band) — ready
+  to redeploy when prerequisites are met.
 - The four guard predicate shapes (outbox / inbox / perspective_events /
   receptor_work) — predicate-aligned with their respective callee
   functions. Mig 029 edit is still the right structural change.
 - The slice plan above (RED tests + GREEN edit + docs) is unchanged;
   the only blocker is the saga-race prerequisite.
-- HPA pinning (BFF + Job at minReplicas=3) — keep on production to
-  preserve test reproducibility; review before merging back to other
-  slots.
+- HPA pinning (both services at minReplicas=3) — keep on the test cluster to
+  preserve test reproducibility; review before rolling out to other
+  environments.
 
 ### Open question worth checking before the saga fix
 
@@ -461,5 +460,5 @@ Is the same race already latent on v0.687? On v0.687 the saga hit
 we saw 347/350 once. If v0.687's 347/350 was the same race fired by a
 different timing window (e.g. a cold start), the fix needed here would
 also protect existing v0.687 production. Worth a literature review of
-prior 350-job sagas across all slots before assuming the race is
+prior 350-job sagas across all environments before assuming the race is
 v0.688-exclusive.

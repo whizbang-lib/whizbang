@@ -4,12 +4,11 @@
 
 The PerspectiveWorker drains `wh_perspective_events` via `process_work_batch`'s Phase 7 using a two-tier budget (`v_tier1_max = 70%` for small streams, remainder for large streams). Today, **all perspectives compete for the same event budget** — the tier split is based on per-stream volume, not on the semantic importance of the perspective.
 
-In live production observations (2026-04-23), a single bulk job import produces:
+In live production observations, a single bulk import produces:
 
-- ~8,400 events for `Order+Projection` (the aggregate projection that drives the UI read model)
-- ~2,200 events for `OrderCompetency+Projection`
-- ~970 events for `OrderOrderLines+Projection`
-- ~965 events for `OrderSkill+Projection`
+- a large majority of events for the aggregate projection that drives the UI read model
+- a smaller but still significant share for a handful of secondary projections
+- a smaller remainder split across several other supporting projections
 - …plus N audit-style perspectives that log events to an audit store
 
 The user-visible UX (UI "Validating..." → "Completed" transition) depends on the **UI-driving projections** reaching steady state. A noisy audit-perspective that handles every event can starve the UI projections — audit writes and UI writes both consume the same 1,000-event-per-cycle budget, so a burst produces ~50/50 progress across both categories even though the UI is a thousand times more latency-sensitive.

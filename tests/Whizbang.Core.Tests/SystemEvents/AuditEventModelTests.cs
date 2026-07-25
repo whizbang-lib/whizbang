@@ -200,7 +200,7 @@ public class AuditEventModelTests {
   [Test]
   public async Task HumanizeEventType_NestedTypeWithNamespace_StripsNamespaceAndContractsAsync() {
     var result = AuditEventProjection.HumanizeEventType(
-      "a consumer.Contracts.Session.SessionContracts+EndedEvent");
+      "App.Contracts.Session.SessionContracts+EndedEvent");
     await Assert.That(result).IsEqualTo("Session \u2192 Ended");
   }
 
@@ -289,7 +289,7 @@ public class AuditEventModelTests {
   [Test]
   public async Task HumanizeNamespace_NestedTypeWithNamespace_UsesParentNotNamespaceAsync() {
     var result = AuditEventProjection.HumanizeNamespace(
-      "a consumer.Contracts.Session.SessionContracts+EndedEvent");
+      "App.Contracts.Session.SessionContracts+EndedEvent");
     await Assert.That(result).IsEqualTo("Session Contracts");
   }
 

@@ -3,7 +3,7 @@ namespace Whizbang.Core.Perspectives;
 /// <summary>
 /// Execution policy for a collective-event apply — how the single set-based UPDATE over the cohort is
 /// bounded and chunked. A collective apply touches every row in scope in one operation, so left unbounded it
-/// holds locks across the whole cohort for the whole duration (the production lock convoy). These knobs keep
+/// holds locks across the whole cohort for the whole duration (a production lock convoy). These knobs keep
 /// each statement short and server-bounded.
 /// </summary>
 /// <remarks>

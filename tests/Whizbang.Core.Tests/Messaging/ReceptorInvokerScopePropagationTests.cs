@@ -94,8 +94,8 @@ public class ReceptorInvokerScopePropagationTests {
   [Test]
   public async Task InvokeAsync_WhenSecurityProviderReturnsNull_ButEnvelopeHasScopeInHops_GetSecurityFromAmbientShouldReturnScopeAsync() {
     // Arrange
-    const string expectedTenantId = "hop-tenant-from-bff";
-    const string expectedUserId = "hop-user-from-bff";
+    const string expectedTenantId = "hop-tenant-from-gateway";
+    const string expectedUserId = "hop-user-from-gateway";
 
     // Security provider returns NULL - simulating no JWT/token extraction
     var securityProvider = new TestSecurityContextProvider(returns: null);
@@ -125,7 +125,7 @@ public class ReceptorInvokerScopePropagationTests {
 
     var invoker = new ReceptorInvoker(registry, scope.ServiceProvider, cascader);
 
-    // Create envelope WITH scope in hops - simulating event from BffService with authenticated user
+    // Create envelope WITH scope in hops - simulating event from a consumer's gateway service with authenticated user
     var envelope = _createEnvelopeWithScopeInHops(new TestCommand("test"), expectedTenantId, expectedUserId);
 
     // Act
@@ -221,7 +221,7 @@ public class ReceptorInvokerScopePropagationTests {
       Hops = [new MessageHop {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
-        // Scope in hop - simulating event arriving from BffService with authenticated user
+        // Scope in hop - simulating event arriving from a consumer's gateway service with authenticated user
         Scope = scopeDelta
       }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

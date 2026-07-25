@@ -15,7 +15,7 @@ namespace Whizbang.Generators;
 /// </para>
 /// </remarks>
 /// <param name="DerivedTypeName">Fully qualified derived type name with global:: prefix (e.g., "global::MyApp.Events.SeedCreatedEvent")</param>
-/// <param name="BaseTypeName">Fully qualified base type name with global:: prefix (e.g., "global::MyApp.BaseConsumerEvent" or "global::Whizbang.Core.IEvent")</param>
+/// <param name="BaseTypeName">Fully qualified base type name with global:: prefix (e.g., "global::MyApp.BaseAppEvent" or "global::Whizbang.Core.IEvent")</param>
 /// <param name="IsInterface">True if BaseTypeName is an interface, false if it's a class</param>
 /// <docs>extending/source-generators/polymorphic-serialization</docs>
 internal sealed record InheritanceInfo(

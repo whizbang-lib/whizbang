@@ -16,7 +16,7 @@ namespace ECommerce.InMemory.Integration.Tests.Workflows;
 /// LocalInvokeAsync → receptor returns event → cascade → outbox → event store →
 /// perspective events → PerspectiveWorker processes → WaitForStreamAsync completes.
 ///
-/// These tests reproduce the a consumer application OrchestratorAgent pattern where LocalInvokeAsync
+/// These tests reproduce a consumer application's orchestrator pattern where LocalInvokeAsync
 /// is used to invoke a command, the receptor returns a cascaded event, and then
 /// WaitForStreamAsync is called to wait for the perspective to process that event.
 /// </summary>

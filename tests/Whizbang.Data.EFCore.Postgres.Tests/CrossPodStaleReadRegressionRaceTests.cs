@@ -14,7 +14,7 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Documents the storage-layer behavior on the cross-pod stale-read race the production strand
+/// Documents the storage-layer behavior on the cross-pod stale-read race a production strand
 /// traces back to. The storage layer DOES NOT independently protect against this race —
 /// these tests assert the current behavior so any future change to the storage layer is
 /// deliberate.
@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// data, even when one writer was applying a forward transition (Pending → Completed) and the
 /// other was applying a backward-only-from-Pending transition (Pending → Running). The
 /// production strand was: pod B's Started write regressed a row pod A had already advanced to
-/// Completed (saga 019ee73d on 2026-06-20, saga 019ef473 on 2026-06-23).</para>
+/// Completed (observed across multiple stranded sagas in production).</para>
 ///
 /// <para><b>Where the framework fix lives:</b> v0.740 introduced
 /// <see cref="Whizbang.Core.Workers.PerspectiveWorker"/>'s intra-pod stream-affinity gate
@@ -134,7 +134,7 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
                "Last-writer-wins is the documented contract, deliberately chosen so the storage layer trusts " +
                "the runner's stamper-lag forwarding invariant (see " +
                "PerspectiveApplyIdempotencyTests.RunWithEvents_MetadataHasCommitSequence_EnvelopeMissingCommitSequence_LexSmallerEventId_IsAppliedAsync). " +
-               "The production strand race is prevented upstream by PerspectiveWorker's intra-pod (streamId, perspectiveName) " +
+               "This race is prevented upstream by PerspectiveWorker's intra-pod (streamId, perspectiveName) " +
                "affinity gate (v0.740). If this assertion ever fails (row==Completed), it means the storage layer " +
                "started carrying its own guard — verify that change is deliberate and that the stamper-lag invariant " +
                "still holds.");
@@ -192,8 +192,8 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   // ────────────────────────────────────────────────────────────────────
 
   /// <summary>
-  /// Pins the production strand we observed on production saga 019ef473: 350 saga_items, 349
-  /// at State=Completed (terminal), 1 at State=Running. The stranded item's per-item stream
+  /// Pins a production strand we observed: a large batch of saga_items, all but one
+  /// at State=Completed (terminal), one at State=Running. The stranded item's per-item stream
   /// has BOTH SagaItemStartedEvent and SagaItemCompletedEvent durably committed to wh_event_store,
   /// yet the projection sits at Running because pod B's Started write overwrote pod A's
   /// Completed write.
@@ -204,13 +204,13 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   /// After fix: passes.</para>
   /// </summary>
   [Test]
-  public async Task SlotThree_ThreeFiftyItemStrand_OneItemRegressedAndLeftAtRunningAsync() {
+  public async Task ProductionStrand_LargeItemBatchOneItemRegressedAndLeftAtRunningAsync() {
     EnableAtomicPath();
     var id = TrackedGuid.NewMedo().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
 
-    // T1: pod A processes SagaItemCompletedEvent for item-171, writes row Completed.
+    // T1: pod A processes SagaItemCompletedEvent for a stranded item, writes row Completed.
     await using (var ctxA = CreateDbContext()) {
       await strategy.UpsertPerspectiveRowAsync(
         ctxA, "wh_per_order", id,
@@ -237,7 +237,7 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
     await Assert.That(row).IsNotNull();
     await Assert.That(row!.Data.Status)
       .IsEqualTo("Running")
-      .Because("production strand exact shape (saga 019ef473, item 171 on 2026-06-23): pod A's SagaItemCompletedEvent " +
+      .Because("Production strand exact shape: pod A's SagaItemCompletedEvent " +
                "wrote the row first, pod B's stale-read SagaItemStartedEvent overwrote it second. Both wh_event_store " +
                "events exist; only the projection lies. Lock-in for the storage-layer contract: regression is accepted. " +
                "The framework prevents this race from manifesting in production via PerspectiveWorker's per-(streamId, " +

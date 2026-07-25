@@ -20,9 +20,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 #pragma warning disable IDE1006
 
 /// <summary>
-/// End-to-end proof of the a consumer SCRAM-SHA-256 fix.
+/// End-to-end proof of a consumer's SCRAM-SHA-256 fix.
 ///
-/// <para>a consumer configures its DbContext via <c>UseNpgsql(NpgsqlDataSource)</c>.
+/// <para>A consumer configures its DbContext via <c>UseNpgsql(NpgsqlDataSource)</c>.
 /// In that configuration Npgsql strips credentials from every public
 /// ConnectionString surface (the connection's, the data source's, EF Core's
 /// resolved string) — leaving no string-based recovery path. The notification
@@ -33,7 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>This test reproduces the production wiring end-to-end:</para>
 /// <list type="number">
 ///   <item><description>Build an <see cref="NpgsqlDataSource"/> and register
-///   the DbContext via <c>UseNpgsql(dataSource)</c> (the a consumer failure-mode
+///   the DbContext via <c>UseNpgsql(dataSource)</c> (a consumer's failure-mode
 ///   configuration).</description></item>
 ///   <item><description>Force the DbContext to open against the live test
 ///   container — this is the precondition that strips credentials from every
@@ -57,7 +57,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Azure Postgres does, so a green here means a green there.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
-public class NotificationDataSourceConsumerConfigurationIntegrationTests : EFCoreTestBase {
+public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task Stamper_AcquiresLeader_UnderUseNpgsqlDataSourceConfigurationAsync() {
@@ -67,12 +67,12 @@ public class NotificationDataSourceConsumerConfigurationIntegrationTests : EFCor
     services.AddLogging();
     services.AddDbContext<WorkCoordinationDbContext>(o => o.UseNpgsql(efDataSource));
 
-    // 2. The fix: register a SEPARATE notification data source. a consumer wires this
+    // 2. The fix: register a SEPARATE notification data source. A consumer wires this
     // by passing the same connection string — the helper builds its own pool
     // (MaxPoolSize=4) so notification workers don't compete with EF Core's pool.
     services.AddWhizbangNotificationDataSource(ConnectionString);
 
-    // 3. Standard notification + worker plumbing as a a consumer-style host would do.
+    // 3. Standard notification + worker plumbing as a consumer-style host would do.
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
       new Whizbang.Core.Observability.ServiceInstanceProvider(
         new ConfigurationBuilder().Build()));
@@ -139,7 +139,7 @@ public class NotificationDataSourceConsumerConfigurationIntegrationTests : EFCor
   /// no manual <c>AddWhizbangNotificationDataSource</c> call — the platform auto-
   /// discovers a credential-bearing connection string from
   /// <c>IConfiguration:ConnectionStrings</c> and builds the notification data
-  /// source itself. This is the "a consumer makes no Whizbang-specific code changes"
+  /// source itself. This is the "the consumer makes no Whizbang-specific code changes"
   /// path: products configure their connection string in appsettings.json like
   /// they always have, Whizbang figures the rest out.
   /// </summary>
@@ -213,7 +213,7 @@ public class NotificationDataSourceConsumerConfigurationIntegrationTests : EFCor
   /// <summary>
   /// RED proof: WITHOUT
   /// <see cref="PostgresNotificationsServiceCollectionExtensions.AddWhizbangNotificationDataSource"/>,
-  /// the a consumer configuration reproduces the exact production failure — opening
+  /// a consumer's configuration reproduces the exact production failure — opening
   /// a fresh <see cref="NpgsqlConnection"/> from either
   /// <see cref="NpgsqlConnection.ConnectionString"/> or
   /// <see cref="NpgsqlDataSource.ConnectionString"/> raises
@@ -223,7 +223,7 @@ public class NotificationDataSourceConsumerConfigurationIntegrationTests : EFCor
   /// </summary>
   [Test]
   public async Task WithoutFix_OpeningFromStrippedConnectionString_ReproducesSCRAMFailureAsync() {
-    // a consumer's data source: built with credentials, opens against SCRAM Postgres.
+    // A consumer's data source: built with credentials, opens against SCRAM Postgres.
     var efDataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
 
     // Force credential stripping the way EF Core does at startup (open + run a query).

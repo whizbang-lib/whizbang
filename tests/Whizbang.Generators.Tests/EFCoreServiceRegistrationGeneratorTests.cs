@@ -995,7 +995,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   public async Task Generator_SchemaExtensions_IncludesBtreeExpressionIndexForTenantScopeAsync() {
     // §7: a gin(scope) index cannot serve `scope->>'t' = ?` btree equality — the tenant filter that both
     // tenant-scoped lens queries AND every collective apply AND onto their WHERE. Without a btree EXPRESSION
-    // index over `((scope->>'t'))` those queries seq-scan the whole perspective table (the production hazard
+    // index over `((scope->>'t'))` those queries seq-scan the whole perspective table (a production hazard
     // the apply-time index ensurer used to paper over). The schema generator must emit it at STARTUP so index
     // creation never happens in a live apply path.
     const string source = """
@@ -1611,7 +1611,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
   /// <summary>
   /// Test that perspectives nested inside static classes are discovered and registered.
-  /// a consumer application pattern: static class contains both Model and Projection classes.
+  /// A consumer pattern: static class contains both Model and Projection classes.
   /// The Projection class implements IPerspectiveFor and should be discovered.
   /// </summary>
   /// <remarks>
@@ -1620,7 +1620,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   /// </remarks>
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_DiscoversPerspectiveAsync() {
-    // Arrange - a consumer application pattern: static class with nested Model and Projection
+    // Arrange - consumer pattern: static class with nested Model and Projection
     const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
@@ -1633,7 +1633,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
       public record SessionStarted : IEvent;
       public record SessionEnded : IEvent;
 
-      // a consumer application pattern: static class contains both Model and Projection
+      // consumer pattern: static class contains both Model and Projection
       public static class ActiveSessions {
         public class ActiveSessionsModel {
           public string Id { get; init; } = "";
@@ -1678,7 +1678,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   /// </summary>
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_GeneratesLensQueryRegistrationAsync() {
-    // Arrange - Same a consumer application pattern
+    // Arrange - Same consumer pattern
     const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
@@ -1727,7 +1727,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   /// </summary>
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_GeneratesCorrectRegistrationCodeAsync() {
-    // Arrange - a consumer application pattern
+    // Arrange - consumer pattern
     const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;

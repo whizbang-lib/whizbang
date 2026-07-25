@@ -15,25 +15,25 @@ namespace Whizbang.Core.Tests.Messaging;
 /// rows BEFORE they hit <c>wh_outbox</c> / <c>wh_inbox</c>.
 /// </summary>
 /// <remarks>
-/// production forensic (Jun 2026): a a consumer producer wrote a <c>RemoveShellUserCommand</c>
-/// with <c>stream_id = Guid.Empty</c> and the row sat silently stuck for 24 h.
+/// A production forensic investigation: a consumer's producer wrote a <c>RemoveUserCommand</c>
+/// with <c>stream_id = Guid.Empty</c> and the row sat silently stuck for hours.
 /// With <see cref="EmptyStreamIdPolicy.Reject"/> (the v0.657 default), this guard
 /// throws <see cref="EmptyStreamIdException"/> at <c>StoreOutboxMessagesAsync</c>
 /// time so the producer's commit fails loud — the bug surfaces at the producer,
-/// not 992 attempts later at the silent consumer.
+/// not hundreds of attempts later at the silent consumer.
 /// </remarks>
 /// <docs>operations/configuration/empty-stream-id-policy</docs>
 public class EmptyStreamIdGuardTests {
 
   /// <summary>
-  /// The production case: Reject policy + Empty stream_id → typed exception. The
+  /// The production forensic case: Reject policy + Empty stream_id → typed exception. The
   /// exception carries message_id + message_type so the producer's stack trace
   /// identifies the exact bad row.
   /// </summary>
   [Test]
   public async Task ThrowIfEmpty_EmptyStreamIdUnderReject_ThrowsAsync() {
     Guid messageId = TrackedGuid.NewMedo();
-    var messageType = "a consumer.Contracts.Auth.RemoveShellUserCommand, a consumer.Contracts";
+    var messageType = "Consumer.Contracts.Auth.RemoveUserCommand, Consumer.Contracts";
 
     var ex = await Assert.That(() => {
       EmptyStreamIdGuard.ThrowIfEmpty(messageId, messageType, Guid.Empty, EmptyStreamIdPolicy.Reject);
@@ -80,6 +80,6 @@ public class EmptyStreamIdGuardTests {
     await Assert.That(() => {
       EmptyStreamIdGuard.ThrowIfEmpty(Guid.NewGuid(), "Sample.Type", streamId: null, EmptyStreamIdPolicy.Reject);
     }).ThrowsNothing()
-      .Because("NULL stream_id is the documented marker for event-store-only / singleton-stream messages. The production bug was Empty masquerading as 'valid stream' through the `??` coalesce — NULL never had that problem.");
+      .Because("NULL stream_id is the documented marker for event-store-only / singleton-stream messages. The production forensic bug was Empty masquerading as 'valid stream' through the `??` coalesce — NULL never had that problem.");
   }
 }

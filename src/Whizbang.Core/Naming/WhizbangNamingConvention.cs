@@ -33,13 +33,13 @@ public static class WhizbangNamingConvention {
   /// <c>"-db"</c>.
   /// </summary>
   /// <param name="dbContextClassName">The simple name of the DbContext class
-  /// (e.g., <c>"BffServiceDbContext"</c>, <c>"ChatDbContext"</c>).</param>
+  /// (e.g., <c>"AppServiceDbContext"</c>, <c>"ChatDbContext"</c>).</param>
   /// <returns>The convention-derived key
   /// (e.g., <c>"appservice-db"</c>, <c>"chat-db"</c>).</returns>
   /// <remarks>
   /// Examples:
   /// <list type="bullet">
-  /// <item><description><c>"BffServiceDbContext"</c> → <c>"appservice-db"</c></description></item>
+  /// <item><description><c>"AppServiceDbContext"</c> → <c>"appservice-db"</c></description></item>
   /// <item><description><c>"ChatDbContext"</c> → <c>"chat-db"</c></description></item>
   /// <item><description><c>"InventoryDbContext"</c> → <c>"inventory-db"</c></description></item>
   /// <item><description><c>"Foo"</c> (no suffix) → <c>"foo-db"</c></description></item>

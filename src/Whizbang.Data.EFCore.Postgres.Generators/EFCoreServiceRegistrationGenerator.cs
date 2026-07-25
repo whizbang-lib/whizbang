@@ -375,7 +375,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   private static string _deriveConnectionStringName(string className) {
     // Convention: strip a trailing "DbContext" suffix, lowercase, append "-db".
-    // "ChatDbContext" → "chat-db", "BffServiceDbContext" → "appservice-db".
+    // "ChatDbContext" → "chat-db", "AppServiceDbContext" → "appservice-db".
     var name = className.EndsWith("DbContext", StringComparison.Ordinal)
         ? className[..^9]
         : className;
@@ -1724,7 +1724,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // subscription. Result: IOptionsMonitor, IFeatureManager,
       // appsettings.json reloadOnChange, Azure App Configuration refresh, and
       // any ChangeToken.OnChange(() => config.GetReloadToken(), …) were all
-      // silently dead from process start. Reported by Bijan Camp (a consumer/a consumer application).
+      // silently dead from process start. Reported by a consumer.
       // Lock-in test: tests/Whizbang.Hosting.AspNet.Tests/Configuration/
       // HostConfigurationDisposalTests.cs
       sb.AppendLine("    // Remove any existing NpgsqlDataSource registration (e.g., from Aspire)");
@@ -1861,7 +1861,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      });");
     sb.AppendLine();
     // 2026-06-12 fix: defer all IConfiguration access to provider-build time.
-    // See Site 1 (above) for the full rationale and Bijan Camp's bug report.
+    // See Site 1 (above) for the full rationale and the consumer's bug report.
     // The previous shape built a temporary ServiceProvider here which disposed
     // the host's ConfigurationManager as a side effect, silently killing every
     // change-token subscription downstream. Lock-in test:

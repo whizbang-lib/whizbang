@@ -80,7 +80,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private readonly IOptions<PerspectiveSnapshotOptions>? _snapshotOptions;
   // Closes the rewind-vs-live race window where same-pod Apply paths race on
   // wh_per_* row writes. See IPerspectiveApplyCoordinator for the full rationale
-  // and the a consumer bulk-import 4-lost-increments incident that motivated it.
+  // and the production bulk-import 4-lost-increments incident that motivated it.
   private readonly global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? _applyCoordinator;
   // Optional: folds collective events back into replay/rebuild so their set-based mutations survive a rebuild.
   // Null when no driver registered it (or the model has no [CollectiveApplyFor] handler) — then the runner
@@ -396,7 +396,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // When no receptor is registered for PrePerspectiveDetached on this event type the
         // spawn is pure overhead: BackgroundStageDispatch.StartLongRunning creates an OS
         // thread via TaskCreationOptions.LongRunning (~5-10 ms on Linux), and the drain
-        // awaits this task via backgroundTasks below. a consumer run 21 PERF data showed the spawn
+        // awaits this task via backgroundTasks below. Production PERF data showed the spawn
         // dominates per-drain wall time on perspectives with no Pre/Post detached receptors
         // registered. Tag dispatch fires from the inline path below so skipping the spawn
         // does not lose tag side-effects.
@@ -583,9 +583,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       // Unit of Work: Save model + checkpoint ONCE at end
       if (eventsProcessed > 0) {
-        // Slice 29 instrumentation: capture SaveModelAndCheckpoint + Flush wall time. a consumer run
-        // 20 measured ~40 events/sec drain on bff despite 4×30 concurrency configured — need
-        // to know whether DB write or in-memory apply or lifecycle dominates per drain.
+        // Slice 29 instrumentation: capture SaveModelAndCheckpoint + Flush wall time. A
+        // production run measured a much lower than expected events/sec drain despite high
+        // concurrency configured — need to know whether DB write or in-memory apply or
+        // lifecycle dominates per drain.
         var saveStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         if (pendingPurge) {
           // Hard delete: Remove model from database entirely
@@ -673,7 +674,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var postRuntimeReceptorRegistry = _serviceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorRegistry>();
         foreach (var envelope in processedEvents) {
           // Slice 30A — gate the per-event PostPerspectiveDetached OS-thread spawn on the
-          // receptor registry. a consumer run 21 PERF data showed per-event spawn cost dominates
+          // receptor registry. Production PERF data showed per-event spawn cost dominates
           // multi-event drains: e.g. a 44-event batch would otherwise spawn 44 dedicated
           // OS threads even when no Post receptor is registered for the perspective's
           // event types. The HasReceptors lookup is a HashSet contains check (~50 ns) vs
@@ -868,8 +869,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // out already-applied events (idempotency across worker crashes between row upsert and
     // cursor advance). CommitSequence is the load-bearing field for that filter: UUIDv7
     // event_ids can invert under concurrent emission, so event_id-only comparison silently
-    // drops late-delivered events with smaller event_id but larger commit_sequence (production
-    // bug). When commit_sequence is available on both sides, the filter prefers it.
+    // drops late-delivered events with smaller event_id but larger commit_sequence (a
+    // production bug). When commit_sequence is available on both sides, the filter prefers it.
     var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
       EventId = checkpointEventId.ToString("D"),
       EventType = checkpointEventType,
@@ -1082,12 +1083,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       #endregion
     };
 
-    // v0.688 — Rewind catch-up loop (production 2026-06-12 fix). The original
+    // v0.688 — Rewind catch-up loop (a production forensic fix). The original
     // implementation read events ONCE here and applied that fixed list. Events
     // appended to the stream during the in-memory apply window were silently
-    // dropped (production BulkImport saga landed at CompletedItems=347/350 with
-    // ProcessedLineNumbers missing 3 entries even though all 350 events were
-    // durable). The wrapping while loop re-checks the event store after each
+    // dropped (a production bulk-import saga landed with a handful of per-item
+    // entries missing even though all events were durable). The wrapping while
+    // loop re-checks the event store after each
     // apply pass — if new events arrived they get picked up in the next
     // iteration instead of being lost between PerspectiveRewindStarted and
     // PerspectiveRewindCompleted. The loop exits when the read returns zero
@@ -1245,7 +1246,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           eventsProcessed, perspectiveName, streamId, lastSuccessfulEventId);
 
       // Create snapshot after replay if configured.
-      // Slice 26.11 / production G3: resolve commit_sequence so the snapshot row carries it.
+      // Slice 26.11 / production forensic G3: resolve commit_sequence so the snapshot row carries it.
       // Without this, GetLatestSnapshotBeforeCommitSequenceAsync (which filters
       // snapshot_commit_sequence IS NOT NULL) silently misses this snapshot on subsequent
       // rewinds — defeating the deterministic-replay invariant the column was added for.
@@ -1291,7 +1292,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     }
 
     var snapshotData = ToSnapshotJson(model);
-    // Slice 26.11 / production G4: bootstrap must stamp commit_sequence so the bootstrap snapshot
+    // Slice 26.11 / production forensic G4: bootstrap must stamp commit_sequence so the bootstrap snapshot
     // participates in commit-sequence-anchored rewind lookups. Without this, every late event
     // would force a full replay because GetLatestSnapshotBeforeCommitSequenceAsync skips the
     // NULL-commit_sequence rows the legacy overload produced.

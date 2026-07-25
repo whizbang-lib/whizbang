@@ -141,7 +141,7 @@ public static class AuditEventProjection {
     }
 
     // Strip namespace (dots) but preserve nested type context (plus signs)
-    // e.g. "a consumer.Contracts.Session.SessionContracts+EndedEvent" → "SessionContracts+EndedEvent"
+    // e.g. "App.Contracts.Session.SessionContracts+EndedEvent" → "SessionContracts+EndedEvent"
     var withoutNamespace = TypeNameFormatter.GetSimpleName(eventType);
 
     // Split on '+' to get nested type segments

@@ -109,7 +109,7 @@ BEGIN
   -- lease. Rows already leased to us are returned by step 2's SELECT without re-extending
   -- the lease here; LeaseRenewalWorker handles in-flight renewals separately. Skipping the
   -- redundant own-row UPDATEs eliminates ~7x WAL write volume on wh_perspective_events
-  -- (pg_stat_user_tables on a consumer after run 19: 5.7M UPDATEs vs 800k inserts).
+  -- (pg_stat_user_tables in a production run showed a large multiple of UPDATEs versus inserts).
   WITH eligible AS (
     SELECT pe.event_work_id, pe.instance_id, pe.attempts
     FROM __SCHEMA__.wh_perspective_events pe

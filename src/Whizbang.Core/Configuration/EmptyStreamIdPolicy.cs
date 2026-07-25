@@ -6,12 +6,12 @@ namespace Whizbang.Core.Configuration;
 /// </summary>
 /// <remarks>
 /// <para>
-/// production forensic (Jun 2026): a consumer BFF accumulated a <c>RemoveShellUserCommand</c>
+/// A production forensic investigation found a consumer's service accumulated a command
 /// outbox row with <c>stream_id = 00000000-0000-0000-0000-000000000000</c> (the
 /// real zero-UUID, not NULL). The C# coordinator's <c>r.StreamId ?? r.WorkId</c>
 /// coalesce only catches NULL; <see cref="System.Guid.Empty"/> slipped through,
 /// then the <c>Where(g =&gt; g != Guid.Empty)</c> filter dropped it. ClaimWorker
-/// bumped <c>attempts</c> on every claim cycle (~996 increments observed) but
+/// bumped <c>attempts</c> on every claim cycle (hundreds of increments observed) but
 /// never wrote to the drain channel — silently stuck forever, no DLQ promotion,
 /// no error captured, no log emitted.
 /// </para>

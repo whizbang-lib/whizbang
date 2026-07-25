@@ -113,7 +113,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
           // Dedupe within the batch — multiple ClaimWorker ticks during the sliding window can
           // emit the same stream_id repeatedly. v0.685 — drain the whole deduped batch with a
           // SINGLE multi-stream FetchInboxBatchAsync call, then dispatch per-stream in C#.
-          // production measurement 2026-06-11 PM showed ~1.9 fetch calls per event with the prior
+          // A production measurement showed ~1.9 fetch calls per event with the prior
           // per-stream loop because each stream had only 1-2 rows; the fetch CTE's per-call
           // setup (parse + plan + window-sort) dominated. Batching streams amortizes that.
           var distinctStreams = new HashSet<Guid>(batch);

@@ -108,7 +108,7 @@ CREATE TABLE wh_dead_letters (
   recovered_at       TIMESTAMPTZ,                     -- non-null when permanently recovered
 
   -- generation tagging (decided: yes)
-  generation         TEXT NOT NULL,                   -- e.g., "0.493.0-alpha.1+a consumer-1.42.0"
+  generation         TEXT NOT NULL,                   -- e.g., "0.493.0-alpha.1+app-1.42.0"
   retried_on_generations TEXT[] NOT NULL DEFAULT '{}', -- generations that have already been auto-retried
 
   -- operator disposition
@@ -182,7 +182,7 @@ Operators override via `DeadLetterRecoveryOptions.PolicyByReason[MessageFailureR
 
 ### Generation-based replay (decided: yes)
 
-Every DLQ row records the `generation` string at time of dead-lettering — e.g., `"0.493.0-alpha.1+a consumer-1.42.0"` (Whizbang version + service version + branch hash).
+Every DLQ row records the `generation` string at time of dead-lettering — e.g., `"0.493.0-alpha.1+app-1.42.0"` (Whizbang version + service version + branch hash).
 
 On worker startup:
 - Compute current generation

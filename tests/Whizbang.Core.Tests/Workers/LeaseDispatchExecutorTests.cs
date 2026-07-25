@@ -137,11 +137,11 @@ public class LeaseDispatchExecutorTests {
 
   [Test]
   public async Task SuccessfulDispatch_DoesNotThrowFirstChanceOceOnLeaseDisposeAsync() {
-    // Phase H step 9 regression lock (2026-05-03): the original implementation used
+    // Phase H step 9 regression lock: the original implementation used
     // Task.Delay(Timeout.InfiniteTimeSpan, ct) as the cancellation race signal. When the lease
     // disposed (which cancels the CT), Task.Delay's internal cancellation registration fired
     // and threw TaskCanceledException — caught downstream but FIRST-CHANCE thrown per dispatch.
-    // a consumer BFF observed thousands of first-chance OCEs per second under load. The fix: use a
+    // Production observed thousands of first-chance OCEs per second under load. The fix: use a
     // TaskCompletionSource + ct.UnsafeRegister, and dispose the registration BEFORE the lease
     // disposes (via `await using` inside the executor). Registration disposal stops the
     // callback-fire on subsequent CT cancellation.

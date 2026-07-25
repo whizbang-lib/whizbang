@@ -15,8 +15,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Pre-fix audit on a consumer application (2026-05-02): all 4023 pending wh_inbox rows on appservice-db
-/// and 1832 on chatservice-db had <c>attempts = 0</c> despite being stuck for &gt; 24 h with
+/// Pre-fix audit on a consumer deployment (2026-05-02): thousands of pending wh_inbox rows on
+/// one service DB and hundreds on another had <c>attempts = 0</c> despite being stuck for &gt; 24 h with
 /// repeated lease cycles. Root cause: <c>claim_orphaned_*</c> reset <c>instance_id</c> +
 /// <c>lease_expiry</c> on every re-claim but never bumped <c>attempts</c>, so a hung handler
 /// looked indistinguishable from a brand-new message.

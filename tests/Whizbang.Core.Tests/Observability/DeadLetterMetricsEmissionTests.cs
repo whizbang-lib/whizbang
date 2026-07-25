@@ -210,7 +210,7 @@ public class DeadLetterMetricsEmissionTests {
 
     var addedEvents = recordings.Where(r => r.InstrumentName == "whizbang.dead_letters.added").ToList();
     await Assert.That(addedEvents.Count).IsEqualTo(1)
-      .Because("OutboxPublishWorker's DLQ promotion path MUST fire whizbang.dead_letters.added exactly once per row promoted — without it, operator dashboards never reflect the production-style stuck-row clearance.");
+      .Because("OutboxPublishWorker's DLQ promotion path MUST fire whizbang.dead_letters.added exactly once per row promoted — without it, operator dashboards never reflect production-style stuck-row clearance.");
     await Assert.That(addedEvents[0].Value).IsEqualTo(1L)
       .Because("Counter increment is +1 per promotion; bulk increments would skew dashboards counting individual failure modes.");
     await Assert.That(addedEvents[0].Tags.ContainsKey("source_table")).IsTrue()

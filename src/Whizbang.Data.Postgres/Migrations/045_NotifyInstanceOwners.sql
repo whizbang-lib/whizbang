@@ -21,8 +21,8 @@
 --                   to do. Skip the table-scan entirely.
 --                2. IF/ELSIF dispatch on p_payload: when Step 2 does run, only the
 --                   relevant source table is touched, not all three via UNION ALL.
---              The 2026-06-11 production measurement attributed ~363 s of cumulative DB
---              time to this function across a 17k-event bulk import. After this rewrite
+--              A production measurement attributed ~363 s of cumulative DB
+--              time to this function across a bulk import of tens of thousands of events. After this rewrite
 --              per-call cost on the hot path drops to ~1 ms (Step 1 only) and ~2 ms in
 --              the cold-start branch (single-table scan instead of UNION ALL).
 -- Dependencies: 007 (wh_active_streams table), slice 6 fix (mig 024/025/027 re-pinning

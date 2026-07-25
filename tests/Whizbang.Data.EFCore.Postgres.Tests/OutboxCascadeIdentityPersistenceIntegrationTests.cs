@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Integration tests verifying that the <em>cascade identity</em> (CorrelationId + CausationId) survives
 /// outbox database persistence exactly the way <see cref="ScopeContextPersistenceIntegrationTests"/> proves
-/// scope does. This reproduces the production defect where every persisted hop carried <c>sc</c> (scope) but
+/// scope does. This reproduces a production defect where every persisted hop carried <c>sc</c> (scope) but
 /// dropped <c>co</c>/<c>ca</c> — because the outbox hop builders re-derived scope from ambient context but
 /// never the correlation/causation pair, so the SignalR notification's correlationId came back null and the
 /// "Template Activating" toast never dismissed.
@@ -42,7 +42,7 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
   public record IdentityTestEvent([property: StreamId] Guid Id) : IEvent;
 
   /// <summary>
-  /// A published event that carries auto-populate properties — the shape of a a consumer <c>BaseConsumerEvent</c>: the
+  /// A published event that carries auto-populate properties — the shape of a consumer's base event type: the
   /// SignalR notification hook reads <c>CorrelationId</c> off the OBJECT, so the publish path must run
   /// AutoPopulate (not just stamp the hop) or the toast's notification carries a null correlationId.
   /// </summary>
@@ -108,7 +108,7 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
   /// <summary>Event returned by the receptor, cascaded to outbox with default routing.</summary>
   public record IdentityCascadeEvent([property: StreamId] Guid Id) : IEvent;
 
-  /// <summary>Non-void receptor: emits an event while handling the command (mirrors a JobService receptor).</summary>
+  /// <summary>Non-void receptor: emits an event while handling the command (mirrors a consumer's receptor).</summary>
   public class IdentityCascadeCommandHandler : IReceptor<IdentityCascadeCommand, IdentityCascadeEvent> {
     public ValueTask<IdentityCascadeEvent> HandleAsync(IdentityCascadeCommand command, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new IdentityCascadeEvent(command.Id));
@@ -173,8 +173,8 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Void reactor: reacts to event A by PUBLISHING event B via the dispatcher — exactly what an
-  /// OverlayApplication saga-trigger handler does. This is the seam where B was minting a FRESH correlation +
+  /// Void reactor: reacts to event A by PUBLISHING event B via the dispatcher — exactly what a
+  /// consumer's saga-trigger handler does. This is the seam where B was minting a FRESH correlation +
   /// null causation instead of inheriting A's, orphaning the completion notification the toast waits on.
   /// </summary>
   public class ReactorTriggerEventReactor(IDispatcher dispatcher) : IReceptor<ReactorTriggerEvent> {

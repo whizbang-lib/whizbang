@@ -69,7 +69,7 @@ There is exactly one place packages are pushed to nuget.org (`nuget-push.yml`, g
 
 > ⚠️ **Changed-only caveat.** Develop alphas republish *only the packages whose content changed* and
 > stamp lockstep inter-package dependency requirements, so a given `alpha.N` can be a partial,
-> **unconsumable** version set. For anything a consumer (e.g. a consumer application) will restore, use a **full**
+> **unconsumable** version set. For anything a consumer will restore, use a **full**
 > publish — a release-branch push or a release (final) — which always publishes all packages.
 
 ```mermaid

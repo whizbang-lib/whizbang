@@ -354,7 +354,7 @@ public class InboxDrainWorkerTests {
   /// v0.685 lock-in — when the InboxDrainWorker receives a sliding-window batch
   /// containing multiple distinct stream_ids, it MUST drain them via a SINGLE
   /// multi-stream <c>FetchInboxBatchAsync</c> call rather than looping per-stream.
-  /// production 2026-06-11 measurement showed ~1.9 fetch calls per event because every
+  /// A production measurement showed ~1.9 fetch calls per event because every
   /// stream had only 1-2 rows and the per-call CTE setup cost dominated. Batching
   /// the fetch amortizes that cost across the whole window. Without this lock-in,
   /// a future refactor of <c>InboxDrainWorker.ExecuteAsync</c> could silently
@@ -406,7 +406,7 @@ public class InboxDrainWorkerTests {
       .Because("All 6 inbox rows across 3 streams must be enqueued for the inbox dispatch path; the batching change is behaviour-preserving.");
 
     await Assert.That(coord.FetchedStreamIdArrays.Count).IsEqualTo(1)
-      .Because("v0.685 — the deduped sliding-window batch MUST be drained with a single multi-stream FetchInboxBatchAsync call. The pre-v0.685 per-stream loop produced one fetch per stream (production 2026-06-11: 31k calls for 16k events ≈ 1.9 per event, 59% of production DB time).");
+      .Because("v0.685 — the deduped sliding-window batch MUST be drained with a single multi-stream FetchInboxBatchAsync call. The pre-v0.685 per-stream loop produced one fetch per stream (production measurement: tens of thousands of calls for a comparable event count ≈ 1.9 per event, over half of total DB time).");
 
     var firstArray = coord.FetchedStreamIdArrays.First();
     await Assert.That(firstArray).Contains(streamA);

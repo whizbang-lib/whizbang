@@ -13,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// v0.687 — definitive-dead cutoff bypass for the v0.681 alive-lock guard in
 /// <c>cleanup_stale_instances</c> (migration 011).
 ///
-/// <para>Background — 2026-06-12 production forensic. A rolling-restart event left 1,381
+/// <para>Background — a production forensic investigation. A rolling-restart event left 1,381
 /// inbox rows held by a dead pod's instance_id with lease_expiry in the future.
 /// <c>cleanup_stale_instances</c> would normally release these leases as part of its
 /// dead-instance removal, but the v0.681 alive-lock guard (added so the adaptive

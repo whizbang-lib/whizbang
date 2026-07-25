@@ -110,7 +110,7 @@ BEGIN
   -- UPDATE for already-owned-with-live-lease streams) + PIN (INSERT...ON CONFLICT for
   -- the rare ownership-transition case, with ORDER BY stream_id for consistent lock
   -- acquisition). Symmetric with the fix in claim_orphaned_outbox (mig 024); see that
-  -- migration for the full rationale. Eliminates the 40P01 deadlock observed on dev
+  -- migration for the full rationale. Eliminates the 40P01 deadlock observed in
   -- production (Whizbang PR #227).
   refreshed AS (
     UPDATE __SCHEMA__.wh_active_streams ast

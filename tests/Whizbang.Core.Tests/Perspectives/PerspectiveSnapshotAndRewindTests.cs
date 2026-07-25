@@ -566,7 +566,7 @@ public class PerspectiveSnapshotAndRewindTests {
   }
 
   /// <summary>
-  /// production G7 default-impl: stores that haven't overridden the new method get a fall-through
+  /// Production forensic G7 default-impl: stores that haven't overridden the new method get a fall-through
   /// to <see cref="IPerspectiveSnapshotStore.GetLatestSnapshotAsync"/>, with null commit_sequence.
   /// </summary>
   [Test]
@@ -599,7 +599,7 @@ public class PerspectiveSnapshotAndRewindTests {
 
   /// <summary>
   /// Minimal stub implementing only the legacy interface methods. Does NOT override
-  /// the production G7 sibling — so calls fall through to the interface default-impl, which is
+  /// the production forensic G7 sibling — so calls fall through to the interface default-impl, which is
   /// the path this test exercises.
   /// </summary>
   private sealed class _LegacyOnlySnapshotStore : IPerspectiveSnapshotStore {

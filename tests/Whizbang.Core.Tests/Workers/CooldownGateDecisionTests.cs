@@ -141,14 +141,14 @@ public class CooldownGateDecisionTests {
   }
 
   // ======================================================================
-  // PER-PERSPECTIVE COOLDOWN ISOLATION (a consumer 2026-05-04 silent-skip bug)
+  // PER-PERSPECTIVE COOLDOWN ISOLATION (silent-skip bug)
   // ======================================================================
   // Bug: when an event_id has multiple wh_perspective_events rows (one per registered
   // perspective), `rawByEventId[eventId]` returns ALL of them. Marking any one perspective's
   // work_id as cooled would also short-circuit OTHER perspectives' Apply on subsequent drains
   // — because the existing logic iterated the entire raw collection regardless of which
-  // perspective was being asked. Production symptom: Order got data, OrderSkills /
-  // OrderWorkExperience / OrderCompetency / etc. all stayed empty after job creation.
+  // perspective was being asked. Production symptom: Order got data, but its OrderLine
+  // perspectives (line items, attributes, notes, etc.) all stayed empty after order creation.
   //
   // Fix: pass `perspectiveName` to the cooldown helpers; filter `rawByEventId[eventId]` to
   // only entries whose `PerspectiveName` matches the current perspective.
@@ -160,7 +160,7 @@ public class CooldownGateDecisionTests {
 
   [Test]
   public async Task ShouldSkip_PerspectiveAOnlyCooled_DraftingPerspectiveB_ReturnsFalseAsync() {
-    // Reproduction of the a consumer 2026-05-04 multi-perspective fanout silent-skip.
+    // Reproduction of a multi-perspective fanout silent-skip observed in production.
     // Setup: ONE event_id, TWO perspectives (A + B). A's work_id is cooled; B's isn't.
     // Expected (post-fix): drain for B returns false (apply must run for B).
     // Pre-fix: returns true because the loop sees A's work_id cooled and the bug treats it
@@ -180,7 +180,7 @@ public class CooldownGateDecisionTests {
     var skip = PerspectiveWorker._shouldSkipApplyDueToCooldown(events, raw, cache, PERSP_B);
 
     await Assert.That(skip).IsFalse()
-      .Because("B's work_id is fresh — A's cooled state is irrelevant to B's drain decision. The pre-fix code sees A's cooled work and incorrectly returns true, which is the a consumer silent-skip bug.");
+      .Because("B's work_id is fresh — A's cooled state is irrelevant to B's drain decision. The pre-fix code sees A's cooled work and incorrectly returns true, which is the silent-skip bug.");
   }
 
   [Test]
@@ -227,7 +227,7 @@ public class CooldownGateDecisionTests {
     await Assert.That(cache.WasRecentlyProcessed(workForA)).IsTrue()
       .Because("A's own work must be marked when A finishes apply.");
     await Assert.That(cache.WasRecentlyProcessed(workForB)).IsFalse()
-      .Because("B's work must NOT be marked when A finishes apply — that would cause B's next drain to incorrectly skip Apply (a consumer 2026-05-04 silent-skip bug).");
+      .Because("B's work must NOT be marked when A finishes apply — that would cause B's next drain to incorrectly skip Apply (the silent-skip bug).");
   }
 
   [Test]
@@ -253,7 +253,7 @@ public class CooldownGateDecisionTests {
 
   [Test]
   public async Task ShouldSkip_AllPerspectivesShareEventId_OnlyMyPerspectiveCooled_ReturnsTrueAsync() {
-    // The full a consumer scenario: 3 perspectives subscribe to one event_id. My perspective (B)'s
+    // The full scenario: 3 perspectives subscribe to one event_id. My perspective (B)'s
     // own work IS cooled. The other two perspectives' work_ids are also in the cache (from
     // their own apply success). Drain for B should skip — its OWN work is cooled.
     var cache = new RecentlyProcessedEventCache(_provider());
@@ -283,7 +283,7 @@ public class CooldownGateDecisionTests {
     // MessageId.Value isn't a key in rawByEventId, the inner foreach loops zero times.
     // The pre-fix implementation falls through to `return true` — incorrectly telling the
     // drainer to skip a never-applied event. This is what masked drain-mode dispatch in
-    // a consumer (saga events) and what made DrainModeAndStandardMode_DoNotBothFireForSameStream
+    // production (saga events) and what made DrainModeAndStandardMode_DoNotBothFireForSameStream
     // fail: drain returns early without populating batchProcessedEvents, the standard-mode
     // guard doesn't fire, and neither path applies the event.
     var cache = new RecentlyProcessedEventCache(_provider());
@@ -336,7 +336,7 @@ public class CooldownGateDecisionTests {
   //      expectations. PostAllPerspectivesInline never fires. [FireAt(PostAllPerspectivesInline)]
   //      receptors never run. Saga completion handlers (e.g., OrderFieldPopulation) never
   //      emit SagaCompletedEvent. Production loaders waiting on saga-name notifications hang
-  //      forever — repro'd against a consumer BFF + JobService 2026-05-03.
+  //      forever — repro'd in production against a consumer's services.
   //   2. DrainBatchContext.BatchProcessedEvents — the per-batch dict that drives the
   //      "fire PostAllPerspectives + PostLifecycle" foreach in PerspectiveWorker's batch
   //      finalize loop. Cooldown-skipped events were absent from it, so even if the
@@ -369,7 +369,7 @@ public class CooldownGateDecisionTests {
 
   [Test]
   public async Task SignalCooldownSkippedEvents_FillsBatchProcessedEvents_AndSignalsCompletionAsync() {
-    // RED-first regression lock for the a consumer-2026-05-03 production hang. When cooldown skip
+    // RED-first regression lock for a production hang. When cooldown skip
     // fires, PerspectiveWorker MUST still: (1) add each filtered event to BatchProcessedEvents
     // so the batch finalize loop can fire PostAllPerspectives; (2) signal perspective complete
     // on the lifecycle coordinator so AreAllPerspectivesComplete becomes true. Pre-fix the

@@ -9,7 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <remarks>
 /// <para>
-/// production forensic fix (v0.657): the pre-v0.657 inline coalesce
+/// Production forensic fix (v0.657): the pre-v0.657 inline coalesce
 /// <c>r.StreamId ?? r.WorkId ?? Guid.Empty</c> only caught NULL — rows whose
 /// <c>stream_id = Guid.Empty</c> (real zero-UUID, distinct from NULL) slipped
 /// through the <c>??</c> and were then dropped by the <c>.Where(g != Empty)</c>

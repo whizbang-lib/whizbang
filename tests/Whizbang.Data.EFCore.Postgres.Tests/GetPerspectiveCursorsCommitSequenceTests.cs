@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// commit-sequence half of <see cref="Whizbang.Core.Workers.PerspectiveCursorCache"/> on cold
 /// starts or post-rewind, and the inversion detector falls through to the event_id path —
 /// re-introducing the UUIDv7 lex-vs-commit-order false positives that slice 26 was meant to
-/// eliminate (observed in a consumer run 11, 1,403 false-positive inversions).
+/// eliminate (observed in a production run as a burst of false-positive inversions).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 public class GetPerspectiveCursorsCommitSequenceTests : EFCoreTestBase {

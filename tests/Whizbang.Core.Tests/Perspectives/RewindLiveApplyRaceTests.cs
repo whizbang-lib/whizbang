@@ -11,9 +11,9 @@ namespace Whizbang.Core.Tests.Perspectives;
 #pragma warning disable IDE1006
 
 /// <summary>
-/// Reproduces the a consumer bulk-import projection-undercount bug observed on
-/// 2026-05-31: a 350-job import committed 350 SagaItemCompletedEvent to the
-/// event store but the saga's projection landed at <c>CompletedItems = 346</c>.
+/// Reproduces a production bulk-import projection-undercount bug: a large batch
+/// import committed a matching number of SagaItemCompletedEvent to the
+/// event store but the saga's projection undercounted by four items.
 /// Cursor inversion warnings + four <c>PerspectiveRewindStarted/Completed</c>
 /// event pairs (one per cursor-inverted perspective) correlated exactly with
 /// the four lost increments.
@@ -35,14 +35,14 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// Expected behavior (and the assertion below): each event applied by either
 /// path must be reflected in the final projection. The lost-increment scenario
 /// is a real data-integrity bug that must be locked at the framework level so
-/// a consumer-style production traffic stops dropping projection state during rewinds.
+/// production traffic stops dropping projection state during rewinds.
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind</docs>
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class RewindLiveApplyRaceTests {
 
   /// <summary>
-  /// Models the a consumer scenario: the BulkImportOrchestration saga's
+  /// Models a consumer's scenario: the BulkImportOrchestration saga's
   /// CompletedItems counter. One increment per SagaItemCompletedEvent.
   /// </summary>
   private sealed class CountModel {

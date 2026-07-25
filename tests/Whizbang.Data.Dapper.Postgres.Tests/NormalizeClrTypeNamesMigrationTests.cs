@@ -115,7 +115,7 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
 
   [Test]
   public async Task Migration063_NormalizesPerspectiveTypeRegistryEntries_ViaAssociationTargetNameAsync() {
-    // Regression for the production gap: wh_message_type_registry is dominated by PERSPECTIVE types
+    // Regression for a production gap: wh_message_type_registry is dominated by PERSPECTIVE types
     // (e.g. Domain.X+Projection), whose '+'-name never appears in an event/message column — only as
     // wh_message_associations.target_name. v2's oracle missed them, so they stayed '.'-nested and
     // reconcile logged a drift warning for each on every startup. v3 adds target_name as an oracle.
@@ -151,7 +151,7 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
 
   [Test]
   public async Task Migration063_WhenBothDottedAndPlusRowsExist_DedupsInsteadOfCollidingAsync() {
-    // Regression for the production DEPLOY FAILURE: a type can already have BOTH a stale '.'-row and the
+    // Regression for a production DEPLOY FAILURE: a type can already have BOTH a stale '.'-row and the
     // canonical '+'-row (on the prior deploy reconcile inserted the '+' form while the pre-existing
     // '.' row lingered). A plain UPDATE '.'->'+' then violates the clr_type_name PRIMARY KEY
     // ('duplicate key value violates unique constraint') — the migration aborts and service startup
@@ -167,7 +167,7 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
         @"INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name)
           VALUES ('Acme.Job.Contracts.JobContracts+CreatedEvent, Acme.Job.Contracts', 'perspective', @Plus, 'JobService')",
         new { Plus = plus });
-      // BOTH forms already present, both pinned — the exact production collision.
+      // BOTH forms already present, both pinned — the exact collision seen in production.
       await conn.ExecuteAsync(
         @"INSERT INTO wh_message_type_registry (clr_type_name, pinned_id, kind, updated_at)
           VALUES (@Plus, gen_random_uuid(), 'perspective', NOW()),

@@ -4,8 +4,8 @@ namespace Whizbang.Core.Observability;
 
 /// <summary>
 /// Metrics for the inbox dispatch path: per-message wall time tagged with
-/// message type. production import (Jun 2026) surfaced 2,704
-/// <c>OrderCompetencyRowAddedEvent</c> rows draining at ~27 rows/sec;
+/// message type. A production bulk import surfaced thousands of rows of a
+/// single event type draining at a few dozen rows/sec;
 /// without a per-message-type histogram an operator can't tell whether the
 /// bottleneck is one slow event type or the pipeline overall.
 /// </summary>

@@ -133,7 +133,7 @@ public class ApplyHookRegistryTests {
     var reg = new CollectiveApplyHookRegistry();
     reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "A")), key: "k");
     reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "B")));       // unkeyed, after
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "C")), key: "k"); // replaces slot 0
+    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "C")), key: "k"); // replaces position 0
 
     await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("C|B")
       .Because("Re-registering an existing key replaces the hook at that slot, preserving its order position.");

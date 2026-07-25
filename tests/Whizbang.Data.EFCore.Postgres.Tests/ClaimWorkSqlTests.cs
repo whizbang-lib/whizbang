@@ -753,7 +753,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   // v0.683 — per-inner-function guard lock-ins.
   //
   // The five IF EXISTS guards added to claim_work in v0.683 are an
-  // architectural invariant — without them, production paid 22.4% of production DB
+  // architectural invariant — without them, a consumer paid 22.4% of its DB
   // time on always-runs-the-scan orphan-claim / emit_chain calls under steady
   // load. Future refactors of claim_work must preserve the "skip the inner
   // function when the corresponding queue has no eligible rows" behavior, or
@@ -831,7 +831,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   /// v0.684 lock-in — emit_chain MUST be idempotent when called against
   /// an inbox event row whose message_id is already in wh_event_store.
   /// The v0.683 guard intentionally does NOT pre-check wh_event_store
-  /// (the production 2026-06-11 PM measurement showed the wrapping NOT EXISTS
+  /// (a production PM measurement showed the wrapping NOT EXISTS
   /// at 42 ms mean — overwhelming the savings from skipping the inner call).
   /// Instead, emit_chain's own internal NOT EXISTS check filters out
   /// already-emitted rows, and ON CONFLICT DO NOTHING swallows any race-
@@ -932,7 +932,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     // instance owns at least one unprocessed inbox event row with stream_id — true
     // here) and must idempotently no-op when every row's event_id is already present.
     await Assert.That(emitCalls).IsGreaterThanOrEqualTo(1L)
-      .Because("v0.684 reverted the guard to the simpler v1 form, so emit_chain runs when this instance owns any unprocessed inbox event row. The production PM measurement showed the v2 NOT EXISTS predicate at 42 ms mean (~5% of production DB time) — net loss under heavy load.");
+      .Because("v0.684 reverted the guard to the simpler v1 form, so emit_chain runs when this instance owns any unprocessed inbox event row. A production PM measurement showed the v2 NOT EXISTS predicate at 42 ms mean (~5% of its DB time) — net loss under heavy load.");
     await Assert.That(afterCount).IsEqualTo(1L)
       .Because("emit_chain MUST be idempotent against pre-emitted events — its internal NOT EXISTS check + ON CONFLICT DO NOTHING guarantee no duplicate wh_event_store rows. This is the lock-in invariant that lets v0.684 ship the cheaper guard safely.");
   }

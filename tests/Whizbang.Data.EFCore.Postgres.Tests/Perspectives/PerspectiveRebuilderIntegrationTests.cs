@@ -174,8 +174,8 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   /// <summary>
   /// Variant of the rebuild DI container that swaps the RecordingReceptorInvoker for the real
   /// <see cref="ReceptorInvoker"/> backed by the source-generated <c>GeneratedReceptorRegistry</c>.
-  /// Used by the dispatch-pipeline test to exercise the same path the a consumer BFF's admin endpoint
-  /// uses: <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c>, which fans out to
+  /// Used by the dispatch-pipeline test to exercise the same path a consumer's app-service admin
+  /// endpoint uses: <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c>, which fans out to
   /// <see cref="IReceptorInvoker.InvokeAsync"/> at <see cref="LifecycleStage.LocalImmediateInline"/>
   /// for same-process dispatch. The runtime-registered receptor must be present at that stage or
   /// the cursor never updates.
@@ -1210,7 +1210,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// <para>Reproduces the a consumer BFF's admin endpoint path:
+  /// <para>Reproduces a consumer's app-service admin endpoint path:
   /// <c>POST /api/admin/rebuild-perspective</c> → <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c>
   /// → same-process routing → <see cref="IReceptorInvoker.InvokeAsync"/> at
   /// <see cref="LifecycleStage.LocalImmediateInline"/> → runtime-registered receptor.</para>

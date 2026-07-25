@@ -78,7 +78,7 @@ public class GeneratedExtensionDoesNotDisposeConfigurationManagerTests {
   public async Task Site2_AddWhizbangWithEFCorePostgres_DoesNotDisposeConfigurationManagerAsync() {
     // SITE 2 — the DbContextRegistrationRegistry.Register<T>(…) callback the
     // generator emits in its module initializer (around line 1636 of
-    // EFCoreServiceRegistrationGenerator.cs). This is the path a consumer application hits
+    // EFCoreServiceRegistrationGenerator.cs). This is the path a consumer hits
     // because every microservice uses the `AddWhizbang(…).WithEFCore<TContext>().
     // WithDriver.Postgres` chain rather than the turnkey `AddXxxDbContext()`.
     var configManager = new ConfigurationManager();
@@ -106,7 +106,7 @@ public class GeneratedExtensionDoesNotDisposeConfigurationManagerTests {
     probe.Provider!.TriggerReload();
 
     await Assert.That(Volatile.Read(ref fired)).IsEqualTo(1)
-      .Because("After AddWhizbang().WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres (Site 2 of the EFCore generator's emit — the path every a consumer application microservice hits), the host's ConfigurationManager MUST still propagate reloads. Pre-fix this assertion lands at 0 because the temp provider built inside the registered callback disposed the shared ConfigurationManager when the callback returned. Post-fix the callback defers IConfiguration to provider-build time via a factory.");
+      .Because("After AddWhizbang().WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres (Site 2 of the EFCore generator's emit — the path every consumer microservice hits), the host's ConfigurationManager MUST still propagate reloads. Pre-fix this assertion lands at 0 because the temp provider built inside the registered callback disposed the shared ConfigurationManager when the callback returned. Post-fix the callback defers IConfiguration to provider-build time via a factory.");
   }
 
   // ============================================================================

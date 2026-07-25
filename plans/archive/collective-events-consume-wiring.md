@@ -143,7 +143,7 @@ extensions so `AddWhizbang…` wires them automatically:
 > `SetProperty` expression into `jsonb_set` SQL for scalar top-level constant / captured-value setters +
 > chained setters. Both deliberately defer **computed-arithmetic** setters (`j => j.X + 1`) and nested paths
 > to the `[CollectiveApplyFor(SpecKind = RawSql)]` escape hatch (identical `NotSupportedException`, intended
-> v1.0 matrix). The a consumer collective candidates use constant values, so computed support is **optional and
+> v1.0 matrix). A consumer's collective candidates use constant values, so computed support is **optional and
 > out of scope** here unless explicitly pulled in. This plan adds only the **DI registration** for both
 > drivers, not new compiler capability.
 
@@ -186,7 +186,7 @@ extensions so `AddWhizbang…` wires them automatically:
 - **Worker path, per driver** (EF Core **and** Dapper, Testcontainers): publish a collective event → the live
   `PerspectiveWorker` resolves `ICollectiveDispatcher` + session from DI (not `_buildDispatcher()`), the
   scoped `UPDATE` fires, the audit-pointer column is written, the cursor/work row completes, and the
-  per-stream runner is **not** invoked. Use a constant-value setter (the supported, a consumer-relevant case);
+  per-stream runner is **not** invoked. Use a constant-value setter (the supported, common case);
   computed-arithmetic setters are out of scope (both compilers already defer them to `RawSql`).
 - **Once-only**: two `[CollectiveApplyFor]` handlers (two models) for one event type → exactly one work row →
   one `DispatchAsync` → both models updated once (no duplicate UPDATEs).
@@ -209,10 +209,10 @@ extensions so `AddWhizbang…` wires them automatically:
 5. **Docs**: write `docs/fundamentals/messaging/collective-events.md` (mirror `composite-events.md`); close
    the docs↔code↔tests graph; bump `last_verified`.
 6. **Package + bump into a consumer** (`.local-whizbang-packages/`, `Directory.Packages.props`, `dotnet restore`) —
-   gates the a consumer collective track.
+   gates the consumer's collective track.
 
 ## Non-goals
 
-- a consumer collective conversions (Template Apply / Overlay Apply) — Phase 2 of the a consumer rollout, after this ships.
+- A consumer's collective conversions (Template Apply / Overlay Apply) — Phase 2 of that rollout, after this ships.
 - Changing the composite path. Collective and composite stay complementary (`EventFlags` category bits).
 - Multi-table transactional atomicity across models beyond what one `UPDATE`-per-table already provides.

@@ -33,8 +33,8 @@ BEGIN
         -- releases the lease but does NOT bump — the next claim's bump captures attempt N+1.
         -- Single-source removes the double-counting that two bumps per failed cycle would cause.
         -- Without this, hung handlers (no exception thrown, lease eventually expires) looked
-        -- identical to fresh messages on a consumer application production — 36 h stuck-message backlog with
-        -- attempts=0 across 4023 rows (audit 2026-05-02).
+        -- identical to fresh messages in a consumer's production environment — an extended stuck-message backlog with
+        -- attempts=0 across thousands of rows (production audit).
         attempts = i.attempts + 1
     WHERE (i.instance_id IS NULL OR i.lease_expiry < p_now)
       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
@@ -42,8 +42,8 @@ BEGIN
       AND (
         -- OWNER PATH — if this instance already owns the stream (live, non-expired lease
         -- in wh_active_streams), it always claims. Partition modulo is IGNORED. This
-        -- preserves per-stream FIFO and prevents the rank-churn wedge observed on dev
-        -- production (2026-04-21): when active_instance_count changes, partition-modulo
+        -- preserves per-stream FIFO and prevents the rank-churn wedge observed in
+        -- production: when active_instance_count changes, partition-modulo
         -- routing for a partition number can shift to a different rank than the stream's
         -- existing owner's rank. Without this branch, the modulo-matched instance is
         -- blocked by the ownership NOT EXISTS below AND the owner is blocked by the
@@ -101,7 +101,7 @@ BEGIN
   -- UPDATE for already-owned-with-live-lease streams) + PIN (INSERT...ON CONFLICT for
   -- the rare ownership-transition case, with ORDER BY stream_id for consistent lock
   -- acquisition). Symmetric with the fix in claim_orphaned_outbox (mig 024); see that
-  -- migration for the full rationale. Eliminates the 40P01 deadlock observed on dev
+  -- migration for the full rationale. Eliminates the 40P01 deadlock observed in
   -- production (Whizbang PR #227).
   refreshed AS (
     UPDATE __SCHEMA__.wh_active_streams ast

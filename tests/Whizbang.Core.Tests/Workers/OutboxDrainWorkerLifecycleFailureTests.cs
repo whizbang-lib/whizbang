@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <c>wh_outbox.error</c> is populated.
 ///
 /// <para>
-/// production root cause: a stuck <c>RemoveShellUserCommand</c> outbox row ran 295 retry
+/// Production root cause: a stuck <c>RemoveUserCommand</c> outbox row ran hundreds of retry
 /// attempts over 24 h with <c>wh_outbox.error = (empty)</c>. The inline-stage
 /// <c>receptorInvoker.InvokeAsync</c> threw on every retry, the outer catch only
 /// called <c>LogLifecycleStageError</c>, and the failure channel never saw the
@@ -159,7 +159,7 @@ public class OutboxDrainWorkerLifecycleFailureTests {
       CancellationToken.None);
 
     await Assert.That(failure.All.Count).IsEqualTo(1)
-      .Because("production: lifecycle exceptions silently swallowed produced 295 retries with empty wh_outbox.error. The failure channel is the only path to populate that column via process_outbox_failures.");
+      .Because("Production: lifecycle exceptions silently swallowed produced hundreds of retries with empty wh_outbox.error. The failure channel is the only path to populate that column via process_outbox_failures.");
     var (category, captured) = failure.All.Single();
     await Assert.That(category).IsEqualTo(WorkCategory.Outbox)
       .Because("Outbox-side fault MUST route through WorkCategory.Outbox so process_outbox_failures targets wh_outbox and not wh_inbox.");

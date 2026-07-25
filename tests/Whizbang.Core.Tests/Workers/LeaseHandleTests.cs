@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Pre-fix audit on a consumer application (2026-05-02): every dispatch path passed only the worker's
+/// Pre-fix audit on a consumer service (2026-05-02): every dispatch path passed only the worker's
 /// <c>stoppingToken</c> (graceful shutdown) to receptor / lifecycle / publish operations.
 /// LeaseRenewalWorker indefinitely extended DB leases for "in-flight" rows with no notion of
 /// "is the handler making progress". Result: a hung handler parked the entire stream's FIFO

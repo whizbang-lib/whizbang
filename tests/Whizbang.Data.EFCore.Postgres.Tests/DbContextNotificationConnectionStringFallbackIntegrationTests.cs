@@ -16,7 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 #pragma warning disable IDE1006
 
 /// <summary>
-/// End-to-end regression for the a consumer Azure SCRAM-SHA-256 incident.
+/// End-to-end regression for a consumer's Azure SCRAM-SHA-256 incident.
 ///
 /// <para>The unit-level regression
 /// (<c>GetConnectionString_PreservesPasswordAfterConnectionOpenedAsync</c> in
@@ -141,7 +141,7 @@ public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFC
   }
 
   /// <summary>
-  /// a consumer production failure mode: when the DbContext is configured with
+  /// A consumer's production failure mode: when the DbContext is configured with
   /// <c>UseNpgsql(NpgsqlDataSource)</c> (the recommended path for Azure Postgres
   /// with credential rotation / Managed Identity), the
   /// <see cref="RelationalOptionsExtension.ConnectionString"/> path returns null

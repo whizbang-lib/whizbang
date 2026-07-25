@@ -234,8 +234,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     // MessageJsonContext is always emitted alongside discovered perspectives.
     //
     // The atomic INSERT...ON CONFLICT DO UPDATE path works for plain-Guid TModels too
-    // — it doesn't require any [WhizbangId] types. a consumer's BFF/Chat/Job services use
-    // raw Guid Ids and still benefit from atomic UPSERT.
+    // — it doesn't require any [WhizbangId] types. A consumer's services that use
+    // raw Guid Ids still benefit from atomic UPSERT.
     if (hasPerspectives) {
       _emitCallbackInitializer(context, assemblyName);
     }

@@ -90,7 +90,7 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
   /// same silent-stuck pattern that put it in the DLQ in the first place.
   /// </summary>
   /// <remarks>
-  /// production forensic context: rows with Empty stream_id are the bug; recovering
+  /// Production forensic context: rows with Empty stream_id are the bug; recovering
   /// one without normalization would land it back in <c>wh_outbox</c> with the
   /// same broken value, and ClaimWorker would resume bumping <c>attempts</c>
   /// silently forever. Normalize at recovery time so the row can drain via the

@@ -10,7 +10,7 @@ namespace Whizbang.Core.Tests.AutoPopulate;
 
 /// <summary>
 /// A public class message so the generator emits a populator for it (records were previously the only
-/// types populated). a consumer events are all classes deriving from a base class, so this is the shape that broke.
+/// types populated). A consumer's events are all classes deriving from a base class, so this is the shape that broke.
 /// </summary>
 public class ClassAutoPopulateEvent {
   public Guid Id { get; set; }

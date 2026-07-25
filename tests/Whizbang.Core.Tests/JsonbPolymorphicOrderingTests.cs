@@ -124,8 +124,8 @@ public partial class JsonbPolymorphicOrderingTests {
 
   [Test]
   public async Task Simulator_FiveCharSibling_KeepsDiscriminatorFirstAsync() {
-    // A 5-char sibling does NOT displace $type ('$'=0x24 < any identifier byte). This is why a consumer
-    // (whose polymorphic leaves have all-long direct props) never triggers the bug.
+    // A 5-char sibling does NOT displace $type ('$'=0x24 < any identifier byte). This is why a
+    // consumer (whose polymorphic leaves have all-long direct props) never triggers the bug.
     var written = """{"$type":"X","Shape":"Rect","Alpha":"a"}""";
     var normalized = JsonbKeyOrderSimulator.Normalize(written);
     await Assert.That(normalized.IndexOf("\"$type\"", StringComparison.Ordinal)).IsEqualTo(1); // first key

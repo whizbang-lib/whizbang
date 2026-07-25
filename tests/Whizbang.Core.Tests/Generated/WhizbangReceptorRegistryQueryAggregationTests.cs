@@ -86,25 +86,25 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
 
   [Test]
   public async Task TwoContributions_HasAnyConsumer_UnionsBothAsync() {
-    // Simulates two consuming assemblies — e.g., a consumer.UserService + a consumer.BffService —
+    // Simulates two consuming assemblies — e.g., a consumer's UserService + GatewayService —
     // each contributing distinct receptor types via their respective ModuleInitializers.
-    // The aggregator MUST see the union; this is the regression that broke chat in a consumer
-    // when each assembly emitted its own static-with-HashSets and Whizbang.Core's adapter
-    // saw only the empty Core copy.
+    // The aggregator MUST see the union; this is the regression that broke messaging for
+    // a consumer when each assembly emitted its own static-with-HashSets and Whizbang.Core's
+    // adapter saw only the empty Core copy.
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
       AnyConsumerTypes = ["UserService.AccountCreated"],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
     });
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AnyConsumerTypes = ["BffService.PermissionsMaterialized"],
+      AnyConsumerTypes = ["GatewayService.PermissionsMaterialized"],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
     });
 
     await Assert.That(WhizbangReceptorRegistryQuery.HasAnyConsumer("UserService.AccountCreated, UserService")).IsTrue()
       .Because("Aggregating registry must see the first assembly's contribution.");
-    await Assert.That(WhizbangReceptorRegistryQuery.HasAnyConsumer("BffService.PermissionsMaterialized, BffService")).IsTrue()
+    await Assert.That(WhizbangReceptorRegistryQuery.HasAnyConsumer("GatewayService.PermissionsMaterialized, GatewayService")).IsTrue()
       .Because("Aggregating registry must see the second assembly's contribution.");
   }
 

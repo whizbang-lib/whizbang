@@ -41,7 +41,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
 
   private const string _stack = """
-    System.InvalidOperationException: Could not open connection to 'jdx_bff'
+    System.InvalidOperationException: Could not open connection to 'appservice_db'
        at Whizbang.Data.EFCore.Postgres.Functions.OutboxClaim.LeaseAsync(Guid instanceId)
     """;
 

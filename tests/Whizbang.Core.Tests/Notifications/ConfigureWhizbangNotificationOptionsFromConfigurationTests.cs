@@ -30,7 +30,7 @@ public class ConfigureWhizbangNotificationOptionsFromConfigurationTests {
   public async Task Bind_FullSettings_AppliesAllFieldsAsync() {
     var opts = _resolveFrom(new() {
       ["Whizbang:Database:SignalingMode"] = "ListenNotify",
-      ["Whizbang:Database:ConnectionStringKey"] = "appservice-db",
+      ["Whizbang:Database:ConnectionStringKey"] = "gatewayservice-db",
       ["Whizbang:Database:DirectConnectionString"] = "Host=explicit",
       ["Whizbang:Database:DisableNotifications"] = "false",
       ["Whizbang:Database:PollingFallbackInterval"] = "00:00:45",
@@ -41,7 +41,7 @@ public class ConfigureWhizbangNotificationOptionsFromConfigurationTests {
     });
 
     await Assert.That(opts.SignalingMode).IsEqualTo(WorkSignalingMode.ListenNotify);
-    await Assert.That(opts.ConnectionStringKey).IsEqualTo("appservice-db");
+    await Assert.That(opts.ConnectionStringKey).IsEqualTo("gatewayservice-db");
     await Assert.That(opts.DirectConnectionString).IsEqualTo("Host=explicit");
     await Assert.That(opts.DisableNotifications).IsFalse();
     await Assert.That(opts.PollingFallbackInterval).IsEqualTo(TimeSpan.FromSeconds(45));
@@ -54,11 +54,11 @@ public class ConfigureWhizbangNotificationOptionsFromConfigurationTests {
   [Test]
   public async Task Bind_PartialSettings_LeavesDefaultsForUnsetKeysAsync() {
     var opts = _resolveFrom(new() {
-      ["Whizbang:Database:ConnectionStringKey"] = "bff-db"
+      ["Whizbang:Database:ConnectionStringKey"] = "gateway-db"
     });
 
     // Set value applied:
-    await Assert.That(opts.ConnectionStringKey).IsEqualTo("bff-db");
+    await Assert.That(opts.ConnectionStringKey).IsEqualTo("gateway-db");
     // Defaults preserved for everything else:
     await Assert.That(opts.SignalingMode).IsEqualTo(WorkSignalingMode.Auto);
     await Assert.That(opts.DirectConnectionString).IsNull();

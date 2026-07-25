@@ -40,7 +40,7 @@ public class FetchOutboxBatchErrorFieldSqlTests : EFCoreTestBase {
     var messageId = (Guid)TrackedGuid.NewMedo();
     var leaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
     const string realError = """
-      System.InvalidOperationException: Could not open connection to 'jdx_bff'
+      System.InvalidOperationException: Could not open connection to 'appservice_db'
          at Whizbang.Data.EFCore.Postgres.Functions.OutboxClaim.LeaseAsync(Guid instanceId)
       """;
 

@@ -23,7 +23,7 @@ namespace Whizbang.Core.Generated;
 /// has no receptors. In production runs of consumer services, the adapter therefore
 /// returned false for every <c>HasAnyConsumer</c> / <c>HasReceptors</c> query, and the
 /// receive-boundary drop-gate silently dropped every message. Symptom: chat would not
-/// load in a consumer because no User / Permissions events ever flowed. The fix: use
+/// load for a consumer application because no User / Permissions events ever flowed. The fix: use
 /// <see cref="AssemblyRegistry{T}"/> — Whizbang's existing reusable primitive for
 /// multi-assembly contribution registration via <c>[ModuleInitializer]</c>. Same pattern
 /// as <c>AutoPopulatePopulatorRegistry</c>, <c>JsonContextRegistry</c>,
