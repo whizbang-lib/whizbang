@@ -43,6 +43,16 @@ public sealed class WhizbangLifecycleState : IWhizbangLifecycleState {
     }
   }
 
+  /// <inheritdoc />
+  public ValueTask FaultAsync(CancellationToken cancellationToken) {
+    // Idempotent: once the fault path has started, further calls are no-ops.
+    if (_phase is LifecyclePhase.Faulted or LifecyclePhase.Halted) {
+      return ValueTask.CompletedTask;
+    }
+
+    return _faultAndHaltAsync(cancellationToken);
+  }
+
   private async ValueTask _faultAndHaltAsync(CancellationToken cancellationToken) {
     _phase = LifecyclePhase.Faulted;
     await _broadcastBestEffortAsync(LifecyclePhase.Faulted, cancellationToken).ConfigureAwait(false);

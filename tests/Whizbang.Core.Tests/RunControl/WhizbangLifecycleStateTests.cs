@@ -76,6 +76,50 @@ public class WhizbangLifecycleStateTests {
     await Assert.That(participant.Seen).Contains(LifecyclePhase.Halted);
   }
 
+  [Test]
+  public async Task FaultAsync_DrivesFaultedThenHaltsAfterRecordWindowAsync() {
+    var time = new FakeTimeProvider();
+    var options = new WhizbangLifecycleOptions { FaultRecordWindow = TimeSpan.FromSeconds(5) };
+    var participant = new FakeParticipant("workers");
+    var coordinator = new WhizbangLifecycleCoordinator([participant], options, time);
+    var state = new WhizbangLifecycleState(coordinator, options, time);
+
+    // A failure OUTSIDE a transition (e.g. background schema init throwing) drives the fault path directly.
+    var fault = state.FaultAsync(CancellationToken.None).AsTask();
+
+    await _until(() => state.Phase == LifecyclePhase.Faulted);
+    await Assert.That(state.Phase).IsEqualTo(LifecyclePhase.Faulted);
+    await Assert.That(fault.IsCompleted).IsFalse(); // still inside the record window
+    await Assert.That(participant.Seen).Contains(LifecyclePhase.Faulted);
+    await Assert.That(participant.Seen).DoesNotContain(LifecyclePhase.Halted);
+
+    time.Advance(TimeSpan.FromSeconds(6)); // record window elapses → Halted
+    await fault;
+    await Assert.That(state.Phase).IsEqualTo(LifecyclePhase.Halted);
+    await Assert.That(participant.Seen).Contains(LifecyclePhase.Halted);
+  }
+
+  [Test]
+  public async Task FaultAsync_WhenAlreadyFaulted_IsIdempotentAsync() {
+    var time = new FakeTimeProvider();
+    var options = new WhizbangLifecycleOptions { FaultRecordWindow = TimeSpan.FromSeconds(5) };
+    var participant = new FakeParticipant("workers");
+    var coordinator = new WhizbangLifecycleCoordinator([participant], options, time);
+    var state = new WhizbangLifecycleState(coordinator, options, time);
+
+    var fault = state.FaultAsync(CancellationToken.None).AsTask();
+    await _until(() => state.Phase == LifecyclePhase.Faulted);
+    var seenAfterFaulted = participant.Seen.Count;
+
+    // A second fault while already Faulted (mid record-window) is a no-op — no extra broadcast.
+    await state.FaultAsync(CancellationToken.None);
+    await Assert.That(state.Phase).IsEqualTo(LifecyclePhase.Faulted);
+    await Assert.That(participant.Seen.Count).IsEqualTo(seenAfterFaulted);
+
+    time.Advance(TimeSpan.FromSeconds(6));
+    await fault;
+  }
+
   private static async Task _until(Func<bool> condition) {
     for (var i = 0; i < 200 && !condition(); i++) {
       await Task.Yield();

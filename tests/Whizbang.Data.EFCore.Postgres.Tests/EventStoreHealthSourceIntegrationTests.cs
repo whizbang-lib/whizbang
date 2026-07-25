@@ -21,6 +21,7 @@ public class EventStoreHealthSourceIntegrationTests : EFCoreTestBase {
   private sealed class FakeLifecycle(LifecyclePhase phase) : IWhizbangLifecycleState {
     public LifecyclePhase Phase { get; } = phase;
     public ValueTask AdvanceToAsync(LifecyclePhase p, CancellationToken cancellationToken) => default;
+    public ValueTask FaultAsync(CancellationToken cancellationToken) => default;
   }
 
   // Mirrors the driver's SELECT 1 probe (PostgresDriverExtensions._pingEventStoreAsync) so this

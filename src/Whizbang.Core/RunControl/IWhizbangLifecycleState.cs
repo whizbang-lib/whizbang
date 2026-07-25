@@ -16,4 +16,14 @@ public interface IWhizbangLifecycleState {
 
   /// <summary>Advances to <paramref name="phase"/>, broadcasting it to every resource and awaiting all acks.</summary>
   ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Drives the system into the fault path — <see cref="LifecyclePhase.Faulted"/>, held for the record
+  /// window, then terminal <see cref="LifecyclePhase.Halted"/> — for a failure that happens OUTSIDE a
+  /// phase transition (e.g. a background schema initialization that throws). Without this, such a
+  /// failure would leave the phase stuck at <see cref="LifecyclePhase.Migrating"/> forever (the ready
+  /// gate never opens) and health would keep reporting "still initializing" instead of the truth.
+  /// Idempotent: once Faulted/Halted, further calls are no-ops.
+  /// </summary>
+  ValueTask FaultAsync(CancellationToken cancellationToken);
 }
