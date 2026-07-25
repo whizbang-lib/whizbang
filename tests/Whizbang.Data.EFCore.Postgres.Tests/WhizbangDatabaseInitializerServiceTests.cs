@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.RunControl;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -88,6 +89,37 @@ public class WhizbangDatabaseInitializerServiceTests {
   }
 
   [Test]
+  public async Task NonBlocking_InitFailure_DrivesLifecycleFaultAsync() {
+    // A failed init must fault the managed-resource lifecycle (Faulted -> record window -> Halted) so
+    // health reports the failure instead of looping "still initializing" forever.
+    var gate = new SchemaReadyGate();
+    var runner = new _FakeRunner(_ => throw new InvalidOperationException("migration boom"));
+    var lifecycle = new _FakeLifecycle();
+    var service = _create(gate: gate, runner: runner, nonBlocking: true, lifecycle: lifecycle);
+
+    await service.StartAsync(CancellationToken.None);
+    await service.BackgroundInitTask!;
+
+    await Assert.That(lifecycle.FaultCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task NonBlocking_InitSuccess_DoesNotFaultLifecycleAsync() {
+    // The happy path never faults the lifecycle.
+    var gate = new SchemaReadyGate();
+    var runner = new _HeldRunner();
+    var lifecycle = new _FakeLifecycle();
+    var service = _create(gate: gate, runner: runner, nonBlocking: true, lifecycle: lifecycle);
+
+    await service.StartAsync(CancellationToken.None);
+    runner.Complete();
+    await service.BackgroundInitTask!;
+
+    await Assert.That(lifecycle.FaultCount).IsEqualTo(0);
+    await Assert.That(gate.IsReady).IsTrue();
+  }
+
+  [Test]
   public async Task NonBlocking_MigrationTimeout_GateStaysClosedAsync() {
     var gate = new SchemaReadyGate();
     var fakeTime = new FakeTimeProvider();
@@ -126,10 +158,14 @@ public class WhizbangDatabaseInitializerServiceTests {
       ISchemaInitializationRunner? runner = null,
       bool nonBlocking = false,
       TimeSpan? migrationTimeout = null,
-      TimeProvider? timeProvider = null) {
+      TimeProvider? timeProvider = null,
+      IWhizbangLifecycleState? lifecycle = null) {
     var services = new ServiceCollection();
     if (coordinator is not null) {
       services.AddSingleton(coordinator);
+    }
+    if (lifecycle is not null) {
+      services.AddSingleton(lifecycle);
     }
     var provider = services.BuildServiceProvider();
     return new WhizbangDatabaseInitializerService(
@@ -163,6 +199,17 @@ public class WhizbangDatabaseInitializerServiceTests {
     public Task RunAsync(CancellationToken cancellationToken) {
       Entered.TrySetResult();
       return behavior(cancellationToken);
+    }
+  }
+
+  /// <summary>Lifecycle that records how many times <see cref="FaultAsync"/> was invoked.</summary>
+  private sealed class _FakeLifecycle : IWhizbangLifecycleState {
+    public int FaultCount { get; private set; }
+    public LifecyclePhase Phase => LifecyclePhase.Migrating;
+    public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => default;
+    public ValueTask FaultAsync(CancellationToken cancellationToken) {
+      FaultCount++;
+      return default;
     }
   }
 

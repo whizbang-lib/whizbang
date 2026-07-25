@@ -78,15 +78,22 @@ public static class EventStoreSchema {
         Nullable: false
 ,
         MaxLength: 500),
+      // event_data/metadata are offloaded to wh_event_body and DROPPED from wh_event_store by the
+      // full body-split migration (078). They belong in CREATE for fresh databases, but the base
+      // schema ensure must NOT re-add them via ADD COLUMN IF NOT EXISTS on an existing (split) DB —
+      // re-asserting a dropped NOT NULL column against a non-empty table fails with Postgres 23502.
+      // BackfillExempt defers their lifecycle to the forward migrations.
       new ColumnDefinition(
         Name: "event_data",
         DataType: WhizbangDataType.JSON,
-        Nullable: false
+        Nullable: false,
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: "metadata",
         DataType: WhizbangDataType.JSON,
-        Nullable: false
+        Nullable: false,
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: "scope",

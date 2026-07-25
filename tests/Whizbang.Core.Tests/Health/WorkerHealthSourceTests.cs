@@ -17,6 +17,7 @@ public class WorkerHealthSourceTests {
   private sealed class FakeLifecycle(LifecyclePhase phase) : IWhizbangLifecycleState {
     public LifecyclePhase Phase { get; } = phase;
     public ValueTask AdvanceToAsync(LifecyclePhase p, CancellationToken cancellationToken) => default;
+    public ValueTask FaultAsync(CancellationToken cancellationToken) => default;
   }
 
   private static async Task<ComponentState> _reportAsync(LifecyclePhase phase) {

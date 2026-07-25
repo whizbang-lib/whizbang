@@ -5,13 +5,15 @@ namespace Whizbang.Core.Health;
 
 /// <summary>
 /// The <c>"schema"</c> managed-resource health source. It judges its state against the current
-/// <see cref="LifecyclePhase"/> (which it reads, not a central override): a failed/wedged migration
-/// (phase <see cref="LifecyclePhase.Faulted"/>/<see cref="LifecyclePhase.Halted"/>) is
-/// <see cref="ComponentState.Faulted"/>; a ready gate is <see cref="ComponentState.Operational"/>;
-/// otherwise it is <see cref="ComponentState.Connecting"/>/<see cref="ComponentState.Starting"/> while
-/// connecting and <see cref="ComponentState.Migrating"/> while the migration runs. Under the Lenient
-/// default, <c>Migrating</c> maps to <b>ready</b> — so a long non-blocking startup migration stays in
-/// rotation instead of being rolled back, and a genuine failure surfaces as <c>Faulted</c>.
+/// <see cref="LifecyclePhase"/> (which it reads, not a central override): a failed migration drives the
+/// lifecycle <see cref="LifecyclePhase.Faulted"/> → <see cref="LifecyclePhase.Halted"/>, surfaced as
+/// <see cref="ComponentState.Degraded"/> during the record window (a <b>warning</b>: readiness Degraded)
+/// and <see cref="ComponentState.Faulted"/> once <c>Halted</c> (a <b>failure</b>: readiness Unhealthy).
+/// A ready gate is <see cref="ComponentState.Operational"/>; otherwise it is
+/// <see cref="ComponentState.Connecting"/>/<see cref="ComponentState.Starting"/> while connecting and
+/// <see cref="ComponentState.Migrating"/> while the migration runs. Under the Lenient default,
+/// <c>Migrating</c> maps to <b>ready</b> — so a long non-blocking startup migration stays in rotation
+/// instead of being rolled back, while a genuine failure escalates warning → failure.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
 public sealed class SchemaHealthSource : IWhizbangHealthSource {
@@ -32,7 +34,12 @@ public sealed class SchemaHealthSource : IWhizbangHealthSource {
   /// <inheritdoc />
   public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
     var phase = _lifecycle.Phase;
-    var state = phase is LifecyclePhase.Faulted or LifecyclePhase.Halted ? ComponentState.Faulted
+    // A genuine init failure drives Faulted -> (record window) -> Halted. Surface the record window as
+    // Degraded (a warning: readiness Degraded while the fault is recorded) and the terminal Halted as
+    // Faulted (a failure: readiness Unhealthy — out of rotation). A ready gate is Operational; otherwise
+    // Connecting/Starting while connecting and Migrating while the migration runs.
+    var state = phase is LifecyclePhase.Halted ? ComponentState.Faulted
+      : phase is LifecyclePhase.Faulted ? ComponentState.Degraded
       : _gate.IsReady ? ComponentState.Operational
       : phase is LifecyclePhase.Starting or LifecyclePhase.Connecting ? ComponentState.Connecting
       : ComponentState.Migrating;

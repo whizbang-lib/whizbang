@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.RunControl;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -83,6 +84,14 @@ internal sealed partial class WhizbangDatabaseInitializerService(
       // Fail-closed: MarkReady was never reached, so the gate stays closed and no worker or readiness
       // check ever sees a ready schema. The host stays alive (liveness green) but never becomes ready.
       LogBackgroundInitializationFailed(_logger, ex);
+
+      // Drive the managed-resource lifecycle into the fault path (Faulted -> record window -> Halted)
+      // so the schema health source reports the failure (Degraded warning -> Faulted failure) instead
+      // of looping "still initializing" forever. Optional: a no-op if run-control isn't registered.
+      var lifecycle = _serviceProvider.GetService<IWhizbangLifecycleState>();
+      if (lifecycle is not null) {
+        await lifecycle.FaultAsync(CancellationToken.None).ConfigureAwait(false);
+      }
     }
   }
 

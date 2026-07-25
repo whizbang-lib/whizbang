@@ -29,6 +29,11 @@ public class LifecyclePhaseWorkerTests {
       }
       return default;
     }
+    public ValueTask FaultAsync(CancellationToken cancellationToken) {
+      Phase = LifecyclePhase.Faulted;
+      Seen.Add(LifecyclePhase.Faulted);
+      return default;
+    }
   }
 
   [Test]
