@@ -99,6 +99,14 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     // get added columns here. Index creation that follows can safely reference any
     // column the schema declares.
     foreach (var column in table.Columns) {
+      // Columns whose lifecycle is owned by forward migrations (e.g. the event-store's offloaded
+      // event_data/metadata, which a later migration drops) must NOT be re-asserted here: an
+      // ADD COLUMN … NOT NULL that re-adds a dropped column to a non-empty table fails with 23502.
+      // They still come from CREATE TABLE for fresh databases; the base ensure defers to migrations.
+      if (column.BackfillExempt) {
+        continue;
+      }
+
       // Inline PRIMARY KEY is part of CREATE TABLE only; ADD COLUMN that re-asserts
       // PRIMARY KEY against an existing table would error. The composite PK branch
       // already suppresses inline PRIMARY KEY for the CREATE; this is the same
