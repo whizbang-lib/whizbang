@@ -1532,7 +1532,7 @@ public record OrderCreatedEvent : IEvent {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_NestedTypeWithEnumProperty_DiscoversEnumAsync() {
-    // Arrange - Event → List<Stage> → Stage.StepType enum (the a consumer application bug scenario)
+    // Arrange - Event → List<Stage> → Stage.StepType enum (the consumer bug scenario)
     const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
@@ -5676,7 +5676,7 @@ public record NestedListEvent : IEvent {
 using Whizbang.Core;
 using System.Collections.Generic;
 
-namespace a consumer.Contracts.Job;
+namespace ConsumerApp.Contracts.Job;
 
 public record JobTemplateFieldCatalogItem {
   public required string Name { get; init; }
@@ -5699,10 +5699,10 @@ public record JobTemplateFieldCatalogInitializedEvent : IEvent {
 
     // Should generate IReadOnlyList factory for JobTemplateFieldCatalogItem
     await Assert.That(code).Contains("CreateIReadOnlyList_");
-    await Assert.That(code).Contains("IReadOnlyList<global::a consumer.Contracts.Job.JobTemplateFieldCatalogItem>");
+    await Assert.That(code).Contains("IReadOnlyList<global::ConsumerApp.Contracts.Job.JobTemplateFieldCatalogItem>");
 
     // Should generate type info check for IReadOnlyList
-    await Assert.That(code).Contains("typeof(global::System.Collections.Generic.IReadOnlyList<global::a consumer.Contracts.Job.JobTemplateFieldCatalogItem>)");
+    await Assert.That(code).Contains("typeof(global::System.Collections.Generic.IReadOnlyList<global::ConsumerApp.Contracts.Job.JobTemplateFieldCatalogItem>)");
   }
 
   /// <summary>

@@ -16,8 +16,8 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// Locks the invariant that <see cref="IDispatcher.PublishAsync{TEvent}(TEvent, DispatchOptions)"/>
 /// gates the in-process local-receptor invocation on <see cref="DispatchOptions.ScheduledFor"/>.
 ///
-/// <para>Production incident (production saga <c>a-production-saga</c>, 2026-06-25):
-/// when the saga watchdog re-armed via <c>_emitter.PublishAsync(nextTick, NOW + 30s)</c>, the
+/// <para>Production incident (a stranded saga): when the saga watchdog re-armed
+/// via <c>_emitter.PublishAsync(nextTick, NOW + 30s)</c>, the
 /// outbox row's <c>scheduled_for</c> column was correctly stamped, but the dispatcher also
 /// invoked the local <c>SagaCompletionWatchdogTickEvent</c> receptor synchronously on the same
 /// call. That receptor immediately re-armed again, which fired again, which re-armed again —
@@ -76,12 +76,12 @@ public class DispatcherScheduledForLocalReceptorTests {
     // THE INVARIANT under test: the local receptor MUST NOT fire inline when ScheduledFor is in
     // the future. The pickup query honors scheduled_for for the cross-pod path; the local path
     // must honor it too, otherwise watchdog re-arm cascades to abandon in milliseconds — the
-    // production 019f000e regression.
+    // production stranded-saga regression.
     await Assert.That(ScheduledForCascadeProbeReceptor.InvocationCount).IsEqualTo(0)
       .Because("DispatchOptions.ScheduledFor must gate the in-process local-receptor invocation " +
                "the same way it gates the outbox pickup. Inline invocation defeats the entire " +
-               "scheduling contract — observed in production as the production saga 019f000e " +
-               "watchdog cascading 5 ticks + Abandoned within 86 ms of saga init.");
+               "scheduling contract — observed in production as a stranded saga's " +
+               "watchdog cascading several ticks + Abandoned within milliseconds of saga init.");
   }
 
   [Test]

@@ -16,7 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// production forensic root cause (Jun 2026): rows with <c>stream_id = Guid.Empty</c>
+/// Production forensic root cause: rows with <c>stream_id = Guid.Empty</c>
 /// (real zero-UUID, not NULL) were silently dropped by the pre-v0.657
 /// <c>r.StreamId ?? r.WorkId ?? Guid.Empty</c> coalesce, because <c>??</c> only
 /// catches null and the subsequent <c>.Where(g =&gt; g != Guid.Empty)</c> filter

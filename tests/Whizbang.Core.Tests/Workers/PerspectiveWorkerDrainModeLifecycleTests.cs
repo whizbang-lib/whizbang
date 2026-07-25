@@ -820,7 +820,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   // ========================================
   // MULTI-PERSPECTIVE SAVE SYMMETRY TESTS
   // ========================================
-  // These target the a consumer 2026-05-03 symptom: when an event has TWO perspectives registered,
+  // These target a production symptom: when an event has TWO perspectives registered,
   // ONE perspective's wh_per_* row was created (Order) but the OTHER (OrderWorkingConditions)
   // was not, despite the SQL chain inserting perspective_events for both. The runtime
   // apply/save asymmetry caused empty fields on the canvas.
@@ -903,13 +903,13 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     await _runWorkerOneBatchAsync(worker, coordinator, harness);
 
     await Assert.That(lc.AreAllPerspectivesComplete(eventId)).IsTrue()
-      .Because("Both perspectives must have called SignalPerspectiveComplete on the LifecycleCoordinator. If only one signals, the gate stays closed forever and PostAllPerspectives never fires — the a consumer 2026-05-03 saga-loader-stuck symptom.");
+      .Because("Both perspectives must have called SignalPerspectiveComplete on the LifecycleCoordinator. If only one signals, the gate stays closed forever and PostAllPerspectives never fires — a production saga-loader-stuck symptom.");
   }
 
   [Test]
   public async Task DrainMode_TwoPerspectivesForSameEvent_PostAllPerspectivesFiresExactlyOnceAsync() {
     // The lifecycle gate must wait for BOTH perspectives' SignalPerspectiveComplete before
-    // firing PostAllPerspectivesInline. Tag hooks attach at this stage in a consumer's BFF — if it
+    // firing PostAllPerspectivesInline. Tag hooks attach at this stage in a consumer's service — if it
     // fires after only ONE perspective, the tag pushes BEFORE the second perspective's row
     // commits, and the frontend's HTTP refetch returns blank data for that perspective's
     // slice of the model. Lock: PostAllPerspectivesInline count == 1 per event, after BOTH.

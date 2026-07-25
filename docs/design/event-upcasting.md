@@ -3,7 +3,7 @@
 > **Using upcasting?** See the developer guide: [`docs/event-upcasting.md`](../event-upcasting.md).
 > This document is the design rationale / RFC.
 
-## Status: IMPLEMENTED (core) — a consumer upcasters + snapshot versioning pending
+## Status: IMPLEMENTED (core) — consumer upcasters + snapshot versioning pending
 
 > RFC authored against Whizbang 0.688. First customer driving the requirement:
 > **a consumer** (per-item saga streams migration). The pattern Whizbang ships here is the
@@ -16,7 +16,7 @@
 > (`ReadPolymorphicAsync`, `DeserializeStreamEvents`, `GetEventsBetweenPolymorphicAsync`)
 > with a seam contract test. Zero-cost passthrough when no upcasters are registered.
 >
-> **Pending:** a consumer registers `SagaItemStreamUpcaster` + `LegacyDomainItemEventUpcaster`
+> **Pending:** the consumer registers `SagaItemStreamUpcaster` + `LegacyDomainItemEventUpcaster`
 > and validates re-key-through-the-runner end-to-end, then deletes its frozen replay
 > `Apply` methods (Slice 3); snapshot versioning + `SnapshotUpgradePolicy` (below).
 
@@ -38,7 +38,7 @@ are:
 1. **Freeze the old `Apply` forever.** Every projection keeps a parallel set of
    replay-only `Apply` methods that reconstruct the historical shape. They are dead
    weight on the live path, must never be edited, and accrete with every schema
-   change. (a consumer currently carries 8 such frozen sections behind `REPLAY-ONLY /
+   change. (A consumer currently carries several such frozen sections behind `REPLAY-ONLY /
    FROZEN` banners.)
 2. **Re-emit migrated copies.** Read the old events, append faithful new-shape twins.
    This permanently doubles event volume, perturbs commit order, and bloats every
@@ -72,7 +72,7 @@ already a decorator chain: `AuditingEventStoreDecorator`,
 
 (`GetEventsBetween[Polymorphic]Async` is a fourth, used by lifecycle receptors.)
 
-The earlier a consumer seam analysis assumed perspective rebuild bypassed `IEventStore`
+The earlier seam analysis assumed perspective rebuild bypassed `IEventStore`
 entirely. **It does not** — drain mode calls `IEventStore.DeserializeStreamEvents`
 and the snapshot/replay path calls `IEventStore.ReadPolymorphicAsync`. So the seam
 *is* `IEventStore`. The real hazard is narrower but still fatal: these are **separate
@@ -110,7 +110,7 @@ public interface IEventUpcaster {
 ```
 
 `Upcast` may:
-- **Re-key** — change `StreamId` (the a consumer case: move a per-item event off the saga
+- **Re-key** — change `StreamId` (the motivating case: move a per-item event off the saga
   stream onto its per-item stream). The framework keys the projection row by the
   returned envelope's `StreamId`, so re-keying is how an upcaster redistributes
   history across aggregate boundaries.
@@ -162,9 +162,9 @@ Either way the pipeline runs **once per event per read**, on already-deserialize
 objects — the marginal cost is `CanUpcast` (a type check + a couple of field
 compares) for the overwhelmingly common no-op case.
 
-## Worked example — a consumer per-item saga streams
+## Worked example — per-item saga streams
 
-a consumer migrated 10 sagas so per-item events route to **per-item streams**
+A consumer migrated its sagas so per-item events route to **per-item streams**
 (`StreamId = SagaItemStreams.Of(sagaId, itemIdentifier)`). Sagas created *before* the
 migration wrote their per-item events onto the **saga's own stream**, in two
 historical shapes. On rebuild through current code those do not reconstruct per-item
@@ -193,7 +193,7 @@ public sealed class SagaItemStreamUpcaster : IEventUpcaster {
 
 Result: old events replay into the per-item `SagaItemModel` correctly and **durably**
 (every future rebuild re-applies the transform), the byte-for-byte event log stays
-immutable, and a consumer deletes its 8 frozen replay-only `Apply` sections. No re-emit, no
+immutable, and the consumer deletes its frozen replay-only `Apply` sections. No re-emit, no
 2× volume, no SQL backfill (a backfill is non-durable — wiped on the next rebuild —
 and is explicitly rejected as anything but a throwaway dashboard patch).
 
@@ -299,7 +299,7 @@ This is the runner/generator change that activates versioning end-to-end.
 2. **`[ReplayFrozen]` analyzer.** Once upcasting lands, the frozen replay-only `Apply`
    methods become deletable. Is a transitional analyzer/attribute (mark a method as
    historical, hash its body, warn on edit) still worth shipping, or does upcasting
-   make it moot? (Original a consumer ask; upcasting subsumes most of its value.)
+   make it moot? (Original consumer ask; upcasting subsumes most of its value.)
 3. ~~**Snapshot invalidation.**~~ *Resolved* — see "Snapshot versioning & upgrade" above:
    stamp `SchemaVersion`, read through `SnapshotUpgradePolicy` (default `RebuildFromEvents`).
 
@@ -308,8 +308,8 @@ This is the runner/generator change that activates versioning end-to-end.
 1. Land `IEventUpcaster` + registration + the chosen seam (b recommended) + the seam
    contract test. Pure framework, no customer coupling.
 2. Ship the golden-fixture + composition + AOT + determinism tests.
-3. a consumer registers `SagaItemStreamUpcaster` + `LegacyDomainItemEventUpcaster`, deletes
-   its 8 frozen `Apply` sections and removes `TryComplete`/`TryFailFast`/
+3. The consumer registers `SagaItemStreamUpcaster` + `LegacyDomainItemEventUpcaster`, deletes
+   its frozen `Apply` sections and removes `TryComplete`/`TryFailFast`/
    `SagaApplyHelper` (its Slice 3 cleanup, currently blocked on those frozen methods).
 4. Document the `[ReplayFrozen]` decision (open question 2) and snapshot invalidation
    (open question 3).

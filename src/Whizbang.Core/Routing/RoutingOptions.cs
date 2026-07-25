@@ -192,7 +192,7 @@ public sealed class RoutingOptions {
   /// persisted (perspective materialization is still gated on there being a perspective — absorbed-only events
   /// simply sit in the store until something rebuilds from them). Namespace-scoped, additive to auto-discovery.
   /// </summary>
-  /// <param name="namespaces">Event namespaces to absorb (e.g. <c>"a consumer.contracts.job"</c>). Case-insensitive.</param>
+  /// <param name="namespaces">Event namespaces to absorb (e.g. <c>"myapp.contracts.job"</c>). Case-insensitive.</param>
   /// <returns>This options instance for chaining.</returns>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="namespaces"/> is null.</exception>
   public RoutingOptions AbsorbNamespaces(params string[] namespaces) {
@@ -263,7 +263,7 @@ public sealed class InboxRoutingOptionsBuilder {
   }
 
   /// <summary>
-  /// Uses domain-specific inbox topics (a consumer application-style).
+  /// Uses domain-specific inbox topics (one inbox topic per domain).
   /// Each domain has its own inbox topic.
   /// </summary>
   /// <param name="suffix">Suffix for domain topics. Default: ".inbox".</param>

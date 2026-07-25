@@ -1136,13 +1136,13 @@ public class SecurityIntegrationTests {
     }
   }
 
-  // === a consumer application Scenario Replication Tests ===
+  // === Consumer Scenario Replication Tests ===
   // These tests replicate the exact scenario from a consumer application where TenantContext is null
 
   [Test]
-  [Category("a consumer applicationScenario")]
+  [Category("ConsumerScenario")]
   public async Task GetCurrentScope_WithRealDatabaseJsonStructure_DeserializesCorrectlyAsync() {
-    // This test uses the EXACT JSON structure found in a consumer application's wh_event_store.metadata column
+    // This test uses the EXACT JSON structure found in a consumer's wh_event_store.metadata column
     // to verify that ScopeDelta deserialization works correctly.
     //
     // The database contains:
@@ -1154,8 +1154,8 @@ public class SecurityIntegrationTests {
         "Hops": [{
           "md": {"AggregateId": "019cd3a4-19dc-7548-aed6-e24ab97f8dc8"},
           "sc": {"v": {"Scope": {"t": "c0ffee00-cafe-f00d-face-feed12345678", "u": "925321d2-9635-49e5-abd8-87b43dcf7e19"}}},
-          "si": {"hn": "test-host", "ii": "019cd3a0-3997-776c-b616-20bbc224dcd9", "pi": 56083, "sn": "a consumer.JobService"},
-          "to": "a consumer.contracts.job",
+          "si": {"hn": "test-host", "ii": "019cd3a0-3997-776c-b616-20bbc224dcd9", "pi": 56083, "sn": "Consumer.JobService"},
+          "to": "consumer.contracts.job",
           "tp": "00-8fe2f60995fa4b5b2a2792f08b1ad39f-a8e13f9311145b78-01",
           "ts": "2026-03-09T17:30:01.693249+00:00"
         }],
@@ -1204,9 +1204,9 @@ public class SecurityIntegrationTests {
   }
 
   [Test]
-  [Category("a consumer applicationScenario")]
+  [Category("ConsumerScenario")]
   public async Task GetCurrentScope_WithScopeDeltaInHops_ReturnsNonNullScopeContextAsync() {
-    // This test replicates the a consumer application scenario where an event is read from the database
+    // This test replicates the consumer scenario where an event is read from the database
     // with scope in hops, and GetCurrentScope() should return the scope.
 
     // Arrange: Create envelope with ScopeDelta in hops (matching database structure)
@@ -1228,13 +1228,13 @@ public class SecurityIntegrationTests {
       Hops = [new MessageHop {
         Type = HopType.Current,
         ServiceInstance = new ServiceInstanceInfo {
-          ServiceName = "a consumer.JobService",
+          ServiceName = "Consumer.JobService",
           HostName = "test-host",
           InstanceId = Guid.NewGuid(),
           ProcessId = 56083
         },
         Timestamp = DateTimeOffset.UtcNow,
-        Topic = "a consumer.contracts.job",
+        Topic = "consumer.contracts.job",
         Scope = scopeDelta
       }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
@@ -1255,16 +1255,16 @@ public class SecurityIntegrationTests {
   }
 
   [Test]
-  [Category("a consumer applicationScenario")]
+  [Category("ConsumerScenario")]
   public async Task PostPerspectiveDetached_WithScopeInEnvelopeHops_SetsMessageContextScopeContextAsync() {
-    // This test replicates the FULL a consumer application scenario:
+    // This test replicates the FULL consumer scenario:
     // 1. Event is read from database with scope in hops
     // 2. Generated runner establishes security context
     // 3. Handler should have non-null MessageContext.ScopeContext
 
     // Arrange
-    var tenantId = "a consumer application-tenant-" + Guid.NewGuid();
-    var userId = "a consumer application-user-" + Guid.NewGuid();
+    var tenantId = "tenant-" + Guid.NewGuid();
+    var userId = "user-" + Guid.NewGuid();
 
     // Create envelope with scope in hops (as if read from database)
     var scopeDelta = ScopeDelta.CreateDelta(null, new ScopeContext {
@@ -1325,7 +1325,7 @@ public class SecurityIntegrationTests {
     await Assert.That(capturedMessageInsideHandler).IsNotNull()
       .Because("MessageContextAccessor.CurrentContext should be set inside handler context");
     await Assert.That(capturedMessageInsideHandler!.ScopeContext).IsNotNull()
-      .Because("MessageContext.ScopeContext should be non-null - THIS IS THE a consumer application BUG if it fails!");
+      .Because("MessageContext.ScopeContext should be non-null - THIS IS THE consumer BUG if it fails!");
     await Assert.That(capturedMessageInsideHandler.TenantId).IsEqualTo(tenantId)
       .Because("MessageContext.TenantId should be set from envelope scope");
     await Assert.That(capturedMessageInsideHandler.UserId).IsEqualTo(userId)

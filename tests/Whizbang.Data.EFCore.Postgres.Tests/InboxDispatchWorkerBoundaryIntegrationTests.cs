@@ -79,7 +79,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
   /// <summary>
   /// Default-stage receptor (NO <c>[FireAt]</c>) — registered at <c>PostInboxDetached</c> + <c>LocalImmediateDetached</c>,
   /// so on the inbox path it fires FIRE-AND-FORGET via <c>BackgroundStageDispatch.StartLongRunning</c> (a fresh task).
-  /// This is exactly the a consumer <c>OverlayActivatedSagaTriggerHandler</c> shape. Signals a TCS after publishing so the
+  /// This is exactly a consumer's saga-trigger-handler shape. Signals a TCS after publishing so the
   /// test can await the fire-and-forget completion deterministically.
   /// </summary>
   public sealed class DetachedChildEmittingReceptor(IDispatcher dispatcher) : IReceptor<DetachedParentEvent> {
@@ -93,7 +93,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     }
   }
 
-  /// <summary>Inbound event for the COLLECTIVE variant (#6) — the a consumer overlay-activation saga-trigger shape.</summary>
+  /// <summary>Inbound event for the COLLECTIVE variant (#6) — a consumer's overlay-activation saga-trigger shape.</summary>
   public record CollectiveParentEvent([property: StreamId] Guid Id) : IEvent;
 
   /// <summary>
@@ -105,7 +105,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
 
   /// <summary>
   /// Detached-stage receptor (the saga-trigger shape) that imperatively PUBLISHES a collective event — exactly
-  /// like a consumer's OverlayActivatedSagaTriggerHandler emitting OverlayAppliedToJobsCollectiveEvent.
+  /// like a consumer's saga-trigger handler emitting an overlay-applied collective event.
   /// </summary>
   public sealed class CollectiveEmittingReceptor(IDispatcher dispatcher) : IReceptor<CollectiveParentEvent> {
     public static TaskCompletionSource Done { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -325,7 +325,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
   public async Task InboxWorker_DetachedStage_CollectiveChild_InheritsIdentityFromHopAsync() {
     // #6: a collective event is produced via ORDINARY PublishAsync (+ EventFlags.Collective) — there is no special
     // collective-produce path. Emitted imperatively from a detached saga-trigger receptor at the worker boundary
-    // (the a consumer OverlayApplied... shape), its persisted STORE hop must inherit co+ca+scope from the carried inbound
+    // (a consumer's overlay-applied shape), its persisted STORE hop must inherit co+ca+scope from the carried inbound
     // hop, same as any event. Proves #6's produce-side is covered by the #1/#2/#7 carry — so a consumer's manual
     // lineage-scope attach for the collective event is no longer needed.
     CollectiveEmittingReceptor.Done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -405,7 +405,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
         Hops = child.MessageData.Hops
       };
       await Assert.That(childEnvelope.GetCorrelationId()).IsEqualTo(expectedCorrelation)
-        .Because("A collective event emitted at the worker boundary must inherit correlation from the carried hop (the a consumer lineage that was fabricating fresh).");
+        .Because("A collective event emitted at the worker boundary must inherit correlation from the carried hop (the lineage bug a consumer worked around by fabricating fresh).");
       await Assert.That(childEnvelope.GetCausationId()).IsNotNull()
         .Because("Causation must survive onto the collective event's store hop.");
       await Assert.That(childEnvelope.GetCurrentScope()?.Scope?.TenantId).IsEqualTo("tenant-456")

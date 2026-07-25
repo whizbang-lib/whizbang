@@ -29,12 +29,12 @@ namespace Whizbang.Core.Tests.Workers;
 /// </para>
 ///
 /// <para>
-/// a consumer 2026-05-03: BFF receives many cross-service events (saga events, draft job field
-/// updates, etc.) that have <c>[NotificationTag]</c> attributes but no BFF-side perspective.
+/// In production, a consumer's service receives many cross-service events (saga events, order
+/// field updates, etc.) that have <c>[NotificationTag]</c> attributes but no local perspective.
 /// Those tags still need to push over SignalR — InboxDispatchWorker is the path that
 /// fires PostAllPerspectives + PostLifecycle for such events. If this contract regresses,
-/// the user's UI sits with empty fields because the per-field <c>draft-job-name</c>,
-/// <c>draft-job-skills</c>, etc. tag notifications never reach the browser.
+/// the user's UI sits with empty fields because the per-field <c>order-name</c>,
+/// <c>order-line</c>, etc. tag notifications never reach the browser.
 /// </para>
 ///
 /// <para>
@@ -241,13 +241,13 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
   [Test]
   public async Task NoLocalPerspective_FiresPostAllPerspectivesInline_SoTagHooksCanEmitAsync() {
     // Regression lock: when an inbox event arrives that no local perspective handles —
-    // e.g., a SagaItem event arriving in BFF that only updates JobService's projections —
-    // InboxDispatchWorker MUST fire PostAllPerspectivesInline so [NotificationTag] /
-    // [NotificationIdTag] hooks (registered at PostAllPerspectivesDetached by default in a consumer)
-    // can push the SignalR notification. Without this, downstream UI subscribers (per-field
-    // load actions tied to `draft-job-name`, `draft-job-skills`, etc.) never receive a signal
+    // e.g., a SagaItem event arriving in a consumer's service that only updates another
+    // service's projections — InboxDispatchWorker MUST fire PostAllPerspectivesInline so
+    // [NotificationTag] / [NotificationIdTag] hooks (registered at PostAllPerspectivesDetached
+    // by default) can push the SignalR notification. Without this, downstream UI subscribers
+    // (per-field load actions tied to `order-name`, `order-line`, etc.) never receive a signal
     // and the canvas sits with empty data even though the projections in OTHER services
-    // have committed. This was the a consumer 2026-05-03 saga-loader-stuck symptom.
+    // have committed. This was a production saga-loader-stuck symptom.
     var (worker, inbox, _, invoker) = _buildWorker(registeredPerspectives: []);
 
     using var cts = new CancellationTokenSource();
@@ -266,7 +266,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue()
       .Because("Inbox events with no local perspective MUST still fire PostAllPerspectivesInline so tag hooks can emit notifications.");
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesDetached)).IsTrue()
-      .Because("PostAllPerspectivesDetached must also fire — a consumer's ConsumerNotificationTagHook is registered at this stage.");
+      .Because("PostAllPerspectivesDetached must also fire — a consumer's notification tag hook is registered at this stage.");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

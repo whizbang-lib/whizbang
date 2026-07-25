@@ -2,8 +2,8 @@
 
 ## Goal
 
-Make `ICompositeEvent` a **turnkey, architecturally-correct** Whizbang feature, then adopt it in a consumer
-bulk import (one composite per job). A composite is "N events batched for the wire." The correct shape:
+Make `ICompositeEvent` a **turnkey, architecturally-correct** Whizbang feature, then adopt it in a
+consumer's bulk import (one composite per item). A composite is "N events batched for the wire." The correct shape:
 
 > A composite is an **ordinary message** everywhere except **one seam — the fan-out** — and that seam
 > sits **inside the durable inbox/dispatch/retry/DLQ envelope**, not outside it at the transport edge.
@@ -153,17 +153,17 @@ StreamIds). Defended in depth:
 - [ ] **Phase E — docs** — `docs/fundamentals/messaging/composite-events.md`: the lifecycle, hooks,
   control surface, no-rebroadcast invariant; link to `CompositeEventBase`, the dispatch seam, and the
   tests. Refresh `ICompositeEvent` XML docs to describe dispatch-time fan-out (not transport-edge).
-- [ ] **Release** — Whizbang alpha (GitVersion `release/*` → PR → develop → nuget); bump a consumer
+- [ ] **Release** — Whizbang alpha (GitVersion `release/*` → PR → develop → nuget); bump a consumer's
   `Directory.Packages.props`.
-- [ ] **Track 2 — a consumer per-job composite.**
-  - `OrderBulkImportComposite : CompositeEventBase` with `Atomicity = Atomic` (a job's field events
-    are one unit), `FanoutMode = Auto`. Optional pre-fanout receptor for the cap guard / per-job
+- [ ] **Track 2 — consumer per-item composite.**
+  - `BulkImportComposite : CompositeEventBase` with `Atomicity = Atomic` (an item's field events
+    are one unit), `FanoutMode = Auto`. Optional pre-fanout receptor for the cap guard / per-item
     metadata.
-  - Rewire `BulkImportSagaHandlers.PublishOrderEventsAsync`: pre-mint `jobStreamId`, publish ONE
+  - Rewire `BulkImportSagaHandlers.PublishItemEventsAsync`: pre-mint `itemStreamId`, publish ONE
     composite (replacing `PublishAsync(init)` + `PublishManyAsync(rest)`). Saga lifecycle unchanged.
-  - RED→GREEN expansion-parity integration test: same N event-store rows on `jobStreamId` as today,
-    per-job atomic rollback on failure, and the no-rebroadcast invariant holds.
-  - Measure the 350-import win on production.
+  - RED→GREEN expansion-parity integration test: same N event-store rows on `itemStreamId` as today,
+    per-item atomic rollback on failure, and the no-rebroadcast invariant holds.
+  - Measure the win on a representative production import batch.
 
 ## Risks / open questions
 

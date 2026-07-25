@@ -120,7 +120,7 @@ public class PostgresDriverExtensionsTests {
     // IClaimedEmissionStore. Before this turnkey wiring, every Postgres consumer had to
     // register EFCoreClaimedEmissionStore manually — a consumer had to add the registration in
     // both Program.cs and the integration fixture to avoid PublishOnceAsync throwing at
-    // saga completion (production saga 019f000e regression). With this in place, .WithDriver.Postgres
+    // saga completion (a production saga regression). With this in place, .WithDriver.Postgres
     // is genuinely turnkey for the dispatcher's exactly-once primitive.
     var services = new ServiceCollection();
     services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));

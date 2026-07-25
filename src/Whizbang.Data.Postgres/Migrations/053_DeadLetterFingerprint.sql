@@ -35,9 +35,9 @@
 -- ============================================================================
 -- Migration 050 was edited in place per project_pre_v1_migrations to add
 -- error_fingerprint and error_fingerprint_version to wh_dead_letters' CREATE
--- TABLE — fine for FRESH databases. But existing databases (e.g. a consumer BFF
--- production) already ran the old 050 and have a wh_dead_letters table WITHOUT
--- those columns; CREATE TABLE IF NOT EXISTS is a no-op on re-run.
+-- TABLE — fine for FRESH databases. But existing databases (e.g. a consumer's
+-- production deployment) already ran the old 050 and have a wh_dead_letters
+-- table WITHOUT those columns; CREATE TABLE IF NOT EXISTS is a no-op on re-run.
 --
 -- The columns MUST be added via ALTER TABLE here so the DDL flows in the
 -- correct order: 050 re-runs (no-op on table, can't create the partial index
@@ -46,7 +46,7 @@
 --
 -- IF NOT EXISTS makes both statements idempotent — no-op on fresh DBs where
 -- 050's CREATE TABLE already provided the columns and 053 hasn't run before.
--- production root cause: production CrashLoopBackOff on Jun-2026 when 050's hash
+-- Production root cause: a CrashLoopBackOff incident when 050's hash
 -- changed and the migration runner re-applied it, hitting a CREATE INDEX on
 -- a column 053 hadn't added yet. Lesson: when editing existing migrations in
 -- place, dependent DDL belongs in the new migration, not the edited one.
@@ -178,7 +178,7 @@ COMMENT ON FUNCTION __SCHEMA__.compute_dead_letter_fingerprint IS
 -- 4. wh_dead_letter_summary table (Slice 6)
 -- ============================================================================
 -- Operator-facing rollup of raw wh_dead_letters by (fingerprint, source, message_type).
--- Collapses the 38k+ row a consumer BFF DLQ into ~dozens of distinct clusters with counts,
+-- Collapses a tens-of-thousands-row DLQ from a consumer's service into ~dozens of distinct clusters with counts,
 -- first/last seen timestamps, and a representative sample error_text per cluster.
 -- Refreshed by aggregate_dead_letters() called from migration 032's
 -- perform_maintenance() (every 10 min default).

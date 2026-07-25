@@ -9,7 +9,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Slice 3 of the 2026-06-12 bulk-import-saga-completion-race plan. Locks the
+/// Slice 3 of the bulk-import-saga-completion-race plan. Locks the
 /// "cursor only advances past contiguously-processed events" invariant in
 /// <c>update_perspective_cursors</c> (migration 016) so future SQL refactors
 /// cannot accidentally weaken it. The production forensic that motivated the plan
@@ -26,8 +26,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///
 /// <para>Concretely: if events 1, 2, 4 are processed and event 3 is NOT,
 /// the cursor must advance to event 2 (max contiguous), never to event 4.
-/// Otherwise event 3 is silently lost — exactly the symptom production produced
-/// at the projection level for lines 334/335/336.</para>
+/// Otherwise event 3 is silently lost — exactly the symptom produced in
+/// production at the projection level, with a handful of line numbers missing.</para>
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind-invariants</docs>
 public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
@@ -73,7 +73,7 @@ public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
 
     var cursorLastEventId = await _readCursorLastEventIdAsync(conn, streamId, perspectiveName);
     await Assert.That(cursorLastEventId).IsEqualTo(eventId2)
-      .Because("Gap-free invariant: cursor MUST stay at the last contiguously-processed event (event 2). Event 3 has processed_at IS NULL, so the cursor cannot legally advance to event 4 — that would silently drop event 3 from the projection's view. This is exactly the production ProcessedLineNumbers gap shape (lines 334/335/336 missing while 350 is present); locking this invariant prevents the SQL side from ever introducing that shape.");
+      .Because("Gap-free invariant: cursor MUST stay at the last contiguously-processed event (event 2). Event 3 has processed_at IS NULL, so the cursor cannot legally advance to event 4 — that would silently drop event 3 from the projection's view. This is exactly the ProcessedLineNumbers gap shape observed in production (a few line numbers missing while a later one is present); locking this invariant prevents the SQL side from ever introducing that shape.");
   }
 
   [Test]

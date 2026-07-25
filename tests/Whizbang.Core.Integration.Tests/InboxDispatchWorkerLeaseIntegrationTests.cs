@@ -21,8 +21,8 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
-/// Phase H step 9 integration regression locks for the OCE storm that surfaced on a consumer BFF
-/// production (2026-05-03 with local-12). The unit tests in <c>Whizbang.Core.Tests</c> couldn't
+/// Phase H step 9 integration regression locks for the OCE storm that surfaced on a consumer
+/// service's production. The unit tests in <c>Whizbang.Core.Tests</c> couldn't
 /// reproduce the full bug because <see cref="InboxDispatchWorker"/>'s detached lifecycle path
 /// only fires when an <see cref="ILifecycleMessageDeserializer"/> + <see cref="IReceptorInvoker"/>
 /// are wired — these tests construct a minimal but real lifecycle pipeline.
@@ -32,7 +32,7 @@ namespace Whizbang.Core.Integration.Tests;
 /// Original bug: <c>_invokeInboxLifecycleStageAsync</c> used the LeaseHandle's CT for both the
 /// awaited inline path AND the fire-and-forget detached path. When the lease disposed on
 /// dispatch return, every parked detached task threw a first-chance <c>TaskCanceledException</c>.
-/// Production saw ~120 OCEs/sec.
+/// Production saw a high sustained rate of OCEs/sec.
 /// </para>
 /// <para>
 /// Fix: detached stages now use <c>stoppingToken</c> (worker shutdown) instead of the lease

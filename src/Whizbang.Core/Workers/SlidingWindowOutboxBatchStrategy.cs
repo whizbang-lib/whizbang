@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// array. The bulk flush ultimately invokes
 /// <see cref="IWorkCoordinator.StoreOutboxMessagesAsync"/> + the SQL
 /// <c>_emit_event_store_chain</c> path, which assigns versions per-stream by message_id —
-/// closing the inter-emit cursor-inversion gap that the saga fan-out hit on a consumer 2026-05-05.
+/// closing the inter-emit cursor-inversion gap that the saga fan-out hit in production.
 /// </para>
 /// <para>
 /// Memory bound via idle eviction: streams with no activity for

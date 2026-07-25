@@ -10,7 +10,7 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Integration-layer regression tests for the a consumer 2026-05-04 cursor-inversion symptom.
+/// Integration-layer regression tests for a production cursor-inversion symptom.
 /// Asserts that <c>wh_event_store</c> preserves UUIDv7 ordering across concurrent inserts
 /// for the same stream. RED here = ordering bug at the SQL/Postgres storage layer.
 /// </summary>
@@ -67,7 +67,7 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
   /// monotonic (the lock fix's per-thread guarantee).
   ///
   /// <para>
-  /// a consumer 2026-05-04 reproduction at the integration boundary: without TrackedGuid's internal
+  /// Production reproduction at the integration boundary: without TrackedGuid's internal
   /// lock, concurrent receptors generating events for the same stream produce non-monotonic
   /// IDs that get inserted into wh_event_store. The runner's cursor-inversion detector then
   /// fires repeated full replays. With the lock, each thread's sequence is monotonic and

@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// <c>wh_outbox</c> / <c>wh_inbox</c>.
 /// </summary>
 /// <remarks>
-/// production forensic (Jun 2026): see
+/// A production forensic investigation motivated this guard: see
 /// <see cref="EmptyStreamIdPolicy"/> for the full motivation. This is one of
 /// two defenses; <c>StreamIdCoalescer</c> in
 /// <c>Whizbang.Data.EFCore.Postgres</c> is the consumer-side recovery for rows

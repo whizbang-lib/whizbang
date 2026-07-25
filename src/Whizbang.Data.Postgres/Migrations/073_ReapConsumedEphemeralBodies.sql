@@ -196,8 +196,8 @@ BEGIN
   --       is older than the grace period. cleanup_stale_instances nulls the
   --       assigned_instance_id in the same tick where it deletes the dead
   --       wh_service_instances row, so without this branch every dead
-  --       instance leaves its streams in the table forever (production forensic,
-  --       Jun 2026: 75k rows accumulated, 99% with NULL owner). The age
+  --       instance leaves its streams in the table forever (production forensic:
+  --       tens of thousands of rows accumulated, 99% with NULL owner). The age
   --       guard preserves the legitimate transient-NULL race window between
   --       cleanup_stale_instances nulling the field and the next
   --       claim_orphaned_* cycle re-assigning via INSERT ON CONFLICT.

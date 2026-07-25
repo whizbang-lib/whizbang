@@ -2,12 +2,13 @@
 
 ## Context
 
-Observed in a consumer application production on 2026-04-21. `wh_active_streams` had accumulated
-**1.82 billion lifetime UPDATEs on 5,790 rows** (~315K writes per row) over
-~3.6 days of uptime on the Job service alone. BFF shows the same pattern
-(~290K updates/row). Autovacuum could not keep up — `process_work_batch` calls
-were averaging 4-5 s with heavy `LWLock:WALWrite` + `Lock:transactionid` waits,
-and end-user-visible processing was severely delayed.
+Observed in a busy multi-instance consumer deployment on 2026-04-21.
+`wh_active_streams` had accumulated **1.82 billion lifetime UPDATEs on 5,790
+rows** (~315K writes per row) over ~3.6 days of uptime on a single service
+alone; other services showed the same pattern (~290K updates/row). Autovacuum
+could not keep up — `process_work_batch` calls were averaging 4-5 s with heavy
+`LWLock:WALWrite` + `Lock:transactionid` waits, and end-user-visible processing
+was severely delayed.
 
 Root cause: `src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql`
 lines 1036-1041 unconditionally refreshes `lease_expiry` on every row owned by
@@ -25,22 +26,21 @@ WHERE assigned_instance_id = p_instance_id;
 With 3 pods × N streams × ~1 s ticks, this generates N × 3 dead tuples per
 second cluster-wide. For Job's 5,790 streams: ~5,800 dead tuples / sec.
 
-## Proof on production
+## Proof from a live deployment
 
-A live patch was applied to all 9 production service DBs on 2026-04-21 via
-`CREATE OR REPLACE FUNCTION`. See
-`a consumer application/docs/production-vacuum-proof-2026-04-21/analysis.md` for methodology and raw
-data. Key numbers:
+A live patch was applied to all service DBs in one environment on 2026-04-21 via
+`CREATE OR REPLACE FUNCTION`. Methodology and raw data were captured separately.
+Key numbers:
 
 | DB | `wh_active_streams` UPDATE rate (pre) | UPDATE rate (post) | Reduction |
 |----|---------------------------------------|--------------------|-----------|
-| BFF production | 1,187 / sec (81,893 / 69 s) | ~0–10 / sec (steady state) | **≥100×** |
-| Job production | similar scale | 0 / sec over 120 s | **≥200×** |
-| Chat production | similar scale | ~15 / sec | **~80×** |
+| Service A | 1,187 / sec (81,893 / 69 s) | ~0–10 / sec (steady state) | **≥100×** |
+| Service B | similar scale | 0 / sec over 120 s | **≥200×** |
+| Service C | similar scale | ~15 / sec | **~80×** |
 
-`wh_active_streams` bloat on Chat dropped from 46 % dead (post-vacuum, pre-patch)
+`wh_active_streams` bloat on Service C dropped from 46 % dead (post-vacuum, pre-patch)
 to steady at 46 % (no new churn). Dead-tuple creation on wh_active_streams
-effectively stopped for all 9 services.
+effectively stopped for all services.
 
 ## The fix (one line of SQL, pre-v1 in-place migration edit)
 
@@ -117,15 +117,15 @@ Apply the one-line guard to migration 029. Both RED tests flip GREEN.
 
 ## Related patterns to investigate (out of scope for this PR, track separately)
 
-These showed up in production pg_stat_statements investigation:
+These showed up during the same pg_stat_statements investigation:
 
 1. **`register_instance_heartbeat` (migration 010)** — INSERT/ON-CONFLICT
-   UPDATE on `wh_service_instances` every tick. Chat production accumulated
+   UPDATE on `wh_service_instances` every tick. One service accumulated
    4,686,253 lifetime calls, 8,300 % dead tuples on a 3-row table. Small
    table, so low runtime impact, but same pattern. **Candidate fix**: skip
    UPDATE if `last_heartbeat_at > p_now - lease_duration/3`.
 
-2. **Concurrent `process_work_batch` call rate** — Chat ran 1,042,862 pwb
+2. **Concurrent `process_work_batch` call rate** — one service ran 1,042,862 pwb
    calls at ~510 ms mean. Tick cadence should be tunable per service; currently
    all services share the same polling interval and many tick faster than they
    need to. Not a migration fix — worker config.
@@ -149,27 +149,26 @@ These showed up in production pg_stat_statements investigation:
 5. **Lock-in tests** — N-instance scenario with overlapping streams; large-N
    throughput test.
 6. **Docs** — new doc page, cross-link.
-7. **Publish local NuGet** — bump Whizbang local version, deploy to a consumer application
-   production as the permanent fix (replaces the live CREATE OR REPLACE FUNCTION
+7. **Publish local NuGet** — bump Whizbang local version, deploy to the test
+   environment as the permanent fix (replaces the live CREATE OR REPLACE FUNCTION
    applied 2026-04-21). Verify via `pg_get_functiondef` that the guard is
-   present after the migration runs on production's next startup.
-8. **Rollout to other slots** — after production soak, roll the same Whizbang
-   version to slot 1, dev main, QA, demo, prod.
+   present after the migration runs on that environment's next startup.
+8. **Rollout to other environments** — after the initial soak, roll the same
+   Whizbang version to the remaining environments.
 
 ## Rollback
 
-The live patch on production was captured per-service in
-`a consumer application/docs/production-vacuum-proof-2026-04-21/{svc}_pwb_original.sql` — re-applying
-any of those files restores the unguarded behavior byte-for-byte.
+The live patch was captured per-service before it was applied — re-applying
+any of those captured function definitions restores the unguarded behavior
+byte-for-byte.
 
 The migration 029 edit is additive: removing the guard restores the old
 behavior. Integration tests would catch any regression.
 
 ## References
 
-- production before/after data: `a consumer application/docs/production-vacuum-proof-2026-04-21/`
-- Analysis: `a consumer application/docs/production-vacuum-proof-2026-04-21/analysis.md`
-- Rollback artifacts: `a consumer application/docs/production-vacuum-proof-2026-04-21/*_pwb_original.sql`
+- Before/after data, analysis, and rollback artifacts were captured out-of-band
+  in the deployment environment's diagnostics directory.
 - Related recent commits on `release/v0.233.2-alpha.1`:
   - `760aa5ce` — partition count unification + recompute migration
     (caused the initial bloat spike by UPDATE-ing every stream in

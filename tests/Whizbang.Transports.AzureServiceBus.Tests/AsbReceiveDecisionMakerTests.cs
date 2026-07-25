@@ -16,8 +16,8 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// RED-first regression locks for slice 1 hotfix's behavior change: when the local service
 /// can't bind a received envelope to a CLR type (unknown JsonTypeInfo or shape rejection),
 /// the broker is acked and the message dropped instead of dead-lettered. The legacy receive
-/// path dead-lettered every such case, which produced unbounded ASB DLQ accumulation on a consumer
-/// services that received events from contracts assemblies they didn't reference. These
+/// path dead-lettered every such case, which produced unbounded ASB DLQ accumulation on
+/// consumer services that received events from contracts assemblies they didn't reference. These
 /// tests pin the new behavior so a future refactor can't quietly regress to broker DLQ.
 /// </summary>
 public class AsbReceiveDecisionMakerTests {
@@ -114,8 +114,8 @@ public class AsbReceiveDecisionMakerTests {
   //
   // Even when the envelope deserializes successfully (typed inner CLR type IS registered),
   // some services receive events they have NO handler for (no IReceptor + no perspective Apply).
-  // BFF observation 2026-05-03: 2,165 stuck inbox rows for ConnectionUpdatedEventHandler — a
-  // handler that lives in a consumer.UserService, not BFF. The dispatcher silently no-op'd; rows
+  // Production observation: thousands of stuck inbox rows for a handler that lives in a
+  // different consumer service, not the one receiving the event. The dispatcher silently no-op'd; rows
   // accumulated forever. With this filter, those messages drop at receive instead of storing.
   // ============================================================
 
@@ -195,8 +195,8 @@ public class AsbReceiveDecisionMakerTests {
   // offloaded: the wire payload becomes BodyClaimEnvelopePayload, the ORIGINAL type is carried in
   // whizbang.original-type, and TransportConsumerWorker rehydrates the real message downstream.
   //
-  // REGRESSION (production 2026-07): "bulk → Approved" (21,398 job IDs) silently did nothing. The
-  // BulkUpdateJobStatusesCommand exceeded ASB's 256 KB limit → offloaded. On receive, Decide's
+  // REGRESSION observed in production: a large bulk status-update command silently did nothing. The
+  // command exceeded ASB's 256 KB limit → offloaded. On receive, Decide's
   // Slice-2 NO_LOCAL_CONSUMER filter ran against the CLAIM payload type (BodyClaimEnvelopePayload),
   // which no service has a receptor for → AckAndDrop before rehydration. Every offloaded message
   // died here. The filter must not fire for claim payloads — the real type is rehydrated downstream.

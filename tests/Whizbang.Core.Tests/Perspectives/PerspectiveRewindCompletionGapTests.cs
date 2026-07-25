@@ -8,12 +8,12 @@ namespace Whizbang.Core.Tests.Perspectives;
 #pragma warning disable IDE1006
 
 /// <summary>
-/// Reproduces the 2026-06-12 production BulkImport projection gap (lines 334,
-/// 335, 336 missing from <c>ProcessedLineNumbers</c> after a 350-item
+/// Reproduces a production bulk-import projection gap (lines 334,
+/// 335, 336 missing from <c>ProcessedLineNumbers</c> after a large
 /// import). Forensic from <c>wh_event_store</c> proved that:
 ///
 /// <list type="number">
-///   <item><description>All 350 <c>SagaItemCompletedEvent</c> events were
+///   <item><description>All imported <c>SagaItemCompletedEvent</c> events were
 ///     durably stored (event-store HEAD reached the expected version).</description></item>
 ///   <item><description>6+ <c>PerspectiveRewindStarted</c>/<c>Completed</c>
 ///     cycles fired in a 15 s window during the import.</description></item>
@@ -34,7 +34,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// rewind publishes <c>PerspectiveRewindCompleted</c> claiming "caught up,"
 /// but caught up means "caught up to event-store HEAD as of rewind-start,"
 /// not "caught up to event-store HEAD at completion." The companion
-/// <see cref="RewindLiveApplyRaceTests"/> (2026-05-31 fix) closed the
+/// <see cref="RewindLiveApplyRaceTests"/> closed the
 /// concurrent-in-memory-state race; THIS test locks the orthogonal
 /// concurrent-event-append race.</para>
 ///
@@ -48,7 +48,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class PerspectiveRewindCompletionGapTests {
 
-  /// <summary>Mirrors the a consumer BulkImport CompletedItems counter.</summary>
+  /// <summary>Mirrors a consumer's bulk-import CompletedItems counter.</summary>
   private sealed class CountModel {
     public Guid Id { get; init; }
     public int CompletedItems { get; set; }

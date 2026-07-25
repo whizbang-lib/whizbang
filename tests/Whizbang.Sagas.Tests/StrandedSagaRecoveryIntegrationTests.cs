@@ -11,17 +11,15 @@ namespace Whizbang.Sagas.Tests;
 /// <summary>
 /// End-to-end lock-in for the v0.740 framework-managed saga completion + recovery loop.
 /// Drives a saga through every step of the contract — initiate, dispatch some items,
-/// strand others (simulating the production strand pattern), fire the watchdog, observe the
+/// strand others (simulating a stranded-saga incident in production), fire the watchdog, observe the
 /// framework emit SagaCompletedEvent without any consumer-side orchestration.
 ///
 /// <para>This is the test that proves the v0.740 design works as a whole. Each individual
 /// piece has unit coverage in <see cref="CompletionOrchestrationGapTests"/>; this test
-/// composes them into the exact production strand scenario (saga 019ef473 on 2026-06-23,
-/// 350 items, 349 reached terminal, 1 stranded at Running) at unit-fixture scale.</para>
+/// composes them into the exact stranded-saga scenario observed in production (a large batch
+/// where nearly all items reached terminal, one stranded at Running) at unit-fixture scale.</para>
 ///
-/// <para>Pre-v0.740, every consumer (a consumer BulkImport, EmployeeImport, Embedding,
-/// JobMapping, ConsumerLibraryImport, OverlayFieldCopy, OverlayApplication, JobArchActivation,
-/// OrderFieldPopulation, BulkJobStatusUpdate — 10 sagas) wired their own
+/// <para>Pre-v0.740, every consumer saga (ten in total) wired its own
 /// SagaItemCompletedHandler + SagaItemFailedHandler + TryEmitAsync orchestration. The
 /// framework now owns it all.</para>
 /// </summary>
@@ -30,7 +28,7 @@ namespace Whizbang.Sagas.Tests;
 public class StrandedSagaRecoveryIntegrationTests {
 
   private const string SAGA_NAME = "BulkImportSimulator";
-  private static readonly Guid _sagaId = Guid.Parse("a-production-saga");  // production forensic id
+  private static readonly Guid _sagaId = Guid.Parse("01900000-0000-7000-8000-000000000001");  // a production forensic id
   private static readonly Guid _entityId = Guid.Parse("c0ffee00-cafe-f00d-face-feed12345678");
 
   // ────────────────────────────────────────────────────────────────────
@@ -65,18 +63,18 @@ public class StrandedSagaRecoveryIntegrationTests {
   }
 
   // ────────────────────────────────────────────────────────────────────
-  //   E2E-2: strand recovery. Mirrors production saga 019ef473 — 349 of 350
-  //   items complete; 1 (item 171) is stranded by a cross-pod stale-read
+  //   E2E-2: strand recovery. Mirrors a stranded-saga incident in production — nearly all of
+  //   a large batch complete; one item is stranded by a cross-pod stale-read
   //   race that left the projection at Running while the durable event
   //   store says Completed. Watchdog fires; framework reads the
-  //   consumer's projection (which already shows TotalItems=350 because
+  //   consumer's projection (which already shows the full item count because
   //   the projection's ApplyMethod aggregates from item-completion events
   //   that DID land, just on a different pod's tracker); emits
   //   SagaCompletedEvent.
   // ────────────────────────────────────────────────────────────────────
 
   [Test]
-  public async Task SlotThreeStrand_WatchdogReadsProjection_EmitsCompletedEventAsync() {
+  public async Task StrandedItemRecovery_WatchdogReadsProjection_EmitsCompletedEventAsync() {
     var emitter = new RecordingEmitter();
     // Wire the framework's projection-loader hook through the test fixture: the projection
     // (post-strand-cleanup) reports TotalItems=350, CompletedItems=350. This is what a
@@ -109,8 +107,8 @@ public class StrandedSagaRecoveryIntegrationTests {
     await Assert.That(emitter.PublishedOnce.Count)
       .IsEqualTo(0)
       .Because("Pre-watchdog state: in-memory tracker says 349 < 350. Fast-path doesn't fire. Recovery requires the " +
-               "watchdog tick — proving the production strand requires the framework's slow path, not just the in-memory " +
-               "fast path.");
+               "watchdog tick — proving the stranded-saga pattern requires the framework's slow path, not just the " +
+               "in-memory fast path.");
 
     // Fire the watchdog. The framework's slow path reads the projection (which the consumer's
     // repository populated from durable per-item terminal events) and sees the saga is actually
@@ -119,9 +117,9 @@ public class StrandedSagaRecoveryIntegrationTests {
 
     await Assert.That(recovered)
       .IsTrue()
-      .Because("production strand pattern (saga 019ef473): in-memory tracker says 349/350 but durable projection says " +
-               "350/350. The watchdog must drive completion via the slow path so a strand can't leave a saga stuck " +
-               "forever — which was the whole point of bringing watchdog recovery into the framework.");
+      .Because("Stranded-saga pattern observed in production: in-memory tracker says 349/350 but durable projection " +
+               "says 350/350. The watchdog must drive completion via the slow path so a strand can't leave a saga " +
+               "stuck forever — which was the whole point of bringing watchdog recovery into the framework.");
 
     var sagaCompleted = emitter.PublishedOnce
       .Select(x => x.evt).OfType<SimCompletedEvent>().SingleOrDefault();

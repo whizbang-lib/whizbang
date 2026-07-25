@@ -107,8 +107,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     ).Where(static info => info is not null);
 
     // Discover event types from perspective interfaces (IPerspectiveFor<TModel, TEvent1, TEvent2, ...>).
-    // These are often in referenced assemblies (e.g., a consumer.Contracts) that the syntactic predicate
-    // can't see. But perspective classes in this assembly reference them as type arguments,
+    // These are often in referenced assemblies (e.g., a consumer's Contracts assembly) that the
+    // syntactic predicate can't see. But perspective classes in this assembly reference them as type arguments,
     // which semantic analysis resolves. Required for drain mode's DeserializeStreamEvents.
     var perspectiveEventTypes = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) =>

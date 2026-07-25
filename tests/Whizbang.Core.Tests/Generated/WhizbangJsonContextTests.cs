@@ -89,8 +89,8 @@ public class WhizbangJsonContextTests {
     // a test-local record by itself. Append a reflection fallback resolver for the
     // test model — the globally-registered Lenient converters still win for
     // DateTimeOffset properties because options.Converters is consulted before
-    // the type info resolver's default converter. This mirrors the a consumer application failure
-    // path: type info comes from a consumer application's source-gen context, but the DateTimeOffset
+    // the type info resolver's default converter. This mirrors the consumer failure
+    // path: type info comes from a consumer's source-gen context, but the DateTimeOffset
     // converter must come from the global registry.
     var options = JsonContextRegistry.CreateCombinedOptions();
     options.TypeInfoResolverChain.Add(new DefaultJsonTypeInfoResolver());

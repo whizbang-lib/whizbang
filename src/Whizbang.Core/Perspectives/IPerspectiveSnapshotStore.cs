@@ -46,7 +46,7 @@ public interface IPerspectiveSnapshotStore {
   Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default);
 
   /// <summary>
-  /// production G7 — commit-sequence-aware variant of <see cref="GetLatestSnapshotAsync"/>.
+  /// Production forensic G7 — commit-sequence-aware variant of <see cref="GetLatestSnapshotAsync"/>.
   /// Returns the latest snapshot along with its stamped <c>snapshot_commit_sequence</c>.
   /// Mirrors the slice 26.11 pattern (kept original + added commit-sequence variant) for the
   /// anchored lookup. Default implementation falls through to the legacy method, surfacing

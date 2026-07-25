@@ -13,8 +13,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// shared <c>ConfigurationManager</c> in <c>WebApplicationBuilder</c> /
 /// <c>HostApplicationBuilder</c> hosts, killing every change-token subscription
 /// downstream (<c>IFeatureManager</c>, <c>IOptionsMonitor</c>, appsettings.json
-/// reloadOnChange, Azure App Configuration refresh). Reported by Bijan Camp
-/// (a consumer/a consumer application).
+/// reloadOnChange, Azure App Configuration refresh). Reported by a consumer.
 /// </summary>
 internal sealed partial class MessageTypeRegistryReconciliationHostedService(
     ILogger<MessageTypeRegistryReconciliationHostedService> logger,

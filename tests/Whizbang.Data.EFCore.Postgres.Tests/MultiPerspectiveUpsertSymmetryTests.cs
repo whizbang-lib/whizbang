@@ -9,9 +9,9 @@ using Whizbang.Core.Perspectives;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Targets the a consumer 2026-05-03 production symptom at the EFCore layer: when two perspectives
-/// both upsert to the same DbContext for the same stream, BOTH rows must persist. The
-/// production observation was Order's row appeared but OrderWorkingConditions'
+/// Targets a production symptom observed on a consumer at the EFCore layer: when two
+/// perspectives both upsert to the same DbContext for the same stream, BOTH rows must
+/// persist. The production observation was Order's row appeared but OrderLines'
 /// row did not, despite both perspectives' Apply running.
 ///
 /// <para>
@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 public class MultiPerspectiveUpsertSymmetryTests {
 
-  /// <summary>Mirrors OrderName shape: scalar properties only — the working case.</summary>
+  /// <summary>Mirrors OrderModel shape: scalar properties only — the working case.</summary>
   public class ModelOne {
     [StreamId]
     public Guid Id { get; set; }
@@ -73,7 +73,7 @@ public class MultiPerspectiveUpsertSymmetryTests {
 
   [Test]
   public async Task TwoPerspectives_SharedDbContext_SameStreamId_BothRowsPersistAsync() {
-    // Direct a consumer scenario: two perspectives on the SAME stream sharing a DbContext.
+    // Direct consumer scenario: two perspectives on the SAME stream sharing a DbContext.
     // Both upsert into their own perspective table. Both rows must exist after.
     await using var ctx = new TwoModelsDbContext(_createInMemoryOptions());
     var storeOne = new EFCorePostgresPerspectiveStore<ModelOne>(ctx, "perspective_one");
@@ -89,7 +89,7 @@ public class MultiPerspectiveUpsertSymmetryTests {
     await Assert.That(savedOne).IsNotNull()
       .Because("ModelOne perspective row must persist on shared DbContext.");
     await Assert.That(savedTwo).IsNotNull()
-      .Because("ModelTwo perspective row must ALSO persist — symmetric with ModelOne. Asymmetry here is the a consumer production bug at the EFCore layer.");
+      .Because("ModelTwo perspective row must ALSO persist — symmetric with ModelOne. Asymmetry here is the consumer's production bug at the EFCore layer.");
     await Assert.That(savedOne!.Data.FieldA).IsEqualTo("a");
     await Assert.That(savedTwo!.Data.FieldX).IsEqualTo("x");
   }

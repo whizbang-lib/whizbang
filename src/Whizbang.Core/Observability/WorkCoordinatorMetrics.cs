@@ -84,9 +84,9 @@ public sealed class WorkCoordinatorMetrics {
   /// Time between <see cref="Messaging.WorkCoordinatorGate.AcquireAsync"/> grant
   /// and the returned <c>Releaser.Dispose</c>, tagged with <c>caller</c> (the
   /// method that called <c>AcquireAsync</c>). Surfaces which gated code paths
-  /// are holding slots longest; production forensic showed BFF at 20% CPU with the
-  /// gate saturated, meaning slots were held during application work, not just
-  /// DB I/O.
+  /// are holding slots longest; a production forensic investigation showed a
+  /// consumer's service at 20% CPU with the gate saturated, meaning slots were
+  /// held during application work, not just DB I/O.
   /// </summary>
   public Histogram<double> GateHoldDuration { get; }
 

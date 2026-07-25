@@ -7,7 +7,7 @@ namespace Whizbang.Core.Tests.ValueObjects;
 
 /// <summary>
 /// Change-level tests for the lock added inside <see cref="TrackedGuid.NewMedo"/>
-/// to fix the a consumer 2026-05-04 cursor-inversion root cause. These test the
+/// to fix a production cursor-inversion root cause. These test the
 /// specific behavior introduced by the lock — they are tighter and more
 /// minimal than the broader monotonicity tests in
 /// <see cref="TrackedGuidMonotonicityTests"/>.
@@ -18,7 +18,7 @@ public class TrackedGuidLockChangeLevelTests {
   /// The lock must serialize NewMedo() calls such that two concurrent calls cannot
   /// observe each other's intermediate state. We prove this by counting the number
   /// of unique IDs returned across thousands of concurrent calls — a race in the
-  /// underlying generator would produce duplicates (proven empirically in a consumer prod).
+  /// underlying generator would produce duplicates (proven empirically in production).
   /// </summary>
   [Test]
   public async Task NewMedo_HighConcurrency_ProducesNoDuplicateIdsAsync() {

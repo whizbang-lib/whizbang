@@ -16,7 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// production forensic exposed a class of bug — "row gets claimed but never reaches the
+/// Production forensic exposed a class of bug — "row gets claimed but never reaches the
 /// drainer" — that bypasses every downstream defense (DLQ promotion, lifecycle
 /// failure capture, drain pipeline). Slices 1-4 close the specific Empty-stream
 /// instance of this class. Slice 5 adds a structural canary: any row that has been
@@ -140,7 +140,7 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
     var inboxIdx = await _indexExistsAsync(conn, "idx_inbox_stuck_sentinel");
 
     await Assert.That(outboxIdx).IsTrue()
-      .Because("Without idx_outbox_stuck_sentinel, find_stuck_outbox_rows would full-scan wh_outbox on every 10-min maintenance tick — at a consumer scale (millions of historical rows), the sentinel itself becomes a problem.");
+      .Because("Without idx_outbox_stuck_sentinel, find_stuck_outbox_rows would full-scan wh_outbox on every 10-min maintenance tick — at production scale (millions of historical rows), the sentinel itself becomes a problem.");
     await Assert.That(inboxIdx).IsTrue()
       .Because("Same for wh_inbox — the index is the cost-control mechanism.");
   }

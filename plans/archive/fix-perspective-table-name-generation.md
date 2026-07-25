@@ -21,21 +21,21 @@ other entity types, but there is no linking relationship.
 In the generated `WhizbangModelBuilderExtensions.g.cs`, all perspective entities use hardcoded table name:
 
 ```csharp
-// ActiveJobTemplate.Model
-entity.ToTable("wh_per_model");  // WRONG - should be wh_per_active_job_template_model
+// ActiveTemplate.Model
+entity.ToTable("wh_per_model");  // WRONG - should be wh_per_active_template_model
 
-// ActiveJobTemplateSection.Model
-entity.ToTable("wh_per_model");  // WRONG - should be wh_per_active_job_template_section_model
+// ActiveTemplateSection.Model
+entity.ToTable("wh_per_model");  // WRONG - should be wh_per_active_template_section_model
 
 // Order.Model
-entity.ToTable("wh_per_model");  // WRONG - should be wh_per_draft_job_model
+entity.ToTable("wh_per_model");  // WRONG - should be wh_per_order_model
 ```
 
 Meanwhile, the `EFCoreServiceRegistrationGenerator` (which generates DbSet properties) uses **correct** table names:
 
 ```csharp
-/// DbSet for ActiveJobTemplateModels perspective (table: wh_per_active_job_template_model)
-public DbSet<PerspectiveRow<...ActiveJobTemplate.Model>> ActiveJobTemplateModels => ...
+/// DbSet for ActiveTemplateModels perspective (table: wh_per_active_template_model)
+public DbSet<PerspectiveRow<...ActiveTemplate.Model>> ActiveTemplateModels => ...
 ```
 
 ## Solution
@@ -44,10 +44,10 @@ In `EFCorePerspectiveConfigurationGenerator`, the table name derivation logic ne
 
 ### Expected Table Name Format
 
-For a perspective model type like `a consumer.MockService.Features.MockOrderFieldPopulation.Domain.ActiveJobTemplate.Model`:
-- Extract: `ActiveJobTemplate` (parent type name, not `Model`)
-- Convert to snake_case: `active_job_template`
-- Add prefix: `wh_per_active_job_template_model`
+For a perspective model type like `Consumer.MockService.Features.MockOrderFieldPopulation.Domain.ActiveTemplate.Model`:
+- Extract: `ActiveTemplate` (parent type name, not `Model`)
+- Convert to snake_case: `active_template`
+- Add prefix: `wh_per_active_template_model`
 
 ### Files to Fix
 
@@ -58,12 +58,12 @@ For a perspective model type like `a consumer.MockService.Features.MockOrderFiel
 ### Table Name Derivation Logic (from EFCoreServiceRegistrationGenerator)
 
 ```csharp
-// Get the parent type name (e.g., "ActiveJobTemplate" from "ActiveJobTemplate.Model")
+// Get the parent type name (e.g., "ActiveTemplate" from "ActiveTemplate.Model")
 var parentTypeName = perspectiveModel.ContainingType?.Name ?? perspectiveModel.Name;
 // Convert to snake_case
-var snakeCaseName = ToSnakeCase(parentTypeName); // "active_job_template"
+var snakeCaseName = ToSnakeCase(parentTypeName); // "active_template"
 // Build table name
-var tableName = $"wh_per_{snakeCaseName}_model"; // "wh_per_active_job_template_model"
+var tableName = $"wh_per_{snakeCaseName}_model"; // "wh_per_active_template_model"
 ```
 
 ## Affected Services

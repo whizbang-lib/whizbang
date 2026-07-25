@@ -76,7 +76,7 @@ public static class PinnedPoolServiceCollectionExtensions {
   /// Opts a non-Whizbang-shipped worker type into the pinned pool.
   /// Whizbang-built-in workers (tier 1+2) are already registered automatically
   /// based on <see cref="WhizbangPinnedPoolOptions.IncludeFlushWorkers"/>; this
-  /// extension exists for consumer code (e.g. a consumer-side custom workers) that
+  /// extension exists for consumer code (e.g. a consumer's custom workers) that
   /// wants to participate in the same pinned-pool plumbing.
   /// </summary>
   /// <typeparam name="TWorker">The worker class to opt in.</typeparam>

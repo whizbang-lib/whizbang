@@ -67,7 +67,7 @@ BEGIN
     -- message_id-as-sentinel rather than stream_id. The coordinator's claim_work
     -- output emits message_id as the sentinel for rows whose stream_id is NULL
     -- (the documented singleton-stream marker) or Guid.Empty (the producer-side
-    -- bug from the production forensic — v0.657 slice 3's Empty→WorkId fallback). The
+    -- bug from a production forensic investigation — v0.657 slice 3's Empty→WorkId fallback). The
     -- pre-v0.658 filter `stream_id = ANY(p_stream_ids)` couldn't match either
     -- case: NULL=ANY is NULL/false, and Empty doesn't equal the message_id
     -- sentinel. The additive OR branch only fires when stream_id is non-routable,

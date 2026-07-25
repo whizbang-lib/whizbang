@@ -11,15 +11,15 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is what lets a cohort span two read models. JobService's <c>OrderModel</c> carries no status
+/// This is what lets a cohort span two read models. A consumer service's <c>OrderModel</c> carries no status
 /// (it lives on the sibling <c>OrderStatusModel</c>, keyed by the same id), so "apply this template to
-/// every Draft/Approved/Published job" is expressed against the status sibling:
+/// every Draft/Approved/Published order" is expressed against the status sibling:
 /// </para>
 /// <code>
 /// [CollectiveApplyFor]
 /// public ICollectiveSpec&lt;OrderModel&gt; ApplyTemplate(TemplateAppliedCollectiveEvent e, ICollectiveQuery q) =&gt;
 ///   new CollectiveSpec&lt;OrderModel&gt;(
-///     Setters: s =&gt; s.SetProperty(j =&gt; j.JobTemplateId, e.TemplateId),
+///     Setters: s =&gt; s.SetProperty(o =&gt; o.TemplateId, e.TemplateId),
 ///     Where:   r =&gt; q.Of&lt;OrderStatusModel&gt;()
 ///                    .Any(st =&gt; st.Id == r.Id &amp;&amp; Eligible.Contains(st.Data.Status)));
 /// </code>

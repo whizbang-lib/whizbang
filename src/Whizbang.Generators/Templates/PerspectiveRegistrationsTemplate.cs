@@ -62,9 +62,10 @@ public static class PerspectiveRegistrationExtensions {
   /// <returns>A WhizbangPerspectiveBuilder for configuring storage providers</returns>
   public static WhizbangPerspectiveBuilder AddWhizbangPerspectives(this IServiceCollection services) {
     // In-process per-(streamId, perspectiveName) Apply serializer. Closes the
-    // rewind-vs-live race window that produced a consumer's 4-lost-increment bulk-import
-    // bug. Idempotent via TryAddSingleton so multiple AddWhizbangPerspectives
-    // calls (multiple assemblies) collapse to one shared coordinator.
+    // rewind-vs-live race window that let concurrent Apply calls silently drop
+    // increments during a production bulk-import run. Idempotent via TryAddSingleton
+    // so multiple AddWhizbangPerspectives calls (multiple assemblies) collapse to
+    // one shared coordinator.
     services.TryAddSingleton<
         global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator,
         global::Whizbang.Core.Perspectives.PerspectiveApplyCoordinator>();

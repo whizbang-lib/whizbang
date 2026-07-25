@@ -788,7 +788,7 @@ public class InboxDispatchWorkerGapTests {
     await Assert.That(captured.Error).Contains("PreInboxDetached failed")
       .Because("the stage name must reach wh_inbox.error so operators can distinguish detached from inline faults");
     await Assert.That(captured.Error).Contains("simulated detached receptor fault")
-      .Because("the real exception text is what fingerprinting clusters on — losing it recreates the production-class silent retry loop");
+      .Because("the real exception text is what fingerprinting clusters on — losing it recreates a production-class silent retry loop");
     await Assert.That(failure.All.Single().Category).IsEqualTo(WorkCategory.Inbox)
       .Because("inbox-side detached faults must target wh_inbox, not wh_outbox");
   }

@@ -123,7 +123,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // ANDed onto every apply — is created at SERVICE STARTUP by the schema generator (see
     // EFCoreServiceRegistrationGenerator._appendStandardIndexes), NOT here. Creating indexes inside the
     // apply hot path took a SHARE lock on the table on the first apply per process — unacceptable in a
-    // live path (production). Cohort filters correlate by PK (id) so they need no extra index; the
+    // live path in production. Cohort filters correlate by PK (id) so they need no extra index; the
     // compiler still records `where.ReferencedJsonPaths` as the compile-time basis for any future
     // per-property startup index, but nothing creates indexes at apply time anymore.
 
@@ -166,7 +166,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     while (true) {
       var lastCursor = lastId;
       // The per-batch transaction must run inside the DbContext's execution strategy: a DbContext configured
-      // with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy — the norm in production, e.g. a consumer) forbids
+      // with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy — the norm in production) forbids
       // a user-initiated BeginTransaction outside strategy.ExecuteAsync (the transaction must be one retriable
       // unit). CreateExecutionStrategy() returns the configured strategy (a no-op non-retrying one when
       // retries are off, e.g. tests), so this is correct either way. PostgresDeadlockRetry stays the outer

@@ -995,7 +995,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // v0.657 slice 3: stream_id coalesce moved into StreamIdCoalescer.Coalesce so
     // Guid.Empty rows are recovered via WorkId fallback (with a Warning naming
     // the offending row) instead of being silently dropped. See
-    // operations/configuration/empty-stream-id-policy for the production forensic.
+    // operations/configuration/empty-stream-id-policy for the production forensic investigation.
     var (perspectiveStreamIds, outboxStreamIds, inboxStreamIds) =
       StreamIdCoalescer.Coalesce(rows, _logger);
 
@@ -1279,7 +1279,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     // v0.657 slice 2: storage-time Reject guard. With the default
     // EmptyStreamIdPolicy.Reject, throws EmptyStreamIdException naming the first
-    // offending row so producers see the bug at INSERT time — not 990 silent
+    // offending row so producers see the bug at INSERT time — not hundreds of silent
     // claim cycles later (the production forensic pattern).
     Whizbang.Core.Messaging.EmptyStreamIdGuard.ThrowIfAnyHasEmptyStreamId(messages, _emptyStreamIdPolicy);
 
@@ -1621,7 +1621,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // Slice 26.13: LEFT JOIN wh_event_store so cold-cache cursor prefetch can warm the
     // commit_sequence half of PerspectiveCursorCache. Without it, the inversion detector
     // falls back to event_id (UUIDv7 lex) comparison and re-introduces same-millisecond
-    // generation-vs-commit-order false positives (a consumer run 11 surfaced 1,403 such logs).
+    // generation-vs-commit-order false positives (a production run surfaced thousands of such logs).
     cmd.CommandText =
         "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, "
       + "c.rewind_trigger_event_id, e.commit_sequence "

@@ -1,15 +1,13 @@
 # Plan: Perspective rewind misses events appended during rewind window
 
 > **Cross-repo pointer.** The full plan, symptom data, and slice breakdown
-> live in a consumer application at:
->
-> `/Users/philcarbone/src/a consumer application/plans/bulk-import-saga-completion-race.md`
+> live in the consumer application's plan repository.
 >
 > This file is a stub kept in the Whizbang repo so the work is discoverable
 > from `whizbang/plans/` when someone scans the Whizbang side. The primary
 > code changes are Whizbang SQL (perspective rewind completion re-check +
 > cursor-advance-only-after-apply invariant). The defensive backstop is in
-> a consumer.
+> the consumer application.
 
 ## TL;DR
 
@@ -19,7 +17,7 @@ event-store HEAD as of when the rewind STARTED, not as of when it
 completes. Events appended to the stream during the rewind window are
 silently skipped.
 
-production forensic on 2026-06-12 confirmed this: a 350-item bulk-import saga
+A forensic on 2026-06-12 confirmed this: a 350-item bulk-import saga
 had 6 rewind cycles fire in a 15 s window, and 3 `SagaItemCompletedEvent`
 rows (at versions 679 / 681 / 683) landed BETWEEN a rewind's start
 (v677/v678) and its eventual completion (v691). Those 3 events never
@@ -28,7 +26,7 @@ reached the projection's `Apply` chain; the saga snapshot shows
 `CompletedItems = 347` vs `TotalItems = 350`. All 350 events ARE durable
 in `wh_event_store` — the data side is correct; only the projection lags.
 
-## Scope (Whizbang side only — see a consumer application plan for the full picture)
+## Scope (Whizbang side only — see the consumer's plan for the full picture)
 
 **Slices 1–4** of the linked plan are Whizbang work:
 
@@ -47,5 +45,5 @@ in `wh_event_store` — the data side is correct; only the projection lags.
 - **Slice 4** — GREEN: audit and tighten the SQL functions that advance
   the cursor.
 
-See the linked a consumer application plan for full slice details, files-to-touch, risks,
-and the a consumer-side defensive reconciliation Apply (slices 5/6).
+See the linked consumer plan for full slice details, files-to-touch, risks,
+and the consumer-side defensive reconciliation Apply (slices 5/6).

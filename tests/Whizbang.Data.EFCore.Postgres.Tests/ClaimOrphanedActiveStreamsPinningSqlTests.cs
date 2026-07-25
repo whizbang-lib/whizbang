@@ -14,13 +14,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///
 /// <para>
 /// Original slice 6 design said <c>wh_active_streams.assigned_instance_id</c> is the
-/// authoritative ownership ledger, with producer-side pinning at first event store. a consumer run
-/// 8 (2026-05-23) revealed that after every instance death/redeploy, ownership rows persist
+/// authoritative ownership ledger, with producer-side pinning at first event store. A
+/// production run revealed that after every instance death/redeploy, ownership rows persist
 /// with <c>assigned_instance_id = NULL</c> (because <c>cleanup_stale_instances</c> /
 /// <c>deregister_instance</c> nullify them) and never recover — <c>claim_orphaned_*</c>
-/// claims via the UNOWNED partition-modulo path but does NOT re-pin. Result: all 499 rows
-/// on a consumer appservice-db sat with NULL ownership after run 8 completed. Slice 27's routed
-/// NOTIFY infrastructure depends on this column being populated to deliver actual benefit.
+/// claims via the UNOWNED partition-modulo path but does NOT re-pin. Result: every row
+/// on the consumer's appservice-db sat with NULL ownership after that run completed.
+/// Slice 27's routed NOTIFY infrastructure depends on this column being populated to
+/// deliver actual benefit.
 /// </para>
 ///
 /// <para>
@@ -54,7 +55,7 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var eventId = (Guid)TrackedGuid.NewMedo();
     await _registerInstanceAsync(conn, meId);
-    // Insert perspective-event row but NO wh_active_streams entry (mirrors the a consumer
+    // Insert perspective-event row but NO wh_active_streams entry (mirrors a consumer's
     // strategy-flush path that calls store_outbox_messages with NULL p_instance_id).
     await _insertPerspectiveEventAsync(conn, workId, streamId, "Projection.Test", eventId,
       instanceId: null, leaseExpiry: null, attempts: 0);
@@ -79,7 +80,7 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     var eventId = (Guid)TrackedGuid.NewMedo();
     await _registerInstanceAsync(conn, meId);
     // The "post-restart" scenario: row exists, but cleanup_stale_instances has nulled
-    // assigned_instance_id. The 499-row a consumer state.
+    // assigned_instance_id. The stale-ownership state observed in production.
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0, ownerInstanceId: null);
     await _insertPerspectiveEventAsync(conn, workId, streamId, "Projection.Test", eventId,
       instanceId: null, leaseExpiry: null, attempts: 0);

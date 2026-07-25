@@ -17,8 +17,8 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Locks the per-message dispatch cost contract for InboxDispatchWorker after the
-/// 2026-06 BFF slowness investigation: detached lifecycle bodies must use the
+/// Locks the per-message dispatch cost contract for InboxDispatchWorker after a
+/// production slowness investigation: detached lifecycle bodies must use the
 /// ThreadPool (Task.Run) — not <see cref="TaskCreationOptions.LongRunning"/> — and
 /// must NOT re-establish security context per detached scope (AsyncLocal flows from
 /// the outer dispatch scope via ExecutionContext into Task.Run continuations).
@@ -146,8 +146,8 @@ public class InboxDispatchWorkerSchedulingTests {
   public async Task PostInboxDetached_RunsOnThreadPoolThread_NotLongRunningAsync() {
     // PostInboxDetached must run on a pooled ThreadPool worker (Task.Run).
     // TaskCreationOptions.LongRunning was originally added for CI starvation but spawns
-    // a dedicated OS thread per inbox message in production — on the a consumer BFF this
-    // produced ~10 msg/min throughput under a 36k inbox backlog (kernel scheduler
+    // a dedicated OS thread per inbox message in production — this produced a severe
+    // throughput drop under a large inbox backlog (kernel scheduler
     // thrash on per-message pthread_create). Confirmed by reading
     // BackgroundStageDispatch.StartLongRunning + InboxDispatchWorker.cs:317.
     var invoker = new SchedulingObservingInvoker();

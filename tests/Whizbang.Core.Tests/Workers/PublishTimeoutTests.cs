@@ -24,8 +24,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// transport SDK surfaces as a clean failure instead of blocking the worker
 /// until pod shutdown.
 ///
-/// <para>production root cause part 2 (Jun-2026, post-v0.647): the stuck
-/// <c>RemoveShellUserCommand</c> outbox row continued to spin even after v0.647
+/// <para>Production root cause part 2 (post-v0.647): the stuck
+/// <c>RemoveUserCommand</c> outbox row continued to spin even after v0.647
 /// (SecurityContext timeout) shipped. Diagnostic: pod logs ZERO publish-related
 /// signal across multi-minute windows, ASB topic last-accessed timestamp is
 /// 15+ hours stale, the row's <c>error</c> column stays NULL,
@@ -114,7 +114,7 @@ public class PublishTimeoutTests {
   /// cancellation token entirely. The TaskCompletionSource is never completed; the
   /// `ct` parameter is unused. With the v0.648 cooperative-CT implementation, the
   /// worker's <c>CancelAfter</c> timer fires but the await sits forever — exactly
-  /// what we observed on a consumer BFF production (715+ attempts, error column empty, no logs).
+  /// what we observed on a consumer's service in production (hundreds of attempts, error column empty, no logs).
   /// v0.651's <c>WaitAsync(TimeSpan, ct)</c> hardening MUST throw TimeoutException
   /// regardless of inner cooperation — that's the invariant this test locks.</summary>
   private sealed class _UncooperativeHangingPublishStrategy : IMessagePublishStrategy {
@@ -127,7 +127,7 @@ public class PublishTimeoutTests {
       return _tcsOne.Task;
     }
     public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      // CT intentionally ignored — same pattern as a consumer BFF production transport hang.
+      // CT intentionally ignored — same pattern as the production transport hang.
       return _tcsBatch.Task;
     }
   }
@@ -319,7 +319,7 @@ public class PublishTimeoutTests {
     await bulkTask;
 
     await Assert.That(failure.All.Count).IsGreaterThanOrEqualTo(2)
-      .Because("production worst case: the transport ignores the cancellation token entirely. The hardened timeout MUST still produce one MessageFailure per row in the batch.");
+      .Because("Production worst case: the transport ignores the cancellation token entirely. The hardened timeout MUST still produce one MessageFailure per row in the batch.");
     await Assert.That(captured.Reason).IsEqualTo(MessageFailureReason.TransportException)
       .Because("Uncooperative transport hangs are still transport-layer failures — same operational class as the cooperative case, same reason code.");
     await Assert.That(captured.Error).Contains("Publish timed out after")

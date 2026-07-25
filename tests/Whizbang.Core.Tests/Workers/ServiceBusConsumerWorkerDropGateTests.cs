@@ -28,8 +28,8 @@ internal sealed partial class DropGateTestJsonContext : JsonSerializerContext { 
 /// drop-unsubscribed-types invariant at the receive boundary. When the local service
 /// has no consumer (no inbox handler, no lifecycle receptor, no perspective, no tag-
 /// attribute) for an envelopeType, ServiceBusConsumerWorker MUST drop the message
-/// before storing the inbox row. Without the drop, a consumer BFF accumulates wh_inbox rows
-/// for cross-service event types it knows nothing about.
+/// before storing the inbox row. Without the drop, a consumer's service accumulates
+/// wh_inbox rows for cross-service event types it knows nothing about.
 /// </summary>
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class ServiceBusConsumerWorkerDropGateTests {

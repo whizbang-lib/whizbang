@@ -66,7 +66,7 @@ public sealed class SecurityContextEventStoreDecoratorTests {
   public async Task AppendAsync_WithMessage_WithAmbientInitiatingContext_PropagatesCascadeIdentityAsync() {
     // Arrange — the decorator re-derives scope from the ambient context when appending a raw message.
     // It must ALSO carry the cascade identity (CorrelationId + CausationId) from the ambient initiating
-    // context, otherwise a raw event stored through this path loses its correlation (the production defect
+    // context, otherwise a raw event stored through this path loses its correlation (a production defect
     // where the persisted hop had `sc` but no `co`/`ca`).
     var capturingStore = new CapturingEventStore();
     var decorator = new SecurityContextEventStoreDecorator(capturingStore);

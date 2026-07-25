@@ -14,17 +14,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 #pragma warning disable IDE1006
 
 /// <summary>
-/// a consumer-bug regression lock. Before this fix:
+/// Consumer-observed regression lock. Before this fix:
 ///   - The EF source generator baked the connection-string key from the
 ///     <c>[WhizbangDbContext(ConnectionStringName=...)]</c> attribute into the
 ///     EF wiring (e.g., <c>"appservice-db"</c>).
 ///   - The runtime PostConfigure in
 ///     <c>PostgresDriverExtensions._deriveConnectionStringName</c> derived a
-///     DIFFERENT key from the class name (e.g., <c>"bff-db"</c> for
-///     <c>BffDbContext</c>) and used THAT for
+///     DIFFERENT key from the class name (e.g., <c>"app-db"</c> for
+///     <c>AppDbContext</c>) and used THAT for
 ///     <see cref="WhizbangNotificationOptions.ConnectionStringKey"/>.
-///   - a consumer wired EF to <c>"appservice-db"</c> (correct) and notifications to
-///     <c>"bff-db"</c> (didn't exist), so the LISTEN/NOTIFY resolver fell back
+///   - A consumer wired EF to <c>"appservice-db"</c> (correct) and notifications to
+///     <c>"app-db"</c> (didn't exist), so the LISTEN/NOTIFY resolver fell back
 ///     to the DbContext connection (pgbouncer) and probe-failure-reconnected
 ///     every 5 minutes in production.
 ///
@@ -95,7 +95,7 @@ public class SourceGenEmitsNotificationConnectionStringPostConfigureTests {
 }
 
 /// <summary>
-/// Test fixture DbContext mirroring the a consumer shape:
+/// Test fixture DbContext mirroring a consumer's shape:
 ///   - Class name is <c>AttributeOverrideDbContext</c> (which would derive to
 ///     <c>"_attributeoverride-db"</c> if anyone used the class-name convention)
 ///   - But the attribute explicitly names it <c>"attribute-override-db"</c>.

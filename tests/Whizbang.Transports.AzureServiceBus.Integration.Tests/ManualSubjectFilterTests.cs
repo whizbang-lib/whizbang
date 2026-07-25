@@ -13,7 +13,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 /// These tests use raw Azure SDK - no Whizbang framework code.</para>
 ///
 /// <para>Uses pre-provisioned topic-filter-test from Config.json with:
-/// - sub-namespace-filter: SqlFilter sys.Label LIKE 'a consumer.contracts.chat.%'
+/// - sub-namespace-filter: SqlFilter sys.Label LIKE 'app.contracts.chat.%'
 /// - sub-all-messages: TrueFilter (receives all messages)</para>
 ///
 /// <para>Key finding: Azure Service Bus SqlFilter uses 'sys.Label' NOT '[Subject]' for the
@@ -33,15 +33,15 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
 
   // Pre-provisioned in Config.json
   private const string TOPIC_NAME = "topic-filter-test";
-  private const string FILTERED_SUBSCRIPTION = "sub-namespace-filter";  // SqlFilter: [Subject] LIKE 'a consumer.contracts.chat.%'
+  private const string FILTERED_SUBSCRIPTION = "sub-namespace-filter";  // SqlFilter: [Subject] LIKE 'app.contracts.chat.%'
   private const string ALL_MESSAGES_SUBSCRIPTION = "sub-all-messages";   // TrueFilter - receives all
 
   /// <summary>
   /// <para>RED TEST: Validates that SqlFilter LIKE pattern matches Subject containing '+' character.</para>
   ///
   /// <para>Context: In a consumer application, nested class commands like `ChatConversationsContracts+CreateCommand`
-  /// produce routing keys like `a consumer.contracts.chat.chatconversationscontracts+createcommand`.
-  /// The subscription filter is `[Subject] LIKE 'a consumer.contracts.chat.%'`.</para>
+  /// produce routing keys like `app.contracts.chat.chatconversationscontracts+createcommand`.
+  /// The subscription filter is `[Subject] LIKE 'app.contracts.chat.%'`.</para>
   ///
   /// <para>This test validates whether the `+` character causes matching issues.
   /// If this test FAILS, it proves `+` is the problem and we need to normalize it.</para>
@@ -65,7 +65,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // This is the exact format TransportPublishStrategy would generate for a nested class
-    const string subjectWithPlus = "a consumer.contracts.chat.chatconversationscontracts+createcommand";
+    const string subjectWithPlus = "app.contracts.chat.chatconversationscontracts+createcommand";
 
     var message = new ServiceBusMessage("test payload for + character") {
       MessageId = Guid.NewGuid().ToString(),
@@ -107,7 +107,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
 
     await Assert.That(filteredMessage)
       .IsNotNull()
-      .Because("Message with '+' in Subject should match SqlFilter LIKE 'a consumer.contracts.chat.%'. " +
+      .Because("Message with '+' in Subject should match SqlFilter LIKE 'app.contracts.chat.%'. " +
                "If this fails, the '+' character is causing SqlFilter mismatch.");
 
     await Assert.That(filteredMessage!.Subject).IsEqualTo(subjectWithPlus);
@@ -132,7 +132,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // This is what the Subject SHOULD look like after normalizing '+' to '.'
-    const string subjectWithDots = "a consumer.contracts.chat.chatconversationscontracts.createcommand";
+    const string subjectWithDots = "app.contracts.chat.chatconversationscontracts.createcommand";
 
     var message = new ServiceBusMessage("test payload for . character") {
       MessageId = Guid.NewGuid().ToString(),
@@ -187,7 +187,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // Simulates a doubly-nested class: OuterClass+InnerClass+DeepestClass
-    const string subjectWithMultiplePlus = "a consumer.contracts.chat.outer+inner+createcommand";
+    const string subjectWithMultiplePlus = "app.contracts.chat.outer+inner+createcommand";
 
     var message = new ServiceBusMessage("test payload for multiple + characters") {
       MessageId = Guid.NewGuid().ToString(),
@@ -238,7 +238,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
 
     var sender = client.CreateSender(TOPIC_NAME);
 
-    // This subject does NOT match 'a consumer.contracts.chat.%'
+    // This subject does NOT match 'app.contracts.chat.%'
     const string nonMatchingSubject = "other.namespace.somecommand";
 
     var message = new ServiceBusMessage("test payload for non-matching subject") {

@@ -21,7 +21,7 @@ public class EmptyStreamIdExceptionTests {
   [Test]
   public async Task Constructor_CarriesMessageIdAndTypeAsync() {
     Guid messageId = TrackedGuid.NewMedo();
-    var messageType = "a consumer.Contracts.Auth.RemoveShellUserCommand";
+    var messageType = "App.Contracts.Auth.RemoveUserCommand";
 
     var ex = new EmptyStreamIdException(messageId, messageType);
 

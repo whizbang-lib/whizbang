@@ -72,7 +72,7 @@ public class EFCoreClaimWorkTests : EFCoreTestBase {
 
     // Pre-insert into wh_event_store so the inbox row's NOT EXISTS check in
     // _emit_event_store_chain_for_inbox returns false. This simulates the
-    // handler-side delay scenario observed during the 2026-06-11 production
+    // handler-side delay scenario observed during a production
     // import: inbox backlog where every event_id is already emitted.
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = @"

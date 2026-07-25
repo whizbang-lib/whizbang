@@ -7,11 +7,10 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.ValueObjects;
 
 /// <summary>
-/// Unit-layer regression tests for the a consumer 2026-05-04 cursor-inversion symptom.
-/// JobService inserted a single transaction's worth of <c>JobTemplateSectionFieldAddedEvent</c>
-/// instances whose UUIDv7 lex order did NOT match real-time creation order, e.g. id ending
-/// in <c>484e</c> (created at ms timestamp 348046) had a LARGER lex value than id ending in
-/// <c>4811</c> (created at ms timestamp 348049 — later in real time). UUIDv7 from a single
+/// Unit-layer regression tests for a production cursor-inversion symptom.
+/// A consumer service inserted a single transaction's worth of <c>TemplateSectionFieldAddedEvent</c>
+/// instances whose UUIDv7 lex order did NOT match real-time creation order — an id created
+/// earlier in real time sorted AFTER an id created later. UUIDv7 from a single
 /// producer should be lex-monotonic. These tests catch a regression in
 /// <c>TrackedGuid.NewMedo()</c>'s monotonicity guarantees.
 /// </summary>
@@ -50,7 +49,7 @@ public class TrackedGuidMonotonicityTests {
   ///
   /// <para>
   /// The third invariant is the strongest — it asserts that the lock + immediate enqueue
-  /// pattern (which is what JobService's bulk-event receptor effectively does when emitting
+  /// pattern (which is what a consumer service's bulk-event receptor effectively does when emitting
   /// a list of events) produces lex-monotonic IDs in collection order. Without the lock,
   /// concurrent NewMedo() calls produce ~16% inversions; with the lock, zero inversions.
   /// </para>

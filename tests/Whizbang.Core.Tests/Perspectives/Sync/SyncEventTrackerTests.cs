@@ -1157,8 +1157,8 @@ public class SyncEventTrackerTests {
   // ==========================================================================
   // MarkPerspectiveStreamProcessed tests — belt-and-suspenders signal for
   // perspective runs that complete without enumerating their processed events
-  // (e.g., already-applied / dedup / cooldown short-circuits). Production
-  // ChatService observed 30s sync-wait timeouts when subsequent waits on the
+  // (e.g., already-applied / dedup / cooldown short-circuits). A consumer service
+  // observed 30s sync-wait timeouts in production when subsequent waits on the
   // same stream landed against events the runner had cleared the cursor past
   // but never called MarkProcessedByPerspective for.
   // ==========================================================================

@@ -12,7 +12,7 @@ using Whizbang.Transports.RabbitMQ;
 namespace Whizbang.Transports.RabbitMQ.Tests;
 
 /// <summary>
-/// Change-level tests for the a consumer 2026-05-04 hardening of <c>_nackPausedMessageAsync</c>
+/// Change-level tests for the hardening of <c>_nackPausedMessageAsync</c>
 /// and <c>_nackDeserializationFailureAsync</c> against <see cref="AlreadyClosedException"/>
 /// (e.g., 406 PRECONDITION_FAILED — unknown delivery tag, after channel auto-recovery).
 ///

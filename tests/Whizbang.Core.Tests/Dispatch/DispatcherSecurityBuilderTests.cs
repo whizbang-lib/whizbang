@@ -554,7 +554,7 @@ public class DispatcherSecurityBuilderTests {
   }
 
   /// <summary>
-  /// <para>REGRESSION TEST: Replicates a consumer application seeder scenario using ACTUAL DispatcherSecurityBuilder.
+  /// <para>REGRESSION TEST: Replicates a consumer seeder scenario using ACTUAL DispatcherSecurityBuilder.
   /// When code inside a message handler calls dispatcher.AsSystem().ForAllTenants().SendAsync(),
   /// the envelope MUST have SYSTEM context on its hop, not the handler's context.</para>
   ///
@@ -588,7 +588,7 @@ public class DispatcherSecurityBuilderTests {
     var command = new DispatcherSecurityBuilderTestCommand("test-data");
     var context = MessageContext.Create(correlationId);
 
-    // Act - Call AsSystem().SendAsync() like a consumer application seeder does
+    // Act - Call AsSystem().SendAsync() like a consumer seeder does
     await dispatcher.AsSystem().ForAllTenants().SendAsync(command, context);
 
     // Assert - Check the envelope that was stored
@@ -785,7 +785,7 @@ public class DispatcherSecurityBuilderTests {
   /// an event (cascaded event), the cascaded event receptor should see SYSTEM context,
   /// not the handler's InitiatingContext.</para>
   ///
-  /// <para>This replicates the a consumer application seeder scenario where ReseedSystemSucceededEvent
+  /// <para>This replicates a consumer seeder scenario where a cascaded success event
   /// was getting SecurityContextRequiredException because the cascaded event
   /// didn't inherit the SYSTEM context.</para>
   ///
@@ -846,7 +846,7 @@ public class DispatcherSecurityBuilderTests {
   /// <para>REGRESSION TEST: Verify that CascadeContext.GetSecurityFromAmbient() returns SYSTEM context
   /// during cascade when AsSystem() is used, even when InitiatingContext exists.</para>
   ///
-  /// <para>This tests the root cause of the a consumer application issue: the scope captured for envelope hops
+  /// <para>This tests the root cause of the consumer issue: the scope captured for envelope hops
   /// must come from the explicit SYSTEM context, not the handler's InitiatingContext.</para>
   /// </summary>
   [Test]
@@ -898,7 +898,7 @@ public class DispatcherSecurityBuilderTests {
   // This is critical for background workers that read from the outbox.
 
   /// <summary>
-  /// <para>REGRESSION TEST: Replicates a consumer application seeder scenario for PublishAsync.
+  /// <para>REGRESSION TEST: Replicates a consumer seeder scenario for PublishAsync.
   /// When code inside a message handler calls dispatcher.AsSystem().ForAllTenants().PublishAsync(),
   /// the event receptor MUST see SYSTEM context, not the handler's InitiatingContext.</para>
   ///
@@ -940,7 +940,7 @@ public class DispatcherSecurityBuilderTests {
 
     var testEvent = new SecurityBuilderPublishTestEvent("test-publish-data", Guid.NewGuid());
 
-    // Act - Call AsSystem().PublishAsync() like a consumer application seeder does when publishing events
+    // Act - Call AsSystem().PublishAsync() like a consumer seeder does when publishing events
     await dispatcher.AsSystem().ForAllTenants().PublishAsync(testEvent);
 
     // Assert - Check the scope captured by the event receptor
@@ -1308,7 +1308,7 @@ public record SecurityBuilderCascadeTestEvent(string Data, [property: StreamId] 
 
 /// <summary>
 /// Receptor that returns a tuple with result and event (cascade pattern).
-/// This simulates a consumer application seeder returning ReseedSystemSucceededEvent.
+/// This simulates a consumer seeder returning a cascaded success event.
 /// </summary>
 public class SecurityBuilderCascadeTestReceptor
   : IReceptor<SecurityBuilderCascadeTestCommand, (SecurityBuilderCascadeTestResult, SecurityBuilderCascadeTestEvent)> {

@@ -9,8 +9,8 @@
 --              worker once per cycle to surface stuck rows as Warning logs.
 -- Dependencies: wh_outbox, wh_inbox tables (created via EF Core entity migrations).
 --
--- production forensic context: a a consumer BFF row sat stuck for 24 h with attempts at
--- 992, processed_at NULL, no DLQ promotion, no error, no log. v0.656 Debug
+-- Production forensic context: a row in a consumer's service sat stuck for 24 h
+-- with attempts in the high hundreds, processed_at NULL, no DLQ promotion, no error, no log. v0.656 Debug
 -- breadcrumbs surfaced the bug (by absence). This sentinel surfaces ANY row
 -- exhibiting the same symptom — even when the root cause is entirely new.
 
@@ -25,7 +25,7 @@
 -- a superset of the query predicate when 5 < 10.
 --
 -- Without these indexes, find_stuck_*_rows would full-scan wh_outbox /
--- wh_inbox on every 10-min maintenance tick — at a consumer scale (millions of
+-- wh_inbox on every 10-min maintenance tick — at production scale (millions of
 -- historical rows including processed=NOT NULL rows pre-cleanup) the
 -- sentinel itself becomes a problem.
 

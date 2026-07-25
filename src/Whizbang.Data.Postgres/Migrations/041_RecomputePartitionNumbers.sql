@@ -8,9 +8,9 @@
 --
 --              Called from C# on worker startup so a service that comes up under a
 --              new (or first-time-correct) PartitionCount immediately self-heals any
---              rows wedged by the cross-table partition mismatch wedge described in
---              a consumer BFF dev incident 2026-04-20. Also useful when a deploy intentionally
---              changes PartitionCount.
+--              rows wedged by the cross-table partition mismatch wedge observed in
+--              production. Also useful when a deploy intentionally changes
+--              PartitionCount.
 --
 -- Dependencies: 001 (compute_partition), 007 (wh_active_streams), 020/021 (wh_outbox/wh_inbox)
 
@@ -74,4 +74,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.recompute_partition_numbers IS
-'Recomputes partition_number for wh_inbox, wh_outbox, and wh_active_streams against the supplied PartitionCount, fixing rows whose stored value disagrees with compute_partition(stream_id, p_partition_count). Idempotent. Called on worker startup to self-heal the partition-mismatch wedge (a consumer BFF dev incident 2026-04-20). Returns one row per table with the count of recomputed rows.';
+'Recomputes partition_number for wh_inbox, wh_outbox, and wh_active_streams against the supplied PartitionCount, fixing rows whose stored value disagrees with compute_partition(stream_id, p_partition_count). Idempotent. Called on worker startup to self-heal the partition-mismatch wedge observed in production. Returns one row per table with the count of recomputed rows.';

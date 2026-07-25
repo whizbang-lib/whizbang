@@ -381,7 +381,7 @@ namespace TestNamespace {
     // A collective event has no IPerspectiveFor — only a [CollectiveApplyFor] sink — but the
     // PerspectiveWorker's __collective__ sink polymorphically deserializes it from the event store using
     // IEventTypeProvider.GetEventTypes(). If it's absent, the sink's envelope set is empty and the apply
-    // silently never runs (the a consumer ApplyTemplateCollective end-to-end symptom: sink row claimed, never
+    // silently never runs (a consumer hit this end-to-end symptom: sink row claimed, never
     // processed). So GetEventTypes() must include collective events alongside perspective event types.
     const string source = @"
 using Whizbang.Core;

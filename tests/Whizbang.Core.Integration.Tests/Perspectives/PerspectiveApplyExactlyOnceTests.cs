@@ -26,12 +26,12 @@ namespace Whizbang.Core.Integration.Tests.Perspectives;
 /// <remarks>
 /// <para>
 /// <strong>Context — why these tests exist.</strong> A bug surfaced in a consumer application where
-/// <c>OrderOrderLineRowAddedEvent</c>s produced twice as many rows as events
+/// a child-row-added event produced twice as many rows as events
 /// (5 events → 10 rows, duplicate RowIds). Investigation showed the event store was
 /// correct and no receptor double-fired; the doubling was purely at the
 /// <c>Apply(TModel, TEvent)</c> dispatch layer in the generated
-/// <c>IPerspectiveRunner</c>. ~35 % of dev streams were affected with 196 exactly-doubled
-/// essential-function jobs.
+/// <c>IPerspectiveRunner</c>. A significant share of streams were affected with a large
+/// number of exactly-doubled records.
 /// </para>
 /// <para>
 /// Plan: <c>plans/receptor-chaos-scenarios-deferred.md</c> and
@@ -311,8 +311,8 @@ public class PerspectiveApplyExactlyOnceTests {
   /// The standard path holds a per-<c>(streamId, perspectiveName)</c> affinity semaphore around apply
   /// (PerspectiveWorker.cs, <c>_streamAffinityGates</c>); the production-active DRAIN path historically
   /// did not, so a second consumer could race through the cooldown check (still "fresh" while the first
-  /// is mid-apply) and dispatch the same event twice on stale state — the production saga-strand race
-  /// (019ee73d / 019ef473). See <c>plans/perspective-worker-stream-affinity.md</c>.
+  /// is mid-apply) and dispatch the same event twice on stale state — a saga-strand race observed in
+  /// production. See <c>plans/perspective-worker-stream-affinity.md</c>.
   /// </summary>
   /// <remarks>
   /// Deterministic by construction: consumer A blocks INSIDE the runner (before cooldown is marked);
@@ -385,7 +385,7 @@ public class PerspectiveApplyExactlyOnceTests {
       await Assert.That(winner == gateParked.Task).IsTrue().Because(
         "the drain path must hold the same per-(streamId,perspectiveName) affinity gate the standard path "
         + "holds — a second consumer draining the same stream must PARK behind the first, never race into "
-        + "the runner and apply the same event concurrently on stale state (the production saga-strand race).");
+        + "the runner and apply the same event concurrently on stale state (a saga-strand race observed in production).");
     } finally {
       // Always unblock A — even if the assertion above threw — so no drain task is left parked.
       runner.Release();

@@ -11,12 +11,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// perspectives are registered for the same event type.
 ///
 /// <para>
-/// a consumer 2026-05-03 symptom: <c>OrderWorkingConditionRowAddedEvent</c> arrived in BFF
-/// inbox. <c>wh_message_associations</c> had TWO rows for that event (Order+Projection
-/// AND OrderWorkingConditions+Projection). After processing, only Order's
-/// <c>wh_per_*</c> row was populated; OrderWorkingConditions' table was empty for the saga's
-/// draft job. The frontend canvas's per-field tag dispatcher fired
-/// <c>LoadOrderWorkingConditionsByJob</c> but the API returned blank because the row
+/// A production symptom observed on a consumer: <c>OrderLineRowAddedEvent</c> arrived in
+/// the app-service inbox. <c>wh_message_associations</c> had TWO rows for that event
+/// (Order+Projection AND OrderLines+Projection). After processing, only Order's
+/// <c>wh_per_*</c> row was populated; OrderLines' table was empty for the saga's
+/// order. The frontend canvas's per-field tag dispatcher fired
+/// <c>LoadOrderLinesByOrder</c> but the API returned blank because the row
 /// wasn't there.
 /// </para>
 ///
@@ -96,8 +96,8 @@ public class EmitEventStoreChainMultiPerspectiveSqlTests : EFCoreTestBase {
   public async Task EmitEventStoreChain_TwoPerspectivesRegistered_CreatesPerspectiveEventForEachAsync() {
     // Core symmetry contract: when N perspectives are associated with the event_type,
     // _emit_event_store_chain must create N wh_perspective_events rows. Asymmetric
-    // creation here is exactly the a consumer 2026-05-03 symptom: Order's row created,
-    // OrderWorkingConditions' row missing, despite both perspectives being registered.
+    // creation here is exactly the production symptom: Order's row created,
+    // OrderLines' row missing, despite both perspectives being registered.
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -120,7 +120,7 @@ public class EmitEventStoreChainMultiPerspectiveSqlTests : EFCoreTestBase {
     await Assert.That(alphaCount).IsEqualTo(1L)
       .Because("PerspectiveAlpha is registered for this event — must get exactly one wh_perspective_events row.");
     await Assert.That(betaCount).IsEqualTo(1L)
-      .Because("PerspectiveBeta is also registered — must get exactly one wh_perspective_events row, symmetric with PerspectiveAlpha. Asymmetry here is the a consumer production symptom.");
+      .Because("PerspectiveBeta is also registered — must get exactly one wh_perspective_events row, symmetric with PerspectiveAlpha. Asymmetry here is the production symptom described above.");
     await Assert.That(totalCount).IsEqualTo(2L)
       .Because("Two perspectives × one event = two perspective_events rows. Anything else is a regression in the JOIN/INSERT logic of _emit_event_store_chain.");
   }
@@ -224,8 +224,8 @@ public class EmitEventStoreChainMultiPerspectiveSqlTests : EFCoreTestBase {
     var betaCount = await _countPerspectiveEventsAsync(conn, messageId, PERSPECTIVE_BETA);
 
     // Current observed behavior: chain creates rows for BOTH regardless of service_name.
-    // If a consumer expects service-scoped filtering, that filter must be added carefully — the
-    // assumption today is shared DB ⇒ all perspectives apply.
+    // If a consumer expects service-scoped filtering, that filter must be added carefully —
+    // the assumption today is shared DB ⇒ all perspectives apply.
     await Assert.That(alphaCount).IsEqualTo(1L);
     await Assert.That(betaCount).IsEqualTo(1L);
   }

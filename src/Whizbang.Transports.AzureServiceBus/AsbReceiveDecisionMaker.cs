@@ -128,7 +128,7 @@ internal sealed class AsbReceiveDecisionMaker {
     // a receptor for BodyClaimEnvelopePayload, so running this filter against the claim type would
     // silently AckAndDrop EVERY offloaded message before it can rehydrate. Skip the filter for claims
     // — the transport SqlFilter already matched this service's owned namespace, and the rehydrated
-    // original type flows through normal dispatch. (Regression: production "bulk → Approved" no-op.)
+    // original type flows through normal dispatch. (Regression: a production bulk-status-transition no-op.)
     var payloadType = envelope.Payload?.GetType();
     if (isHandledLocally != null && payloadType != null
         && envelope.Payload is not Whizbang.Core.Offloads.BodyClaimEnvelopePayload

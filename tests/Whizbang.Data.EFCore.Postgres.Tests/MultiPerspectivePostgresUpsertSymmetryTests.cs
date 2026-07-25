@@ -11,9 +11,9 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Real-Postgres integration tests for the a consumer 2026-05-03 production symptom: two
+/// Real-Postgres integration tests for a production symptom observed on a consumer: two
 /// perspectives on the same stream sharing one DbContext — Order (scalar)
-/// persists, OrderWorkingConditions (with List&lt;RowItem&gt;) does not.
+/// persists, OrderLines (with List&lt;RowItem&gt;) does not.
 ///
 /// <para>
 /// These tests use Testcontainers Postgres + the production
@@ -42,7 +42,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   private string _connectionString = null!;
   private DbContextOptions<TwoPerspectivesDbContext> _options = null!;
 
-  /// <summary>Mirrors OrderName: scalar properties only — the perspective that DOES persist in a consumer prod.</summary>
+  /// <summary>Mirrors OrderModel: scalar properties only — the perspective that DOES persist in the consumer's production system.</summary>
   public class ScalarModel {
     [StreamId]
     public Guid Id { get; set; }
@@ -50,8 +50,8 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
     public string? FieldB { get; set; }
   }
 
-  /// <summary>Mirrors OrderWorkingConditions: scalar fields plus a List&lt;T&gt; property
-  /// that becomes a JSONB array. The perspective that does NOT persist in a consumer prod.</summary>
+  /// <summary>Mirrors OrderLines: scalar fields plus a List&lt;T&gt; property
+  /// that becomes a JSONB array. The perspective that does NOT persist in the consumer's production system.</summary>
   public class ListModel {
     [StreamId]
     public Guid Id { get; set; }
@@ -180,7 +180,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   // ===========================================================================
 
   /// <summary>
-  /// Direct a consumer scenario: two perspectives, scalar + list-property, both upsert
+  /// Direct consumer scenario: two perspectives, scalar + list-property, both upsert
   /// for the SAME stream on the SAME DbContext. Both rows must persist in their
   /// respective tables. RED here would directly reproduce the production symptom
   /// and localize the bug to the list-property upsert path.
@@ -206,7 +206,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
     await Assert.That(savedScalar).IsNotNull()
       .Because("Scalar perspective row must persist on shared DbContext.");
     await Assert.That(savedList).IsNotNull()
-      .Because("List perspective row must ALSO persist symmetrically. Asymmetry here is the a consumer UI loader bug.");
+      .Because("List perspective row must ALSO persist symmetrically. Asymmetry here is the consumer's UI loader bug.");
     await Assert.That(savedScalar!.Data.FieldA).IsEqualTo("a");
     await Assert.That(savedList!.Data.Rows.Count).IsEqualTo(2);
     await Assert.That(savedList.Data.Rows[0].Label).IsEqualTo("first");
@@ -215,7 +215,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   /// <summary>
   /// Reverse order: list-perspective FIRST, then scalar. Catches a regression where
   /// the second upsert is what's lost (i.e., the scalar perspective happens to be
-  /// what's "always saved last" in a consumer, masking a list-second bug).
+  /// what's "always saved last" for this consumer, masking a list-second bug).
   /// </summary>
   [Test, Timeout(60000)]
   public async Task TwoPerspectives_ListFirst_ThenScalar_BothPersistAsync(CancellationToken ct) {
@@ -306,7 +306,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
       var savedScalar = await context.Set<PerspectiveRow<ScalarModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == sid, ct);
       var savedList = await context.Set<PerspectiveRow<ListModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == sid, ct);
       await Assert.That(savedScalar).IsNotNull().Because($"Scalar row missing for stream {sid}.");
-      await Assert.That(savedList).IsNotNull().Because($"List row missing for stream {sid} — a consumer symptom on this stream.");
+      await Assert.That(savedList).IsNotNull().Because($"List row missing for stream {sid} — the production symptom reproduced on this stream.");
       await Assert.That(savedList!.Data.Rows.Count).IsEqualTo(1);
       await Assert.That(savedList.Data.Rows[0].Label).IsEqualTo($"row-for-{sid}");
     }
@@ -346,7 +346,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   // GetMetadataByStreamIdAsync to filter out already-applied events. If the
   // metadata stored on perspective A's row leaks into perspective B's metadata
   // read (or vice versa), perspective B's events would be filtered out and
-  // never applied — matching the a consumer symptom (one perspective row missing).
+  // never applied — matching the production symptom (one perspective row missing).
   // ===========================================================================
 
   /// <summary>
@@ -388,7 +388,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
       .Because("Scalar perspective's metadata read must return scalar's own EventId.");
     await Assert.That(listReadBack).IsNotNull();
     await Assert.That(listReadBack!.EventId).IsEqualTo(listEventId.ToString("D"))
-      .Because("List perspective's metadata read must return list's own EventId, NOT the scalar's. If these cross, the runner's idempotency guard silently drops events and the a consumer symptom appears.");
+      .Because("List perspective's metadata read must return list's own EventId, NOT the scalar's. If these cross, the runner's idempotency guard silently drops events and the production symptom appears.");
   }
 
   /// <summary>
@@ -396,7 +396,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   /// that is LATER than the list perspective's pending event. If the list
   /// perspective's runner accidentally read scalar's metadata, the
   /// string-compare-greater filter would drop ALL of list's events because
-  /// "list event id &lt; scalar last applied" — exactly the a consumer symptom.
+  /// "list event id &lt; scalar last applied" — exactly the production symptom.
   /// </summary>
   [Test, Timeout(60000)]
   public async Task IdempotencyFilter_DoesNotApplyAcrossPerspectives_WhenScalarAdvancedFurtherAsync(CancellationToken ct) {
@@ -443,7 +443,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   // ScopeFields constants. If the filter produces a problematic value (e.g.,
   // empty scope when DB has NOT NULL constraint, or a scope that fails
   // some downstream filter), one perspective could fail to save while the other
-  // succeeds — matching the a consumer symptom.
+  // succeeds — matching the production symptom.
   // ===========================================================================
 
   /// <summary>
@@ -483,7 +483,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
     await Assert.That(savedScalar).IsNotNull()
       .Because("Scalar perspective with empty scope must save (JSONB column accepts {}).");
     await Assert.That(savedList).IsNotNull()
-      .Because("List perspective with full scope must save (JSONB column accepts populated object). Asymmetry here = a consumer symptom.");
+      .Because("List perspective with full scope must save (JSONB column accepts populated object). Asymmetry here = the production symptom.");
     await Assert.That(savedList!.Data.Rows.Count).IsEqualTo(1);
   }
 

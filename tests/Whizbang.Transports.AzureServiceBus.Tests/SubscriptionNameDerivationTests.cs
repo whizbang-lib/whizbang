@@ -19,7 +19,7 @@ public class SubscriptionNameDerivationTests {
   public async Task DeriveSubscriptionNameWithSubscriberNameMetadataUsesServiceNameAndTopicAsync() {
     // Arrange
     const string subscriberName = "bff-service";
-    const string topicName = "a consumer.contracts.chat";
+    const string topicName = "app.contracts.chat";
 
     // Create metadata with SubscriberName
     var metadata = new Dictionary<string, JsonElement> {
@@ -31,7 +31,7 @@ public class SubscriptionNameDerivationTests {
     var derivedName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
 
     // Assert - Should combine subscriber name and topic
-    await Assert.That(derivedName).IsEqualTo("bff-service-a consumer.contracts.chat");
+    await Assert.That(derivedName).IsEqualTo("bff-service-app.contracts.chat");
   }
 
   [Test]

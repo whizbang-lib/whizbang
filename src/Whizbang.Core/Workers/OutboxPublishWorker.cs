@@ -636,7 +636,7 @@ public sealed class OutboxPublishWorkerOptions {
   /// of release/v0.645.0-alpha.1 — mirrors
   /// <see cref="OutboxDrainWorkerOptions.MaxOutboxAttempts"/> so ops who haven't migrated
   /// off the legacy publisher (or who flip both for a rollback window) still get DLQ
-  /// promotion. Without this knob, failed outbox rows retried forever — the production
+  /// promotion. Without this knob, failed outbox rows retried forever — a production
   /// stuck-row pattern. Set to <c>null</c> explicitly to restore the pre-Slice-3b
   /// "retry forever" behavior.
   /// </summary>

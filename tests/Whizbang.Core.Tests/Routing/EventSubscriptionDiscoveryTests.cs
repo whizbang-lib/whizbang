@@ -178,11 +178,11 @@ public class EventSubscriptionDiscoveryTests {
 
   [Test]
   public async Task DiscoverEventNamespaces_ExcludesOwnedDomainsExactMatchAsync() {
-    // Arrange - BFF service owns "a consumer.contracts.bff", shouldn't subscribe to its own events
+    // Arrange - BFF service owns "app.contracts.bff", shouldn't subscribe to its own events
     // Use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
-    routingOptions.OwnDomains("a consumer.contracts.bff");
-    routingOptions.SubscribeTo("a consumer.contracts.bff", "a consumer.contracts.auth");
+    routingOptions.OwnDomains("app.contracts.bff");
+    routingOptions.SubscribeTo("app.contracts.bff", "app.contracts.auth");
     var options = Options.Create(routingOptions);
     var emptyRegistry = TestEventNamespaceRegistry.Create();
     var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
@@ -192,20 +192,20 @@ public class EventSubscriptionDiscoveryTests {
 
     // Assert - should only contain auth, not bff (owned)
     await Assert.That(namespaces.Count).IsEqualTo(1);
-    await Assert.That(namespaces.Contains("a consumer.contracts.auth")).IsTrue();
-    await Assert.That(namespaces.Contains("a consumer.contracts.bff")).IsFalse();
+    await Assert.That(namespaces.Contains("app.contracts.auth")).IsTrue();
+    await Assert.That(namespaces.Contains("app.contracts.bff")).IsFalse();
   }
 
   [Test]
   public async Task DiscoverEventNamespaces_ExcludesOwnedDomainChildNamespacesAsync() {
-    // Arrange - BFF owns "a consumer.contracts.bff", shouldn't subscribe to child namespaces
+    // Arrange - BFF owns "app.contracts.bff", shouldn't subscribe to child namespaces
     var routingOptions = new RoutingOptions();
-    routingOptions.OwnDomains("a consumer.contracts.bff");
+    routingOptions.OwnDomains("app.contracts.bff");
     var options = Options.Create(routingOptions);
 
     var registry = TestEventNamespaceRegistry.Create(
-        perspectiveNamespaces: "a consumer.contracts.bff.events",  // Child of owned domain
-        receptorNamespaces: "a consumer.contracts.auth.events"     // Not owned
+        perspectiveNamespaces: "app.contracts.bff.events",  // Child of owned domain
+        receptorNamespaces: "app.contracts.auth.events"     // Not owned
     );
 
     var discovery = new EventSubscriptionDiscovery(options, registry);
@@ -215,8 +215,8 @@ public class EventSubscriptionDiscoveryTests {
 
     // Assert - should only contain auth events, not bff.events (child of owned)
     await Assert.That(namespaces.Count).IsEqualTo(1);
-    await Assert.That(namespaces.Contains("a consumer.contracts.auth.events")).IsTrue();
-    await Assert.That(namespaces.Contains("a consumer.contracts.bff.events")).IsFalse();
+    await Assert.That(namespaces.Contains("app.contracts.auth.events")).IsTrue();
+    await Assert.That(namespaces.Contains("app.contracts.bff.events")).IsFalse();
   }
 
   [Test]
@@ -224,8 +224,8 @@ public class EventSubscriptionDiscoveryTests {
     // Arrange - owned domain already has trailing dot
     // Use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
-    routingOptions.OwnDomains("a consumer.contracts.bff.");
-    routingOptions.SubscribeTo("a consumer.contracts.bff.events", "a consumer.contracts.user.events");
+    routingOptions.OwnDomains("app.contracts.bff.");
+    routingOptions.SubscribeTo("app.contracts.bff.events", "app.contracts.user.events");
     var options = Options.Create(routingOptions);
     var emptyRegistry = TestEventNamespaceRegistry.Create();
     var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
@@ -235,22 +235,22 @@ public class EventSubscriptionDiscoveryTests {
 
     // Assert - should exclude bff.events even with trailing dot
     await Assert.That(namespaces.Count).IsEqualTo(1);
-    await Assert.That(namespaces.Contains("a consumer.contracts.user.events")).IsTrue();
-    await Assert.That(namespaces.Contains("a consumer.contracts.bff.events")).IsFalse();
+    await Assert.That(namespaces.Contains("app.contracts.user.events")).IsTrue();
+    await Assert.That(namespaces.Contains("app.contracts.bff.events")).IsFalse();
   }
 
   [Test]
   public async Task DiscoverEventNamespaces_MultipleOwnedDomainsAsync() {
     // Arrange - service owns multiple domains
     var routingOptions = new RoutingOptions();
-    routingOptions.OwnDomains("a consumer.contracts.bff", "a consumer.contracts.admin");
+    routingOptions.OwnDomains("app.contracts.bff", "app.contracts.admin");
     var options = Options.Create(routingOptions);
 
     var registry = TestEventNamespaceRegistry.Create(
-        perspectiveNamespaces: "a consumer.contracts.bff.events",
-        receptorNamespaces: "a consumer.contracts.admin.events"
+        perspectiveNamespaces: "app.contracts.bff.events",
+        receptorNamespaces: "app.contracts.admin.events"
     );
-    routingOptions.SubscribeTo("a consumer.contracts.user.events");
+    routingOptions.SubscribeTo("app.contracts.user.events");
 
     var discovery = new EventSubscriptionDiscovery(options, registry);
 
@@ -259,9 +259,9 @@ public class EventSubscriptionDiscoveryTests {
 
     // Assert - both owned domain children should be excluded
     await Assert.That(namespaces.Count).IsEqualTo(1);
-    await Assert.That(namespaces.Contains("a consumer.contracts.user.events")).IsTrue();
-    await Assert.That(namespaces.Contains("a consumer.contracts.bff.events")).IsFalse();
-    await Assert.That(namespaces.Contains("a consumer.contracts.admin.events")).IsFalse();
+    await Assert.That(namespaces.Contains("app.contracts.user.events")).IsTrue();
+    await Assert.That(namespaces.Contains("app.contracts.bff.events")).IsFalse();
+    await Assert.That(namespaces.Contains("app.contracts.admin.events")).IsFalse();
   }
 
   [Test]
@@ -269,8 +269,8 @@ public class EventSubscriptionDiscoveryTests {
     // Arrange - owned domain matching should be case-insensitive
     // Use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
-    routingOptions.OwnDomains("a consumer.Contracts.BFF");
-    routingOptions.SubscribeTo("a consumer.contracts.bff.events", "a consumer.contracts.auth.events");
+    routingOptions.OwnDomains("App.Contracts.BFF");
+    routingOptions.SubscribeTo("app.contracts.bff.events", "app.contracts.auth.events");
     var options = Options.Create(routingOptions);
     var emptyRegistry = TestEventNamespaceRegistry.Create();
     var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
@@ -280,7 +280,7 @@ public class EventSubscriptionDiscoveryTests {
 
     // Assert - should exclude bff.events despite case difference
     await Assert.That(namespaces.Count).IsEqualTo(1);
-    await Assert.That(namespaces.Contains("a consumer.contracts.auth.events")).IsTrue();
+    await Assert.That(namespaces.Contains("app.contracts.auth.events")).IsTrue();
   }
 
   #endregion

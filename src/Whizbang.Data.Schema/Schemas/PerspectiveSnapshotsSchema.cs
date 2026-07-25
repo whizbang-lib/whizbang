@@ -53,7 +53,7 @@ public static class PerspectiveSnapshotsSchema {
       ),
       // Slice 26.11 — commit_sequence as of this snapshot. NULL on existing rows; populated
       // by the runner template via IEventStore.GetCommitSequenceAsync. Mig 048 backfills
-      // schema (ALTER + index) on existing a consumer databases.
+      // schema (ALTER + index) on existing consumer databases.
       new ColumnDefinition(
         Name: Columns.SNAPSHOT_COMMIT_SEQUENCE,
         DataType: WhizbangDataType.BIG_INT,

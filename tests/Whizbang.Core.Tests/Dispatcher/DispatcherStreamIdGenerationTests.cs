@@ -68,7 +68,7 @@ public class DispatcherStreamIdGenerationTests {
   }
 
   /// <summary>
-  /// Base command with [StreamId] but NOT IHasStreamId - simulates a consumer application's BaseConsumerCommand pattern.
+  /// Base command with [StreamId] but NOT IHasStreamId - simulates a consumer's base command pattern.
   /// </summary>
   public class BaseTestCommand : ICommand {
     [StreamId]
@@ -77,7 +77,7 @@ public class DispatcherStreamIdGenerationTests {
 
   /// <summary>
   /// Derived command with [GenerateStreamId] at class level, inheriting [StreamId] from base.
-  /// Simulates a consumer application's LoginAttemptCommand : BaseConsumerCommand pattern.
+  /// Simulates a consumer's derived-command-inheriting-base-command pattern.
   /// Does NOT implement IHasStreamId - uses SetStreamId fallback.
   /// </summary>
   [GenerateStreamId]
@@ -319,7 +319,7 @@ public class DispatcherStreamIdGenerationTests {
 
   [Test]
   public async Task SendAsync_InheritedStreamId_WithoutIHasStreamId_AutoGeneratesViaSetStreamIdAsync() {
-    // Arrange - Simulates a consumer application's LoginAttemptCommand : BaseConsumerCommand pattern
+    // Arrange - Simulates a consumer's derived-command-inheriting-base-command pattern
     // [GenerateStreamId] on class, [StreamId] inherited from base, no IHasStreamId
     var command = new InheritedStreamIdCommand { Description = "test" };
     var dispatcher = _createDispatcher();

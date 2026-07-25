@@ -43,7 +43,7 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
   // (outbox/inbox/perspective). Each has a distinct exception type and a
   // distinct first in-app frame so they produce distinct fingerprints.
   private const string _outboxStack = """
-    System.InvalidOperationException: Could not open connection to 'jdx_bff' (publish path)
+    System.InvalidOperationException: Could not open connection to 'appservice_db' (publish path)
        at Whizbang.Data.EFCore.Postgres.Functions.OutboxClaim.LeaseAsync(Guid instanceId)
        at Whizbang.Core.Workers.OutboxDrainWorker.InvokeOutboxLifecycleStageAsync()
        at Whizbang.Core.Workers.OutboxDrainWorker.ExecuteAsync(CancellationToken ct)
@@ -59,7 +59,7 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
 
   private const string _perspectiveStack = """
     System.OperationCanceledException: The operation was canceled.
-       at a consumer.Perspectives.MyView.ApplyAsync(MessageEnvelope envelope)
+       at Consumer.Perspectives.MyView.ApplyAsync(MessageEnvelope envelope)
        at Whizbang.Core.Workers.PerspectiveWorker.ProcessEventAsync()
        at System.Threading.Tasks.ValueTask.GetResult()
     """;
@@ -152,7 +152,7 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
     var stored = new[] {
       (dlqOutbox, _outboxStack, "Whizbang.Data.EFCore.Postgres.Functions.OutboxClaim.LeaseAsync"),
       (dlqInbox, _inboxStack, "Whizbang.Data.EFCore.Postgres.Functions.InboxDispatch.ClaimAsync"),
-      (dlqPerspective, _perspectiveStack, "a consumer.Perspectives.MyView.ApplyAsync"),
+      (dlqPerspective, _perspectiveStack, "Consumer.Perspectives.MyView.ApplyAsync"),
     };
 
     foreach (var (dlqId, expectedFullText, signatureFrame) in stored) {

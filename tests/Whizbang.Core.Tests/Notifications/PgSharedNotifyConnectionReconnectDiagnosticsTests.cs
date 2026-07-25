@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Notifications;
 #pragma warning disable IDE1006
 
 /// <summary>
-/// Regression lock for the a consumer-deployment diagnostic: when
+/// Regression lock for a production-deployment diagnostic: when
 /// <see cref="PgSharedNotifyConnection"/>'s probe fails (or any other connect-time
 /// error), the disconnect warning MUST name the resolved connection-string source
 /// and key so operators can immediately see whether the bad connection came from
@@ -70,7 +70,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     var msg = logger.LastDisconnectMessage;
     await Assert.That(msg).IsNotNull();
     // The new format must name the source (DirectKey here) and the key
-    // ("test-db") so a consumer operators can match the symptom to the env var.
+    // ("test-db") so operators can match the symptom to the env var.
     await Assert.That(msg!).Contains("DirectKey");
     await Assert.That(msg!).Contains("test-db");
     // The operator-actionable hint must also be present so the log line stands
@@ -80,7 +80,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
 
   [Test]
   public async Task LogReconnect_PooledKeyFallback_NamesSourceAndHintsAddDirectAsync() {
-    // Mirrors the a consumer failure mode: ONLY the pooled "appservice-db" key is
+    // Mirrors a production failure mode: ONLY the pooled "gatewayservice-db" key is
     // configured, no "-direct". Resolver falls back to PooledKeyFallback → the
     // connection routes through pgbouncer → LISTEN/NOTIFY round-trip will fail.
     // Operator must see in the log that the source was PooledKeyFallback so the

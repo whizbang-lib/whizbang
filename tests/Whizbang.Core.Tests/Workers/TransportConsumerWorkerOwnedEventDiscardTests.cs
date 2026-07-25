@@ -35,8 +35,8 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel("OwnedEventDiscard")]
 public class TransportConsumerWorkerOwnedEventDiscardTests {
 
-  private const string THIS_SERVICE = "ChatService";
-  private const string OTHER_SERVICE = "BffService";
+  private const string THIS_SERVICE = "OrderService";
+  private const string OTHER_SERVICE = "GatewayService";
   private const string UNOWNED_EVENT_TYPE = "Some.Other.Namespace.SomeEvent, SomeAssembly";
 
   // Compute type names from actual types so they match EventTypeMatchingHelper normalization.
@@ -73,15 +73,15 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
   /// <summary>
   /// Owned event from ANOTHER service → still discard.
-  /// Even if the hop says "BffService", an event in ChatService's owned namespace can only
-  /// have been published by ChatService. The hop's service name is irrelevant for events.
+  /// Even if the hop says "GatewayService", an event in OrderService's owned namespace can only
+  /// have been published by OrderService. The hop's service name is irrelevant for events.
   /// </summary>
   [Test]
   public async Task OwnedEvent_FromOtherService_IsStillDiscardedAsync() {
     var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
     await worker.StartAsync();
 
-    // Event with hop claiming it came from BffService — still echo for owned events
+    // Event with hop claiming it came from GatewayService — still echo for owned events
     var envelope = _createEventEnvelope(sourceServiceName: OTHER_SERVICE);
 
     try {
@@ -124,7 +124,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
   /// <summary>
   /// Owned command from ANOTHER service → pass through (legitimate cross-service delivery).
-  /// When BffService sends a command to ChatService's owned namespace, it is NOT echo —
+  /// When GatewayService sends a command to OrderService's owned namespace, it is NOT echo —
   /// it's a legitimate cross-service command that must be processed.
   /// </summary>
   [Test]

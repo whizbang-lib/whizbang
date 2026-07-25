@@ -44,9 +44,9 @@ public class WhizbangCoreOptionsTests {
 
   /// <summary>
   /// Locks the v0.657 default: brand-new deployments REJECT producers writing
-  /// zero-UUID stream_ids at storage time. Reason: the production forensic confirmed
+  /// zero-UUID stream_ids at storage time. Reason: a production forensic investigation confirmed
   /// the silent-stuck pattern only exists because the producer's bug isn't surfaced
-  /// at write time — by the time anyone notices (~990 attempts later) the producer
+  /// at write time — by the time anyone notices (hundreds of attempts later) the producer
   /// has shipped a thousand more. Reject default = fail at the producer, not at the
   /// silent consumer.
   /// </summary>

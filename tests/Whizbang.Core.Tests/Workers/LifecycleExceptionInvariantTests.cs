@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// Slice 7 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis) — audit
-/// across all workers' lifecycle catches. production root cause was a single silent
+/// across all workers' lifecycle catches. The production root cause was a single silent
 /// catch in <see cref="OutboxDrainWorker"/>.<c>InvokeOutboxLifecycleStageAsync</c>
 /// — exception logged, no failure-channel enqueue, no wh_outbox.error population,
 /// no DLQ promotion. This slice audits the sibling workers to verify the same
@@ -156,7 +156,7 @@ public class LifecycleExceptionInvariantTests {
   // InboxDispatchWorker — Pre/Post Inbox stages (production audit hole)
   // ============================================================
   // Pre-Slice-7 audit, InboxDispatchWorker.cs:497 had the SAME silent-swallow
-  // shape as production's OutboxDrainWorker.cs bug — catch (Exception ex) {
+  // shape as the production OutboxDrainWorker.cs bug — catch (Exception ex) {
   // LogLifecycleError(...); } with no failure-channel enqueue. Inbox-side
   // lifecycle exceptions retried forever silently, wh_inbox.error stayed empty.
   // Slice 7's GREEN mirrors Slice 1's fix to the inbox path.

@@ -78,8 +78,8 @@ public enum MessageFailureReason {
   /// from actual transport / serialization / business-logic failures.
   /// </summary>
   /// <remarks>
-  /// Introduced in Slice 5a of release/v0.647.0-alpha.1 after the production
-  /// a consumer BFF stuck-row pattern was traced to a consumer's
+  /// Introduced in Slice 5a of release/v0.647.0-alpha.1 after a consumer's
+  /// production stuck-row pattern was traced to the consumer's
   /// <c>IMessageSecurityContextProvider</c> implementation hanging
   /// indefinitely on a test-pattern tenant id. See
   /// operations/dead-letter-queue/internal-dlq doc page.
@@ -95,7 +95,7 @@ public enum MessageFailureReason {
   /// grep-able code distinct from generic transport / serialization failures.
   /// </summary>
   /// <remarks>
-  /// Introduced in v0.657 after the production silent-stuck forensic.
+  /// Introduced in v0.657 after a production silent-stuck forensic investigation.
   /// See operations/configuration/empty-stream-id-policy.
   /// </remarks>
   EmptyStreamId = 11,

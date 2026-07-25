@@ -8,9 +8,9 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The motivating measurement: under steady consume load on production
-/// (2026-06-10, alpha 0.674.1-alpha.32), <c>DISCARD ALL</c> accounted for
-/// <b>22.5 % of production DB time</b> — every short worker transaction returning
+/// The motivating measurement: under steady consume load in production
+/// (alpha 0.674.1-alpha.32), <c>DISCARD ALL</c> accounted for
+/// <b>22.5 % of DB time</b> — every short worker transaction returning
 /// to the pgbouncer pool incurs a session-reset round-trip. Pinning the
 /// worker connections eliminates that overhead for the loops that run them.
 /// </para>
@@ -53,8 +53,8 @@ public sealed class WhizbangPinnedPoolOptions {
   /// </remarks>
   /// <example>
   /// <code>
-  /// ConnectionStrings__appservice-db-direct = "Host=...;Port=5432;..."
-  /// Whizbang__Workers__PinnedPool__ConnectionStringName = "appservice-db-direct"
+  /// ConnectionStrings__myservice-db-direct = "Host=...;Port=5432;..."
+  /// Whizbang__Workers__PinnedPool__ConnectionStringName = "myservice-db-direct"
   /// </code>
   /// </example>
   public string? ConnectionStringName { get; set; }

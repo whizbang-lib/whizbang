@@ -90,7 +90,7 @@
                     "Properties": {
                       "FilterType": "Sql",
                       "SqlFilter": {
-                        "SqlExpression": "sys.Label LIKE 'a consumer.contracts.chat.%'"
+                        "SqlExpression": "sys.Label LIKE 'app.contracts.chat.%'"
                       }
                     }
                   }

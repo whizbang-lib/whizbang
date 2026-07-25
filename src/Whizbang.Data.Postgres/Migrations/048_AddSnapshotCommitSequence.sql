@@ -3,7 +3,7 @@
 -- Description: Slice 26.11 — adds snapshot_commit_sequence + supporting partial index to
 --              wh_perspective_snapshots so rewinds can locate snapshots by commit_sequence
 --              (deterministic across live + replay paths). Idempotent ALTER + CREATE INDEX
---              for both fresh DBs and existing a consumer databases whose wh_perspective_snapshots
+--              for both fresh DBs and existing consumer databases whose wh_perspective_snapshots
 --              was created before slice 26.
 -- Dependencies: wh_perspective_snapshots table (created via PerspectiveSnapshotsSchema
 --               by the generated schema-init code at startup).

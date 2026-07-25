@@ -31,25 +31,25 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task TranslatePattern_HashWildcard_TranslatesToPercentAsync() {
     // Arrange - RabbitMQ-style pattern with #
-    const string rabbitPattern = "a consumer.contracts.chat.#";
+    const string rabbitPattern = "app.contracts.chat.#";
 
     // Act
     var sqlPattern = _translateToSqlPattern(rabbitPattern);
 
     // Assert
-    await Assert.That(sqlPattern).IsEqualTo("a consumer.contracts.chat.%");
+    await Assert.That(sqlPattern).IsEqualTo("app.contracts.chat.%");
   }
 
   [Test]
   public async Task TranslatePattern_AsteriskWildcard_TranslatesToPercentAsync() {
     // Arrange - RabbitMQ-style pattern with *
-    const string rabbitPattern = "a consumer.contracts.chat.*";
+    const string rabbitPattern = "app.contracts.chat.*";
 
     // Act
     var sqlPattern = _translateToSqlPattern(rabbitPattern);
 
     // Assert
-    await Assert.That(sqlPattern).IsEqualTo("a consumer.contracts.chat.%");
+    await Assert.That(sqlPattern).IsEqualTo("app.contracts.chat.%");
   }
 
   [Test]
@@ -69,8 +69,8 @@ public class SqlFilterPatternMatchingTests {
     // Arrange - Multiple routing patterns
     var patterns = new[] {
       "whizbang.core.commands.system.#",
-      "a consumer.contracts.chat.#",
-      "a consumer.contracts.facts.#"
+      "app.contracts.chat.#",
+      "app.contracts.facts.#"
     };
 
     // Act - Build SQL expression
@@ -79,8 +79,8 @@ public class SqlFilterPatternMatchingTests {
     // Assert
     await Assert.That(sqlExpression).IsEqualTo(
       "[Subject] LIKE 'whizbang.core.commands.system.%' OR " +
-      "[Subject] LIKE 'a consumer.contracts.chat.%' OR " +
-      "[Subject] LIKE 'a consumer.contracts.facts.%'"
+      "[Subject] LIKE 'app.contracts.chat.%' OR " +
+      "[Subject] LIKE 'app.contracts.facts.%'"
     );
   }
 
@@ -93,10 +93,10 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_CommandRoutingKey_MatchesPatternAsync() {
     // Arrange
-    // TransportPublishStrategy generates: a consumer.contracts.chat.activitytrackedcommand
-    // SqlFilter pattern is: [Subject] LIKE 'a consumer.contracts.chat.%'
-    const string subject = "a consumer.contracts.chat.activitytrackedcommand";
-    const string pattern = "a consumer.contracts.chat.%";
+    // TransportPublishStrategy generates: app.contracts.chat.activitytrackedcommand
+    // SqlFilter pattern is: [Subject] LIKE 'app.contracts.chat.%'
+    const string subject = "app.contracts.chat.activitytrackedcommand";
+    const string pattern = "app.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -109,10 +109,10 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_NestedClassCommand_MatchesPatternAsync() {
     // Arrange
-    // TransportPublishStrategy generates: a consumer.contracts.chat.chatconversationscontracts+createcommand
-    // SqlFilter pattern is: [Subject] LIKE 'a consumer.contracts.chat.%'
-    const string subject = "a consumer.contracts.chat.chatconversationscontracts+createcommand";
-    const string pattern = "a consumer.contracts.chat.%";
+    // TransportPublishStrategy generates: app.contracts.chat.chatconversationscontracts+createcommand
+    // SqlFilter pattern is: [Subject] LIKE 'app.contracts.chat.%'
+    const string subject = "app.contracts.chat.chatconversationscontracts+createcommand";
+    const string pattern = "app.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -141,8 +141,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_DifferentNamespace_DoesNotMatchAsync() {
     // Arrange - Chat pattern should NOT match auth namespace
-    const string subject = "a consumer.contracts.auth.authcontracts+createtenantcommand";
-    const string pattern = "a consumer.contracts.chat.%";
+    const string subject = "app.contracts.auth.authcontracts+createtenantcommand";
+    const string pattern = "app.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -156,7 +156,7 @@ public class SqlFilterPatternMatchingTests {
   public async Task SqlLikeMatch_DefaultSubject_DoesNotMatchNamespacePatternAsync() {
     // Arrange - This was the bug! Without RoutingKey, Subject defaulted to "message"
     const string subject = "message"; // Default when RoutingKey is null
-    const string pattern = "a consumer.contracts.chat.%";
+    const string pattern = "app.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -169,11 +169,11 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_MultiplePatterns_MatchesAnyAsync() {
     // Arrange - Service subscribed to multiple namespaces
-    const string subject = "a consumer.contracts.facts.factcreatedevent";
+    const string subject = "app.contracts.facts.factcreatedevent";
     var patterns = new[] {
       "whizbang.core.commands.system.%",
-      "a consumer.contracts.chat.%",
-      "a consumer.contracts.facts.%"
+      "app.contracts.chat.%",
+      "app.contracts.facts.%"
     };
 
     // Act
@@ -201,8 +201,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_CaseInsensitive_MatchesAsync() {
     // Arrange - Routing keys are lowercased by TransportPublishStrategy
-    const string subject = "a consumer.contracts.chat.createcommand";
-    const string pattern = "a consumer.contracts.chat.%";
+    const string subject = "app.contracts.chat.createcommand";
+    const string pattern = "app.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -222,20 +222,20 @@ public class SqlFilterPatternMatchingTests {
     // Arrange - Chat service subscribes to these patterns
     var chatServicePatterns = new[] {
       "whizbang.core.commands.system.#",
-      "a consumer.contracts.chat.#"
+      "app.contracts.chat.#"
     };
 
     // Commands that should be received by Chat service
     var chatCommands = new[] {
-      "a consumer.contracts.chat.activitytrackedcommand",
-      "a consumer.contracts.chat.chatconversationscontracts+createcommand",
+      "app.contracts.chat.activitytrackedcommand",
+      "app.contracts.chat.chatconversationscontracts+createcommand",
       "whizbang.core.commands.system.healthcheckcommand"
     };
 
     // Commands that should NOT be received by Chat service
     var otherCommands = new[] {
-      "a consumer.contracts.auth.authcontracts+createtenantcommand",
-      "a consumer.contracts.bff.createpageviewcommand",
+      "app.contracts.auth.authcontracts+createtenantcommand",
+      "app.contracts.bff.createpageviewcommand",
       "message" // Default when RoutingKey is null
     };
 
@@ -261,21 +261,21 @@ public class SqlFilterPatternMatchingTests {
     // Arrange - BFF service subscribes to these patterns
     var bffServicePatterns = new[] {
       "whizbang.core.commands.system.#",
-      "a consumer.contracts.bff.#",
-      "a consumer.contracts.systemseeding.#"
+      "app.contracts.bff.#",
+      "app.contracts.systemseeding.#"
     };
 
     // Commands that should be received by BFF service
     var bffCommands = new[] {
-      "a consumer.contracts.bff.createpageviewcommand",
-      "a consumer.contracts.systemseeding.seedcompletecommand",
+      "app.contracts.bff.createpageviewcommand",
+      "app.contracts.systemseeding.seedcompletecommand",
       "whizbang.core.commands.system.healthcheckcommand"
     };
 
     // Commands that should NOT be received by BFF service
     var otherCommands = new[] {
-      "a consumer.contracts.chat.activitytrackedcommand",
-      "a consumer.contracts.auth.authcontracts+createtenantcommand"
+      "app.contracts.chat.activitytrackedcommand",
+      "app.contracts.auth.authcontracts+createtenantcommand"
     };
 
     // Act & Assert

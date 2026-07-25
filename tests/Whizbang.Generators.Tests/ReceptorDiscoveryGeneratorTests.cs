@@ -2226,7 +2226,7 @@ public class EventsReceptor : IReceptor<GetEventsCommand, List<MyEvent>> {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfIEvent_UsesPatternMatchingForCascadeAsync() {
     // Arrange - Tests that List<IEvent> uses 'is IEvent' pattern matching instead of 'typeof(IEvent)'
-    // This is critical for the a consumer application scenario where (List<IEvent>, FailedEvent?) returns concrete types
+    // This is critical for the consumer scenario where (List<IEvent>, FailedEvent?) returns concrete types
     // At runtime, the message is typeof(ConcreteEvent), not typeof(IEvent), so exact matching fails
     const string source = @"
 using System.Collections.Generic;

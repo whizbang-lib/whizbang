@@ -22,8 +22,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// invariant that <c>SecurityContextHelper.EstablishFullContextAsync</c> calls
 /// inside the worker publish/dispatch paths are wrapped in a per-call timeout.
 ///
-/// <para>production root cause (Jun-2026): a stuck <c>RemoveShellUserCommand</c>
-/// outbox row spun for 438+ retries with no log, no failure record, no DLQ
+/// <para>Production root cause: a stuck <c>RemoveUserCommand</c>
+/// outbox row spun for hundreds of retries with no log, no failure record, no DLQ
 /// promotion, no ASB traffic. Root cause: a consumer's
 /// <see cref="IMessageSecurityContextProvider"/> implementation hung
 /// indefinitely on the envelope's test-pattern tenant id
@@ -283,7 +283,7 @@ public class SecurityContextTimeoutTests {
     await Assert.That(captured.MessageId).IsEqualTo(row.MessageId)
       .Because("The failing row's id MUST be on the failure record so process_outbox_failures targets the correct wh_outbox row.");
     await Assert.That(captured.Reason).IsEqualTo(MessageFailureReason.SecurityContextEstablishmentFailure)
-      .Because("production-class hangs at EstablishFullContextAsync are operationally distinct from transport faults; the dedicated reason lets dashboards / DLQ recovery policies / operators distinguish them.");
+      .Because("Production-class hangs at EstablishFullContextAsync are operationally distinct from transport faults; the dedicated reason lets dashboards / DLQ recovery policies / operators distinguish them.");
     await Assert.That(captured.Error).Contains("EstablishFullContextAsync timed out")
       .Because("The error text MUST describe the hang site so the wh_outbox.error column (and later wh_dead_letters.error_text + fingerprint) carries useful triage information for operators.");
   }

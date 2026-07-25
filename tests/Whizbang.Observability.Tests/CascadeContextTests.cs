@@ -95,7 +95,7 @@ public class CascadeContextTests {
   // ========================================
   // These directly guard the hop-first PRECEDENCE — "source hop wins over a DIFFERENT present ambient" — that
   // survives detached/worker/collective boundaries. The boundary integration tests clear ambient, so ONLY these
-  // catch a regression from hop-first back to ambient-first (which would silently reappear the production bug).
+  // catch a regression from hop-first back to ambient-first (which would silently reappear a bug seen in production).
 
   [Test]
   [NotInParallel("AmbientInitiatingContext")]

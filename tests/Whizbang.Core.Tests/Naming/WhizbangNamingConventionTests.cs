@@ -17,10 +17,10 @@ namespace Whizbang.Core.Tests.Naming;
 /// each ran their own copy of the convention. The runtime copy looked at a
 /// different input than the generator copy in one specific call shape
 /// (<c>.WithEFCore&lt;TDbContext&gt;()</c> with no explicit name) — so the EF
-/// wiring landed at <c>"appservice-db"</c> (from the
-/// <c>[WhizbangDbContext(ConnectionStringName="appservice-db")]</c> attribute)
-/// while notifications landed at <c>"bff-db"</c> (from the runtime falling
-/// back to the class-name derivation). a consumer silently fell back to the pgbouncer
+/// wiring landed at <c>"gatewayservice-db"</c> (from the
+/// <c>[WhizbangDbContext(ConnectionStringName="gatewayservice-db")]</c> attribute)
+/// while notifications landed at <c>"gateway-db"</c> (from the runtime falling
+/// back to the class-name derivation). A consumer silently fell back to the pgbouncer
 /// connection and LISTEN/NOTIFY died with self-test probe failures every 5
 /// minutes.
 /// </summary>
@@ -29,9 +29,9 @@ public class WhizbangNamingConventionTests {
 
   [Test]
   public async Task DeriveConnectionStringName_StripsDbContextSuffix_LowercasesAndAppendsDashDbAsync() {
-    // Canonical example used in docs + a consumer production.
-    await Assert.That(WhizbangNamingConvention.DeriveConnectionStringName("BffServiceDbContext"))
-      .IsEqualTo("appservice-db");
+    // Canonical example used in docs + production.
+    await Assert.That(WhizbangNamingConvention.DeriveConnectionStringName("GatewayServiceDbContext"))
+      .IsEqualTo("gatewayservice-db");
   }
 
   [Test]
@@ -55,15 +55,15 @@ public class WhizbangNamingConventionTests {
   }
 
   [Test]
-  public async Task DeriveConnectionStringName_BffDbContext_ReturnsBffDashDb_NotBffserviceDashDbAsync() {
-    // Explicit regression test for the a consumer scenario: when the DbContext is
-    // named "BffDbContext" but the attribute overrides to "appservice-db",
+  public async Task DeriveConnectionStringName_GatewayDbContext_ReturnsGatewayDashDb_NotGatewayserviceDashDbAsync() {
+    // Explicit regression test for a consumer's scenario: when the DbContext is
+    // named "GatewayDbContext" but the attribute overrides to "gatewayservice-db",
     // ONLY this central helper's convention applies — it can't second-guess
     // the attribute. The bug fix is that runtime call sites no longer use
     // this derivation when the [WhizbangDbContext] attribute provides a name;
     // the generator-emitted PostConfigure carries that explicit name through.
-    await Assert.That(WhizbangNamingConvention.DeriveConnectionStringName("BffDbContext"))
-      .IsEqualTo("bff-db");
+    await Assert.That(WhizbangNamingConvention.DeriveConnectionStringName("GatewayDbContext"))
+      .IsEqualTo("gateway-db");
   }
 
   [Test]

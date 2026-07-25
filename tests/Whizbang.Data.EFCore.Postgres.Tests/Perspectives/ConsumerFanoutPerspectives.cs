@@ -6,10 +6,10 @@ using Whizbang.Core.Perspectives;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
 /// <summary>
-/// Reproduction perspectives for the a consumer 2026-05-03 UI loader bug.
+/// Reproduction perspectives for a consumer's UI loader bug, observed in production.
 /// One event (<see cref="ConsumerFanoutEvent"/>) fans out to TWO perspectives on the
-/// SAME stream: a scalar model (mirrors OrderName) and a list-property model
-/// (mirrors OrderWorkingConditions). The bug was that only the scalar
+/// SAME stream: a scalar model (mirrors OrderModel) and a list-property model
+/// (mirrors OrderLines). The bug was that only the scalar
 /// perspective's row appeared in Postgres after the event. These perspectives
 /// + their generated runners power
 /// <c>MultiPerspectiveConsumerFanoutEndToEndTests</c>.
@@ -21,14 +21,14 @@ public record ConsumerFanoutEvent : IEvent {
   public required List<string> ConditionLabels { get; init; }
 }
 
-/// <summary>Scalar model — mirrors OrderName.</summary>
+/// <summary>Scalar model — mirrors OrderModel.</summary>
 public class ConsumerScalarModel {
   [StreamId]
   public Guid Id { get; init; }
   public string Title { get; init; } = "";
 }
 
-/// <summary>List-property model — mirrors OrderWorkingConditions, the a consumer-failing one.</summary>
+/// <summary>List-property model — mirrors OrderLines, the failing one in production.</summary>
 public class ConsumerListModel {
   [StreamId]
   public Guid Id { get; init; }

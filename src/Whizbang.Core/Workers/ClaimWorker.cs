@@ -338,7 +338,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     // turned out to be unrecoverable in production: a drain task that hung past its try/finally
     // (or crashed before MarkDrained ran, or got cancelled mid-`_drainStreamInnerAsync`) left
     // the in-memory flag stuck forever, and ClaimWorker silently discarded every subsequent
-    // claim_work emit for that stream. Observed on a consumer BFF — 3,545 inbox rows leased to a
+    // claim_work emit for that stream. Observed in production — thousands of inbox rows leased to a
     // healthy instance with zero drain progress; only restart unstuck them. The reconciliation
     // belt is in the SQL: claim_work's eligible_* CTEs filter `instance_id = me AND lease_expiry > NOW()
     // AND processed_at IS NULL`, so they re-emit every leased row on every poll. The drainer's
@@ -503,9 +503,9 @@ public sealed class ClaimWorkerOptions {
   /// <para>
   /// Default <c>5_000</c> (5 s) as of v0.684. v0.502 introduced 30_000 to eliminate the
   /// ~4 calls/sec/pod safety-net cost; the v0.683 alpha dropped it to 1_000 to fix a
-  /// 30 s+ cold-start latency observed on the 2026-06-11 production bulk-job import.
+  /// 30 s+ cold-start latency observed on a production bulk-job import.
   /// 1_000 multiplied claim_work call count ~10× on the import drain path and combined
-  /// with the v0.683 emit_chain guard to push claim_work back to 19 % of production DB time
+  /// with the v0.683 emit_chain guard to push claim_work back to 19 % of DB time in production
   /// (the original problem). 5_000 is the compromise: cold-start latency stays under
   /// 5 s, but workers don't poll claim_work every second on a steady-state DB.
   /// </para>

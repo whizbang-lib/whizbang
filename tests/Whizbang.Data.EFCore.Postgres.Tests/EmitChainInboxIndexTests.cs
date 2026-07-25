@@ -9,8 +9,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// v0.685 lock-in — <c>_emit_event_store_chain_for_inbox</c>'s per-row
 /// <c>NOT EXISTS in wh_event_store</c> scan is the dominant cost on the
-/// work-pump under heavy inbox load (production 2026-06-11 PM: 137 ms mean per
-/// call, ~11 % of production DB time). The scan walks every wh_inbox row owned
+/// work-pump under heavy inbox load (a production PM measurement: 137 ms mean per
+/// call, ~11 % of its DB time). The scan walks every wh_inbox row owned
 /// by the instance that's an unprocessed event with a stream_id and
 /// PK-looks-up each against the ~600 k-row wh_event_store. Without a
 /// dedicated partial index, PG plans a sequential scan + nested-loop
@@ -39,7 +39,7 @@ public class EmitChainInboxIndexTests : EFCoreTestBase {
     var exists = await _indexExistsAsync(npgsql, "idx_inbox_emit_chain");
 
     await Assert.That(exists).IsTrue()
-      .Because("v0.685 migration 057 MUST create idx_inbox_emit_chain — the partial index that backs _emit_event_store_chain_for_inbox's outer scan. production 2026-06-11 PM measured the unindexed scan at 137 ms mean (~11 % of production DB time) once wh_event_store grew past ~600 k rows and the inbox handler-delay backlog exceeded ~10 k rows.");
+      .Because("v0.685 migration 057 MUST create idx_inbox_emit_chain — the partial index that backs _emit_event_store_chain_for_inbox's outer scan. A production PM measurement showed the unindexed scan at 137 ms mean (~11 % of its DB time) once wh_event_store grew past ~600 k rows and the inbox handler-delay backlog exceeded ~10 k rows.");
   }
 
   [Test]

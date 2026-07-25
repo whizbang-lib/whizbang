@@ -81,7 +81,7 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task ScopeFilter_NotEqual_CompilesToInequalityAsync() {
-    // a consumer cohort handlers use `!=` (e.g. r.Data.Status != "Archived"); the compiler must emit SQL `<>`.
+    // A consumer's cohort handlers use `!=` (e.g. r.Data.Status != "Archived"); the compiler must emit SQL `<>`.
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Data.Status != "Archived";
     var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
     await Assert.That(result.SqlFragment).IsEqualTo("data->>'Status' <> @where_status");
@@ -90,7 +90,7 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task ScopeFilter_NotOnAny_CompilesToNotExistsAsync() {
-    // a consumer overlay-apply cohorts use `!q.Of<Sibling>().Any(...)` (NOT-in-cohort) → NOT EXISTS.
+    // A consumer's overlay-apply cohorts use `!q.Of<Sibling>().Any(...)` (NOT-in-cohort) → NOT EXISTS.
     var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_statusModel)] = "wh_per_status" });
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       r => !q.Of<_statusModel>().Any(s => s.Id == r.Id && s.Data.Status == "Archived");
@@ -165,7 +165,7 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task ScopeFilter_EnumArrayContains_CompilesToInWithEnumNamesAsync() {
-    // Mirrors the a consumer OrderTemplateCollectiveHandler: a STATIC enum-array field `.Contains(enum property)`
+    // Mirrors a consumer's collective handler: a STATIC enum-array field `.Contains(enum property)`
     // inside a cross-perspective Any. string[] Contains was covered; enum[] Contains is a different shape/value.
     var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_enumStatusModel)] = "wh_per_status" });
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
@@ -178,7 +178,7 @@ public class DapperCollectiveUnitTests {
       "EXISTS (SELECT 1 FROM wh_per_status s WHERE (s.id = wh_per_job.id AND s.data->>'Status' IN (@where_status_0, @where_status_1, @where_status_2)))");
     // Enum values serialize to their UNDERLYING INT (Draft=0, Approved=1, Published=2) — EF's
     // ComplexProperty().ToJson() stores a plain enum as its number, so `data->>'Status'` is "0"/"1"/"2", NOT
-    // the name. Compiling to the name would match zero rows (the production collective template bug).
+    // the name. Compiling to the name would match zero rows (a production collective template bug).
     await Assert.That(result.Parameters["where_status_0"]).IsEqualTo("0");
     await Assert.That(result.Parameters["where_status_1"]).IsEqualTo("1");
     await Assert.That(result.Parameters["where_status_2"]).IsEqualTo("2");

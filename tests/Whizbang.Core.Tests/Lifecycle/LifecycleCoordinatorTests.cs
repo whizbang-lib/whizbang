@@ -877,7 +877,7 @@ public class LifecycleCoordinatorTests {
   }
 
   /// <summary>
-  /// <para>RED TEST: Reproduces the a consumer application notification bug.</para>
+  /// <para>RED TEST: Reproduces the consumer notification bug.</para>
   ///
   /// <para>In the PerspectiveWorker, signal replay sends ALL perspective completions from the current
   /// batch to ALL events in the batch. So an event expecting only [ActiveTenantProjection] also
@@ -905,7 +905,7 @@ public class LifecycleCoordinatorTests {
     // Assert — all EXPECTED perspectives are complete, extra signals should be ignored
     await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue()
       .Because("Extra signals from unrelated perspectives in the same batch must not " +
-               "prevent WhenAll completion. This is the root cause of a consumer application notification " +
+               "prevent WhenAll completion. This is the root cause of consumer notification " +
                "hooks never firing at PostAllPerspectivesDetached.");
   }
 

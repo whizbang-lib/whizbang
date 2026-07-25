@@ -23,7 +23,7 @@ BEGIN
   -- SELECT to fetch stream_id/perspective_name then a DELETE/UPDATE) into a
   -- single set-based statement with RETURNING. For a batch of N completions,
   -- the loop pattern issued 2N round trips through the planner; the bulk
-  -- pattern is one. production during-import data (PR #252 cycle) showed this
+  -- pattern is one. Production during-import data (PR #252 cycle) showed this
   -- sub-function as one of the structural contributors to
   -- CompletePerspectiveAsync avg 122 ms.
   --

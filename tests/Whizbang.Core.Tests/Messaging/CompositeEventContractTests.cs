@@ -23,7 +23,7 @@ public class CompositeEventContractTests {
     // surface as ordinary events — that only works because the interface
     // root is IMessage. A composite that did NOT extend IMessage would
     // need a parallel dispatch surface.
-    ICompositeEvent composite = new _bulkJobImportComposite([]);
+    ICompositeEvent composite = new _bulkImportComposite([]);
 
     await Assert.That(composite is IMessage).IsTrue()
       .Because("ICompositeEvent : IMessage — the dispatcher / outbox / transport ALL constrain on IMessage. The composite-events feature reuses the existing pipeline; it does not introduce a parallel one.");
@@ -35,10 +35,10 @@ public class CompositeEventContractTests {
     // intentionally raising it MUST override; accidental composites
     // that yield millions of inner events get caught at the cap rather
     // than corrupting downstream batched appends.
-    ICompositeEvent composite = new _bulkJobImportComposite([]);
+    ICompositeEvent composite = new _bulkImportComposite([]);
 
     await Assert.That(composite.MaxInnerEventsAllowed).IsEqualTo(10_000)
-      .Because("Default cap of 10K matches the W3 plan's '5000-job bulk import' upper end with 2x headroom — producers raising past 10K should override the property and document why.");
+      .Because("Default cap of 10K matches the W3 plan's '5,000-record bulk import' upper end with 2x headroom — producers raising past 10K should override the property and document why.");
   }
 
   [Test]
@@ -58,18 +58,18 @@ public class CompositeEventContractTests {
     // The order is part of the contract: per resolved design (W3 notes
     // 2026-06-09), inner events are sequential within a composite.
     var inner = new IMessage[] {
-      new _jobCreatedEvent("J-001"),
-      new _jobCreatedEvent("J-002"),
-      new _jobCreatedEvent("J-003"),
+      new _orderCreatedEvent("O-001"),
+      new _orderCreatedEvent("O-002"),
+      new _orderCreatedEvent("O-003"),
     };
-    ICompositeEvent composite = new _bulkJobImportComposite(inner);
+    ICompositeEvent composite = new _bulkImportComposite(inner);
 
     var collected = composite.InnerEvents.ToList();
 
     await Assert.That(collected.Count).IsEqualTo(3);
-    await Assert.That(((_jobCreatedEvent)collected[0]).JobId).IsEqualTo("J-001");
-    await Assert.That(((_jobCreatedEvent)collected[1]).JobId).IsEqualTo("J-002");
-    await Assert.That(((_jobCreatedEvent)collected[2]).JobId).IsEqualTo("J-003");
+    await Assert.That(((_orderCreatedEvent)collected[0]).OrderId).IsEqualTo("O-001");
+    await Assert.That(((_orderCreatedEvent)collected[1]).OrderId).IsEqualTo("O-002");
+    await Assert.That(((_orderCreatedEvent)collected[2]).OrderId).IsEqualTo("O-003");
   }
 
   [Test]
@@ -91,8 +91,8 @@ public class CompositeEventContractTests {
   // Test composites
   // ============================================================
 
-  /// <summary>Bulk job import composite — represents a a consumer bulk-import operation that emits N JobCreatedEvents.</summary>
-  private sealed class _bulkJobImportComposite(IReadOnlyList<IMessage> inner) : ICompositeEvent {
+  /// <summary>Bulk import composite — represents a consumer's bulk-import operation that emits N OrderCreatedEvents.</summary>
+  private sealed class _bulkImportComposite(IReadOnlyList<IMessage> inner) : ICompositeEvent {
     public IEnumerable<IMessage> InnerEvents => inner;
   }
 
@@ -112,11 +112,11 @@ public class CompositeEventContractTests {
     public IEnumerable<IMessage> InnerEvents {
       get {
         for (var i = 0; i < _count; i++) {
-          yield return new _jobCreatedEvent($"L-{i:D3}");
+          yield return new _orderCreatedEvent($"L-{i:D3}");
         }
       }
     }
   }
 
-  private sealed record _jobCreatedEvent(string JobId) : IEvent;
+  private sealed record _orderCreatedEvent(string OrderId) : IEvent;
 }

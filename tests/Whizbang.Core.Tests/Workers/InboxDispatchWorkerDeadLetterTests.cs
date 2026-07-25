@@ -52,9 +52,9 @@ public class InboxDispatchWorkerDeadLetterTests {
   public async Task CustomGenerationProvider_OverridesDefaultWhenRegisteredAsync() {
     // Operators register their own IGenerationProvider via DI to combine
     // Whizbang+service+branch. Verify the abstraction supports it.
-    IGenerationProvider provider = new CustomGen("0.502.0-alpha.1+a consumer-1.42.0+ag-grid-license");
+    IGenerationProvider provider = new CustomGen("0.502.0-alpha.1+consumer-1.42.0+ag-grid-license");
     await Assert.That(provider.GetGeneration())
-      .IsEqualTo("0.502.0-alpha.1+a consumer-1.42.0+ag-grid-license");
+      .IsEqualTo("0.502.0-alpha.1+consumer-1.42.0+ag-grid-license");
   }
 
   private sealed class CustomGen(string value) : IGenerationProvider {

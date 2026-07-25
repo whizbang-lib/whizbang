@@ -440,7 +440,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   /// <c>process_perspective_event_completions</c>. The current PL/pgSQL FOR-loop
   /// implementation does TWO statements per completion (a SELECT to fetch
   /// stream_id/perspective_name, then a DELETE). For N completions that's 2N
-  /// round trips through the planner. production during-import gate-hold data
+  /// round trips through the planner. Production during-import gate-hold data
   /// (PR #252 cycle) showed <c>CompletePerspectiveAsync</c> at avg 122 ms /
   /// max 11.7 s — process_perspective_event_completions is one of three
   /// sub-calls inside <c>complete_perspective</c>, and the loop-per-row pattern

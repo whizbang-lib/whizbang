@@ -10,7 +10,7 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <remarks>
 /// See <see cref="Whizbang.Core.Configuration.EmptyStreamIdPolicy"/> for the
-/// motivation (production forensic, Jun 2026).
+/// motivation (a production forensic investigation).
 /// </remarks>
 /// <docs>operations/configuration/empty-stream-id-policy</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",

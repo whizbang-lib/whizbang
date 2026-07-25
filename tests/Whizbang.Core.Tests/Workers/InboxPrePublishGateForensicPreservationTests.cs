@@ -25,8 +25,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// <c>errorText</c> when present, falling back to the synthetic meta-message
 /// only when the column is NULL.
 ///
-/// <para>production Jun 2026 forensic gap: all 38,251 inbox-source DLQ rows on the
-/// a consumer BFF database carried the synthetic
+/// <para>A production forensic investigation found a gap: all inbox-source DLQ rows on
+/// a consumer's service database carried the synthetic
 /// <c>"InboxDispatchWorker dead-lettered: attempts=N > max=10"</c>
 /// meta-message, collapsing under a single
 /// <c>error_fingerprint</c> (<c>7a66c4fc2d9ddd71</c>) regardless of underlying
@@ -152,15 +152,15 @@ public class InboxPrePublishGateForensicPreservationTests {
   /// carries a real exception stack. Asserts the pre-publish DLQ gate fires
   /// MoveAsync with the work's actual error as errorText — NOT the synthetic
   /// meta-message "InboxDispatchWorker dead-lettered: attempts=N > max=M".
-  /// Pre-fix, the gate always used the meta-message, which collapsed production's
-  /// 38k+ inbox-source DLQ rows to a single fingerprint cluster.
+  /// Pre-fix, the gate always used the meta-message, which collapsed a
+  /// production consumer's large volume of inbox-source DLQ rows to a single fingerprint cluster.
   /// </summary>
   [Test]
   public async Task PrePublishGate_WorkHasRealError_PromotesUsingWorkErrorNotMetaMessageAsync() {
     const string realStack = """
       System.InvalidOperationException: Receptor 'CreateProductHandler' threw on duplicate product key
-         at a consumer.JobService.Features.JobFeature.JobDuplicateGuard.AssertUnique(Guid productId)
-         at a consumer.JobService.Features.JobFeature.Receptors.CreateProductHandler.HandleAsync()
+         at Consumer.JobService.Features.JobFeature.JobDuplicateGuard.AssertUnique(Guid productId)
+         at Consumer.JobService.Features.JobFeature.Receptors.CreateProductHandler.HandleAsync()
       """;
 
     var work = _work(attempts: 11, rowError: realStack);
@@ -178,7 +178,7 @@ public class InboxPrePublishGateForensicPreservationTests {
     await Assert.That(move.FailureReason).IsEqualTo(MessageFailureReason.MaxAttemptsExceeded)
       .Because("The gate fires specifically on MaxInboxAttempts breach — the reason code must reflect that, not the underlying receptor exception class.");
     await Assert.That(move.ErrorText).IsEqualTo(realStack)
-      .Because("v0.651 inbox invariant: pre-publish gate MUST use the work's actual error column verbatim — NOT the meta-message. The 38k+ production DLQ rows all collapsed to one fingerprint because the meta-message was used; using the real stack restores forensic diversity.");
+      .Because("v0.651 inbox invariant: pre-publish gate MUST use the work's actual error column verbatim — NOT the meta-message. The production DLQ rows all collapsed to one fingerprint because the meta-message was used; using the real stack restores forensic diversity.");
     await Assert.That(move.ErrorText).DoesNotContain("dead-lettered: attempts=")
       .Because("Explicit anti-assertion: the meta-message text must NOT appear in errorText when work.Error is present.");
   }
