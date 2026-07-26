@@ -10,9 +10,9 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <remarks>
 /// <para>
-/// a consumer production + local bulk-import of 350 jobs landed at 346/350
-/// <c>CompletedItems</c> on the BulkImportOrchestration saga — four lost
-/// increments correlated exactly with four
+/// A production bulk import of several hundred records landed a handful short
+/// of the full count on <c>CompletedItems</c> for a bulk-import orchestration
+/// saga — the lost increments correlated exactly with an equal number of
 /// <c>PerspectiveRewindStarted</c>/<c>Completed</c> pairs during the burst.
 /// </para>
 /// <para>

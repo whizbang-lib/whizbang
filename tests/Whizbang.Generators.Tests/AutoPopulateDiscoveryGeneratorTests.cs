@@ -876,7 +876,7 @@ public class AutoPopulateDiscoveryGeneratorTests {
 
   /// <summary>
   /// Class messages with settable auto-populate properties must ALSO get a populator (mutated in place),
-  /// not just records. a consumer events are all classes deriving from a base class, so without this their
+  /// not just records. A consumer's events may all be classes deriving from a base class, so without this their
   /// [PopulateFrom*] properties (CorrelationId, UserId, ...) are silently never set on the object.
   /// </summary>
   [Test]
@@ -970,7 +970,7 @@ public class AutoPopulateDiscoveryGeneratorTests {
   }
 
   /// <summary>
-  /// A base class that declares auto-populate properties plus several classes that inherit them (a consumer's shape:
+  /// A base class that declares auto-populate properties plus several classes that inherit them (a real-world shape:
   /// one <c>BaseConsumerEvent</c>, many derived events). The populator must NOT emit a case for every derived type
   /// (a base-typed case ahead of derived cases makes them unreachable — CS8120 — and bloats the output);
   /// instead the base case populates all derived instances in place. Generated code must compile.
@@ -1012,7 +1012,7 @@ public class AutoPopulateDiscoveryGeneratorTests {
   /// Mirrors a consumer's <c>BaseConsumerEvent</c> exactly — a CLASS with a string CorrelationId (from the Guid id), a
   /// non-null SentAt timestamp, a string OriginatingService (from ServiceName), and a <b>Guid?</b> AccountId
   /// populated from the <b>string</b> UserId context. The AccountId conversion (string→Guid) is the one that
-  /// would break the real a consumer.Contracts build, so this compiles the exact generated shape in isolation.
+  /// would break a real consumer contracts build, so this compiles the exact generated shape in isolation.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
@@ -1039,7 +1039,7 @@ public class AutoPopulateDiscoveryGeneratorTests {
     var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>(source);
 
     await Assert.That(errors).IsEmpty()
-      .Because($"Generated populator for a a consumer-shaped class must compile (AccountId Guid? from string UserId); errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
+      .Because($"Generated populator for a consumer-shaped class must compile (AccountId Guid? from string UserId); errors: {string.Join("; ", errors.Select(e => e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))}");
   }
 
   /// <summary>

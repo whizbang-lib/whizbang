@@ -168,7 +168,7 @@ public class OrderProjection : IPerspectiveFor<OrderModel, OrderCreated> {
   [RequiresAssemblyFiles()]
   public async Task Generator_ReceptorAtPostAllPerspectives_HasAnyConsumerReturnsTrueAsync() {
     // Regression lock: a receptor at a stage outside _exposedStages (e.g.
-    // PostAllPerspectivesDetached — used by ConsumerNotificationTagHook) MUST still register the
+    // PostAllPerspectivesDetached — used by a consumer's notification-tag hook) MUST still register the
     // message type as a consumer. Without this, the slice 3 drop-gate at the receive boundary
     // would silently drop messages whose only consumer is at PostAllPerspectives or
     // PostLifecycle — losing tag notifications for cross-service events. The bug existed

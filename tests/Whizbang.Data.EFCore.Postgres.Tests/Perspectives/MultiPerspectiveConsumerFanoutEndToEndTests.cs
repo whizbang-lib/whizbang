@@ -15,10 +15,10 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
 /// <summary>
-/// End-to-end reproduction of the a consumer 2026-05-03 UI loader bug at the generated
-/// PerspectiveRunner layer. One <see cref="ConsumerFanoutEvent"/> fans out to TWO
+/// End-to-end reproduction of a consumer's UI loader bug, observed in production, at the
+/// generated PerspectiveRunner layer. One <see cref="ConsumerFanoutEvent"/> fans out to TWO
 /// generated runners on the SAME stream sharing the SAME real-Postgres DbContext.
-/// a consumer symptom: the scalar perspective's row appears, the list-property
+/// The production symptom: the scalar perspective's row appears, the list-property
 /// perspective's row does not. If this test goes RED, the bug is reproduced;
 /// if it stays GREEN, the bug is not in the generated runner + per-runner DbContext
 /// flow.
@@ -75,7 +75,7 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
 
   /// <summary>
   /// The smoking-gun reproduction. Single event, two perspectives, one shared
-  /// DbContext for both upserts. RED here = the a consumer bug is reproduced and
+  /// DbContext for both upserts. RED here = the production bug is reproduced and
   /// localized to the generated runner / store layer with list-property models.
   /// </summary>
   [Test, Timeout(60000)]
@@ -84,30 +84,30 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
     var eventStore = new InMemoryEventStore();
     await AppendEventAsync(eventStore, streamId, new ConsumerFanoutEvent {
       StreamId = streamId,
-      Title = "a consumer-Job-1",
+      Title = "Order-1",
       ConditionLabels = ["WC-A", "WC-B", "WC-C"]
     });
 
     await using var sharedContext = CreateDbContext();
-    var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(sharedContext, "wh_per_jdx_scalar");
-    var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(sharedContext, "wh_per_jdx_list");
+    var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(sharedContext, "wh_per_consumer_scalar");
+    var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(sharedContext, "wh_per_consumer_list");
 
     var sp = _buildPerspectiveSp();
     var scalarRunner = CreateRunnerByName("ConsumerScalarPerspectiveRunner", sp, eventStore, scalarStore);
     var listRunner = CreateRunnerByName("ConsumerListPerspectiveRunner", sp, eventStore, listStore);
 
-    await scalarRunner.RunAsync(streamId, "wh_per_jdx_scalar", null, ct);
-    await listRunner.RunAsync(streamId, "wh_per_jdx_list", null, ct);
+    await scalarRunner.RunAsync(streamId, "wh_per_consumer_scalar", null, ct);
+    await listRunner.RunAsync(streamId, "wh_per_consumer_list", null, ct);
 
     await using var verify = CreateDbContext();
     var savedScalar = await verify.Set<PerspectiveRow<ConsumerScalarModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);
     var savedList = await verify.Set<PerspectiveRow<ConsumerListModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);
 
     await Assert.That(savedScalar).IsNotNull()
-      .Because("ConsumerScalarPerspectiveRunner must persist its row (Order in a consumer terms).");
+      .Because("ConsumerScalarPerspectiveRunner must persist its row (Order in the consumer's terms).");
     await Assert.That(savedList).IsNotNull()
-      .Because("ConsumerListPerspectiveRunner must persist its row symmetrically (OrderWorkingConditions in a consumer). RED here = a consumer bug reproduced at runner+store layer.");
-    await Assert.That(savedScalar!.Data.Title).IsEqualTo("a consumer-Job-1");
+      .Because("ConsumerListPerspectiveRunner must persist its row symmetrically (OrderLines in the consumer's terms). RED here = the production bug reproduced at runner+store layer.");
+    await Assert.That(savedScalar!.Data.Title).IsEqualTo("Order-1");
     await Assert.That(savedList!.Data.Conditions.Count).IsEqualTo(3);
     await Assert.That(savedList.Data.Conditions[0].Label).IsEqualTo("WC-A");
     await Assert.That(savedList.Data.Conditions[2].Label).IsEqualTo("WC-C");
@@ -125,20 +125,20 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
     var eventStore = new InMemoryEventStore();
     await AppendEventAsync(eventStore, streamId, new ConsumerFanoutEvent {
       StreamId = streamId,
-      Title = "a consumer-Job-2",
+      Title = "Order-2",
       ConditionLabels = ["A", "B"]
     });
 
     var sp = _buildPerspectiveSp();
     await using (var scalarContext = CreateDbContext()) {
-      var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(scalarContext, "wh_per_jdx_scalar");
+      var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(scalarContext, "wh_per_consumer_scalar");
       var scalarRunner = CreateRunnerByName("ConsumerScalarPerspectiveRunner", sp, eventStore, scalarStore);
-      await scalarRunner.RunAsync(streamId, "wh_per_jdx_scalar", null, ct);
+      await scalarRunner.RunAsync(streamId, "wh_per_consumer_scalar", null, ct);
     }
     await using (var listContext = CreateDbContext()) {
-      var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(listContext, "wh_per_jdx_list");
+      var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(listContext, "wh_per_consumer_list");
       var listRunner = CreateRunnerByName("ConsumerListPerspectiveRunner", sp, eventStore, listStore);
-      await listRunner.RunAsync(streamId, "wh_per_jdx_list", null, ct);
+      await listRunner.RunAsync(streamId, "wh_per_consumer_list", null, ct);
     }
 
     await using var verify = CreateDbContext();
@@ -160,22 +160,22 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
     var eventStore = new InMemoryEventStore();
     await AppendEventAsync(eventStore, streamId, new ConsumerFanoutEvent {
       StreamId = streamId,
-      Title = "a consumer-Job-Reverse",
+      Title = "Order-Reverse",
       ConditionLabels = ["only-one"]
     });
 
     await using var sharedContext = CreateDbContext();
-    var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(sharedContext, "wh_per_jdx_scalar");
-    var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(sharedContext, "wh_per_jdx_list");
+    var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(sharedContext, "wh_per_consumer_scalar");
+    var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(sharedContext, "wh_per_consumer_list");
 
     var sp = _buildPerspectiveSp();
     var scalarRunner = CreateRunnerByName("ConsumerScalarPerspectiveRunner", sp, eventStore, scalarStore);
     var listRunner = CreateRunnerByName("ConsumerListPerspectiveRunner", sp, eventStore, listStore);
 
     // List FIRST
-    await listRunner.RunAsync(streamId, "wh_per_jdx_list", null, ct);
+    await listRunner.RunAsync(streamId, "wh_per_consumer_list", null, ct);
     // Then scalar
-    await scalarRunner.RunAsync(streamId, "wh_per_jdx_scalar", null, ct);
+    await scalarRunner.RunAsync(streamId, "wh_per_consumer_scalar", null, ct);
 
     await using var verify = CreateDbContext();
     var savedScalar = await verify.Set<PerspectiveRow<ConsumerScalarModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);
@@ -189,7 +189,7 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
 
   /// <summary>
   /// Two events for the same stream, both runners process both events on a shared
-  /// DbContext. Mirrors the a consumer scenario where a Job has multiple events
+  /// DbContext. Mirrors the consumer scenario where an Order has multiple events
   /// (Created, Updated) and both perspectives must keep up.
   /// </summary>
   [Test, Timeout(60000)]
@@ -208,15 +208,15 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
     });
 
     await using var sharedContext = CreateDbContext();
-    var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(sharedContext, "wh_per_jdx_scalar");
-    var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(sharedContext, "wh_per_jdx_list");
+    var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(sharedContext, "wh_per_consumer_scalar");
+    var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(sharedContext, "wh_per_consumer_list");
 
     var sp = _buildPerspectiveSp();
     var scalarRunner = CreateRunnerByName("ConsumerScalarPerspectiveRunner", sp, eventStore, scalarStore);
     var listRunner = CreateRunnerByName("ConsumerListPerspectiveRunner", sp, eventStore, listStore);
 
-    await scalarRunner.RunAsync(streamId, "wh_per_jdx_scalar", null, ct);
-    await listRunner.RunAsync(streamId, "wh_per_jdx_list", null, ct);
+    await scalarRunner.RunAsync(streamId, "wh_per_consumer_scalar", null, ct);
+    await listRunner.RunAsync(streamId, "wh_per_consumer_list", null, ct);
 
     await using var verify = CreateDbContext();
     var savedScalar = await verify.Set<PerspectiveRow<ConsumerScalarModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);
@@ -247,15 +247,15 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
     });
 
     await using var sharedContext = CreateDbContext();
-    var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(sharedContext, "wh_per_jdx_scalar");
-    var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(sharedContext, "wh_per_jdx_list");
+    var scalarStore = new EFCorePostgresPerspectiveStore<ConsumerScalarModel>(sharedContext, "wh_per_consumer_scalar");
+    var listStore = new EFCorePostgresPerspectiveStore<ConsumerListModel>(sharedContext, "wh_per_consumer_list");
 
     var sp = _buildPerspectiveSp();
     var scalarRunner = CreateRunnerByName("ConsumerScalarPerspectiveRunner", sp, eventStore, scalarStore);
     var listRunner = CreateRunnerByName("ConsumerListPerspectiveRunner", sp, eventStore, listStore);
 
-    await scalarRunner.RunAsync(streamId, "wh_per_jdx_scalar", null, ct);
-    await listRunner.RunAsync(streamId, "wh_per_jdx_list", null, ct);
+    await scalarRunner.RunAsync(streamId, "wh_per_consumer_scalar", null, ct);
+    await listRunner.RunAsync(streamId, "wh_per_consumer_list", null, ct);
 
     await using var verifyAfterFirst = CreateDbContext();
     var firstScalar = await verifyAfterFirst.Set<PerspectiveRow<ConsumerScalarModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);
@@ -264,8 +264,8 @@ public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
     var firstListVersion = firstList!.Version;
 
     // Re-run both — idempotency guard should make this a no-op
-    await scalarRunner.RunAsync(streamId, "wh_per_jdx_scalar", null, ct);
-    await listRunner.RunAsync(streamId, "wh_per_jdx_list", null, ct);
+    await scalarRunner.RunAsync(streamId, "wh_per_consumer_scalar", null, ct);
+    await listRunner.RunAsync(streamId, "wh_per_consumer_list", null, ct);
 
     await using var verifyAfterRerun = CreateDbContext();
     var afterScalar = await verifyAfterRerun.Set<PerspectiveRow<ConsumerScalarModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);

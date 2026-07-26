@@ -12,7 +12,7 @@ namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
 /// Locks the v0.654 invariants around <see cref="WorkCoordinatorGate.AcquireAsync"/>.
-/// production forensic motivation (Jun 2026): with the pre-v0.654 implementation, an
+/// A production forensic investigation motivated this: with the pre-v0.654 implementation, an
 /// exhausted gate's <c>WaitAsync(ct)</c> would hang every caller forever — silently,
 /// no exception, no log. Every gated coordinator call AND every <c>MoveAsync</c> in
 /// the DLQ pre-publish gate routed through this single chokepoint. The deadline turns
@@ -145,8 +145,8 @@ public class WorkCoordinatorGateTests {
   /// <summary>
   /// v0.660 Slice 7 — gate hold-duration histogram. Records the time between
   /// acquire and dispose so operators can see which gated code paths are
-  /// holding slots longest. production forensic showed gate held at 49-50/50 with
-  /// BFF CPU at 20% — gate slots are being held during application work, not
+  /// holding slots longest. A production forensic investigation showed gate held at 49-50/50 with
+  /// the consumer's service CPU at 20% — gate slots are being held during application work, not
   /// just DB I/O. The histogram makes that visible per-caller.
   /// </summary>
   [Test]
@@ -210,7 +210,7 @@ public class WorkCoordinatorGateTests {
   public async Task FromPoolSize_TinyPool_ClampsToMinimumOneAsync() {
     using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 3, reserve: 5);
     await Assert.That(gate.MaxConcurrent).IsEqualTo(1)
-      .Because("(3 - 5) = -2 would disable the gate. Floor at 1 instead: a slow pipeline is recoverable; a silently-disabled gate is the production-stuck-row class of bug the v0.654 hardening was supposed to prevent.");
+      .Because("(3 - 5) = -2 would disable the gate. Floor at 1 instead: a slow pipeline is recoverable; a silently-disabled gate is the production stuck-row class of bug the v0.654 hardening was supposed to prevent.");
   }
 
   /// <summary>
@@ -233,7 +233,7 @@ public class WorkCoordinatorGateTests {
   /// <see cref="AcquireAsync_OnDispose_RecordsHistogramObservationAsync"/>
   /// actually records under production wiring. Slice 7 originally landed only
   /// the class-level histogram contract; the DI factory was left passing
-  /// <c>logger</c> alone, so 14 minutes of production traffic produced zero
+  /// <c>logger</c> alone, so several minutes of production traffic produced zero
   /// <c>whizbang.gate.hold_duration_ms</c> observations in App Insights —
   /// proving the wiring gap. This test locks the wiring so any future
   /// refactor of the factory that drops the metrics arg fails here.

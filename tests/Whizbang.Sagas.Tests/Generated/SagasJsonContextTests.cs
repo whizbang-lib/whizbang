@@ -26,8 +26,8 @@ namespace Whizbang.Sagas.Tests.Generated;
 ///     — polymorphic dispatch for envelope reads of base interfaces</item>
 /// </list>
 ///
-/// <para>Each test locks one layer. production dev exposed gaps #2/#3/#4 in successive deploys
-/// (2026-06-24) because earlier "surgical" patches only addressed one path at a time.
+/// <para>Each test locks one layer. Production exposed gaps #2/#3/#4 in successive deploys
+/// because earlier "surgical" patches only addressed one path at a time.
 /// This suite is the comprehensive lock so we don't fix-and-rediscover again.</para>
 /// </summary>
 [Category("Unit")]
@@ -68,10 +68,10 @@ public class SagasJsonContextTests {
     // The exact form Dispatcher._serializeToJsonEnvelope passes (eventType.AssemblyQualifiedName)
     // and the lifecycle hooks read from wh_outbox.message_type at publish time. Includes
     // Version/Culture/PublicKeyToken — must round-trip through NormalizeTypeName to the
-    // short-form registration. Without this layer, production dev's lifecycle hooks logged
+    // short-form registration. Without this layer, a consumer's lifecycle hooks logged
     // "Failed to resolve message type 'Whizbang.Sagas.SagaCompletionWatchdogTickEvent,
     // Whizbang.Sagas, Version=0.742.2.0, Culture=neutral, PublicKeyToken=null'" on every
-    // outbox batch (caught 2026-06-25 01:34).
+    // outbox batch in production.
     var fullName = typeof(SagaCompletionWatchdogTickEvent).AssemblyQualifiedName!;
     var options = JsonContextRegistry.CreateCombinedOptions();
 

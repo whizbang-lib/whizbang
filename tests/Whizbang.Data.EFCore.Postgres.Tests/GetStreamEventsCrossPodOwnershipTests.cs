@@ -12,14 +12,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// RED confirmation that <c>get_stream_events</c> lets a second instance claim a stream's events
 /// while the stream is owned by a different, <b>live</b> instance — the cross-pod concurrency that
-/// enables the lost-update stranding (production saga <c>019ee73d</c>, 2026-06-20).
+/// enables the lost-update stranding (a stranded production saga).
 ///
 /// <para>The per-item-stream design assumes single-writer per stream: <c>wh_active_streams</c> pins
 /// a stream to one instance, and that owner processes all of its events sequentially. But the actual
 /// row claim in <c>get_stream_events</c> is purely row-lease based
 /// (<c>instance_id IS NULL OR lease_expiry &lt; now</c>) and does <b>not consult stream ownership or
 /// owner liveness</b>. So when the owning instance is merely slow/throttled and a row's lease lapses
-/// (e.g. under the stamper/ASB backpressure during a 350-item import), a <i>different live</i>
+/// (e.g. under the stamper/ASB backpressure during a large import), a <i>different live</i>
 /// instance re-claims that row and applies it concurrently — two writers on one stream.</para>
 ///
 /// <para>This is RED until the row claim is gated by stream ownership: a row whose stream is owned by
@@ -62,7 +62,7 @@ public class GetStreamEventsCrossPodOwnershipTests : EFCoreTestBase {
     await Assert.That(rows).IsEqualTo(0)
       .Because("a row whose stream is owned by a live instance (A) must not be re-claimed by another "
         + "instance (B) on row-lease expiry alone — concurrent apply on one stream is the cross-pod "
-        + "lost-update that stranded production saga 019ee73d");
+        + "lost-update that stranded a production saga");
 
     var leasedTo = await _getRowInstanceAsync(conn, workId);
     await Assert.That(leasedTo).IsEqualTo(ownerA)

@@ -102,7 +102,7 @@ public class MessageDiscardPolicyTests {
   // BodyClaimEnvelopePayload as its wire payload type — no service consumes it, so HasAnyConsumer
   // says "discard". That silently drops every offloaded message before TransportConsumerWorker can
   // rehydrate the original type. Both no-local-consumer gates must exempt claim envelopes.
-  // (Regression: production "bulk → Approved" (21,398 IDs) offloaded past ASB's limit, then dropped.)
+  // (Regression: a production "bulk → Approved" batch of many IDs offloaded past ASB's limit, then dropped.)
   private const string CLAIM_ENVELOPE_TYPE =
     "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Offloads.BodyClaimEnvelopePayload, Whizbang.Core]], Whizbang.Core";
 

@@ -319,7 +319,7 @@ public interface IWorkCoordinator {
   /// <remarks>
   /// Called by <c>WorkCoordinatorPublisherWorker</c> on startup so a service that comes
   /// up under a new (or first-time-correct) <c>PartitionCount</c> immediately self-heals
-  /// rows wedged by a partition-mismatch (the dev BFF incident of 2026-04-20). Returns
+  /// rows wedged by a partition-mismatch (observed in production). Returns
   /// the number of rows recomputed per table, which the worker logs at WARN if any are
   /// non-zero.
   /// </remarks>
@@ -876,7 +876,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// production forensic exposed a class of bug — silent stuck rows — that bypasses
+  /// A production forensic investigation exposed a class of bug — silent stuck rows — that bypasses
   /// every downstream defense. This surface lets the maintenance worker log a
   /// Warning per row exhibiting the symptom, independent of root cause.
   /// </para>
@@ -1818,7 +1818,7 @@ public record StreamEventData {
   /// Perspective name from wh_perspective_events.perspective_name. Required for the cooldown
   /// gate's per-perspective filter — without it, marking ANY perspective's work_id as
   /// recently-processed under the same event_id would prevent OTHER perspectives' Apply from
-  /// running on subsequent drains for the same event (a consumer 2026-05-04 silent-skip bug).
+  /// running on subsequent drains for the same event (a production silent-skip bug).
   /// </summary>
   public string? PerspectiveName { get; init; }
 
@@ -1866,7 +1866,7 @@ public record PerspectiveEventCompletion {
 /// of rows that survive filtering.
 /// </summary>
 /// <remarks>
-/// production G6: <see cref="CommitSequence"/> carries <c>wh_event_store.commit_sequence</c> via
+/// Production forensic G6: <see cref="CommitSequence"/> carries <c>wh_event_store.commit_sequence</c> via
 /// a LEFT JOIN inside the SQL fn. The drainer's inversion detector compares against the
 /// cached cursor's commit_sequence directly — no per-event GetCommitSequence round-trip,
 /// no UUIDv7 lex-inversion edge case. Null when the stamper hasn't caught up yet; callers
@@ -1936,8 +1936,8 @@ public sealed record OutboxBatchRow {
   /// the actual root cause (a real exception stack from a prior failure) instead
   /// of a meta-message like <c>"OutboxDrainWorker dead-lettered: attempts=N > max=10"</c>
   /// — the meta-message collapses every DLQ row to a single fingerprint, wiping
-  /// out triage value (production Jun-2026: 38k+ rows collapsed to one fingerprint
-  /// cluster). NULL when no failure has been recorded against the row yet (the
+  /// out triage value (observed in production: tens of thousands of rows collapsed
+  /// to one fingerprint cluster). NULL when no failure has been recorded against the row yet (the
   /// gate falls back to the meta-message in that case).
   /// </summary>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>

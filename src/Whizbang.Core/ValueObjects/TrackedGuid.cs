@@ -76,7 +76,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   // Synchronizes Medo.Uuid7.NewUuid7() across threads. Medo's per-process counter
   // is not strictly monotonic under contention — concurrent callers can observe
   // interleaved sub-ms tail bytes, producing lex-non-monotonic UUIDv7 IDs. We saw
-  // this manifest as cursor-inversion + rewind storms on a consumer BFF perspectives
+  // this manifest as cursor-inversion + rewind storms on a consumer's perspectives
   // when a receptor returned a list of events generated in parallel. Holding
   // a lock around the call serializes ID issuance so monotonicity holds.
   private static readonly Lock _medoLock = new();

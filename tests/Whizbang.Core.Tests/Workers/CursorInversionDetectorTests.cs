@@ -87,7 +87,7 @@ public class CursorInversionDetectorTests {
 
   [Test]
   public async Task FindCursorInversionAnchor_EventEqualsCursor_NotInversionAsync() {
-    // Boundary case revised after a consumer BFF over-trigger incident (2026-05-02 ~09:43):
+    // Boundary case revised after a production over-trigger incident:
     // pending event_id == cursor is the EXPECTED state during the cursor-flush window.
     // The runner just applied this event, advancing the cursor synchronously, but the
     // wh_perspective_events row's completion (DELETE in prod / processed_at in debug)
@@ -138,7 +138,7 @@ public class CursorInversionDetectorTests {
   // Routes between commit_sequence and event_id detectors. When commit_sequence cursor is
   // available, that detector's null return is FINAL — no fall-through to the UUIDv7 path.
   // Without this rule, same-millisecond events whose UUIDv7 lex order disagrees with commit
-  // order produce false-positive rewinds (a consumer run-11 regression, 1,403 logged inversions).
+  // order produce false-positive rewinds (a production regression, thousands of logged inversions).
 
   private static StreamEventData _raw(Guid streamId, Guid eventId, long? commitSequence) => new() {
     StreamId = streamId,
@@ -158,7 +158,7 @@ public class CursorInversionDetectorTests {
 
   [Test]
   public async Task ResolveInversionAnchor_CommitSequenceCursorPresent_UUIDv7ReversedButCommitOrderCorrect_ReturnsNullAsync() {
-    // THE bug scenario from a consumer run 11 (bff stream 019e5a09-c8f6-...):
+    // THE bug scenario from a production run (same-millisecond stream events):
     // Three same-millisecond UUIDv7 events whose random suffix put them in one lex order
     // but commit_sequence puts them in another. Cursor advanced to the highest-commit_seq
     // event; a pending sibling has a lower UUIDv7 lex value but a HIGHER commit_seq.
@@ -167,8 +167,8 @@ public class CursorInversionDetectorTests {
 
     // UUIDv7-lex-order: cursorLowLex < pendingLex — would trip the event_id detector.
     // Commit-order: cursorLowLex (cseq=100) < pendingLex (cseq=101) — no inversion.
-    var cursorEventId = Guid.Parse("019e5a09-d534-77b4-bf8d-62ba6ca3d5c4");
-    var pendingEventId = Guid.Parse("019e5a09-d529-74e7-bf97-e2ef18941879");
+    var cursorEventId = Guid.Parse("0198a1b2-c3d4-77b4-bf8d-62ba6ca3d5c4");
+    var pendingEventId = Guid.Parse("0198a1b2-c3d1-74e7-bf97-e2ef18941879");
 
     var pendingEnvelope = _envelope(pendingEventId);
     var rawLookup = _lookup(_raw(streamId, pendingEventId, commitSequence: 101));
@@ -189,7 +189,7 @@ public class CursorInversionDetectorTests {
     // still in the pending queue because PerspectiveCompletionFlushWorker hasn't deleted the
     // perspective_events row yet. Same commit_sequence ≠ inversion — it's the SAME event,
     // idempotent re-drain. The runner template's filter handles it without a rewind.
-    // Strict `<` semantics — observed in a consumer run 13 on OrderRemoteWork.
+    // Strict `<` semantics — observed in a production run on OrderRemoteWork.
     var streamId = (Guid)TrackedGuid.NewMedo();
     var cursorEventId = (Guid)TrackedGuid.NewMedo();
     var sameEventPending = cursorEventId;
@@ -307,7 +307,7 @@ public class CursorInversionDetectorTests {
   // cooldown cache while their perspective_events rows haven't been DELETEd yet, others
   // genuinely new) made cooldown's "all-or-nothing" gate return false, letting the cooled
   // events look like real inversions to the detector and triggering ~1100 spurious rewinds
-  // per a consumer bulk-import run.
+  // per bulk-import run.
 
   [Test]
   public async Task PartitionByCooldown_AllCooled_AllInCooledListAsync() {
@@ -352,7 +352,7 @@ public class CursorInversionDetectorTests {
 
   [Test]
   public async Task PartitionByCooldown_MixedCooledAndFresh_SplitsCorrectlyAsync() {
-    // The a consumer saga-batch race: e1 was just applied (still warm in cooldown, row not yet
+    // The saga-batch race: e1 was just applied (still warm in cooldown, row not yet
     // DELETEd), e2 is the next batch's fresh event. Pre-26.15 cooldown returned false
     // (not all cooled) → inversion detector saw e1 as "pending ≤ cursor" → spurious rewind.
     var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(_timeProvider());

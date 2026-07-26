@@ -271,8 +271,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// Prefer the inbox row's existing <c>wh_inbox.error</c> column (the real exception text
   /// from the most recent <c>process_inbox_failures</c> cycle) over the synthetic
   /// <c>"InboxDispatchWorker dead-lettered"</c> meta-message. The meta-message collapses
-  /// every DLQ row to a single fingerprint cluster (production Jun 2026: 38k+ rows under one
-  /// cluster regardless of root cause). Using <c>work.Error</c> restores forensic diversity
+  /// every DLQ row to a single fingerprint cluster (observed in production: tens of
+  /// thousands of rows under one cluster regardless of root cause). Using <c>work.Error</c> restores forensic diversity
   /// so Slice 2's fingerprint algorithm extracts the real exception type + frames and
   /// operators see distinct clusters per failure mode.
   /// </summary>
@@ -610,7 +610,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // Phase H step 9: detached lifecycle stages run fire-and-forget on a separate scheduler
     // and outlive the dispatch. They MUST NOT use the lease token — when the lease disposes
     // on dispatch completion, the still-running detached tasks would throw a first-chance OCE
-    // each (production observed thousands of OCEs/sec on a consumer BFF). Callers pass the worker's
+    // each (production observed thousands of OCEs/sec on a consumer's service). Callers pass the worker's
     // stoppingToken (or CancellationToken.None) here so detached stages run until shutdown.
     // If left default, falls back to <paramref name="cancellationToken"/> for backward-compat.
     var detachedCt = detachedCancellationToken == default ? cancellationToken : detachedCancellationToken;
@@ -641,7 +641,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // concatenates compile-time + runtime entries, so OR-ing the two sources here is the
     // authoritative "is anyone listening at this stage" check. Without the runtime branch
     // the gate would silently skip runtime-registered receptors (the integration-test
-    // PreInboxDetached failure on ECommerce BFF was this exact bug).
+    // PreInboxDetached failure on a consumer's service was this exact bug).
     var runtimeMessageType = typedEnvelope.Payload?.GetType();
     var hasDetached = _receptorRegistry is null || !_isGatedStage(detachedStage)
       || _receptorRegistry.HasReceptors(detachedStage, work.MessageType)
@@ -670,7 +670,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         // 2026-06: use Task.Run (pooled). TaskCreationOptions.LongRunning was originally
         // added to avoid CI ThreadPool starvation during PerspectiveWorker drain churn,
         // but in production it spawns a dedicated OS thread per inbox message — observed
-        // throughput collapse on a consumer BFF (10 msg/min vs target 1000s/min) traced here.
+        // throughput collapse on a consumer's service (10 msg/min vs target 1000s/min) traced here.
         // If pool starvation comes back, fix it at the host via ThreadPool.SetMinThreads.
         _ = Task.Run(async () => {
           try {
@@ -698,7 +698,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             // route the lifecycle exception through IFailureChannel so
             // process_inbox_failures populates wh_inbox.error with the full
             // ex.ToString(). Without this, inbox lifecycle faults retried forever
-            // silently — identical to the production outbox bug, different worker.
+            // silently — identical to a production outbox bug, different worker.
             await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
               MessageId = work.MessageId,
               CompletedStatus = work.Status,
@@ -722,7 +722,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // route the lifecycle exception through IFailureChannel so
       // process_inbox_failures populates wh_inbox.error with the full
       // ex.ToString(). Without this, inbox lifecycle faults retried forever
-      // silently — identical to the production outbox bug, different worker.
+      // silently — identical to a production outbox bug, different worker.
       await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
         MessageId = work.MessageId,
         CompletedStatus = work.Status,

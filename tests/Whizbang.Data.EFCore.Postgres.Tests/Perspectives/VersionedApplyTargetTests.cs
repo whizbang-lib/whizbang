@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 ///
 /// <para>The default (non-opted-in) contract remains last-writer-wins under null CommitSequence
 /// — see <c>CrossPodStaleReadRegressionRaceTests</c>. Models opt in by implementing the marker;
-/// this is what closed the production <c>019f03cd</c> cross-pod strand for <c>SagaItemModel</c>
+/// this is what closed a production cross-pod strand for <c>SagaItemModel</c>
 /// without breaking consumers that depend on stamper-lag forwarding.</para>
 /// </summary>
 [Category("Integration")]

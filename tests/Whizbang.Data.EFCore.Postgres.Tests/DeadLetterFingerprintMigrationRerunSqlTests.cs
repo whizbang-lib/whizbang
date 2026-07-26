@@ -9,7 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 #pragma warning disable CA1707, IDE1006
 
 /// <summary>
-/// production CrashLoopBackOff regression-lock (Jun-2026). Simulates the scenario:
+/// Production CrashLoopBackOff regression-lock. Simulates the scenario:
 /// an existing wh_dead_letters table — created by the pre-Slice-2 version of
 /// migration 050 — has NO error_fingerprint / error_fingerprint_version columns.
 /// The migration runner (hash-based, see DbContextSchemaExtensionTemplate.cs)
@@ -21,14 +21,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// 053 AFTER its ALTER TABLE that adds the columns. Migration 050 only
 /// contains the column DEFINITIONS in its CREATE TABLE clause — which is a
 /// no-op on existing databases — and is otherwise the same as pre-Slice-2.
-/// This means re-applying 050 on production-class existing databases is safe.</para>
+/// This means re-applying 050 on existing production-class databases is safe.</para>
 ///
-/// <para>Production reproduction: production CrashLoopBackOff on Jun-2026 when
+/// <para>Production reproduction: a CrashLoopBackOff incident when
 /// migration 050's content hash changed; the runner re-applied 050; CREATE
 /// INDEX wh_dead_letters_fingerprint_idx ON wh_dead_letters (error_fingerprint)
 /// failed with "column error_fingerprint does not exist" because 053 hadn't
 /// run yet to add the column. App pods exited startup, StartupProbe failed,
-/// CrashLoopBackOff propagated to bff-service, chat-service, email-service.</para>
+/// CrashLoopBackOff propagated to the consumer's downstream services.</para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
 public class DeadLetterFingerprintMigrationRerunSqlTests : EFCoreTestBase {
@@ -104,7 +104,7 @@ public class DeadLetterFingerprintMigrationRerunSqlTests : EFCoreTestBase {
     await using var conn = await _openAsync();
 
     // Setup: drop the fingerprint artifacts to simulate the pre-Slice-2 state
-    // of an existing database (production on Jun-2026: migration 050 had run, but
+    // of an existing database (production: migration 050 had run, but
     // without the fingerprint columns from the original CREATE TABLE).
     await _dropFingerprintArtifactsAsync(conn);
     await Assert.That(await _columnExistsAsync(conn, "error_fingerprint")).IsFalse()
@@ -124,7 +124,7 @@ public class DeadLetterFingerprintMigrationRerunSqlTests : EFCoreTestBase {
     await Assert.That(await _columnExistsAsync(conn, "error_fingerprint_version")).IsTrue()
       .Because("ALTER TABLE in migration 053 MUST add error_fingerprint_version alongside the fingerprint column — Slice 6's version-aware backfill keys off it.");
     await Assert.That(await _indexExistsAsync(conn, "wh_dead_letters_fingerprint_idx")).IsTrue()
-      .Because("Partial index MUST be created in migration 053 (after the column-add), not migration 050 — putting it in 050 caused the production CrashLoopBackOff on Jun-2026.");
+      .Because("Partial index MUST be created in migration 053 (after the column-add), not migration 050 — putting it in 050 caused the CrashLoopBackOff seen in production.");
   }
 
   [Test]

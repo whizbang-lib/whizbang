@@ -20,8 +20,8 @@ namespace Whizbang.Core.Workers;
 /// 50ms window. Two transport messages for the same stream arriving more than 50 ms apart
 /// landed in DIFFERENT inbox flushes. Each batch was internally sorted by MessageId
 /// (slice 18b) but cross-batch ordering was arrival order — guaranteed to deviate from
-/// MessageId order on fan-in streams. The result was 5,622 cursor inversions per a consumer
-/// bulk-import run, mostly on BulkImportOrchestration / Order / saga streams.
+/// MessageId order on fan-in streams. The result was thousands of cursor inversions per
+/// production bulk-import run, mostly on BulkImportOrchestration / Order / saga streams.
 /// </para>
 /// <para>
 /// Per-stream-keyed buffer + 300 ms / 3 s sliding window: messages for the same stream

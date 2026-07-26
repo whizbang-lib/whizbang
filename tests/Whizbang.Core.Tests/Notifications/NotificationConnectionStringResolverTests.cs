@@ -36,10 +36,10 @@ public class NotificationConnectionStringResolverTests {
 
   [Test]
   public async Task Resolve_DirectKeyExists_PrefersDirectOverPooledAsync() {
-    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "appservice-db" };
+    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "gatewayservice-db" };
     var config = _config(new() {
-      ["ConnectionStrings:appservice-db-direct"] = "Host=direct.pg",
-      ["ConnectionStrings:appservice-db"] = "Host=pgbouncer.local"
+      ["ConnectionStrings:gatewayservice-db-direct"] = "Host=direct.pg",
+      ["ConnectionStrings:gatewayservice-db"] = "Host=pgbouncer.local"
     });
 
     var result = NotificationConnectionStringResolver.Resolve(opts, config);
@@ -50,9 +50,9 @@ public class NotificationConnectionStringResolverTests {
 
   [Test]
   public async Task Resolve_OnlyPooledKeyExists_FallsBackToPooledAsync() {
-    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "appservice-db" };
+    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "gatewayservice-db" };
     var config = _config(new() {
-      ["ConnectionStrings:appservice-db"] = "Host=pgbouncer.local"
+      ["ConnectionStrings:gatewayservice-db"] = "Host=pgbouncer.local"
     });
 
     var result = NotificationConnectionStringResolver.Resolve(opts, config);
@@ -88,10 +88,10 @@ public class NotificationConnectionStringResolverTests {
   [Test]
   public async Task Resolve_EmptyDirectKeyValue_FallsBackToPooledAsync() {
     // "set but empty" is treated as not set — fallback to pooled key.
-    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "appservice-db" };
+    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "gatewayservice-db" };
     var config = _config(new() {
-      ["ConnectionStrings:appservice-db-direct"] = "",
-      ["ConnectionStrings:appservice-db"] = "Host=pgbouncer.local"
+      ["ConnectionStrings:gatewayservice-db-direct"] = "",
+      ["ConnectionStrings:gatewayservice-db"] = "Host=pgbouncer.local"
     });
 
     var result = NotificationConnectionStringResolver.Resolve(opts, config);
@@ -111,11 +111,11 @@ public class NotificationConnectionStringResolverTests {
   [Test]
   public async Task Resolve_NoExplicitConfig_WithFallback_UsesFallbackAsync() {
     var opts = new WhizbangNotificationOptions();
-    var fallback = new _FixedFallback("Host=dbcontext.local;Database=bff");
+    var fallback = new _FixedFallback("Host=dbcontext.local;Database=gateway");
 
     var result = NotificationConnectionStringResolver.Resolve(opts, _config([]), fallback);
 
-    await Assert.That(result.ConnectionString).IsEqualTo("Host=dbcontext.local;Database=bff");
+    await Assert.That(result.ConnectionString).IsEqualTo("Host=dbcontext.local;Database=gateway");
     await Assert.That(result.Source).IsEqualTo(NotificationConnectionStringResolver.ResolutionSource.DbContextFallback);
   }
 
@@ -157,8 +157,8 @@ public class NotificationConnectionStringResolverTests {
 
   [Test]
   public async Task Resolve_DirectKeyResolves_FallbackIgnoredAsync() {
-    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "bff-db" };
-    var config = _config(new() { ["ConnectionStrings:bff-db-direct"] = "Host=direct.pg" });
+    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "gateway-db" };
+    var config = _config(new() { ["ConnectionStrings:gateway-db-direct"] = "Host=direct.pg" });
     var fallback = new _FixedFallback("Host=should-not-be-used");
 
     var result = NotificationConnectionStringResolver.Resolve(opts, config, fallback);
@@ -169,8 +169,8 @@ public class NotificationConnectionStringResolverTests {
 
   [Test]
   public async Task Resolve_PooledKeyResolves_FallbackIgnoredAsync() {
-    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "bff-db" };
-    var config = _config(new() { ["ConnectionStrings:bff-db"] = "Host=pooled" });
+    var opts = new WhizbangNotificationOptions { ConnectionStringKey = "gateway-db" };
+    var config = _config(new() { ["ConnectionStrings:gateway-db"] = "Host=pooled" });
     var fallback = new _FixedFallback("Host=should-not-be-used");
 
     var result = NotificationConnectionStringResolver.Resolve(opts, config, fallback);

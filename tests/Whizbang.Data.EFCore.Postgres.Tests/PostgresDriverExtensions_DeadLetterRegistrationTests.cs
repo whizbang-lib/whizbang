@@ -16,8 +16,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Locks the turnkey EFCore Postgres path's DLQ wiring. v0.502 added
 /// <see cref="IDeadLetterStore"/> + <see cref="IDeadLetterRecoveryService"/> as
 /// optional collaborators on the dispatch/recovery workers but the original
-/// commit forgot to register the EFCore implementations — production symptom on
-/// a consumer production: <c>wh_dead_letters</c> empty even with WRN logs firing.
+/// commit forgot to register the EFCore implementations — production symptom
+/// observed by a consumer: <c>wh_dead_letters</c> empty even with WRN logs firing.
 /// </summary>
 public class PostgresDriverExtensions_DeadLetterRegistrationTests {
 

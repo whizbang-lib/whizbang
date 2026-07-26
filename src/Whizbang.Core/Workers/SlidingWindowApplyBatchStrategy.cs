@@ -16,8 +16,8 @@ namespace Whizbang.Core.Workers;
 /// <para>Slice 22c. Defaults baked into <see cref="SlidingWindowApplyOptions"/>:
 /// 300 ms debounce / 3 s hard cap / 1000-signal ceiling per stream / 30 s idle eviction.</para>
 /// <para>
-/// Motivation: <c>Order</c>-style aggregate perspectives receive ~45 events per
-/// stream during a consumer bulk import. Without batching at the apply boundary, each drain
+/// Motivation: <c>Order</c>-style aggregate perspectives receive many events per
+/// stream during bulk import. Without batching at the apply boundary, each drain
 /// signal triggers a separate apply cycle (read snapshot → apply 1 event → atomic upsert)
 /// even though all events are already pending. With the window, signals coalesce into
 /// one flush per stream, producing one snapshot read + one apply pass + one atomic upsert.

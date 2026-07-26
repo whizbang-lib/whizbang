@@ -19,10 +19,10 @@ namespace Whizbang.Core.Security;
 /// for the canonical shape.
 /// </para>
 /// <para>
-/// a consumer application currently implements this pattern bespoke for its persona-security work:
-/// <c>UserEffectivePermissionsModel</c> + <c>MaterializeUserEffectivePermissionsCommand</c>
-/// + cascade receptors. The generic abstraction allows other applications to drop into
-/// the same pattern without re-deriving it.
+/// A consumer application may implement this pattern bespoke for its persona-security work
+/// (e.g. a materialized-permissions model + a "materialize effective permissions" command
+/// + cascade receptors). The generic abstraction lets applications drop into the same
+/// pattern without re-deriving it.
 /// </para>
 /// </remarks>
 /// <typeparam name="TUserId">

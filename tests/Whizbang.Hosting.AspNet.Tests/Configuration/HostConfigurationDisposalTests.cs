@@ -9,7 +9,7 @@ using TUnit.Core;
 namespace Whizbang.Hosting.AspNet.Tests.Configuration;
 
 /// <summary>
-/// Bijan Camp (a consumer/a consumer application) reported 2026-06-12: every Whizbang consumer that
+/// A consumer reported 2026-06-12: every Whizbang consumer that
 /// registers an EF Core <c>[WhizbangDbContext]</c> silently loses all dynamic
 /// configuration behaviour (<c>IOptionsMonitor</c>, <c>IFeatureManager</c>,
 /// <c>appsettings.json reloadOnChange</c>, Azure App Configuration refresh,
@@ -40,7 +40,7 @@ public class HostConfigurationDisposalTests {
 
   [Test]
   public async Task BrokenPattern_TempServiceProviderDisposed_HostConfigurationManagerDies_RedAsync() {
-    // Reproduces Bijan's bug: the temp provider's Dispose() disposes the host's
+    // Reproduces the reported bug: the temp provider's Dispose() disposes the host's
     // ConfigurationManager. Reads still work, but reload tokens are dead.
     var builder = WebApplication.CreateBuilder([]);
     var probe = new ProbeSource();
@@ -70,7 +70,7 @@ public class HostConfigurationDisposalTests {
     probe.Provider!.TriggerReload();
 
     await Assert.That(Volatile.Read(ref fired)).IsEqualTo(0)
-      .Because("BUG REPRO: the temp provider's Dispose() disposed the ConfigurationManager, which destroyed every provider→CM change-token registration. No subsequent provider reload can ever reach a subscriber on the CM's reload token. This is exactly the bug Bijan reported on 2026-06-12 — every Whizbang EF Core consumer loses IOptionsMonitor / IFeatureManager / appsettings reload / Azure App Configuration refresh silently at startup.");
+      .Because("BUG REPRO: the temp provider's Dispose() disposed the ConfigurationManager, which destroyed every provider→CM change-token registration. No subsequent provider reload can ever reach a subscriber on the CM's reload token. This is exactly the bug reported on 2026-06-12 — every Whizbang EF Core consumer loses IOptionsMonitor / IFeatureManager / appsettings reload / Azure App Configuration refresh silently at startup.");
   }
 
   [Test]
@@ -109,7 +109,7 @@ public class HostConfigurationDisposalTests {
   }
 
   // ============================================================================
-  // helpers — Bijan's ProbeProvider pattern from the bug report
+  // helpers — the ProbeProvider pattern from the bug report
   // ============================================================================
 
   private sealed class ProbeSource : IConfigurationSource {

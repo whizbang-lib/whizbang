@@ -12,7 +12,7 @@ namespace Whizbang.Core.Tests.Workers;
 #pragma warning disable IDE1006
 
 /// <summary>
-/// Reproduces the a consumer bulk-import "5 lost events with 0 rewinds" symptom on a cold
+/// Reproduces a bulk-import "5 lost events with 0 rewinds" symptom on a cold
 /// in-memory cursor cache. Before this fix: <see cref="PerspectiveCursorCache.TryGet"/>
 /// returns false on a cold lookup. The inversion detector in
 /// <c>PerspectiveWorker._resolveInversionAnchor</c> then sees a null cursor, can't
@@ -40,7 +40,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <docs>fundamentals/perspectives/cursor-inversion</docs>
 public class PerspectiveCursorResolverTests {
 
-  private const string PERSPECTIVE_NAME = "a consumer.Test.SagaProjection";
+  private const string PERSPECTIVE_NAME = "Consumer.Test.SagaProjection";
 
   [Test]
   public async Task ColdCache_PersistedCursorPresent_ResolverReturnsPersistedValuesAsync() {

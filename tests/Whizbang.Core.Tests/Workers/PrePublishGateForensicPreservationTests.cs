@@ -23,9 +23,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// last <c>process_outbox_failures</c> cycle) as <c>errorText</c> when present,
 /// falling back to the synthetic meta-message only when the column is NULL.
 ///
-/// <para>production Jun-2026 forensic gap: <c>wh_dead_letter_summary</c> showed
-/// 61 "clusters" but all 38,251 raw rows shared a single
-/// <c>error_fingerprint</c> (<c>7a66c4fc2d9ddd71</c>) because every promotion
+/// <para>A production forensic investigation found a gap: <c>wh_dead_letter_summary</c> showed
+/// a handful of "clusters" but all the raw rows shared a single
+/// <c>error_fingerprint</c> because every promotion
 /// used the meta-message
 /// <c>"OutboxDrainWorker dead-lettered: attempts=N > max=10"</c> as
 /// <c>error_text</c>. Slice 2's fingerprint algorithm extracts
@@ -176,13 +176,13 @@ public class PrePublishGateForensicPreservationTests {
   /// Asserts the pre-publish DLQ gate fires MoveAsync with the row's actual
   /// stack as errorText — NOT the synthetic meta-message
   /// "OutboxDrainWorker dead-lettered: attempts=N > max=M". Pre-fix, the gate
-  /// always used the meta-message, which collapsed production's 38k+ DLQ rows to
-  /// a single fingerprint cluster regardless of root cause.
+  /// always used the meta-message, which collapsed a production consumer's large
+  /// volume of DLQ rows to a single fingerprint cluster regardless of root cause.
   /// </summary>
   [Test]
   public async Task PrePublishGate_RowHasRealError_PromotesUsingRowErrorNotMetaMessageAsync() {
     var realStack = """
-      System.InvalidOperationException: Could not open connection to 'jdx_bff'
+      System.InvalidOperationException: Could not open connection to 'consumer_db'
          at Whizbang.Data.EFCore.Postgres.Functions.OutboxClaim.LeaseAsync(Guid instanceId)
          at Whizbang.Core.Workers.OutboxDrainWorker.PublishBulkAsync()
       """;
@@ -231,7 +231,7 @@ public class PrePublishGateForensicPreservationTests {
     await Assert.That(move.SourceTable).IsEqualTo(DeadLetterSourceTable.OUTBOX)
       .Because("DLQ promotion path setup sanity check.");
     await Assert.That(move.ErrorText).IsEqualTo(realStack)
-      .Because("Slice 1 invariant: pre-publish gate MUST use the row's actual error column verbatim — NOT the meta-message. The 38k+ production DLQ rows all collapsed to one fingerprint because the meta-message was used; using the real stack restores forensic diversity.");
+      .Because("Slice 1 invariant: pre-publish gate MUST use the row's actual error column verbatim — NOT the meta-message. The production DLQ rows all collapsed to one fingerprint because the meta-message was used; using the real stack restores forensic diversity.");
     await Assert.That(move.ErrorText).DoesNotContain("dead-lettered: attempts=")
       .Because("Explicit anti-assertion: the meta-message text must NOT appear in errorText when row.Error is present.");
   }

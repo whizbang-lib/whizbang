@@ -672,7 +672,7 @@ public class EFCorePostgresPerspectiveStoreTests {
 
   [Test]
   public async Task UpsertAsync_WithMetadata_PersistsCommitSequenceForOrderedIdempotencyAsync() {
-    // production regression: late-delivered events with smaller event_id but larger commit_sequence
+    // Production regression: late-delivered events with smaller event_id but larger commit_sequence
     // were being dropped by the runner's filter because metadata.CommitSequence didn't exist.
     // Locks the invariant: commit_sequence roundtrips through the perspective row's JSON metadata
     // column so the runner can compare incoming commit_sequence vs. the persisted floor.

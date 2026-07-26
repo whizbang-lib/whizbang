@@ -131,7 +131,7 @@ public static class WorkerPipelineExtensions {
     // Process-wide TaskScheduler.UnobservedTaskException + (optional)
     // AppDomain.FirstChanceException subscription. Without this, exceptions raised on
     // fire-and-forget Tasks after their registered catch handler completes silently vanish
-    // at GC time — see UnobservedExceptionDiagnostics for the production forensic that drove this.
+    // at GC time — see UnobservedExceptionDiagnostics for the production forensic investigation that drove this.
     services.TryAddSingleton<Whizbang.Core.Observability.UnobservedExceptionDiagnostics>();
     services.AddOptions<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsOptions>();
 

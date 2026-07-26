@@ -317,13 +317,19 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Test]
   [Timeout(30000)]
   public async Task FastPath_WhenTableNotExists_FallsToSlowPathAsync(CancellationToken cancellationToken) {
-    // Arrange — create a fresh database without any WhizBang tables
+    // Arrange — create a fresh database without any WhizBang tables.
     await using var adminConn = new NpgsqlConnection(ConnectionString);
     await adminConn.OpenAsync(cancellationToken);
 
-    // Drop the schema_migrations table to simulate first run
+    // Drop the WHOLE schema to genuinely simulate a first run (no tables, no ledger).
+    // Dropping only wh_schema_migrations while leaving a fully-migrated schema in place is
+    // not a supported state: the migration chain is forward-only and a later migration
+    // structurally DROPs wh_event_store.event_data, so replaying earlier migrations (which
+    // reference event_data in their bodies/ALTERs, validated under check_function_bodies=on)
+    // against an already-final schema cannot succeed. A real "tables don't exist" means the
+    // tables are actually gone — so drop and recreate the schema for a true from-scratch install.
     await using var dropCmd = adminConn.CreateCommand();
-    dropCmd.CommandText = "DROP TABLE IF EXISTS wh_schema_migrations CASCADE";
+    dropCmd.CommandText = "DROP SCHEMA public CASCADE; CREATE SCHEMA public;";
     await dropCmd.ExecuteNonQueryAsync(cancellationToken);
 
     // Act — run initialization (should fall to slow path since table doesn't exist)

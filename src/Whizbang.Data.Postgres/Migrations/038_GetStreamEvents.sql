@@ -41,7 +41,7 @@ BEGIN
   -- expired lease at the moment of the SELECT — invisible to the original
   -- instance_id-filtered query, so the perspective worker advanced its cursor past
   -- it, only to find it later (now behind cursor) and trigger a rewind. Investigated
-  -- a consumer run 6: BulkImportOrchestration / EmbeddingSaga streams produced
+  -- in a production run: a bulk-import / saga stream produced
   -- 38-second-delta inversions because batch N's fetch missed rows that
   -- claim_orphaned_perspective_events only claimed between batch N and batch N+1.
   --
@@ -61,7 +61,7 @@ BEGIN
   -- SKIP LOCKED also means concurrent callers don't fight over the same rows;
   -- the loser silently moves on with fewer claimed rows this cycle, and
   -- claim_orphaned_perspective_events / the next get_stream_events tick picks
-  -- up whatever was skipped. Without SKIP LOCKED, a consumer run 7 produced 40P01
+  -- up whatever was skipped. Without SKIP LOCKED, a production run produced 40P01
   -- deadlocks under high parallel apply pressure.
   -- Slice 28: only UPDATE rows that actually NEED claiming — unowned or with expired
   -- lease. Mirror of the change in claim_and_fetch_pending_perspective_events (mig 042).

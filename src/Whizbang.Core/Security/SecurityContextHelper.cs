@@ -152,7 +152,7 @@ public static partial class SecurityContextHelper {
   /// <item><description>Calls <see cref="EstablishScopeContextAsync"/> to set IScopeContextAccessor.Current</description></item>
   /// <item><description>Calls <see cref="SetMessageContextFromEnvelope"/> to set IMessageContextAccessor.Current</description></item>
   /// <item><description>If extraction succeeds, uses that context for MessageContext.ScopeContext (not envelope.GetCurrentScope())</description></item>
-  /// <item><description>Invokes ISecurityContextCallback implementations to notify user code (e.g., UserContextManager)</description></item>
+  /// <item><description>Invokes ISecurityContextCallback implementations to notify user code (e.g., a user-context callback service)</description></item>
   /// </list>
   /// </remarks>
   /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishFullContextAsync_SetsBothContextsAsync</tests>
@@ -188,14 +188,14 @@ public static partial class SecurityContextHelper {
 
     // Step 4: Set message context with the resolved scope
     // CRITICAL: This must be done BEFORE callbacks are invoked so MessageContextAccessor.Current
-    // is available inside callbacks (e.g., UserContextManagerCallback)
+    // is available inside callbacks (e.g., a user-context callback service)
     BuildAndEstablishMessageContext(envelope, scopeForMessageContext, scopedProvider);
 
     // Step 5: Invoke callbacks AFTER both accessors are set
     // This ensures MessageContextAccessor.CurrentContext is available inside callbacks
     // Only invoke when extraction failed but envelope had scope (immutableScope was created)
     if (immutableScope is not null) {
-      // Invoke callbacks (e.g., UserContextManagerCallback) since extractors didn't invoke them
+      // Invoke callbacks (e.g., a user-context callback service) since extractors didn't invoke them
       // IMPORTANT: Do NOT use ConfigureAwait(false) - we need AsyncLocal values to flow back
       var callbacks = scopedProvider.GetServices<ISecurityContextCallback>();
       foreach (var callback in callbacks) {
@@ -480,7 +480,7 @@ public static partial class SecurityContextHelper {
   /// <summary>
   /// Slice 5a of release/v0.647.0-alpha.1 — wraps <see cref="EstablishFullContextAsync"/>
   /// in a per-call timeout so a hung <see cref="IMessageSecurityContextProvider"/>
-  /// implementation (e.g. a consumer BFF's production Jun-2026 incident — provider blocked
+  /// implementation (e.g. a consumer's production incident — provider blocked
   /// indefinitely on an unknown tenant id) surfaces as a clean failure instead
   /// of blocking the worker until pod shutdown.
   /// </summary>
@@ -516,7 +516,7 @@ public static partial class SecurityContextHelper {
     // cancellation token. The earlier (v0.647) form used CreateLinkedTokenSource +
     // CancelAfter, which only signalled cooperatively — if the provider hung on a
     // non-cancellable I/O (sync-over-async, blocked DB call, etc.), the await sat
-    // forever and the catch never fired. a consumer BFF production forensic (Jun 2026) confirmed
+    // forever and the catch never fired. A production forensic investigation confirmed
     // that exact pattern: a stuck outbox row's SecurityContext call hung for the full
     // lease duration without timing out. The still-running establishment task is
     // abandoned with an observe-only continuation so any late exception lands in

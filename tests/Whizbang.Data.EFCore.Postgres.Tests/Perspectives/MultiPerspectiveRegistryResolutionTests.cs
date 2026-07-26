@@ -9,15 +9,15 @@ using Whizbang.Core.Perspectives;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
 /// <summary>
-/// Locks the source-generated <c>PerspectiveRunnerRegistry</c> invariant for the
-/// a consumer 2026-05-03 fanout: when two perspectives subscribe to the SAME event,
+/// Locks the source-generated <c>PerspectiveRunnerRegistry</c> invariant for a
+/// production fanout symptom: when two perspectives subscribe to the SAME event,
 /// the registry must enumerate BOTH perspectives in <c>GetRegisteredPerspectives</c>
 /// AND return a non-null runner for each via <c>GetRunner(perspectiveName, sp)</c>.
 ///
 /// <para>
 /// If the source generator silently dropped one perspective from registration, the
 /// PerspectiveWorker would never dispatch its perspective_events row — perfectly
-/// matching the a consumer symptom (one perspective row missing).
+/// matching the production symptom (one perspective row missing).
 /// </para>
 /// </summary>
 public class MultiPerspectiveRegistryResolutionTests {
@@ -80,7 +80,7 @@ public class MultiPerspectiveRegistryResolutionTests {
     await Assert.That(names).Contains("Whizbang.Data.EFCore.Postgres.Tests.Perspectives.ConsumerScalarPerspective")
       .Because("ConsumerScalarPerspective must be registered.");
     await Assert.That(names).Contains("Whizbang.Data.EFCore.Postgres.Tests.Perspectives.ConsumerListPerspective")
-      .Because("ConsumerListPerspective must ALSO be registered. If missing, the PerspectiveWorker never dispatches its events — a consumer symptom reproduced.");
+      .Because("ConsumerListPerspective must ALSO be registered. If missing, the PerspectiveWorker never dispatches its events — the production symptom reproduced.");
   }
 
   /// <summary>
@@ -157,6 +157,6 @@ public class MultiPerspectiveRegistryResolutionTests {
       .Because("ConsumerFanoutEvent must appear in event types — it's declared by both perspectives.");
     // No upper bound here: deduplication is a desirable property but not a load-bearing
     // invariant; lifecycle deserialization handles duplicates fine. The lower-bound check
-    // is what catches the a consumer-shaped regression.
+    // is what catches this shape of regression.
   }
 }

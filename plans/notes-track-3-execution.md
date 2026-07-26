@@ -6,9 +6,9 @@ Append-only file capturing on-the-fly decisions, open questions, and surprises d
 
 ### Status: **Deferred to user (production PG access required)**
 
-I don't have direct SQL access to production PG:
+I don't have direct SQL access to the production PG instance:
 - `kubectl run psql-probe` is RBAC-blocked (Azure: "User does not have access to the resource in Azure. Update role assignment to allow access.")
-- BFF pod doesn't have `psql` installed; only `dotnet`, `curl`, `wget`, `nc`
+- The service pod doesn't have `psql` installed; only `dotnet`, `curl`, `wget`, `nc`
 - The MCP postgres tool connects to a local DB, not production
 
 So W1 Phase 1 (`pg_stat_user_indexes` snapshot) and Phase 2 (isolated-table `EXPLAIN ANALYZE` experiments) need a human with sufficient Azure RBAC.
@@ -52,7 +52,7 @@ The accidentally-green test still locks the post-impl semantic (any error raises
 
 ### Open question (deferred to PR review or follow-up)
 
-- **production perf validation**: the plan estimated 70 ms → ~25 ms per `CommitHandlerBatchAsync` hold. We can't measure this locally; it gates on a a consumer bulk-import on production after merge. Need to schedule a re-baseline import after deploy.
+- **Production perf validation**: the plan estimated 70 ms → ~25 ms per `CommitHandlerBatchAsync` hold. We can't measure this locally; it gates on a consumer bulk-import in production after merge. Need to schedule a re-baseline import after deploy.
 
 ## W3 — Composite events + body offload
 
@@ -68,7 +68,7 @@ The plan flagged six open design questions that we don't want to block on. Defau
 | Inner-event StreamId | Inherit composite's StreamId | Simplest; per-inner producer-supplied override is future work |
 | Inner-event ordering | Sequential within composite | Matches single-row outbox storage semantics |
 | Event-store replay | Always replay inner events; composite is wire-only | Per plan; lock at replay time |
-| Producer migration sequence | Whizbang first → a consumer pilot in follow-up | Plan says a consumer pilot is a different work item |
+| Producer migration sequence | Whizbang first → consumer pilot in follow-up | Plan says consumer pilot is a different work item |
 | Lifecycle hooks fan-out | Per-inner-event | Consistent with "composite is wire-only"; preserves per-message contract |
 
 ### Completed slices
@@ -94,7 +94,7 @@ The plan flagged six open design questions that we don't want to block on. Defau
 
 ### Slice 5b design — agreed: JIT post-serialize hook inside each transport
 
-User feedback (2026-06-09): "I don't want the performance hit of a double serialize. We need to do this JIT after serialization."
+User feedback: "I don't want the performance hit of a double serialize. We need to do this JIT after serialization."
 
 Decision: the offload hook fires **inside the transport**, immediately after `JsonSerializer.Serialize(envelope, ...)`, before the wire-send call. No double-serialize on the non-offload path; on the offload path we serialize twice (original + small claim envelope) but that's unavoidable.
 
@@ -126,7 +126,7 @@ Existing `IMessageBodyOffloadStrategy` from slice 5a will be reshaped — the co
 
 ### Slice 5b actual execution log
 
-User pivoted the design (2026-06-09) to **transport-level JIT hooks with the wire-size header always emitted**. Rationale: pre-serializing upstream means we'd double-serialize on the non-offload path. The wire-side hook avoids that AND broadcasts the size as a header for other tools.
+User pivoted the design to **transport-level JIT hooks with the wire-size header always emitted**. Rationale: pre-serializing upstream means we'd double-serialize on the non-offload path. The wire-side hook avoids that AND broadcasts the size as a header for other tools.
 
 Implementation landed as four sub-slices:
 

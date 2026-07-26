@@ -447,7 +447,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_AttributeFactory_PreservesInitOnlyNamedArgumentsAsync() {
     // Arrange — custom tag attribute with an init-only enum property. Mirrors the shape
-    // of a consumer application's NotificationTagAttribute that surfaced this bug.
+    // of a consumer's custom tag attribute that surfaced this bug.
     const string source = """
             using System;
             using Whizbang.Core.Attributes;
@@ -774,7 +774,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleTagAttributes_DiscoversAllAsync() {
-    // Arrange - Event with TWO different tag attributes (like a consumer application's NotificationTag + NotificationIdTag)
+    // Arrange - Event with TWO different tag attributes (like a consumer's NotificationTag + NotificationIdTag)
     const string source = """
             using System;
             using Whizbang.Core.Attributes;

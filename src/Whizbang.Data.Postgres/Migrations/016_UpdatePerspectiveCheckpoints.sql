@@ -18,7 +18,7 @@ BEGIN
   -- issued 4M round trips; the bulk pattern is 2 (one UPDATE + one INSERT
   -- for any new pairs not yet in wh_perspective_cursors).
   --
-  -- production during-import data (PR #252 cycle) showed CompletePerspectiveAsync
+  -- Production during-import data (PR #252 cycle) showed CompletePerspectiveAsync
   -- as the second-largest gate-hold contributor after ClaimWorkAsync. Slice A
   -- (PR #253) collapsed process_perspective_event_completions's loop;
   -- this slice B addresses the other major loop inside complete_perspective.

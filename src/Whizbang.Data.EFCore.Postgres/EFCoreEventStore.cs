@@ -339,7 +339,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       // LocalCommitSequence carries the wh_event_store.commit_sequence stamp so the
       // perspective runner's idempotency filter can compare against
       // metadata.CommitSequence — required to keep UUIDv7 generation-time inversions
-      // from silently dropping late events (production G5).
+      // from silently dropping late events (production forensic G5).
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
@@ -617,7 +617,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       DispatchContext = metadata?.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
       // Drain-mode parity with ReadPolymorphicAsync — carry the local commit_sequence stamp
       // through to the perspective runner so the idempotency filter can compare commit_sequence
-      // when both sides have it (production G5).
+      // when both sides have it (production forensic G5).
       LocalCommitSequence = raw.CommitSequence
     };
   }

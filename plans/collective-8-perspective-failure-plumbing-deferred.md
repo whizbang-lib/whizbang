@@ -2,7 +2,7 @@
 
 **Status**: PARTIALLY SHIPPED (2026-07-01). The **success-side sink completion** — item #3 below, the
 `__collective__` sink completing its own work rows by `event_work_id` so `claim_orphaned` can't re-lease
-them — **is fixed and shipped** (it was the production re-dispatch loop / table bloat; see
+them — **is fixed and shipped** (it was a production re-dispatch loop / table bloat; see
 `PerspectiveWorker._completeCollectiveSinkWorkRows` + `PerspectiveWorkerCollectiveSinkTests`). What remains
 **DEFERRED** is the *failure-reporting* path (items #1, #2, #4): a failing apply still does not set the
 Failed flag / `error` / `scheduled_for` backoff, because of the identifier mismatch below. That fix touches

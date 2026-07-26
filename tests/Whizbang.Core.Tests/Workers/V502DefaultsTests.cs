@@ -14,8 +14,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// </para>
 /// <list type="bullet">
 ///   <item><description><see cref="InboxDispatchWorkerOptions.MaxInboxAttempts"/> was
-///   <c>null</c> (= infinite retry); now <c>10</c>. A pod observed 25k stuck inbox rows
-///   with one row at <c>attempts == 114</c> because dead-lettering was a hidden opt-in.</description></item>
+///   <c>null</c> (= infinite retry); now <c>10</c>. A pod observed thousands of stuck inbox rows
+///   with one row at over a hundred attempts because dead-lettering was a hidden opt-in.</description></item>
 ///   <item><description><see cref="ClaimWorkerOptions.NotifyHealthyPollingIntervalMilliseconds"/>
 ///   was <c>null</c> (= use the tight 250 ms baseline always); now <c>30000</c>. With
 ///   LISTEN/NOTIFY healthy, work-pickup latency is already sub-second; the tight poll
@@ -42,9 +42,9 @@ public class V502DefaultsTests {
   public async Task NotifyHealthyPollingIntervalMilliseconds_DefaultsToFiveSecondsAsync() {
     var options = new ClaimWorkerOptions();
     await Assert.That(options.NotifyHealthyPollingIntervalMilliseconds).IsEqualTo(5_000)
-      .Because("v0.684 settled on 5000 after measuring both extremes on production 2026-06-11: " +
+      .Because("v0.684 settled on 5000 after measuring both extremes in production: " +
                "30000 produced 30 s+ cold-start latency on new streams not yet in wh_active_streams; " +
-               "1000 multiplied claim_work call count ~10x on the bulk-job-import drain path. " +
+               "1000 multiplied claim_work call count ~10x on the bulk-import drain path. " +
                "5000 keeps cold-start under 5 s without paying the steady-state polling cost. " +
                "Proper fix (broadcast NOTIFY on first-touch) is architectural follow-up.");
   }

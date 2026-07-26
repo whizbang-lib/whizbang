@@ -2,12 +2,12 @@
 
 > **Audience**: the parallel Whizbang library session.
 > **Status**: design proposal, ready to consume.
-> **Source of motivation**: a week of a consumer bulk-import work that ended with a
-> `Whizbang.Sagas` shaped hole — pattern-quality coordination that every a consumer
+> **Source of motivation**: a week of consumer bulk-import work that ended with a
+> `Whizbang.Sagas` shaped hole — pattern-quality coordination that every consumer
 > saga reinvents, with a residual emission race the current
 > `SagaCompletionGuard` doesn't fully close. The proposals below come from
 > what we needed and what we wished was there. Cross-reference:
-> `plans/saga-ui-audit-2026-06-22.md`, `docs/patterns/adding-a-new-saga.md`.
+> `plans/saga-ui-audit.md`, `docs/patterns/adding-a-new-saga.md`.
 
 ---
 
@@ -23,8 +23,8 @@ Two changes, in this order:
    Houses `BaseSagaEvent` / `BaseSagaItemEvent`, `BaseSagaModel`,
    `ISagaService`, the `SagaItemStreams` routing convention, the
    `SagaItemModel` projection, `SagaCompletionGuard`, the live-progress
-   resolver helper, and Rule-17 hook bookends. Today's `a consumer.Infrastructure.Saga/`
-   becomes mostly empty — a consumer consumes the library.
+   resolver helper, and Rule-17 hook bookends. Today's consumer-side
+   `Infrastructure.Saga/` becomes mostly empty — the consumer uses the library.
 
 The split is principled: `Whizbang.Core` is the event-sourcing kernel any
 consumer needs; `Whizbang.Sagas` is a multi-stream coordination pattern
@@ -211,9 +211,9 @@ await dispatcher.PublishOnceAsync(
   ct);
 ```
 
-The 15 projection-side `Apply(SagaCompletedEvent)` CAS guards (`if (current.CompletionEventDispatched) return None();`) — added in a consumer commit `b9a640f9d` as defense-in-depth against the race — become unnecessary. They can be removed in a follow-up cleanup. The receptor-side `AlreadyEmittedAsync` checks in 5 handlers (BulkImport, JobMapping, JobArchActivation, OrderFieldPopulation, EmployeeImport) also become redundant.
+The 15 projection-side `Apply(SagaCompletedEvent)` CAS guards (`if (current.CompletionEventDispatched) return None();`) — added in a prior consumer-side commit as defense-in-depth against the race — become unnecessary. They can be removed in a follow-up cleanup. The receptor-side `AlreadyEmittedAsync` checks in 5 handlers across several bulk-import sagas also become redundant.
 
-Result: ~20 lines removed across a consumer, one new line per emission site (use
+Result: ~20 lines removed across the consumer, one new line per emission site (use
 `PublishOnceAsync` instead of `PublishAsync`), and the 1–4× residual goes
 to exactly 1× by construction.
 
@@ -313,7 +313,7 @@ Whizbang.Sagas           ← multi-stream coordination block:
                             SagaHookApplyHelper + Rule-17 hook bookend events,
                             Roslyn analyzer for the [StreamId] shadow trap
 
-(stays in a consumer or its own block later, NOT in Whizbang yet:
+(stays in the consumer or its own block later, NOT in Whizbang yet:
   notifications, audit, multi-tenancy scopes — only one consumer today.)
 ```
 
@@ -337,38 +337,37 @@ right split criterion is **does every consumer need this?**
     cohesive and useful only together.
   - Pulling in saga primitives shouldn't be required just to use event
     sourcing.
-  - The `PublishOnceAsync` dispatcher API + the saga lib together let a consumer
-    drop ~80% of `a consumer.Infrastructure.Saga/` — that's a concrete migration
-    win, not a hypothetical one.
-- Notifications, audit, multi-tenancy — only a consumer uses them today. Premature
-  library extraction bakes in the wrong shape because there's only one
-  user. They stay in a consumer.Infrastructure until a second consumer exists.
+  - The `PublishOnceAsync` dispatcher API + the saga lib together let a
+    consumer drop ~80% of its `Infrastructure.Saga/` — that's a concrete
+    migration win, not a hypothetical one.
+- Notifications, audit, multi-tenancy — only one consumer uses them today.
+  Premature library extraction bakes in the wrong shape because there's only
+  one user. They stay in the consumer's Infrastructure until a second
+  consumer exists.
 
 Two libraries. No more, no less.
 
 ### What a consumer migrates
 
-When `Whizbang.Sagas` ships, the work on the a consumer side is mechanical:
+When `Whizbang.Sagas` ships, the work on the consumer side is mechanical:
 
-1. Delete `src/aspects/a consumer.Infrastructure/Saga/` *except*
-   `a consumer.Contracts.Saga.SagaNames` (a consumer-domain saga names) and any
-   a consumer-domain-specific contracts.
-2. Replace `a consumer.Infrastructure.Saga` namespace imports with `Whizbang.Sagas`
-   in every projection, receptor, service, and test.
-3. Remove the 15 `Apply(SagaCompletedEvent)` CAS guards added in
-   `b9a640f9d` — `PublishOnceAsync` makes them defense-in-depth against
-   nothing.
+1. Delete the consumer's `Infrastructure/Saga/` *except* its domain saga
+   names and any domain-specific contracts.
+2. Replace the consumer's `Infrastructure.Saga` namespace imports with
+   `Whizbang.Sagas` in every projection, receptor, service, and test.
+3. Remove the 15 `Apply(SagaCompletedEvent)` CAS guards added in a prior
+   consumer-side commit — `PublishOnceAsync` makes them defense-in-depth
+   against nothing.
 4. Remove the receptor-side `SagaCompletionGuard.AlreadyEmittedAsync`
    checks in 5 handlers — same reason.
 5. Drop the per-saga `XxxCompletion.TryEmitAsync` helpers; replace with the
    one provided by `Whizbang.Sagas`.
-6. The `SagaLiveProgressResolvers` helper (in
-   `src/services/a consumer.BffService/Features/SagaItemFeature/Domain/`) moves
-   into `Whizbang.Sagas`; the 10 BFF saga model delegates point at the
-   library version.
+6. The `SagaLiveProgressResolvers` helper (in the consumer's BFF-service
+   saga-item feature) moves into `Whizbang.Sagas`; the 10 BFF saga model
+   delegates point at the library version.
 
-Expected diff: net negative ~500 LOC in a consumer, no behavior change, single
-emission of `SagaCompletedEvent` by construction.
+Expected diff: net negative ~500 LOC in the consumer, no behavior change,
+single emission of `SagaCompletedEvent` by construction.
 
 ---
 
@@ -377,14 +376,14 @@ emission of `SagaCompletedEvent` by construction.
 If the other session wants to ship in order of consumer value:
 
 1. **`PublishOnceAsync` + the claim table.** Smallest, highest-impact
-   change. Once it's in Whizbang.Core, a consumer's `SagaCompletionGuard` can be
-   refactored in a consumer (or in `Whizbang.Sagas` once that exists) to use it.
-   The 1–4× residual goes to 1× immediately.
-2. **`Whizbang.Sagas` package extraction.** Move existing a consumer saga
-   primitives into the new library. No a consumer migration required immediately
-   — a consumer can keep its `Infrastructure.Saga/` shim that re-exports from
-   `Whizbang.Sagas` for one transitional release.
-3. **a consumer migration.** Switch namespaces, delete shim. Net LOC drop.
+   change. Once it's in Whizbang.Core, a consumer's `SagaCompletionGuard`
+   can be refactored (or moved into `Whizbang.Sagas` once that exists) to
+   use it. The 1–4× residual goes to 1× immediately.
+2. **`Whizbang.Sagas` package extraction.** Move existing consumer saga
+   primitives into the new library. No consumer migration required
+   immediately — the consumer can keep its `Infrastructure.Saga/` shim
+   that re-exports from `Whizbang.Sagas` for one transitional release.
+3. **Consumer migration.** Switch namespaces, delete shim. Net LOC drop.
 4. **`[StreamRouting]`** — independent track, not on the critical path for
    the emission race fix.
 5. **`BaseSagaModel.Id` shadow fix** — bundled with `Whizbang.Sagas` v1.0 or

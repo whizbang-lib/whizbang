@@ -30,7 +30,7 @@ var functionName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA
 
 ## Example
 
-a consumer application's UserService has:
+A consumer's service has:
 ```csharp
 [WhizbangDbContext(Schema = "user")]
 public partial class UserDbContext : DbContext { }
@@ -87,11 +87,11 @@ Then inject `WhizbangSchemaOptions` into `EFCoreWorkCoordinator`.
 
 1. Test with non-public schema (e.g., `[WhizbangDbContext(Schema = "user")]`)
 2. Verify `process_work_batch` is called with correct schema qualification
-3. Test with a consumer application services
+3. Test with a consumer application's services
 
 ## Context
 
-- Reported from a consumer application project using Whizbang 0.5.1-alpha.26
-- All a consumer application services use custom schemas: `user`, `bff`, `chat`, `job`, etc.
+- Reported from a consumer application using Whizbang 0.5.1-alpha.26
+- The consumer's services use custom schemas: `user`, `bff`, `chat`, `job`, etc.
 - WorkCoordinatorPublisherWorker triggers this during startup
 - Need fix in 0.5.1-alpha.27

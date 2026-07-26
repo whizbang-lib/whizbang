@@ -86,7 +86,7 @@ BEGIN
     RETURNING o.message_id AS c_message_id, o.stream_id AS c_stream_id, o.partition_number AS c_partition_number
   ),
   -- 2026-06-02: split the wh_active_streams ledger maintenance into two paths to
-  -- eliminate the unique-index leaf-page deadlock observed on production under N pods ×
+  -- eliminate the unique-index leaf-page deadlock observed in production under N pods ×
   -- 250 ms polling. See Whizbang PR #227 for the full diagnosis.
   --
   -- REFRESH path (steady-state, >99% of claims under load): if this instance already

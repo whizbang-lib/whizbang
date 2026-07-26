@@ -25,7 +25,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// {
 ///   "Whizbang": {
 ///     "Database": {
-///       "ConnectionStringKey": "appservice-db",
+///       "ConnectionStringKey": "app-db",
 ///       "SignalingMode": "Auto"
 ///     }
 ///   }
@@ -275,7 +275,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// a consumer-style production deployments configure their EF Core DbContext via
+  /// Some production deployments configure their EF Core DbContext via
   /// <c>UseNpgsql(NpgsqlDataSource)</c>. In that configuration Npgsql strips
   /// credentials from every public ConnectionString surface — including
   /// <c>NpgsqlDataSource.ConnectionString</c> — and there is no string-based

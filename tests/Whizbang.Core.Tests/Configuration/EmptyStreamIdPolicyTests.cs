@@ -13,12 +13,12 @@ namespace Whizbang.Core.Tests.Configuration;
 /// whose stream_id is the all-zeros UUID (<c>Guid.Empty</c>).
 /// </summary>
 /// <remarks>
-/// Motivation: production forensic (Jun 2026) — a a consumer producer wrote a
-/// <c>RemoveShellUserCommand</c> outbox row with <c>stream_id =
+/// Motivation: a production forensic investigation — a consumer's producer wrote a
+/// <c>RemoveUserCommand</c> outbox row with <c>stream_id =
 /// 00000000-0000-0000-0000-000000000000</c> (zero-UUID, not NULL). The C#
 /// coordinator's <c>r.StreamId ?? r.WorkId</c> fallback only catches NULL; Empty
 /// slipped through and was filtered by the <c>Where(g => g != Guid.Empty)</c>
-/// guard. ClaimWorker bumped attempts every cycle (996+) but never wrote to the
+/// guard. ClaimWorker bumped attempts every cycle (repeatedly) but never wrote to the
 /// drain channel, so the row was silently stuck forever — no DLQ promotion, no
 /// error, no log. This policy enum is the structural fix.
 /// </remarks>

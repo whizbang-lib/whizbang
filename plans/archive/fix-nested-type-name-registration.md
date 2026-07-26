@@ -6,28 +6,28 @@ The `MessageJsonContextGenerator` registers nested type names using C# syntax (d
 
 ### Example
 
-For a nested type like `a consumer.Contracts.Auth.AuthContracts.LoginAttemptCommand`:
+For a nested type like `MyApp.Contracts.Auth.AuthContracts.LoginAttemptCommand`:
 
 **Generated registration (WRONG):**
 ```csharp
 global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(
-  "a consumer.Contracts.Auth.AuthContracts.LoginAttemptCommand, a consumer.Contracts",  // Uses dots
-  typeof(global::a consumer.Contracts.Auth.AuthContracts.LoginAttemptCommand),
+  "MyApp.Contracts.Auth.AuthContracts.LoginAttemptCommand, MyApp.Contracts",  // Uses dots
+  typeof(global::MyApp.Contracts.Auth.AuthContracts.LoginAttemptCommand),
   MessageJsonContext.Default);
 ```
 
 **Runtime lookup uses CLR format:**
 ```
-a consumer.Contracts.Auth.AuthContracts+LoginAttemptCommand, a consumer.Contracts
+MyApp.Contracts.Auth.AuthContracts+LoginAttemptCommand, MyApp.Contracts
 ```
 
 After `NormalizeTypeName` strips version info:
-- **Registered key**: `a consumer.Contracts.Auth.AuthContracts.LoginAttemptCommand, a consumer.Contracts` (dots)
-- **Lookup key**: `a consumer.Contracts.Auth.AuthContracts+LoginAttemptCommand, a consumer.Contracts` (plus)
+- **Registered key**: `MyApp.Contracts.Auth.AuthContracts.LoginAttemptCommand, MyApp.Contracts` (dots)
+- **Lookup key**: `MyApp.Contracts.Auth.AuthContracts+LoginAttemptCommand, MyApp.Contracts` (plus)
 
 These don't match, so `GetTypeInfoByName` returns null and we get:
 ```
-Failed to resolve message type 'a consumer.Contracts.Auth.AuthContracts+LoginAttemptCommand, a consumer.Contracts'.
+Failed to resolve message type 'MyApp.Contracts.Auth.AuthContracts+LoginAttemptCommand, MyApp.Contracts'.
 Ensure the assembly containing this type is loaded and registered via [ModuleInitializer].
 ```
 
@@ -129,7 +129,7 @@ This bug affects any application using nested message types (classes defined ins
 
 ## Discovered In
 
-a consumer application migration - `ExchangeCodeEndpoint` sending `LoginAttemptCommand` which is nested in `AuthContracts` class.
+A consumer migration — an endpoint sending `LoginAttemptCommand` which is nested in an `AuthContracts` class.
 
 ## Temporary Workaround Applied
 

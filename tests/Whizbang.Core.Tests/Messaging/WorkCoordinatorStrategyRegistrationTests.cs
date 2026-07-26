@@ -430,7 +430,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
 
   [Test]
   public async Task ResolvedStrategy_StreamAffinityWrapper_IsCastableToIWorkFlusherAsync() {
-    // Smoking-gun for the a consumer 5/7/2026 incident: WhizbangFlushMiddleware does
+    // Smoking-gun for a production incident: WhizbangFlushMiddleware does
     //   (IWorkFlusher)sp.GetRequiredService<IWorkCoordinatorStrategy>()
     // at request boundary. Before this lock, the StreamAffinity wrapper didn't implement
     // IWorkFlusher and the cast threw InvalidCastException on every HTTP request.

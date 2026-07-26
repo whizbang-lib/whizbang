@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS wh_dead_letters (
   recovered_at       TIMESTAMPTZ,                            -- non-null when permanently recovered
 
   -- generation tagging (deploy-aware auto-replay)
-  generation                TEXT NOT NULL,                   -- e.g., "0.502.0-alpha.1+a consumer-1.42.0"
+  generation                TEXT NOT NULL,                   -- e.g., "0.502.0-alpha.1+consumer-1.42.0"
   retried_on_generations    TEXT[] NOT NULL DEFAULT '{}',    -- generations that have already been auto-retried
 
   -- operator disposition
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS wh_dead_letters (
   -- error fingerprint (Slice 2 of release/v0.645.0-alpha.1)
   -- Populated inline by move_to_dead_letters via compute_dead_letter_fingerprint
   -- (defined in migration 053). VARCHAR(16) holds the first 16 hex chars of
-  -- SHA256(type:frame1:frame2:frame3). Lets operators triage 38k+ rows via
+  -- SHA256(type:frame1:frame2:frame3). Lets operators triage tens of thousands of rows via
   -- GROUP BY error_fingerprint without waiting for Slice 6's aggregation job.
   -- NULL when error_text is NULL — no spurious 'all-NULL' cluster.
   error_fingerprint         VARCHAR(16),
@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS wh_dead_letters_reason_status_idx
 -- it here would break existing databases where 050 already ran without the
 -- fingerprint columns — the migration runner re-applies 050 on hash change, and
 -- a CREATE INDEX referencing a column that 053 hasn't added yet would crash
--- (production CrashLoopBackOff Jun-2026). Keep the column DEFINITIONS in 050's
+-- (a production CrashLoopBackOff incident). Keep the column DEFINITIONS in 050's
 -- CREATE TABLE for fresh DBs (no-op on existing), but the index belongs after
 -- the column-add for re-run safety.
 

@@ -13,10 +13,10 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// 2026-06-12 production forensic — locks in the wake-coalescing contract for the
+/// A production forensic investigation — locks in the wake-coalescing contract for the
 /// <see cref="ClaimWorker"/> under bulk-NOTIFY storms. The v0.686 store-level
 /// <c>notify_instance_owners</c> hook emits one pg_notify per store call, so a
-/// 17 000-event bulk import fires 17 000+ NOTIFYs against the BFF replica's
+/// large bulk import fires thousands of NOTIFYs against the consumer's service replica's
 /// <c>wh_work_i_{instance_id}</c> channel. Each NOTIFY translates to a
 /// <see cref="ClaimWorker.RequestImmediatePoll"/> invocation via the listener's
 /// <c>OnSignal</c> handler.
@@ -88,7 +88,7 @@ public class ClaimWorkerSignalCoalescingTests {
     // legitimate startup/heartbeat-driven activity without admitting the bug.
     var observed = coord.CallCount;
     await Assert.That(observed).IsLessThanOrEqualTo(4)
-      .Because("Signal-storm coalescing invariant: 100 RequestImmediatePoll() calls during a busy claim cycle MUST collapse to AT MOST one follow-up claim — anything more means the wake mechanism is leaking signal count into claim_work call count, the regression observed on production during bulk imports.");
+      .Because("Signal-storm coalescing invariant: 100 RequestImmediatePoll() calls during a busy claim cycle MUST collapse to AT MOST one follow-up claim — anything more means the wake mechanism is leaking signal count into claim_work call count, the regression observed in production during bulk imports.");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

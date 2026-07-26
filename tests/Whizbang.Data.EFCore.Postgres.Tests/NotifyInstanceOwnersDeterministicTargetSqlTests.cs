@@ -13,8 +13,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// stream is NOT in <c>wh_active_streams</c>. Without this, first-event-on-
 /// new-stream consumers wait up to
 /// <c>NotifyHealthyPollingIntervalMilliseconds</c> on the safety-net poll
-/// before <c>claim_orphaned_*</c> discovers the row — observed on the
-/// 2026-06-11 production import as a 30 s+ dispatch-to-processing delay on cold
+/// before <c>claim_orphaned_*</c> discovers the row — observed in production
+/// during a large import as a 30 s+ dispatch-to-processing delay on cold
 /// start.
 ///
 /// The deterministic target must match the partition-modulo formula that
@@ -67,7 +67,7 @@ public class NotifyInstanceOwnersDeterministicTargetSqlTests : EFCoreTestBase {
       });
 
     await Assert.That(received.Count).IsEqualTo(1)
-      .Because("v0.685 — exactly ONE instance MUST receive the notify for an unclaimed stream. Per-instance fan-out (the legacy path) returns zero rows because the stream is not in wh_active_streams; the deterministic-target fallback MUST emit one and only one notify to the partition-modulo owner. Without this fallback, no instance receives a wake and the consumer waits on safety-net poll (production 2026-06-11 observed 30 s+ cold-start latency).");
+      .Because("v0.685 — exactly ONE instance MUST receive the notify for an unclaimed stream. Per-instance fan-out (the legacy path) returns zero rows because the stream is not in wh_active_streams; the deterministic-target fallback MUST emit one and only one notify to the partition-modulo owner. Without this fallback, no instance receives a wake and the consumer waits on safety-net poll (production observed 30 s+ cold-start latency).");
 
     var (channel, payload) = received[0];
     await Assert.That(channel).IsEqualTo($"wh_work_i_{instanceB}")

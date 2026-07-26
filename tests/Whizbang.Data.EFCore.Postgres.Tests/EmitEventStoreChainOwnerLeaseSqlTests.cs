@@ -13,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>wh_active_streams.assigned_instance_id</c>), NOT the commit instance.
 ///
 /// <para>
-/// The cross-instance saga race (a consumer run 14 root cause):
+/// The cross-instance saga race (root cause of a production run's asymmetry):
 /// </para>
 /// <list type="bullet">
 /// <item>Instance A's receptor emits "SagaItemCompleted" → inserts perspective_events leased to A.</item>
@@ -221,7 +221,7 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
 
   [Test]
   public async Task EmitEventStoreChain_NullLeaseExpiry_LeavesUnleased_EvenWithPinnedOwnerAsync() {
-    // Regression lock for the a consumer upload-stall bug (2026-05-24, slice 26.14 follow-up).
+    // Regression lock for a production upload-stall bug (slice 26.14 follow-up).
     // The strategy-flush path calls store_outbox_messages with NULL p_instance_id +
     // NULL p_lease_expiry, signaling "leave unleased — claim_orphaned will pick it up."
     // store_outbox_messages UPSERTs wh_active_streams with the commit instance as owner.

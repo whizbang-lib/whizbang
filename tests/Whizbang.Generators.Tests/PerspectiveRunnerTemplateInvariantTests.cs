@@ -30,8 +30,8 @@ public class PerspectiveRunnerTemplateInvariantTests {
 
     // The all-skipped self-heal branch must be Debug. With the drainer's cooldown gate
     // (step 7 slice 5) active, this branch only fires post-restart / TTL expiry / handler
-    // failure recovery — rare. INF firing per cursor-flush race produced ~8.6k/day of noise
-    // on a consumer BFF; Debug is the right level for the post-step-7 invariant.
+    // failure recovery — rare. INF firing per cursor-flush race produced a high volume of
+    // noise on a consumer's BFF; Debug is the right level for the post-step-7 invariant.
     await Assert.That(template).Contains("[diag.filter.all-dropped]")
       .Because("the all-skipped branch's log message is the anchor we're pinning");
     var idx = template.IndexOf("[diag.filter.all-dropped]", StringComparison.Ordinal);

@@ -150,8 +150,8 @@ public sealed class WhizbangCoreOptions {
   /// fixed.
   /// </summary>
   /// <remarks>
-  /// production forensic (Jun 2026): a single producer wrote ~990 silent-stuck
-  /// rows over 24 h because Empty <c>stream_id</c> bypassed the
+  /// A production forensic investigation found a single producer wrote hundreds of
+  /// silent-stuck rows over 24 h because Empty <c>stream_id</c> bypassed the
   /// <c>r.StreamId ?? r.WorkId</c> NULL-only fallback. The
   /// <see cref="EmptyStreamIdPolicy.Reject"/> default closes that surface
   /// at the producer; the coordinator-side Empty→WorkId recovery is

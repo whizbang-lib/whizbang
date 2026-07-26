@@ -133,13 +133,13 @@ public class PinnedPoolRegistrationTests {
     var services = new ServiceCollection();
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["ConnectionStrings:appservice-db-direct"] = "Host=test;Database=test;Username=x;Password=x",
+        ["ConnectionStrings:app-db-direct"] = "Host=test;Database=test;Username=x;Password=x",
       })
       .Build();
     services.AddSingleton<IConfiguration>(config);
     services.AddWhizbangPinnedWorkerPool(opts => {
       opts.Enabled = true;
-      opts.ConnectionStringName = "appservice-db-direct";
+      opts.ConnectionStringName = "app-db-direct";
     });
     services.AddWhizbangPostgresPinnedPool();
 
@@ -147,7 +147,7 @@ public class PinnedPoolRegistrationTests {
     var pool = sp.GetRequiredService<IPinnedConnectionPool>();
 
     await Assert.That(pool).IsTypeOf<PinnedConnectionPool>()
-      .Because("ConnectionStringName MUST resolve via IConfiguration.GetConnectionString — that's the a consumer-convention path operators are pointed at in the devops doc.");
+      .Because("ConnectionStringName MUST resolve via IConfiguration.GetConnectionString — that's the consumer-convention path operators are pointed at in the devops doc.");
   }
 
   [Test]
@@ -155,13 +155,13 @@ public class PinnedPoolRegistrationTests {
     var services = new ServiceCollection();
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["ConnectionStrings:appservice-db-direct"] = "Host=fromConfig;Database=test;Username=x;Password=x",
+        ["ConnectionStrings:app-db-direct"] = "Host=fromConfig;Database=test;Username=x;Password=x",
       })
       .Build();
     services.AddSingleton<IConfiguration>(config);
     services.AddWhizbangPinnedWorkerPool(opts => {
       opts.Enabled = true;
-      opts.ConnectionStringName = "appservice-db-direct";
+      opts.ConnectionStringName = "app-db-direct";
       opts.ConnectionString = "Host=inlineLoser;Database=test;Username=x;Password=x";
     });
     services.AddWhizbangPostgresPinnedPool();
@@ -184,7 +184,7 @@ public class PinnedPoolRegistrationTests {
     services.AddSingleton<IConfiguration>(config);
     services.AddWhizbangPinnedWorkerPool(opts => {
       opts.Enabled = true;
-      opts.ConnectionStringName = "appservice-db-direct";  // unresolvable
+      opts.ConnectionStringName = "app-db-direct";  // unresolvable
       opts.ConnectionString = "Host=inlineFallback;Database=test;Username=x;Password=x";
     });
     services.AddWhizbangPostgresPinnedPool();

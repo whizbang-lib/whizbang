@@ -27,8 +27,8 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
   #region CreateSnapshotAsync Tests
 
   /// <summary>
-  /// production G7: GetLatestSnapshotWithCommitSequenceAsync surfaces snapshot_commit_sequence
-  /// (the production G3/G4 stamp) so callers don't have to do a separate lookup. Symmetric with
+  /// Production forensic G7: GetLatestSnapshotWithCommitSequenceAsync surfaces snapshot_commit_sequence
+  /// (the production forensic G3/G4 stamp) so callers don't have to do a separate lookup. Symmetric with
   /// the slice 26.11 BeforeCommitSequence anchored variant.
   /// </summary>
   [Test]
@@ -47,7 +47,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(snapshotEventId);
     await Assert.That(result.Value.SnapshotCommitSequence)
       .IsEqualTo(expectedCommitSequence)
-      .Because("the commit-sequence-aware no-anchor variant must surface what the production G3/G4 stamps wrote");
+      .Because("the commit-sequence-aware no-anchor variant must surface what the production forensic G3/G4 stamps wrote");
     result.Value.SnapshotData.Dispose();
   }
 

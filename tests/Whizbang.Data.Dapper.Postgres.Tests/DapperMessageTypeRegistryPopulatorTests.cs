@@ -203,7 +203,7 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   public async Task PopulateAsync_DottedEncoding_WithPreexistingPlusRow_DedupsWithoutCollisionAsync() {
     const string dottedId = "11111111-1111-1111-1111-111111111111";
     // A stale '.'-row (this pinned id) AND the canonical '+'-row (a different identity) already coexist —
-    // the exact production shape. A naive rename '.'->'+' would violate the clr_type_name primary key.
+    // the exact shape seen in production. A naive rename '.'->'+' would violate the clr_type_name primary key.
     await using (var conn = new NpgsqlConnection(_connectionString)) {
       await conn.OpenAsync();
       await conn.ExecuteAsync(

@@ -12,7 +12,7 @@ namespace Whizbang.Sagas.Tests;
 /// Locks <c>AddWhizbangSagas</c> DI registrations and the namespace
 /// configuration path. The namespace override is the principal
 /// migration mechanism for consumers with pre-existing per-item streams
-/// (the a consumer migration story); these tests pin that the override
+/// (a consumer migration story); these tests pin that the override
 /// actually takes effect on <see cref="SagaItemStreams.AppDefaultNamespace"/>
 /// and that registered services round-trip cleanly.
 /// </summary>
@@ -53,7 +53,7 @@ public class SagaServiceCollectionExtensionsTests {
       services.AddWhizbangSagas(opts => opts.PerItemStreamNamespace = custom);
 
       await Assert.That(SagaItemStreams.AppDefaultNamespace).IsEqualTo(custom)
-        .Because("The configured namespace must take effect immediately so every subsequent SagaItemStreams.Of(sagaId, itemId) call uses the consumer's value. This is the a consumer migration story — one line at startup, no per-saga attribute pollution.");
+        .Because("The configured namespace must take effect immediately so every subsequent SagaItemStreams.Of(sagaId, itemId) call uses the consumer's value. This is the consumer migration story — one line at startup, no per-saga attribute pollution.");
     } finally {
       SagaItemStreams.AppDefaultNamespace = prior;
     }

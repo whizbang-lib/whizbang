@@ -94,8 +94,8 @@ public static class PostgresDriverExtensions {
         // SagaCompletionGuard.EmitOnceAsync, idempotent receptor emissions, etc.) doesn't
         // throw at runtime. EFCoreClaimedEmissionStore writes ON CONFLICT DO NOTHING against
         // wh_unique_emission_claims through the consumer's DbContext. Without this, every
-        // Postgres consumer had to wire it manually — observed on a consumer production where saga
-        // 019f000e couldn't dispatch SagaCompletedEvent until the registration was added
+        // Postgres consumer had to wire it manually — observed in production where a saga
+        // couldn't dispatch SagaCompletedEvent until the registration was added
         // (CompletionEventDispatched stayed false despite items being durably terminal).
         selector.Services.TryAddScoped<IClaimedEmissionStore>(sp =>
             new EFCoreClaimedEmissionStore(
@@ -176,7 +176,7 @@ public static class PostgresDriverExtensions {
         // dispatch worker can move failed inbox rows into wh_dead_letters and the
         // recovery worker can drain them back out. Without these the dispatch path's
         // _deadLetterStore field is null and the DLQ branch silently falls back to
-        // mark-Published (observed on a consumer production: wh_dead_letters empty even with
+        // mark-Published (observed in production: wh_dead_letters empty even with
         // WRN dead-letter logs firing).
         //
         // IDeadLetterStore is a SINGLETON (dispatch worker is singleton, can't inject
@@ -217,9 +217,9 @@ public static class PostgresDriverExtensions {
         // TURNKEY: Apply the same connection-string-name convention to the
         // notification options that .WithDriver.Postgres already uses for EF
         // Core (derived from TDbContext via WithEFCore<T>(...) — e.g.,
-        // BffServiceDbContext → "appservice-db"). The resolver will then try
+        // AppServiceDbContext → "appservice-db"). The resolver will then try
         // ConnectionStrings:{name}-direct first (the bypass-pgbouncer variant
-        // that a consumer-style deployments already configure) and fall back to
+        // that some deployments already configure) and fall back to
         // ConnectionStrings:{name}. Operators only need to override this in
         // config when they want a different key per-environment.
         //

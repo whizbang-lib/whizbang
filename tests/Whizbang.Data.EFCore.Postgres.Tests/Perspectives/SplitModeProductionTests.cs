@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <summary>
 /// Integration tests for Split-mode physical fields using the PRODUCTION EF Core mapping
 /// (ComplexProperty().ToJson()) — NOT the fallback Property().HasColumnType("jsonb").
-/// These tests reproduce the exact bugs seen in a consumer application production.
+/// These tests reproduce the exact bugs seen in a consumer's production deployment.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("PostgreSQL")]
@@ -36,7 +36,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   private string _connectionString = null!;
 
   // ========================================================================
-  // Test Model — mirrors a consumer application's JobArchitectureEmbeddingModel exactly
+  // Test Model — mirrors a consumer's embedding model exactly
   // ========================================================================
 
   /// <summary>

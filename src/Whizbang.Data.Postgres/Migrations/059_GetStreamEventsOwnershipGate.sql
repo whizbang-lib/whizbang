@@ -4,11 +4,11 @@
 --              get_stream_events claimed perspective_events rows purely on the ROW lease
 --              (instance_id IS NULL OR lease_expiry < now) and never consulted STREAM ownership.
 --              So when a stream's owning instance was merely slow/throttled and a row's lease
---              lapsed (e.g. under stamper/ASB backpressure during a 350-item bulk import), a
---              DIFFERENT live instance re-claimed that row and applied it concurrently — two
---              writers on one stream. Combined with the unconditional perspective upsert, the
---              staler write reverted a per-item row from Completed to Running and stranded
---              production saga 019ee73d (2026-06-20).
+--              lapsed (e.g. under stamper/ASB backpressure during a several-hundred-item bulk
+--              import), a DIFFERENT live instance re-claimed that row and applied it
+--              concurrently — two writers on one stream. Combined with the unconditional
+--              perspective upsert, the staler write reverted a per-item row from Completed to
+--              Running and stranded a saga in production.
 --
 --              This gates the claim CTE with the same live-owner check claim_orphaned uses
 --              (027): a row whose stream is owned by a different instance that is alive (its
@@ -120,4 +120,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.get_stream_events IS
-'Mig 059 — atomic per-stream claim+fetch with the grace-windowed unstamped gate (058) AND a single-writer ownership gate: a row whose stream is owned by a different live instance is not claimable, so two pods never apply one stream concurrently (the cross-pod lost-update that stranded production saga 019ee73d). Caller-owned / unowned / dead-owner streams stay claimable for clean failover. Supersedes mig 058.';
+'Mig 059 — atomic per-stream claim+fetch with the grace-windowed unstamped gate (058) AND a single-writer ownership gate: a row whose stream is owned by a different live instance is not claimable, so two pods never apply one stream concurrently (the cross-pod lost-update that stranded a saga in production). Caller-owned / unowned / dead-owner streams stay claimable for clean failover. Supersedes mig 058.';

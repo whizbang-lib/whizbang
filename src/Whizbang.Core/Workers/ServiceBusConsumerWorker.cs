@@ -131,8 +131,8 @@ public partial class ServiceBusConsumerWorker(
             //
             // Earlier code did `await _streamSerializer.EnqueueAsync; await done.Task` per
             // message in a foreach, which serialized the entire batch by accident: a hung A
-            // message blocked B from even entering the serializer (a consumer 2026-05-05 incident —
-            // 368 inbox messages stuck because one stream's processing stalled).
+            // message blocked B from even entering the serializer (a production incident —
+            // many inbox messages stuck because one stream's processing stalled).
             //
             // Per-message TaskCompletionSource preserves transport ack/nack semantics: handler
             // success → SetResult; exception → SetException → propagates to the ASB callback
@@ -193,7 +193,7 @@ public partial class ServiceBusConsumerWorker(
     // Slice 3 of pump-then-process.md (Half A): drop messages whose type has NO consumer
     // anywhere on this service — no inbox handler, no lifecycle receptor, no perspective,
     // no tag-attribute. They cannot do useful work, so the inbox row + dispatch path are
-    // pure waste. Dropping at the receive boundary keeps wh_inbox clean for the a consumer BFF
+    // pure waste. Dropping at the receive boundary keeps wh_inbox clean for the BFF
     // pattern where many cross-service events flow through with no local consumer.
     // Null registry → legacy behavior (always store) for back-compat in test harnesses.
     // EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; we

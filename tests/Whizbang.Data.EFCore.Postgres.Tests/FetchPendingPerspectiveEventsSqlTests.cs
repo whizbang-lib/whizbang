@@ -180,9 +180,9 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
   [Test]
   public async Task ClaimAndFetch_AlreadyLeasedToMe_DoesNotReExtendLeaseAsync() {
     // Slice 28: when rows are already leased to the caller with a valid lease, the
-    // function MUST NOT re-UPDATE them. pg_stat_user_tables on a consumer after run 19 showed
-    // 5.7M UPDATEs vs 800k inserts (7x bloat) directly caused by the prior behavior of
-    // bumping every fetch. LeaseRenewalWorker handles in-flight renewals independently,
+    // function MUST NOT re-UPDATE them. pg_stat_user_tables on a consumer's production
+    // system showed UPDATEs dwarfing inserts by a large multiple, directly caused by
+    // the prior behavior of bumping every fetch. LeaseRenewalWorker handles in-flight renewals independently,
     // so the per-fetch re-extend is redundant.
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -371,10 +371,10 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// production regression (G6): the prefetch tuple must carry <c>wh_event_store.commit_sequence</c>
+  /// Production regression (G6): the prefetch tuple must carry <c>wh_event_store.commit_sequence</c>
   /// so the drainer's inversion detector can compare against the cached cursor's commit_sequence
   /// directly, with no separate round-trip. Without this column, the detector either falls back
-  /// to event_id (the same UUIDv7 inversion that production hit) or pays N extra GetCommitSequence
+  /// to event_id (the same UUIDv7 inversion hit in production) or pays N extra GetCommitSequence
   /// queries per drain cycle.
   /// </summary>
   [Test]

@@ -103,7 +103,7 @@ BEGIN
   END IF;
 
   -- v0.657 slice 4: DLQ replay self-repair. If the DLQ row preserves a
-  -- Guid.Empty stream_id (the production pattern — producer bug from before the
+  -- Guid.Empty stream_id (a pattern observed in production — producer bug from before the
   -- v0.657 storage-time Reject guard shipped), normalize to NULL on the
   -- INSERT back into the source table. Otherwise the recovered row immediately
   -- re-sticks under the same silent-stuck pattern that DLQ'd it in the first

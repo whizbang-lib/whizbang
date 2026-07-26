@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// End-to-end proof that the turnkey
 /// <see cref="PostgresDriverExtensions.Postgres"/> property wires the
 /// notification resolver against a consumer's exact production config shape — no
-/// a consumer-side <c>Whizbang:Database:ConnectionStringKey</c> needed.
+/// consumer-side <c>Whizbang:Database:ConnectionStringKey</c> needed.
 ///
 /// <para>RED + GREEN pair, mirroring the structure of the SCRAM-SHA-256
 /// reproduction tests.</para>
@@ -23,16 +23,16 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
 
-  // The a consumer BFF production config shape: ConnectionStrings:appservice-db
+  // A representative consumer production config shape: ConnectionStrings:appservice-db
   // (pgbouncer pooled) + ConnectionStrings:appservice-db-direct (port-5432
   // direct, the notification path).
   private const string PRODUCTION_LIKE_POOLED_STRING =
-    "Server=db.example.com.postgres.database.azure.com;Database=appservice_db_db_production;Port=6432;User Id=bff_service_user;Password=fake_test_password;Ssl Mode=Require;";
+    "Server=db.example.com;Database=appservice_db;Port=6432;User Id=app_user;Password=fake_test_password;Ssl Mode=Require;";
   private const string PRODUCTION_LIKE_DIRECT_STRING =
-    "Server=db.example.com.postgres.database.azure.com;Database=appservice_db_db_production;Port=5432;User Id=bff_service_user;Password=fake_test_password;Ssl Mode=Require;";
+    "Server=db.example.com;Database=appservice_db;Port=5432;User Id=app_user;Password=fake_test_password;Ssl Mode=Require;";
 
   /// <summary>
-  /// RED: with the a consumer-shaped config but NO Whizbang-side derivation and NO
+  /// RED: with the consumer-shaped config but NO Whizbang-side derivation and NO
   /// explicit <c>ConnectionStringKey</c>, the resolver finds nothing — exactly
   /// the failure mode a consumer hits before the fix.
   /// </summary>
@@ -50,21 +50,21 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
       options, config, fallback: null);
 
     // Without ConnectionStringKey set and no fallback, the resolver has
-    // nothing to work with — this is the a consumer SCRAM failure mode.
+    // nothing to work with — this is the consumer SCRAM failure mode.
     await Assert.That(resolution.ConnectionString).IsNull();
     await Assert.That(resolution.Source)
       .IsEqualTo(NotificationConnectionStringResolver.ResolutionSource.None);
   }
 
   /// <summary>
-  /// GREEN: with the same a consumer-shaped config, simulating what the turnkey
+  /// GREEN: with the same consumer-shaped config, simulating what the turnkey
   /// <c>.WithDriver.Postgres</c> now does via <c>PostConfigure</c> — set
   /// <c>ConnectionStringKey</c> to the derived name from
-  /// <c>BffServiceDbContext</c>. The resolver then picks the <c>-direct</c>
+  /// <c>AppServiceDbContext</c>. The resolver then picks the <c>-direct</c>
   /// variant.
   /// </summary>
   [Test]
-  public async Task TurnkeyDerivationFromBffServiceDbContext_ResolverPicksDirectVariantAsync() {
+  public async Task TurnkeyDerivationFromAppServiceDbContext_ResolverPicksDirectVariantAsync() {
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
         ["ConnectionStrings:appservice-db"] = PRODUCTION_LIKE_POOLED_STRING,
@@ -72,7 +72,7 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
       })
       .Build();
 
-    var derivedKey = PostgresDriverExtensions._deriveConnectionStringName("BffServiceDbContext");
+    var derivedKey = PostgresDriverExtensions._deriveConnectionStringName("AppServiceDbContext");
     var options = new WhizbangNotificationOptions { ConnectionStringKey = derivedKey };
 
     var resolution = NotificationConnectionStringResolver.Resolve(
@@ -109,7 +109,7 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
       .Configure(o => o.ConnectionStringKey = "custom-override");
     services.PostConfigure<WhizbangNotificationOptions>(o => {
       if (string.IsNullOrWhiteSpace(o.ConnectionStringKey)) {
-        o.ConnectionStringKey = PostgresDriverExtensions._deriveConnectionStringName("BffServiceDbContext");
+        o.ConnectionStringKey = PostgresDriverExtensions._deriveConnectionStringName("AppServiceDbContext");
       }
     });
 
@@ -144,7 +144,7 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
     // This is the same shape PostgresDriverExtensions.Postgres uses.
     services.PostConfigure<WhizbangNotificationOptions>(o => {
       if (string.IsNullOrWhiteSpace(o.ConnectionStringKey)) {
-        o.ConnectionStringKey = PostgresDriverExtensions._deriveConnectionStringName("BffServiceDbContext");
+        o.ConnectionStringKey = PostgresDriverExtensions._deriveConnectionStringName("AppServiceDbContext");
       }
     });
 

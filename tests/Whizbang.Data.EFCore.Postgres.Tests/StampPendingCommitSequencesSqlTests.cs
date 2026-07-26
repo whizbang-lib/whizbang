@@ -135,7 +135,7 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
 
   [Test]
   public async Task Stamp_DefersWhileOlderTxStillInFlightAsync() {
-    // The smoking-gun test: simulates the a consumer run 8 commit-order race.
+    // The smoking-gun test: simulates a production run's commit-order race.
     // T1 begins, inserts row r1 (xmin = X1, uncommitted), holds tx open.
     // T2 begins on a separate connection, inserts r2 (xmin = X2 > X1), commits fast.
     // Stamper runs from a third connection.
@@ -143,7 +143,7 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     //     → ZERO stamps. The stamper defers r2 until T1 resolves.
     //   * AFTER T1 commits: snapshot_xmin > X2, both rows visible & past barrier
     //     → BOTH stamped in xmin order (r1 first, r2 second).
-    // This is the invariant that fixes the 2-second commit-order delta from run 8.
+    // This is the invariant that fixes the 2-second commit-order delta from that production run.
     var dataSource = NpgsqlDataSource.Create(ConnectionString);
 
     var streamId = (Guid)TrackedGuid.NewMedo();

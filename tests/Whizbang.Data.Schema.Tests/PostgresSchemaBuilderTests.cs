@@ -54,6 +54,31 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
   }
 
   [Test]
+  public async Task BuildCreateTable_BackfillExemptColumn_OmittedFromAddColumnBackfillAsync() {
+    // A column whose lifecycle is owned by forward migrations (e.g. the offloaded event_data /
+    // metadata that migration 078 drops) must NOT be re-added by the idempotent
+    // ADD COLUMN IF NOT EXISTS backfill pass: re-adding a dropped NOT NULL column to a non-empty
+    // table fails with 23502 (contains null values). It still belongs in the CREATE for fresh DBs.
+    var table = new TableDefinition(
+      Name: "offload_demo",
+      Columns:
+      [
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
+        new ColumnDefinition("event_data", WhizbangDataType.JSON, Nullable: false, BackfillExempt: true),
+      ]);
+    var config = new SchemaConfiguration();
+
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
+
+    // Present in CREATE so fresh databases still get the column…
+    await Assert.That(sql).Contains("event_data JSONB NOT NULL");
+    // …but NOT re-asserted by the backfill pass (which is what breaks a DB past migration 078).
+    await Assert.That(sql).DoesNotContain("ADD COLUMN IF NOT EXISTS event_data");
+    // Non-exempt columns are still backfilled as before.
+    await Assert.That(sql).Contains("ADD COLUMN IF NOT EXISTS id");
+  }
+
+  [Test]
   public async Task BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync() {
     // Arrange
     var table = new TableDefinition(

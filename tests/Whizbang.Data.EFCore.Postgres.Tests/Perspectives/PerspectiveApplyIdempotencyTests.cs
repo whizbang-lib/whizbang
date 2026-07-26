@@ -158,7 +158,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       // Status MUST be Completed even though zero events were applied — otherwise the worker
       // skips _enqueueDrainModePerspectiveCompletions and the wh_perspective_events rows
       // never get deleted. claim_orphaned_perspective_events would then re-claim them every
-      // safety-net interval forever (the a consumer application "Skipped 1 already-applied" hot loop).
+      // safety-net interval forever (the consumer's "Skipped 1 already-applied" hot loop).
       await Assert.That(second.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
       await Assert.That(second.ProcessedEventIds).IsNotEmpty();
     }
@@ -176,7 +176,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
 
   /// <summary>
   /// Mixed batch: a re-claim that contains BOTH already-applied events AND new ones
-  /// must apply only the new ones. This is the realistic a consumer application shape — first refresh
+  /// must apply only the new ones. This is the realistic consumer shape — first refresh
   /// claims events 1-3, dies; second refresh claims 1-3 again plus a new event 4.
   /// </summary>
   [Test]
@@ -254,7 +254,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// production regression (G2): the runner must persist <see cref="PerspectiveMetadata.CommitSequence"/>
+  /// Consumer regression (G2): the runner must persist <see cref="PerspectiveMetadata.CommitSequence"/>
   /// alongside <see cref="PerspectiveMetadata.EventId"/>. Without this, the idempotency filter has
   /// no commit-sequence floor to compare incoming events against — late-delivered events whose
   /// event_id sorts lex-smaller (UUIDv7 inversion) but whose commit_sequence is larger get
@@ -301,7 +301,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   /// Pre-fix the filter falls back to event_id lex compare — same UUIDv7 inversion the cs
   /// path was added to avoid. The lex-smaller event_id gets silently dropped.
   ///
-  /// Concrete observation from the local healthcare-350 run on 2026-06-01: the
+  /// Concrete observation from a production bulk-import run: the
   /// BulkImportOrchestration saga projection's metadata never had CommitSequence
   /// because the SagaItemCompletedEvents were being checkpointed faster than the stamper
   /// could keep up — every checkpoint write got null cs. Subsequent batches arrived with
@@ -471,9 +471,9 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// production regression (G5): events with smaller event_id but larger commit_sequence than
+  /// Consumer bulk-import regression (G5): events with smaller event_id but larger commit_sequence than
   /// metadata.CommitSequence MUST be applied, not silently dropped. Concretely reproduces the
-  /// a consumer bulk-import miss: pre-populate metadata with (EventId = X-large, CommitSequence = Y-small);
+  /// consumer bulk-import miss: pre-populate metadata with (EventId = X-large, CommitSequence = Y-small);
   /// then run with an event whose MessageId sorts lex-smaller than X but whose LocalCommitSequence
   /// is &gt; Y. Without G5, the runner's event_id-only string.Compare filter drops it.
   /// </summary>
@@ -483,7 +483,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var innerStore = new InMemoryEventStore();
 
     // First apply: small event_id, small commit_sequence — establishes a metadata floor.
-    // (lex-large event_id chosen deliberately to mimic the production inversion shape.)
+    // (lex-large event_id chosen deliberately to mimic the commit-sequence inversion shape.)
     var firstId = MessageId.From(Guid.Parse("019e80de-59c0-7000-8000-000000000000"));
     var firstEnvelope = new MessageEnvelope<ActionTestCreatedEvent> {
       MessageId = firstId,
@@ -531,7 +531,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       // Use RunWithEventsAsync — the worker's drain-mode path. The drainer pre-fetches
       // events (worker already saw them in the DB) and hands them straight to the runner,
       // bypassing ReadPolymorphicAsync's event_id-based filter. This is the exact code
-      // path that produced the production miss in a consumer bulk-import.
+      // path that produced the miss in a consumer bulk-import.
       var lateEnvelopePoly = new MessageEnvelope<IEvent> {
         MessageId = lateId,
         Payload = lateEnvelope.Payload,
@@ -572,7 +572,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// production regression (G3 + G4): the runner's snapshot Create calls in BootstrapSnapshotAsync
+  /// Consumer regression (G3 + G4): the runner's snapshot Create calls in BootstrapSnapshotAsync
   /// and the after-replay branch of RewindAndRunAsync must thread commit_sequence through the
   /// 5-arg overload. Without it, snapshot rows get NULL <c>snapshot_commit_sequence</c> and
   /// the commit-sequence-anchored rewind lookup (<c>GetLatestSnapshotBeforeCommitSequenceAsync</c>)

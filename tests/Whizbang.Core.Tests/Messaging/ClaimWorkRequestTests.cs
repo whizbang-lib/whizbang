@@ -42,7 +42,7 @@ public class ClaimWorkRequestTests {
       HostName: "H",
       ProcessId: 1);
 
-    // These defaults are deployed across every a consumer application service; bumping them in
+    // These defaults are deployed across every consumer service; bumping them in
     // a refactor without realizing the production impact is the failure mode
     // this test guards against.
     await Assert.That(req.MaxStreams).IsEqualTo(1000);

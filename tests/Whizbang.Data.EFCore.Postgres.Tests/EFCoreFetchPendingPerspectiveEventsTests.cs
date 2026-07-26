@@ -99,7 +99,7 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// production G6: when wh_event_store has a stamped commit_sequence, the C# reader's
+  /// Production forensic G6: when wh_event_store has a stamped commit_sequence, the C# reader's
   /// non-null branch must surface it through <see cref="PendingPerspectiveEvent.CommitSequence"/>.
   /// Companion to the no-event-store row test above.
   /// </summary>
@@ -165,7 +165,7 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// production G6: same coverage for the atomic claim-and-fetch variant. Locks the non-null
+  /// Production forensic G6: same coverage for the atomic claim-and-fetch variant. Locks the non-null
   /// reader branch on <see cref="EFCoreWorkCoordinator{T}.ClaimAndFetchPendingPerspectiveEventsAsync"/>.
   /// </summary>
   [Test]

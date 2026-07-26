@@ -4,6 +4,42 @@
 
 ---
 
+## 🔒 NEVER name a client, consumer, or their infrastructure (CRITICAL)
+
+Whizbang is a general-purpose library. **Never reference a specific client, consumer application,
+tenant, person, or their environments — anywhere.** This is non-negotiable and applies to:
+
+- **Code & comments** — no client/app/product names, no contributor names, no bespoke consumer
+  patterns named after a consumer. Describe the *general* scenario instead ("a consumer service",
+  "a downstream application", "a multi-schema consumer").
+- **Tests** — no client names in test method/class names, `[Category(...)]` values, or seed/string
+  literals (use generic values like `tenant-…`, `user-…`, `ConsumerScenario`).
+- **Commit messages, PR titles & PR descriptions** — describe the framework-level symptom and fix,
+  never "seen on <client>'s <service>" or "what lets <client> delete …".
+- **Docs, scripts, plans** — no client names, no client repo paths (`~/src/<Client>`), no
+  environment/slot/tenant identifiers.
+- **Secrets** — never commit or mention client secrets, connection strings, tenant ids, hostnames,
+  slot names, or deployment coordinates.
+
+If a real-world case motivated the change, **generalize it**: capture the *behavior* (what the
+framework does wrong/right and under what conditions), not *who* hit it or *where*. When in doubt,
+leave the name out. This includes production-forensic notes: describe the failure mode, never the
+environment (no deployment-slot names, incident dates, production stream/saga GUIDs, hostnames,
+database names, or raw workload counts that identify a consumer's system).
+
+---
+
+## Releasing & Versioning
+
+📖 **Read [`docs/RELEASING.md`](docs/RELEASING.md)** before cutting a release or touching any release
+workflow (`reusable-version.yml`, `release.yml`, `start-release.yml`, `ci.yml` publish jobs,
+`nuget-*.yml`). It documents — with diagrams — the gitflow branching model, the three publish channels,
+how the version is decided and kept identical across **preview → publish → stamp → tag**, the tag-driven
+GitVersion sync (highest repo-wide tag), and the `nuget-publish` approval gate. `Directory.Build.props`
+is a **local placeholder**, never the source of truth.
+
+---
+
 ## Essential Standards
 
 ### Code Style

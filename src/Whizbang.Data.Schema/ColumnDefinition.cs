@@ -24,6 +24,15 @@ namespace Whizbang.Data.Schema;
 /// <param name="Unique">True if column values must be unique (default: false)</param>
 /// <param name="MaxLength">Maximum length for string types (null = unlimited)</param>
 /// <param name="DefaultValue">Default value expression (null = no default)</param>
+/// <param name="BackfillExempt">
+/// True if this column's lifecycle is owned by forward migrations rather than the base schema
+/// (default: false). The column is still emitted in <c>CREATE TABLE</c> for fresh databases, but is
+/// omitted from the idempotent <c>ALTER TABLE … ADD COLUMN IF NOT EXISTS</c> backfill pass. Set this
+/// on columns a later migration may drop or relax (e.g. the event-store's offloaded
+/// <c>event_data</c>/<c>metadata</c>, dropped by the full body split): re-asserting a dropped NOT NULL
+/// column against a non-empty table fails with Postgres 23502, so the base ensure must defer to the
+/// migrations and only move forward.
+/// </param>
 public sealed record ColumnDefinition(
   string Name,
   WhizbangDataType DataType,
@@ -31,5 +40,6 @@ public sealed record ColumnDefinition(
   bool PrimaryKey = false,
   bool Unique = false,
   int? MaxLength = null,
-  DefaultValue? DefaultValue = null
+  DefaultValue? DefaultValue = null,
+  bool BackfillExempt = false
 );

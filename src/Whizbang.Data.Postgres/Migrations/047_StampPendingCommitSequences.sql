@@ -25,8 +25,8 @@ BEGIN
   -- Critically: pg_snapshot_xmin CANNOT advance past T2's xmin while T1 (with lower
   -- xmin) is still in flight. So if T1 holds a tx open with xmin=X1, neither T1's
   -- inserts NOR T2's inserts (with xmin > X1) become stampable until T1 resolves.
-  -- This is what closes the a consumer run 8 commit-order race: T2's row is deferred until
-  -- T1 is also resolved, then both get stamped in xmin order.
+  -- This is what closes the commit-order race seen in a production run: T2's row is
+  -- deferred until T1 is also resolved, then both get stamped in xmin order.
   --
   -- FOR UPDATE SKIP LOCKED: concurrent stamper callers partition the work — one
   -- locks rows the other skips. Each row gets stamped exactly once. Singleton-stamper

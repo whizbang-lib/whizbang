@@ -11,8 +11,8 @@ namespace Whizbang.Core.Tests.Observability;
 /// <summary>
 /// Locks the v0.660 Slice 8 invariants around <see cref="InboxMetrics"/> — the
 /// instrumentation the inbox dispatch worker uses to record per-message wall
-/// time. production import surfaced 2,704 <c>OrderCompetencyRowAddedEvent</c>
-/// rows draining at ~27 rows/sec; without a per-message-type histogram, an
+/// time. A production bulk import surfaced thousands of <c>BulkImportRowAddedEvent</c>
+/// rows draining slowly; without a per-message-type histogram, an
 /// operator can't tell whether the bottleneck is one slow event type or the
 /// pipeline overall.
 /// </summary>
@@ -66,11 +66,11 @@ public class InboxMetricsTests {
     listener.SetMeasurementEventCallback<double>((_, _, tags, _) => observed.Add(tags.ToArray()));
     listener.Start();
 
-    metrics.RecordDispatch("a consumer.Contracts.Job.OrderCompetencyContracts+OrderCompetencyRowAddedEvent, a consumer.Contracts", durationMs: 100.0);
+    metrics.RecordDispatch("Consumer.Contracts.Import.BulkImportContracts+BulkImportRowAddedEvent, Consumer.Contracts", durationMs: 100.0);
 
     listener.Dispose();
     var tag = (string?)observed[0].FirstOrDefault(kv => kv.Key == "message_type").Value;
-    await Assert.That(tag).IsEqualTo("OrderCompetencyRowAddedEvent")
+    await Assert.That(tag).IsEqualTo("BulkImportRowAddedEvent")
       .Because("Nested types use '+' between outer and inner — operators care about the actual event class (the inner), not its container.");
   }
 

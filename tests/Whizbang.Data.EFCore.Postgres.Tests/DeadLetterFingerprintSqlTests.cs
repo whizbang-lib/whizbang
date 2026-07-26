@@ -41,7 +41,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class DeadLetterFingerprintSqlTests : EFCoreTestBase {
 
   private const string _typicalStack = """
-    System.InvalidOperationException: Could not open connection to 'jdx_bff'
+    System.InvalidOperationException: Could not open connection to 'appservice_db'
        at Whizbang.Data.EFCore.Postgres.Functions.OutboxClaim.LeaseAsync(Guid instanceId)
        at Whizbang.Core.Workers.OutboxDrainWorker.InvokeOutboxLifecycleStageAsync()
        at Whizbang.Core.Workers.OutboxDrainWorker.ExecuteAsync(CancellationToken ct)
@@ -52,7 +52,7 @@ public class DeadLetterFingerprintSqlTests : EFCoreTestBase {
   // captures the "Npgsql patched, .NET hotfixed" scenario that would otherwise
   // fragment a single root cause across many fingerprint clusters.
   private const string _typicalStackDifferentFramework = """
-    System.InvalidOperationException: Could not open connection to 'jdx_bff'
+    System.InvalidOperationException: Could not open connection to 'appservice_db'
        at Npgsql.NpgsqlConnection.OpenAsync(CancellationToken token)
        at System.Threading.Tasks.ValueTask.GetResult()
        at Whizbang.Data.EFCore.Postgres.Functions.OutboxClaim.LeaseAsync(Guid instanceId)
@@ -62,7 +62,7 @@ public class DeadLetterFingerprintSqlTests : EFCoreTestBase {
 
   // Same exception type, DIFFERENT first in-app frame — must produce a different fingerprint.
   private const string _typicalStackDifferentInAppFrame = """
-    System.InvalidOperationException: Could not open connection to 'jdx_bff'
+    System.InvalidOperationException: Could not open connection to 'appservice_db'
        at Whizbang.Data.EFCore.Postgres.Functions.InboxDispatch.ClaimAsync(Guid instanceId)
        at Whizbang.Core.Workers.InboxDispatchWorker.ExecuteAsync(CancellationToken ct)
     """;

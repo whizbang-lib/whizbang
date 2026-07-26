@@ -14,8 +14,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// NOTIFY calls inside <c>store_inbox_messages</c> / <c>store_outbox_messages</c>
 /// (migrations 021 / 020).
 ///
-/// <para>Background — 2026-06-11 production import attempted to re-enable the 30 s safety-net
-/// polling cadence on a consumer application production. It regressed catastrophically because the v0.685
+/// <para>Background — a 2026-06-11 bulk import attempted to re-enable the 30 s safety-net
+/// polling cadence on a consumer dev environment. It regressed catastrophically because the v0.685
 /// shape of <c>notify_instance_owners</c> cost ~24 ms per call, and the store-level wire-up
 /// invoked it ~15k times across a 17k-event bulk import. The fix has two parts:</para>
 ///
@@ -64,7 +64,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       emit: async () => await _callNotifyInstanceOwnersAsync(conn, "outbox", streamId));
 
     await Assert.That(received).Count().IsEqualTo(1)
-      .Because("Step 2 must short-circuit when every input stream is already pinned. Otherwise the rank-deterministic owner gets an extra (wrong) notify and the function pays the table-scan cost on every call — the 2026-06-11 production regression.");
+      .Because("Step 2 must short-circuit when every input stream is already pinned. Otherwise the rank-deterministic owner gets an extra (wrong) notify and the function pays the table-scan cost on every call — the 2026-06-11 consumer regression.");
     await Assert.That(received[0].Channel).IsEqualTo($"wh_work_i_{instanceA}")
       .Because("Step 1 must emit to the pinned owner (instanceA) — NOT the partition-modulo deterministic target (instanceB) — because the stream is claimed.");
   }
@@ -121,7 +121,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     // wh_active_streams as the stream's owner BEFORE the NOTIFY runs, so Step 1 of
     // notify_instance_owners emits to the caller's channel. This is correct: the
     // caller is the instance that physically stored the row and most often the one
-    // that should process it (in a consumer application, the caller is the BFF replica that
+    // that should process it (in a consumer deployment, the caller is the replica that
     // received the transport message). Step 2's partition-modulo deterministic
     // routing is the COLD-START fallback when no instance has yet pinned the
     // stream — once pinned, all subsequent notifies go through Step 1.
@@ -254,7 +254,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       instancesToListen: [instanceA],
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, secondJson));
     await Assert.That(secondReceived).IsEmpty()
-      .Because("v0.686.1 — subsequent store calls for an already-pinned stream MUST NOT emit a NOTIFY. The pinned owner's worker is already on the case; the NOTIFY storm is what made the bulk-import regress on production (2026-06-12).");
+      .Because("v0.686.1 — subsequent store calls for an already-pinned stream MUST NOT emit a NOTIFY. The pinned owner's worker is already on the case; the NOTIFY storm is what made the bulk-import regress in a consumer deployment (2026-06-12).");
   }
 
   [Test]

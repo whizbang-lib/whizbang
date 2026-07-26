@@ -15,7 +15,7 @@ namespace Whizbang.Core.Workers;
 /// forward-apply path. The runner's own idempotency filter then reads the
 /// persisted <c>metadata.EventId</c> (which IS current) and drops the event
 /// — silently, because <c>wh_perspective_events.processed_at</c> gets stamped
-/// and the event_work_id is gone. This is the a consumer bulk-import
+/// and the event_work_id is gone. This is the bulk-import
 /// "N lost events, 0 rewinds" symptom.
 /// </remarks>
 /// <docs>fundamentals/perspectives/cursor-inversion</docs>

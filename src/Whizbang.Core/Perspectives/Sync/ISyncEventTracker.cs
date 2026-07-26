@@ -158,7 +158,7 @@ public interface ISyncEventTracker {
   /// <param name="perspectiveName">The perspective whose tracked entries should be swept.</param>
   /// <param name="streamId">The stream whose tracked entries should be swept.</param>
   /// <remarks>
-  /// Production motivation: ChatService observed 30s sync-wait timeouts when a
+  /// Production motivation: a consumer service observed 30s sync-wait timeouts when a
   /// perspective drained a stream whose runner short-circuited every event (eg the
   /// recently-processed-event cooldown filtered the whole batch). The per-event
   /// <see cref="MarkProcessedByPerspective"/> call was gated on a non-empty

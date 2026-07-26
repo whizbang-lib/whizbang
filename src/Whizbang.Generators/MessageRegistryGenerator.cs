@@ -183,13 +183,13 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var invocation = (InvocationExpressionSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    // Crash-fix (2026-06-15): the predicate matches purely on method name
+    // Crash-fix: the predicate matches purely on method name
     // ("SendAsync" / "PublishAsync"), so invocations resolve to *any* type with
     // a same-named method — including Rocks-generated expectations classes
     // (e.g. `IDispatcherCreateExpectations.SetupsExpectations.PublishAsync<T>(Argument<T>)`)
     // and any user-written wrapper. In overload-resolution-ambiguous cases
     // Roslyn returns a null `Symbol`, and the prior `GetMethodSymbolOrThrow`
-    // dereference fired CS8785, breaking every a consumer test project that uses Rocks
+    // dereference fired CS8785, breaking every consumer test project that uses Rocks
     // to mock `IDispatcher`. A generator must never throw on an invocation it
     // cannot resolve — skip safely instead.
     var symbolInfo = semanticModel.GetSymbolInfo(invocation, cancellationToken);

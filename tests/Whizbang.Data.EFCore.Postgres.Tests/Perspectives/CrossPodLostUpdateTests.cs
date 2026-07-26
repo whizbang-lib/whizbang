@@ -8,8 +8,8 @@ using Whizbang.Core.Perspectives;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
 /// <summary>
-/// RED confirmation of the cross-pod perspective lost-update (production saga
-/// <c>019ee73d</c> item 141, 2026-06-20).
+/// RED confirmation of the cross-pod perspective lost-update (a stranded
+/// production saga item).
 ///
 /// <para>The per-item-stream design assumes <b>single-writer per stream</b>: while one instance is
 /// applying a stream's events, no other instance applies it. That invariant is enforced only by an
@@ -77,7 +77,7 @@ public class CrossPodLostUpdateTests : EFCoreTestBase {
     await Assert.That(row.Data.Name).IsEqualTo("Completed")
       .Because("a staler concurrent apply (commit_sequence 841014) from a second instance must not "
         + "overwrite the terminal apply (841062) — this is the cross-pod lost-update that stranded "
-        + "production saga 019ee73d item 141 at Running");
+        + "a production saga item at Running");
     await Assert.That(row.Metadata.CommitSequence).IsEqualTo(841062L)
       .Because("the stored metadata must reflect the highest applied commit_sequence, not the staler write");
   }

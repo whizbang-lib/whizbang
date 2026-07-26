@@ -253,10 +253,10 @@ public class ReceptorInvokerTagScopePropagationTests {
   }
 
   /// <summary>
-  /// <para>Verifies that an accessor-injected hook (like ConsumerSignalRNotificationHook) can read
+  /// <para>Verifies that an accessor-injected hook (like a consumer's SignalR notification hook) can read
   /// scope from the injected IScopeContextAccessor at terminal stages with no receptors.</para>
   ///
-  /// <para>This is the exact code path used by a consumer notification hooks — they resolve
+  /// <para>This is the exact code path used by a consumer's notification hooks — they resolve
   /// IScopeContextAccessor via DI injection, not via ScopeContextAccessor.CurrentContext directly.</para>
   /// </summary>
   [Test]
@@ -424,7 +424,7 @@ public class ReceptorInvokerTagScopePropagationTests {
   #region Test Types
 
   /// <summary>
-  /// A strongly-typed event with a tag, simulating events like JobTemplateCreatedEvent
+  /// A strongly-typed event with a tag, simulating events like TemplateCreatedEvent
   /// that are dispatched via AsSystem().ForAllTenants().
   /// </summary>
   private sealed record TestTaggedEvent(string Name) : IEvent;

@@ -28,11 +28,11 @@ public class AzureBlobOffloadFromConfigurationTests {
   [Test]
   public async Task FromConfiguration_RegistersProvider_BindsOptions_AndSelectorAsync() {
     var configuration = _config(new() {
-      ["Whizbang:Offloads:AzureBlob:a consumer-offload:ConnectionString"] = "UseDevelopmentStorage=true",
-      ["Whizbang:Offloads:AzureBlob:a consumer-offload:ContainerName"] = "whizbang-offload-bodies-production",
-      ["Whizbang:Offloads:AzureBlob:a consumer-offload:DefaultAccessTier"] = "Cool",
-      ["Whizbang:Offloads:AzureBlob:a consumer-offload:MaxDownloadBytes"] = "104857600",
-      ["Whizbang:BodyOffload:ProviderName"] = "a consumer-offload",
+      ["Whizbang:Offloads:AzureBlob:consumer-offload:ConnectionString"] = "UseDevelopmentStorage=true",
+      ["Whizbang:Offloads:AzureBlob:consumer-offload:ContainerName"] = "whizbang-offload-bodies-prod",
+      ["Whizbang:Offloads:AzureBlob:consumer-offload:DefaultAccessTier"] = "Cool",
+      ["Whizbang:Offloads:AzureBlob:consumer-offload:MaxDownloadBytes"] = "104857600",
+      ["Whizbang:BodyOffload:ProviderName"] = "consumer-offload",
       ["Whizbang:BodyOffload:SizeThresholdBytes"] = "65536",
       ["Whizbang:BodyOffload:ActiveCleanup"] = "false",
     });
@@ -42,21 +42,21 @@ public class AzureBlobOffloadFromConfigurationTests {
     var provider = services.BuildServiceProvider();
 
     // Store registered under the provider name discovered in config.
-    var store = provider.GetKeyedService<IMessageBodyStore>("a consumer-offload");
+    var store = provider.GetKeyedService<IMessageBodyStore>("consumer-offload");
     await Assert.That(store).IsNotNull();
-    await Assert.That(store!.ProviderName).IsEqualTo("a consumer-offload");
+    await Assert.That(store!.ProviderName).IsEqualTo("consumer-offload");
 
     // Provider options bound — including DefaultAccessTier parsed from the "Cool" string, the bit
     // ConfigurationBinder cannot convert (the reason for explicit binding).
-    var blobOptions = provider.GetRequiredService<IOptionsMonitor<AzureBlobOffloadOptions>>().Get("a consumer-offload");
+    var blobOptions = provider.GetRequiredService<IOptionsMonitor<AzureBlobOffloadOptions>>().Get("consumer-offload");
     await Assert.That(blobOptions.ConnectionString).IsEqualTo("UseDevelopmentStorage=true");
-    await Assert.That(blobOptions.ContainerName).IsEqualTo("whizbang-offload-bodies-production");
+    await Assert.That(blobOptions.ContainerName).IsEqualTo("whizbang-offload-bodies-prod");
     await Assert.That(blobOptions.DefaultAccessTier).IsEqualTo(AccessTier.Cool);
     await Assert.That(blobOptions.MaxDownloadBytes).IsEqualTo(104857600L);
 
     // Send-side selector bound + the claim-check hook chain registered (offload is ON).
     var bodyOptions = provider.GetRequiredService<IOptionsMonitor<MessageBodyOffloadOptions>>().CurrentValue;
-    await Assert.That(bodyOptions.ProviderName).IsEqualTo("a consumer-offload");
+    await Assert.That(bodyOptions.ProviderName).IsEqualTo("consumer-offload");
     await Assert.That(bodyOptions.SizeThresholdBytes).IsEqualTo(65536L);
     await Assert.That(bodyOptions.ActiveCleanup).IsFalse();
     await Assert.That(provider.GetService<PostSerializeHookChain>()).IsNotNull();
@@ -69,7 +69,7 @@ public class AzureBlobOffloadFromConfigurationTests {
     var provider = services.BuildServiceProvider();
 
     // No provider configured → no store, no hook chain — offload stays off and publish is inline.
-    await Assert.That(provider.GetKeyedService<IMessageBodyStore>("a consumer-offload")).IsNull();
+    await Assert.That(provider.GetKeyedService<IMessageBodyStore>("consumer-offload")).IsNull();
     await Assert.That(provider.GetService<PostSerializeHookChain>()).IsNull();
   }
 

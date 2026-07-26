@@ -10,7 +10,7 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// the full event-driven sync pipeline: track → wait → mark processed → signal.
 /// </summary>
 /// <remarks>
-/// These tests reproduce the pattern used in a consumer application's OrchestratorAgent:
+/// These tests reproduce the pattern used in a consumer's orchestrator agent:
 /// 1. Dispatcher cascade tracks event via <see cref="ISyncEventTracker.TrackEvent"/>
 /// 2. <see cref="IPerspectiveSyncAwaiter.WaitForStreamAsync"/> queries pending events and waits
 /// 3. PerspectiveWorker calls <see cref="ISyncEventTracker.MarkProcessedByPerspective"/> → signals waiter

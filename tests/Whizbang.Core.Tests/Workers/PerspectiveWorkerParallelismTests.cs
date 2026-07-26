@@ -9,8 +9,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// Slice 17 of plans/pump-then-process.md — PerspectiveWorker parallel consumer loops.
 /// Pre-slice-17 ExecuteAsync ran a single channel-consumer loop; while one batch was
 /// processing, new perspective work piled up in the channel until the batch completed.
-/// On a consumer BFF this capped drain throughput at ~38/sec while saga fan-out arrived at
-/// ~180/sec, leaving the read models stale and the UI unable to show fresh data.
+/// In production this capped drain throughput well below the saga fan-out arrival
+/// rate, leaving the read models stale and the UI unable to show fresh data.
 /// </summary>
 public class PerspectiveWorkerParallelismTests {
 
@@ -22,7 +22,7 @@ public class PerspectiveWorkerParallelismTests {
     // accumulates in the channel during ProcessChannelBatchAsync.
     var defaults = new PerspectiveWorkerOptions();
     await Assert.That(defaults.MaxConcurrentDrainConsumers).IsGreaterThan(1)
-      .Because("Slice 17 invariant: parallel perspective consumer loops are on by default. UI freshness on a consumer depends on this.");
+      .Because("Slice 17 invariant: parallel perspective consumer loops are on by default. UI freshness for consumers depends on this.");
   }
 
   [Test]

@@ -273,7 +273,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Reproduces the a consumer application ActiveSessions zombie bug:
+  /// Reproduces a consumer's active-sessions zombie bug:
   /// When multiple page refreshes occur before the PerspectiveWorker processes events,
   /// the batch contains: UpdateEvent, PurgeEvent, UpdateEvent (from 2nd refresh).
   /// The update AFTER purge passes null to Apply(), causing NullReferenceException,

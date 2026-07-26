@@ -87,7 +87,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// <item><description>Set <see cref="IScopeContextAccessor.Current"/> with the established context</description></item>
   /// </list>
   /// <para>
-  /// This enables scoped services (like UserContextManager) to access security information during receptor execution.
+  /// This enables scoped services (like a user/tenant context manager) to access security information during receptor execution.
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/security/message-security#lifecycle-receptors</docs>
@@ -469,7 +469,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       accessor.Current = immutableScope;
     }
 
-    // Invoke security callbacks so a consumer application's UserContextManagerCallback sets TenantContext
+    // Invoke security callbacks so a consumer's security callback sets its tenant context
     var callbacks = _scopedProvider.GetServices<ISecurityContextCallback>();
     foreach (var callback in callbacks) {
       cancellationToken.ThrowIfCancellationRequested();

@@ -343,8 +343,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // CrossPodStaleReadRegressionRaceTests.StaleSecondWriter_RegressesTerminalRowToEarlierState_StoreFailsToProtectAsync
     // — so existing consumers that depend on stamper-lag forwarding keep working.
     // Models that need strand prevention beyond the v0.740 stream-affinity gate (the first
-    // is SagaItemModel) opt in by implementing IVersionedApplyTarget. production saga 019f03cd
-    // (2026-06-26) showed 2 of 350 per-item rows survived the affinity gate and reverted to
+    // is SagaItemModel) opt in by implementing IVersionedApplyTarget. A production saga
+    // showed a small fraction of per-item rows survived the affinity gate and reverted to
     // State=Running — this marker closes that gap at the storage layer.
     var isVersionedTarget = typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel));
     var whereClause = isVersionedTarget
@@ -514,7 +514,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       // Cross-pod lost-update guard: refuse a write whose commit_sequence is strictly below the
       // stored row's. A staler concurrent apply from a second instance (which loaded an empty/older
       // row and never saw the fresher write) must not overwrite a newer apply — this is what reverted
-      // a per-item row from Completed to Running and stranded production saga 019ee73d. A NULL on either
+      // a per-item row from Completed to Running and stranded a production saga. A NULL on either
       // side can't be ordered, so it falls through to the stream-ownership guarantee in the claim path.
       if (existingRow.Metadata?.CommitSequence is long storedCommitSequence
           && metadata.CommitSequence is long incomingCommitSequence

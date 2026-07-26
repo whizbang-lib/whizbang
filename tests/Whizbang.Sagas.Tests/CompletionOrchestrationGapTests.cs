@@ -12,11 +12,11 @@ namespace Whizbang.Sagas.Tests;
 /// <summary>
 /// Locks the gap-claims that drive the v0.740 framework-owns-completion work:
 /// today Whizbang.Sagas can EMIT saga lifecycle events but it cannot DRIVE the
-/// saga to terminal state on its own. Consumers (a consumer BulkImport, EmployeeImport,
-/// Embedding, …) each hand-roll receptors that watch SagaItem terminal events,
-/// run a reconciler, and call <see cref="BaseSagaService{TInit,TItemsDispatched,TItemStarted,TItemCompleted,TItemFailed,TCompleted,TReset,THookStarted,THookCompleted}.CompleteSagaAsync"/>.
+/// saga to terminal state on its own. Consumers each hand-roll receptors that watch
+/// SagaItem terminal events, run a reconciler, and call
+/// <see cref="BaseSagaService{TInit,TItemsDispatched,TItemStarted,TItemCompleted,TItemFailed,TCompleted,TReset,THookStarted,THookCompleted}.CompleteSagaAsync"/>.
 /// When a per-item projection is stranded by the cross-pod stale-read race
-/// (production saga <c>019ef473</c> on 2026-06-23), the saga sits forever — there
+/// (a stranded-saga incident observed in production), the saga sits forever — there
 /// is no framework wake-up. Every consumer also has to write its own watchdog.
 ///
 /// <para>These REDs assert the missing surface (auto-orchestration, watchdog

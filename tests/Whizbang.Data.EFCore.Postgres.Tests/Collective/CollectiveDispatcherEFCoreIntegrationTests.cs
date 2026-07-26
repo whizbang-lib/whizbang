@@ -428,8 +428,8 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       _mapRow<_jobStatusModel>(modelBuilder, "wh_per_collective_job_status");
       _mapRow<_overlayModel>(modelBuilder, "wh_per_collective_overlay");
       // POLYMORPHIC model mapping: Data is a SCALAR jsonb column (Property + HasColumnType), NOT
-      // ComplexProperty().ToJson(). This is exactly what a consumer generates for perspective models with
-      // [JsonPolymorphic] members (e.g. OrderTenantFields, whose field cells are polymorphic). EF Core 10
+      // ComplexProperty().ToJson(). This is exactly what a consumer's generator produces for perspective models with
+      // [JsonPolymorphic] members (e.g. a tenant-fields model whose field cells are polymorphic). EF Core 10
       // rejects native nested SetProperty(j => j.Data.Sub, …) on this shape — there is no complex
       // sub-property — with "does not represent a valid property to be set".
       modelBuilder.Entity<PerspectiveRow<_cellsModel>>(e => {
@@ -451,8 +451,8 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         e.HasKey(x => x.Id);
         e.Property(x => x.Id).HasColumnName("id");
         // Mirror the PRODUCTION turnkey mapping (EFCoreSnippets): Data is an EF Core 10
-        // ComplexProperty().ToJson() complex type, NOT a scalar jsonb column. This is the mapping a consumer
-        // actually generates, and the one the collective rewriter must support. (Metadata/Scope stay
+        // ComplexProperty().ToJson() complex type, NOT a scalar jsonb column. This is the mapping a
+        // consumer's generator actually produces, and the one the collective rewriter must support. (Metadata/Scope stay
         // scalar jsonb here — they are not mutated or materialized by these tests, so keeping them simple
         // avoids unrelated complex-collection materialization noise.)
         e.ComplexProperty(x => x.Data, d => d.ToJson("data"));
@@ -824,7 +824,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         r => r.Data.GlobalTemplateId == e.GlobalTemplateId);
 
     // A SECOND apply for the SAME (event, model) — proves the dispatcher fans out to multiple
-    // [CollectiveApplyFor] methods per (event, model), which the a consumer overlay redesign (apply + clear on the
+    // [CollectiveApplyFor] methods per (event, model), which a consumer's overlay redesign (apply + clear on the
     // jobs perspective off one event) depends on.
     public ICollectiveSpec<_overlayModel> MarkAll(_setActiveEvent e) =>
       new _whereSpec(
@@ -1253,7 +1253,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     // §7 redesign: the btree `((scope->>'t'))` expression index the WHERE needs is created at SERVICE
     // STARTUP by the schema generator (EFCoreServiceRegistrationGenerator._appendStandardIndexes), NOT by
     // the apply. An earlier design ran `CREATE INDEX IF NOT EXISTS` inside the apply on the first call per
-    // process — taking a SHARE lock on the table in a live path (the production hazard). The apply must
+    // process — taking a SHARE lock on the table in a live path (a production hazard). The apply must
     // now emit ZERO DDL: only the keyset SELECT + UPDATE. Captured SQL is instance-isolated (this test's
     // own interceptor).
     var id = Guid.NewGuid();

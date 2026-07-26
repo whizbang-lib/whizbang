@@ -16,7 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Production observation on a consumer BFF (2026-05-03 during job creation): cursor
+/// Production observation on a consumer's app-service (during order creation): cursor
 /// inversions firing repeatedly on <c>BulkImportOrchestration+Projection</c> and
 /// <c>Order+Projection</c>. Each inversion triggers a full replay or
 /// snapshot-restore. Root cause: high-rate event emission produces inbox/outbox
@@ -250,7 +250,8 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     // Phase H step 10 slice 4 regression lock: pre-fix, the INSERT was
     // `ON CONFLICT (event_id) DO NOTHING` which only handled event_id duplicates. A
     // (stream_id, version) conflict (concurrent insert race) bubbled up as PG 23505 and
-    // failed the whole claim_work tick — observed on a consumer BFF 2026-05-03. The fix is
+    // failed the whole claim_work tick — observed on a consumer's app-service in production.
+    // The fix is
     // `ON CONFLICT DO NOTHING` with NO constraint specifier so PG handles both unique
     // constraints gracefully. With slices 2+3 in place we shouldn't hit the version conflict
     // in practice, but this is the third defensive layer.
@@ -295,8 +296,8 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   public async Task EmitEventStoreChainForInbox_SourceContains_AdvisoryLockPerStreamAsync() {
     // Phase H step 10 slice 2 regression lock: the inbox backfill (in
     // _emit_event_store_chain_for_inbox, called by claim_work after claim_orphaned_inbox) used
-    // to skip the lock — that's the bug observed on a consumer BFF as PG 23505 on
-    // idx_event_store_stream during job creation.
+    // to skip the lock — that's the bug observed on a consumer's app-service as PG 23505
+    // on idx_event_store_stream during order creation.
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {

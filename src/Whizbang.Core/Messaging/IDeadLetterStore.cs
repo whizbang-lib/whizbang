@@ -23,7 +23,7 @@ public interface IDeadLetterStore {
   /// <param name="errorText">Human-readable error context (truncated to a reasonable
   /// length by the caller).</param>
   /// <param name="instanceId">The instance that decided to dead-letter (for forensics).</param>
-  /// <param name="generation">Current generation tag — e.g. <c>"0.502.0-alpha.1+a consumer-1.42.0"</c>.
+  /// <param name="generation">Current generation tag — e.g. <c>"0.502.0-alpha.1+consumer-1.42.0"</c>.
   /// Used by the recovery worker's generation-replay logic.</param>
   /// <param name="ct">Cancellation.</param>
   /// <returns>The <paramref name="deadLetterId"/> on success, <c>null</c> when the source

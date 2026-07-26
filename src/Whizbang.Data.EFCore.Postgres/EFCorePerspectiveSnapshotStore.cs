@@ -122,10 +122,10 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
   }
 
   /// <summary>
-  /// production G7: commit-sequence-aware sibling of <see cref="GetLatestSnapshotAsync"/>. Surfaces
+  /// Production forensic fix (G7): commit-sequence-aware sibling of <see cref="GetLatestSnapshotAsync"/>. Surfaces
   /// <c>snapshot_commit_sequence</c> so any future caller (drainer cooldown, rewind anchor
   /// resolver, etc.) doesn't need a separate JOIN. Null when the snapshot was written via the
-  /// legacy 4-arg <c>CreateSnapshotAsync</c> overload before slice 26.11 + production G3/G4 shipped.
+  /// legacy 4-arg <c>CreateSnapshotAsync</c> overload before slice 26.11 + the production forensic G3/G4 fixes shipped.
   /// </summary>
   public async Task<(Guid SnapshotEventId, long? SnapshotCommitSequence, JsonDocument SnapshotData)?> GetLatestSnapshotWithCommitSequenceAsync(
       Guid streamId, string perspectiveName, CancellationToken ct = default) {

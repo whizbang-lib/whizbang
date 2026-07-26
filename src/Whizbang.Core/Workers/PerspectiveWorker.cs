@@ -98,7 +98,7 @@ public partial class PerspectiveWorker(
   private readonly IPerspectiveStreamLocker? _streamLocker = streamLocker;
   private readonly PerspectiveStreamLockOptions _streamLockOptions = streamLockOptions?.Value ?? new PerspectiveStreamLockOptions();
 
-  // ── Intra-pod stream-affinity gate (closes the production strand race) ───
+  // ── Intra-pod stream-affinity gate (closes a production strand race) ───
   //
   // Closes the same-pod, same-stream, same-perspective concurrency hole
   // documented in plans/perspective-worker-stream-affinity.md. wh_active_streams
@@ -495,8 +495,8 @@ public partial class PerspectiveWorker(
 
       // Sliding-window batching on the DRAIN channel only. After collecting the initial
       // drain items, wait up to SlidingWindow for additional stream_id signals to arrive,
-      // bounded by MaxWait. This eliminates the a consumer 2026-05-04 cursor-inversion symptom:
-      // events arriving at the BFF inbox in two clumps milliseconds apart now accumulate
+      // bounded by MaxWait. This eliminates a cursor-inversion symptom seen in a consumer deployment:
+      // events arriving at a consumer's inbox in two clumps milliseconds apart now accumulate
       // into one drain batch so the per-stream fetch returns events in monotonic order.
       // The work channel is NOT batched here — its dedup semantics depend on per-cycle
       // processing of PerspectiveWork items.
@@ -867,8 +867,8 @@ public partial class PerspectiveWorker(
     // runs its Parallel.ForEachAsync for X concurrently. Both load the projection row
     // from possibly-stale state, both Apply against their in-memory current, both UPSERT.
     // Last writer wins — and that "winner" may be a logically earlier event that just
-    // committed later. This is the cross-pod stale-read race that stranded saga 019ee73d
-    // (2026-06-20) and 019ef473 (2026-06-23) — see CrossPodStaleReadRegressionRaceTests.
+    // committed later. This is the cross-pod stale-read race that stranded a production
+    // saga — see CrossPodStaleReadRegressionRaceTests.
     //
     // The cross-pod half of the invariant (only one pod owns a stream at a time) is
     // handled by wh_active_streams ownership rows (mig 007). The intra-pod half (only
@@ -892,7 +892,7 @@ public partial class PerspectiveWorker(
         // Intra-pod stream-affinity gate — serializes all perspective application for
         // this stream across consumer loops AND across batches within the same pod.
         // wh_active_streams pins streams to a single pod cross-pod; this gate closes
-        // the same-pod hole that caused the production strand race. See
+        // the same-pod hole that caused a production strand race. See
         // plans/perspective-worker-stream-affinity.md.
         _ensureCursorCacheEvictionSubscribed();
         var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
@@ -1119,8 +1119,8 @@ public partial class PerspectiveWorker(
   /// <c>wh_active_streams</c> ownership). BOTH the standard per-event path and the drain path route
   /// their apply through this gate — if only one did (as was the case before the drain path was wired
   /// in), a second consumer draining the same stream would race the cooldown/cursor check while the
-  /// first is mid-apply and double-apply on stale state (the production saga-strand race, 019ee73d /
-  /// 019ef473). See <c>plans/perspective-worker-stream-affinity.md</c>.
+  /// first is mid-apply and double-apply on stale state (a production saga-strand race).
+  /// See <c>plans/perspective-worker-stream-affinity.md</c>.
   /// </summary>
   private async Task _withStreamAffinityGateAsync(
       Guid streamId, string perspectiveName, Func<Task> body, CancellationToken ct) {
@@ -1482,7 +1482,7 @@ public partial class PerspectiveWorker(
     // we're still working on it. Symmetric with OutboxDrainWorker / InboxDrainWorker Part B.
     _perspectiveDrainChannel?.MarkDraining(streamId);
     try {
-      // Slice 30: loop-until-empty inside the drain. a consumer run 21 PERF data showed 22,318 single-
+      // Slice 30: loop-until-empty inside the drain. Consumer PERF data showed 22,318 single-
       // event drains × ~150 ms each = ~55 min of per-drain envelope overhead. The dominant cost
       // per drain (DI scope + LeaseHandle + BackgroundStageDispatch OS thread spawn + commit
       // strategy plumbing) is roughly the same whether we process 1 or 44 events. By refetching
@@ -1704,7 +1704,7 @@ public partial class PerspectiveWorker(
     // ICollectiveDispatcher and skip the per-stream runner. See _processCollectiveSinkAsync.
     if (perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
       // Resolve the sink rows' event_work_ids from this drain batch's raw rows so the sink can complete
-      // (DELETE) them on success — without it the row loops forever (production re-dispatch death spiral).
+      // (DELETE) them on success — without it the row loops forever (a production re-dispatch death spiral).
       var sinkWorkIds = filteredEvents
         .SelectMany(e => batchContext.RawByEventId[e.MessageId.Value])
         .Where(raw => string.Equals(raw.PerspectiveName, CollectiveRouting.SINK_PERSPECTIVE_NAME, StringComparison.Ordinal))
@@ -1723,12 +1723,12 @@ public partial class PerspectiveWorker(
       return;
     }
 
-    // a consumer 2026-05-31 fix: when the cursor cache is cold (process start,
+    // Cold-cache fix: when the cursor cache is cold (process start,
     // post-rewind invalidate, eviction), TryGet returns false and the
     // inversion detector below sees null cursors. Late events would then slip
     // past detection into the runner's forward-apply path, where the runner's
     // own idempotency filter (which DOES see the persisted metadata.EventId)
-    // silently drops them — a consumer's "5 lost events, 0 rewinds" symptom.
+    // silently drops them — the "5 lost events, 0 rewinds" symptom seen in a consumer deployment.
     //
     // Cold-cache fallback: read persisted wh_perspective_cursors via the
     // already-scoped IWorkCoordinator and warm the cache. Subsequent
@@ -1762,14 +1762,14 @@ public partial class PerspectiveWorker(
     // race between drain finish and PerspectiveCompletionFlushWorker DELETE produces a
     // window where just-applied event_work_ids are still in DB pending. Pre-26.15 the
     // inversion detector ran on the full set, saw those cooled events as "pending ≤ cursor",
-    // and triggered a spurious rewind — measured as ~1100 phantom rewinds per a consumer bulk-import
+    // and triggered a spurious rewind — measured as ~1100 phantom rewinds per consumer bulk-import
     // when sagas commit N events in two close transactions (drainer re-fetches between flush
     // ticks, sees first-batch events still warm, second-batch fresh, mixed bag).
     var (cooledEvents, freshEvents) = _partitionByCooldown(
       filteredEvents, batchContext.RawByEventId, _recentlyProcessedEventCache, perspectiveName);
 
     // Signal cooled events into the batch's completion bookkeeping so PostAllPerspectives
-    // can fire correctly — same a consumer 2026-05-03 reasoning as the all-cooled short-circuit.
+    // can fire correctly — same reasoning as the all-cooled short-circuit.
     // SignalPerspectiveComplete + BatchProcessedEvents.TryAdd are idempotent so re-signaling
     // is safe even when the previous drain already signaled them.
     if (cooledEvents.Count > 0) {
@@ -1835,7 +1835,7 @@ public partial class PerspectiveWorker(
             .Select(raw => raw.CommitSequence)
             .FirstOrDefault(seq => seq.HasValue);
           // Slice 26.16 instrumentation: emit detailed inversion diagnostics so we can
-          // classify the residual ~400 inversions per a consumer import. Captures whether the
+          // classify the residual ~400 inversions per consumer import. Captures whether the
           // commit_sequence detector or the event_id fallback fired, the gap, and the
           // partition counts so we can spot cooldown misses.
           long? pendingSeq = anchorCommitSequence;
@@ -1858,8 +1858,8 @@ public partial class PerspectiveWorker(
 
         // Slice 29 instrumentation: capture per-drain wall time partitioned into the three
         // dominant phases — runner (read + apply + save), completion (cursor update + lifecycle),
-        // completion-enqueue + signaler. Surfaces the per-drain cost dominant when bff drains
-        // at ~40 events/sec despite 4×30 concurrency configured.
+        // completion-enqueue + signaler. Surfaces the per-drain cost dominant when a consumer's
+        // service drains at ~40 events/sec despite 4×30 concurrency configured.
         var runnerEndTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         var runnerMs = (runnerEndTicks - drainStartTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
@@ -1895,8 +1895,8 @@ public partial class PerspectiveWorker(
           _enqueueDrainModePerspectiveCompletions(streamId, perspectiveName, filteredEvents, batchContext.RawByEventId);
           // Slice 26.17: cooldown is now marked at the top of _applyDrainModePerspectiveCompletionAsync,
           // before any cursor cache update or lifecycle invocation that could throw. The
-          // late-mark site here was the source of the residual Order inversions in a consumer
-          // run 16 — keep the call site comment as a regression breadcrumb.
+          // late-mark site here was the source of residual inversions in a consumer's
+          // bulk run — keep the call site comment as a regression breadcrumb.
         }
 
         _metrics?.StreamsUpdated.Add(1);
@@ -1973,7 +1973,7 @@ public partial class PerspectiveWorker(
   /// flusher coalesces ~10 ms before writing). That's the expected state during the
   /// cursor-flush window — the runner's idempotency filter inside RunWithEventsAsync skips
   /// the duplicate. Triggering rewind here was a slice 4 over-trigger that produced hot-loop
-  /// full replays in a consumer BFF on hot session streams (observed 2026-05-02 ~09:43).
+  /// full replays in a consumer's service on hot session streams.
   /// </para>
   /// </remarks>
   internal static Guid? _findCursorInversionAnchor(
@@ -2009,7 +2009,7 @@ public partial class PerspectiveWorker(
   /// Slice 26.18 — when commit_sequence cursor is missing but <em>any</em> pending event
   /// has a commit_sequence stamp, suppress the event_id fallback entirely. Mixing a
   /// stamped pending event against an unstamped cursor is meaningless and produced the
-  /// dominant residual a consumer run-18 inversions (6 of 8 logged cursorSeq=-1). The runner
+  /// dominant residual inversions in a consumer run (6 of 8 logged cursorSeq=-1). The runner
   /// template's idempotency filter already drops events with event_id ≤ apply cursor at
   /// apply time, so biasing toward "no rewind" here is safe — the worst case is one
   /// extra applied-then-skipped pass, never a stale cursor.
@@ -2141,9 +2141,9 @@ public partial class PerspectiveWorker(
   /// skip Apply.
   /// </summary>
   /// <param name="perspectiveName">The current perspective being drained. The decision MUST
-  /// only consider work_ids belonging to THIS perspective. a consumer 2026-05-04 silent-skip bug:
-  /// without filtering, marking Order's work_id as cooled would also stop OrderSkills'
-  /// Apply from running (since both perspectives share the same EventId in <paramref name="rawByEventId"/>
+  /// only consider work_ids belonging to THIS perspective. Multi-perspective silent-skip bug:
+  /// without filtering, marking one perspective's work_id as cooled would also stop another
+  /// perspective's Apply from running (since both perspectives share the same EventId in <paramref name="rawByEventId"/>
   /// but have distinct work_ids). When <paramref name="perspectiveName"/> is null (legacy
   /// callers), all entries for the EventId are considered — back-compat mode.</param>
   /// <summary>
@@ -2153,7 +2153,7 @@ public partial class PerspectiveWorker(
   /// the remainder. Drain path runs the inversion detector on the fresh remainder only —
   /// without this, the saga-batch race (44 events committed in two transactions 18ms
   /// apart, drainer re-fetches between completion-flush ticks) made the cooled events look
-  /// like real inversions and produced ~1100 spurious rewinds per a consumer bulk-import.
+  /// like real inversions and produced ~1100 spurious rewinds per consumer bulk-import.
   ///
   /// <para>
   /// An envelope is treated as <strong>fresh</strong> when (a) <paramref name="cache"/> is
@@ -2214,7 +2214,7 @@ public partial class PerspectiveWorker(
       foreach (var raw in rawRows) {
         // Per-perspective filter: when perspectiveName is supplied, only consider raw rows
         // whose PerspectiveName matches. Rows for OTHER perspectives' work_ids are irrelevant
-        // to the current perspective's cooldown decision. See a consumer 2026-05-04 multi-perspective
+        // to the current perspective's cooldown decision. See the multi-perspective
         // fanout silent-skip bug.
         if (perspectiveName is not null
             && raw.PerspectiveName is not null
@@ -2229,7 +2229,7 @@ public partial class PerspectiveWorker(
       // ILookup returns an empty enumerable for missing keys. If we never saw any raw row
       // for this envelope (after filtering), we cannot prove every event_work_id is cooled —
       // default to running the apply. Otherwise a mapping mismatch silently strands the event
-      // and prevents PostAllPerspectives from firing (saga events on a consumer application, repro'd by
+      // and prevents PostAllPerspectives from firing (saga events in a consumer application, repro'd by
       // CooldownGateDecisionTests.ShouldSkip_EnvelopeMessageIdNotInRawLookup_ReturnsFalse).
       if (!rawSeen) {
         return false;
@@ -2244,7 +2244,7 @@ public partial class PerspectiveWorker(
   /// subsequent drain ticks within the TTL window short-circuit.
   /// </summary>
   /// <remarks>
-  /// a consumer 2026-05-04 silent-skip bug: marking ALL raw rows under an EventId — not just the
+  /// Multi-perspective silent-skip bug: marking ALL raw rows under an EventId — not just the
   /// current perspective's — would put OTHER perspectives' work_ids into the cooldown cache.
   /// On the next drain those perspectives would short-circuit before Apply, never updating
   /// their model. The per-perspective filter scopes the mark to the current perspective only.
@@ -2284,7 +2284,7 @@ public partial class PerspectiveWorker(
     // Slice 26.17: mark cooldown FIRST, BEFORE cursor cache update. Invariant: if cursor
     // cache advances, cooldown must already contain the work_ids of the events applied to
     // produce that advance. Reversing this order (cursor first, cooldown later) was the
-    // dominant residual inversion cause in a consumer run 16: when a lifecycle receptor invoker
+    // dominant residual inversion cause in a consumer run: when a lifecycle receptor invoker
     // between cursor update and the deferred cooldown-mark call threw or the lease
     // cancelled, cursor advanced but cooldown stayed empty. The next drain saw pending
     // events that weren't in cooldown, the inversion detector compared them against the
@@ -2615,7 +2615,7 @@ public partial class PerspectiveWorker(
     // Delete the sink's own __collective__ work rows by event_work_id. The cursor completion above only
     // advances the cursor + marks processed_at by event_id — it does NOT delete the wh_perspective_events
     // rows. Standard perspectives get the DELETE via _bufferCompletionsAndUpdateCache; the sink must do the
-    // same here or claim_orphaned re-leases the row forever and re-dispatches the whole-cohort UPDATE — the
+    // same here or claim_orphaned re-leases the row forever and re-dispatches the whole-cohort UPDATE — a
     // production death spiral (re-dispatch loop → ~95% table bloat → lock convoy).
     _completeCollectiveSinkWorkRows(sinkWorkIds);
 
@@ -3661,7 +3661,7 @@ public partial class PerspectiveWorker(
     // we must:
     // 1. Wrap the scope in ImmutableScopeContext with ShouldPropagate=true so that
     //    CascadeContext.GetSecurityFromAmbient() can find it when lifecycle handlers append events
-    // 2. Invoke callbacks manually so UserContextManagerCallback sets TenantContext
+    // 2. Invoke callbacks manually so a consumer's security callback sets its tenant context
     if (securityContext is null && scopeForMessageContext is not null) {
       // Convert envelope scope to a propagating ImmutableScopeContext via the shared promotion.
       var immutableScope = ImmutableScopeContext.PromoteToPropagating(scopeForMessageContext);
@@ -4299,9 +4299,9 @@ public class PerspectiveWorkerOptions {
   /// Outer × inner gives the steady-state concurrency ceiling. Default 4 (so ~120 concurrent
   /// stream-perspective applies at peak).
   /// <para>
-  /// Sized to break the single-consumer batch loop bottleneck observed on a consumer BFF where
-  /// saga fan-out enqueued perspective work faster than one consumer could drain (38/sec
-  /// drain vs ~180/sec arrivals). Set to 1 to restore the pre-slice-17 single-consumer
+  /// Sized to break the single-consumer batch loop bottleneck observed in a consumer's service where
+  /// saga fan-out enqueued perspective work faster than one consumer could drain (draining
+  /// at a small fraction of the arrival rate). Set to 1 to restore the pre-slice-17 single-consumer
   /// behavior.
   /// </para>
   /// </summary>
@@ -4325,7 +4325,7 @@ public class PerspectiveWorkerOptions {
   /// by ClaimWorker on the next tick. Set to 1 to disable the loop and restore pre-slice-30
   /// single-pass behavior.
   /// <para>
-  /// Sized from a consumer run 21 PERF data: 22 318 single-event drains × ~150 ms envelope cost
+  /// Sized from consumer PERF data: 22 318 single-event drains × ~150 ms envelope cost
   /// dominated the import wall time. Each loop iteration is a single SQL refetch (~5-10 ms)
   /// plus the per-perspective apply path; even at the cap (5) the loop costs at most a few
   /// hundred ms per stream vs the multi-second savings from skipping 5× drain envelopes.
@@ -4337,7 +4337,7 @@ public class PerspectiveWorkerOptions {
   /// Slice 30 — minimum batch size that triggers a refetch in the per-stream drain loop.
   /// When the current iteration processed fewer events than this threshold, the loop exits
   /// without refetching to avoid wasting ~5-10 ms of SQL on the steady-state low-arrival
-  /// case (single-event drains, which dominated a consumer run 21: 22 318 of ~30 000 total drains).
+  /// case (single-event drains, which dominated a consumer run: 22 318 of ~30 000 total drains).
   /// Set to 1 to refetch unconditionally; set above <see cref="DrainLoopMaxIterations"/> to
   /// disable the loop entirely (functionally identical to <c>DrainLoopMaxIterations = 1</c>).
   /// </summary>
@@ -4357,8 +4357,8 @@ public class PerspectiveWorkerOptions {
   /// NOT batched — the dedup tests assert per-cycle work-item processing semantics.
   /// </summary>
   /// <remarks>
-  /// Defaults: 300 ms debounce / 3 s hard cap / 1000 signal ceiling. Tuned for the a consumer
-  /// bulk-import case where a single stream (e.g. <c>Order</c>) receives ~46
+  /// Defaults: 300 ms debounce / 3 s hard cap / 1000 signal ceiling. Tuned for a consumer's
+  /// bulk-import case where a single stream receives ~46
   /// events in rapid succession — without the longer window, each event triggers a
   /// separate apply cycle. With 300 ms the window almost always coalesces all 46
   /// into one apply pass.

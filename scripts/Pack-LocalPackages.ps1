@@ -67,12 +67,12 @@
     Packs all packages in Debug configuration.
 
 .EXAMPLE
-    ./scripts/Pack-LocalPackages.ps1 -Output ~/src/a consumer application
-    Packs all packages and deploys them to the a consumer application repo.
+    ./scripts/Pack-LocalPackages.ps1 -Output ~/src/consumer-app
+    Packs all packages and deploys them to the consumer repo.
 
 .EXAMPLE
-    ./scripts/Pack-LocalPackages.ps1 -RestoreNuGet -Output ~/src/a consumer application
-    Restores a consumer application to the latest nuget.org versions (no pack).
+    ./scripts/Pack-LocalPackages.ps1 -RestoreNuGet -Output ~/src/consumer-app
+    Restores the consumer app to the latest nuget.org versions (no pack).
 
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1 -Configuration Release -Clean

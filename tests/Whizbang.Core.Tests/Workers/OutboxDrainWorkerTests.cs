@@ -170,8 +170,8 @@ public class OutboxDrainWorkerTests {
   }
 
   /// <summary>
-  /// production follow-up — a consumer production bulk-import-350 ran at ~5 msg/sec with 1,578
-  /// streams pending in the outbox, root-caused to a serial cross-stream foreach in
+  /// Production follow-up — a consumer's bulk import ran at a fraction of expected
+  /// throughput with many streams pending in the outbox, root-caused to a serial cross-stream foreach in
   /// <c>OutboxDrainWorker.ExecuteAsync</c>. Per-stream FIFO is required; cross-stream
   /// FIFO is NOT — different streams can and must drain in parallel.
   ///
@@ -266,7 +266,7 @@ public class OutboxDrainWorkerTests {
   }
 
   /// <summary>
-  /// production follow-up — within-stream bulk publish: when the publish strategy reports
+  /// Production follow-up — within-stream bulk publish: when the publish strategy reports
   /// <see cref="IMessagePublishStrategy.SupportsBulkPublish"/>, the drainer MUST send the
   /// stream's fetched rows via <see cref="IMessagePublishStrategy.PublishBatchAsync"/> in
   /// ONE call, not loop <see cref="IMessagePublishStrategy.PublishAsync"/> per row. Per-row
@@ -355,7 +355,7 @@ public class OutboxDrainWorkerTests {
       throw new InvalidOperationException("transport down");
   }
 
-  /// <summary>production throughput fix coverage: per-result routing when the batch call
+  /// <summary>Production throughput fix coverage: per-result routing when the batch call
   /// returns a mix of success and failure. Locks that successful rows enqueue completion
   /// and failed rows enqueue a <see cref="MessageFailure"/> with the broker error.</summary>
   [Test]
@@ -409,7 +409,7 @@ public class OutboxDrainWorkerTests {
     await Assert.That(failure.All.Single().Error).IsEqualTo("broker said no");
   }
 
-  /// <summary>production throughput fix coverage: whole-batch publish exception fans every row
+  /// <summary>Production throughput fix coverage: whole-batch publish exception fans every row
   /// out to the failure channel so claim_orphaned_outbox can re-lease them next cycle.</summary>
   [Test]
   public async Task OutboxDrainWorker_BulkPublishThrows_RoutesAllRowsToFailureChannelAsync() {
@@ -461,7 +461,7 @@ public class OutboxDrainWorkerTests {
     await Assert.That(completion.AllIds).IsEmpty();
   }
 
-  /// <summary>production throughput fix: backward-compat — setting MaxConcurrentStreams=1
+  /// <summary>Production throughput fix: backward-compat — setting MaxConcurrentStreams=1
   /// restores the pre-fix serial cross-stream behavior while preserving correctness.</summary>
   [Test]
   public async Task OutboxDrainWorker_MaxConcurrentStreams_OneRestoresSerialCrossStreamDrainAsync() {
@@ -893,7 +893,7 @@ public class OutboxDrainWorkerTests {
     // the failure-channel assertion: the lifecycle exception now also routes through
     // IFailureChannel so process_outbox_failures populates wh_outbox.error with the
     // full ex.ToString(). The pre-slice "no failure record on lifecycle fault" was
-    // the actual production BUG (a stuck RemoveShellUserCommand ran 295 retries over
+    // the actual production BUG (a stuck RemoveUserCommand ran hundreds of retries over
     // 24 h with empty wh_outbox.error). Locking the new "lifecycle exception →
     // failure record" invariant per feedback_lock_invariants_in_tests.
     var streamId = (Guid)TrackedGuid.NewMedo();
@@ -951,7 +951,7 @@ public class OutboxDrainWorkerTests {
     // throws at PreOutboxInline and surfaces as a WorkCategory.Outbox failure
     // record whose Error contains the full ex.ToString().
     await Assert.That(failure.All.Count).IsEqualTo(1)
-      .Because("production fix: lifecycle exceptions MUST enqueue a failure so wh_outbox.error captures the cause — production ran 295 silent retries before this routing existed.");
+      .Because("Production fix: lifecycle exceptions MUST enqueue a failure so wh_outbox.error captures the cause — production ran hundreds of silent retries before this routing existed.");
     var captured = failure.All.Single();
     await Assert.That(captured.MessageId).IsEqualTo(msgId)
       .Because("Failure record must target the offending row.");

@@ -439,7 +439,7 @@ public class TransportPublishStrategyTests {
   [Test]
   public async Task PublishAsync_NestedClassCommand_RoutedToInboxAsync() {
     // Arrange - This test verifies nested class types work correctly
-    // a consumer uses nested types like AuthContracts+CreateTenantCommand
+    // A consumer uses nested types like AuthContracts+CreateTenantCommand
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
@@ -449,9 +449,9 @@ public class TransportPublishStrategyTests {
       MessageId = messageId,
       Destination = "createtenant",
       Envelope = _createTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.Auth.AuthContracts+CreateTenantCommand, a consumer.Contracts]], Whizbang.Core",
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[App.Contracts.Auth.AuthContracts+CreateTenantCommand, App.Contracts]], Whizbang.Core",
       // Nested class uses '+' notation: Namespace.OuterClass+NestedClass
-      MessageType = "a consumer.Contracts.Auth.AuthContracts+CreateTenantCommand, a consumer.Contracts",
+      MessageType = "App.Contracts.Auth.AuthContracts+CreateTenantCommand, App.Contracts",
       StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -719,7 +719,7 @@ public class TransportPublishStrategyTests {
   [Test]
   public async Task PublishAsync_NestedClassEvent_RoutingKeySetCorrectlyAsync() {
     // Arrange - Nested class types (OuterClass+InnerType) should work correctly
-    // a consumer uses patterns like a consumer.Contracts.Chat.ChatConversationsContracts+CreateCommand
+    // A consumer uses patterns like App.Contracts.Chat.ChatConversationsContracts+CreateCommand
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
@@ -727,10 +727,10 @@ public class TransportPublishStrategyTests {
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
       MessageId = messageId,
-      Destination = "a consumer.contracts.chat.events", // Event namespace topic
+      Destination = "app.contracts.chat.events", // Event namespace topic
       Envelope = _createTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.Chat.ChatEvents+ConversationCreatedEvent, a consumer.Contracts]], Whizbang.Core",
-      MessageType = "a consumer.Contracts.Chat.ChatEvents+ConversationCreatedEvent, a consumer.Contracts",
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[App.Contracts.Chat.ChatEvents+ConversationCreatedEvent, App.Contracts]], Whizbang.Core",
+      MessageType = "App.Contracts.Chat.ChatEvents+ConversationCreatedEvent, App.Contracts",
       StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -744,10 +744,10 @@ public class TransportPublishStrategyTests {
     // Assert
     await Assert.That(result.Success).IsTrue();
     await Assert.That(transport.LastPublishedDestination).IsNotNull();
-    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("a consumer.contracts.chat.events");
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("app.contracts.chat.events");
     // RoutingKey should include the full nested type name (with +)
     await Assert.That(transport.LastPublishedDestination.RoutingKey)
-      .IsEqualTo("a consumer.contracts.chat.chatevents+conversationcreatedevent")
+      .IsEqualTo("app.contracts.chat.chatevents+conversationcreatedevent")
       .Because("Nested class event types should have RoutingKey with full type name including +");
   }
 
@@ -764,8 +764,8 @@ public class TransportPublishStrategyTests {
       MessageId = messageId,
       Destination = "createconversation",
       Envelope = _createTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.Chat.ChatConversationsContracts+CreateCommand, a consumer.Contracts]], Whizbang.Core",
-      MessageType = "a consumer.Contracts.Chat.ChatConversationsContracts+CreateCommand, a consumer.Contracts",
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[App.Contracts.Chat.ChatConversationsContracts+CreateCommand, App.Contracts]], Whizbang.Core",
+      MessageType = "App.Contracts.Chat.ChatConversationsContracts+CreateCommand, App.Contracts",
       StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -781,17 +781,17 @@ public class TransportPublishStrategyTests {
     await Assert.That(transport.LastPublishedDestination).IsNotNull();
     await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox");
     // RoutingKey for nested class should include the + character
-    // SqlFilter pattern '[Subject] LIKE 'a consumer.contracts.chat.%' should match this
+    // SqlFilter pattern '[Subject] LIKE 'app.contracts.chat.%' should match this
     await Assert.That(transport.LastPublishedDestination.RoutingKey)
-      .IsEqualTo("a consumer.contracts.chat.chatconversationscontracts+createcommand")
+      .IsEqualTo("app.contracts.chat.chatconversationscontracts+createcommand")
       .Because("Nested command types should have RoutingKey matching SqlFilter pattern");
   }
 
   [Test]
   public async Task PublishAsync_Command_RoutingKeyMatchesSqlFilterPatternAsync() {
     // Arrange - This test verifies the RoutingKey will match SqlFilter patterns
-    // SqlFilter: [Subject] LIKE 'a consumer.contracts.chat.%'
-    // RoutingKey: a consumer.contracts.chat.activitytrackedcommand
+    // SqlFilter: [Subject] LIKE 'app.contracts.chat.%'
+    // RoutingKey: app.contracts.chat.activitytrackedcommand
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
@@ -801,8 +801,8 @@ public class TransportPublishStrategyTests {
       MessageId = messageId,
       Destination = "activitytracked",
       Envelope = _createTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[a consumer.Contracts.Chat.ActivityTrackedCommand, a consumer.Contracts]], Whizbang.Core",
-      MessageType = "a consumer.Contracts.Chat.ActivityTrackedCommand, a consumer.Contracts",
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[App.Contracts.Chat.ActivityTrackedCommand, App.Contracts]], Whizbang.Core",
+      MessageType = "App.Contracts.Chat.ActivityTrackedCommand, App.Contracts",
       StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -819,12 +819,12 @@ public class TransportPublishStrategyTests {
     var routingKey = transport.LastPublishedDestination!.RoutingKey;
 
     // The RoutingKey MUST start with the pattern that SqlFilter expects
-    // SqlFilter: [Subject] LIKE 'a consumer.contracts.chat.%'
+    // SqlFilter: [Subject] LIKE 'app.contracts.chat.%'
     await Assert.That(routingKey)
-      .StartsWith("a consumer.contracts.chat.")
-      .Because("RoutingKey must match SqlFilter pattern '[Subject] LIKE 'a consumer.contracts.chat.%'");
+      .StartsWith("app.contracts.chat.")
+      .Because("RoutingKey must match SqlFilter pattern '[Subject] LIKE 'app.contracts.chat.%'");
     await Assert.That(routingKey)
-      .IsEqualTo("a consumer.contracts.chat.activitytrackedcommand");
+      .IsEqualTo("app.contracts.chat.activitytrackedcommand");
   }
 
   // ========================================

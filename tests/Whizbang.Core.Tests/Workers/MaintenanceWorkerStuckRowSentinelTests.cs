@@ -83,7 +83,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   public async Task MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync() {
     Guid stuckId = TrackedGuid.NewMedo();
     var coord = new _FakeCoordinator {
-      StuckOutbox = [_stuck(stuckId, "a consumer.RemoveShellUserCommand", attempts: 992)]
+      StuckOutbox = [_stuck(stuckId, "Consumer.RemoveUserCommand", attempts: 992)]
     };
     var (worker, logger) = _buildWorker(coord);
 
@@ -94,7 +94,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
       .Because("MaintenanceWorker MUST emit at least one Warning when the sentinel surfaces a stuck row — otherwise the structural canary is silent.");
     await Assert.That(warnings.Any(w => w.Message.Contains(stuckId.ToString()))).IsTrue()
       .Because("The Warning MUST name the specific message_id so operators can investigate that row directly.");
-    await Assert.That(warnings.Any(w => w.Message.Contains("a consumer.RemoveShellUserCommand"))).IsTrue()
+    await Assert.That(warnings.Any(w => w.Message.Contains("Consumer.RemoveUserCommand"))).IsTrue()
       .Because("The Warning MUST name the message_type — that's the producer-side hint for operators chasing down the source.");
     await Assert.That(warnings.Any(w => w.Message.Contains("992"))).IsTrue()
       .Because("Reporting the attempts count is what tells operators how long this has been stuck — 992 vs 11 frames the urgency differently.");

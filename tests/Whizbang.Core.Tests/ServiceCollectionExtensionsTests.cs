@@ -512,7 +512,7 @@ public class ServiceCollectionExtensionsTests {
       options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
     });
 
-    // Second call without hooks (like a consumer application's pattern)
+    // Second call without hooks (like a consumer's pattern)
     _ = services.AddWhizbang();
 
     var provider = services.BuildServiceProvider();

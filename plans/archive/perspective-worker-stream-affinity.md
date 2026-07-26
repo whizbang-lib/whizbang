@@ -1,6 +1,6 @@
 # PerspectiveWorker stream-affinity — the missing slice
 
-> **Status:** confirmed gap, 2026-06-23. Fix is the natural extension of the
+> **Status:** confirmed gap. Fix is the natural extension of the
 > existing `PerStreamSerializer` (already used by `ServiceBusConsumerWorker`,
 > "slice 2 of plans/stream-affinity-everywhere.md").
 
@@ -14,8 +14,8 @@ projection (`SagaItemProjection`, `BulkOperationItem`, every per-item read
 model). If two threads anywhere apply different events for X concurrently
 to potentially-stale loaded state, the second writer's data overwrites the
 first — even when the second writer's event is logically earlier. That is
-the cross-pod stale-read race that stranded saga `019ee73d` on 2026-06-20
-and saga `019ef473` on 2026-06-23, and is what `tests/Whizbang.Data.EFCore.Postgres.Tests/CrossPodStaleReadRegressionRaceTests.cs`
+the cross-pod stale-read race that stranded a production saga on one
+occasion and another production saga days later, and is what `tests/Whizbang.Data.EFCore.Postgres.Tests/CrossPodStaleReadRegressionRaceTests.cs`
 locks as RED.
 
 The invariant has two halves, each enforced by a different mechanism:
@@ -94,7 +94,7 @@ streams → different per-stream workers).
 After the fix:
 
 - `CrossPodStaleReadRegressionRaceTests.StaleSecondWriter_...` and
-  `CrossPodStaleReadRegressionRaceTests.SlotThree_ThreeFiftyItemStrand_...`
+  `CrossPodStaleReadRegressionRaceTests.ProductionStrand_...`
   remain meaningful as **storage-layer** regression locks (they assert
   the storage doesn't independently protect against the race) but the
   *pipeline-level* race they reproduce no longer occurs in production

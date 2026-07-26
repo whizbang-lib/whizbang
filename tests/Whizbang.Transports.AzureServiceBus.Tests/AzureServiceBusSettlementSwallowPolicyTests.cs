@@ -8,7 +8,7 @@ using Whizbang.Transports.AzureServiceBus;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
-/// Change-level tests for the a consumer 2026-05-04 hardening of ASB
+/// Change-level tests for the hardening of ASB
 /// Complete/Abandon/DeadLetter call sites against settlement-time exceptions
 /// (lock lost, message not found, processor disposed). Mirrors the RabbitMQ
 /// transport hardening committed earlier on this branch.

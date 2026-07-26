@@ -11,8 +11,8 @@ namespace Whizbang.Core.Messaging;
 /// <para>Default implementation: <c>SlidingWindowApplyBatchStrategy</c> with a per-stream
 /// sliding window of 300 ms / 3000 ms max (mirrors the slice 18a/18b outbox + inbox
 /// sliding-window batch strategies, but applied to the perspective apply boundary). This
-/// solves the Order-style hot-spot where 45 events for the same stream arrive in
-/// rapid succession and currently trigger 45 separate apply cycles — with the window the
+/// solves the Order-style hot-spot where many events for the same stream arrive in
+/// rapid succession and currently trigger many separate apply cycles — with the window the
 /// drain signals coalesce into one flush, one snapshot read, one apply pass, one atomic
 /// upsert.</para>
 /// <para>Strategies users can plug in:</para>
