@@ -32,11 +32,16 @@ jobs:
 
     - name: Install and Run OSV Scanner
       run: |
-        # Pinned version (githubactions:S8545): @latest makes the toolchain unpredictable
-        # and is a supply-chain risk in the very workflow that guards the supply chain.
+        # Pinned, checksum-verified release binary (githubactions:S8545): `go install @version`
+        # still resolves transitive modules unpredictably; downloading the official release
+        # artifact and verifying its SHA-256 makes the toolchain byte-reproducible — table
+        # stakes for the very workflow that guards the supply chain.
         # Pinned within v1 — v2 renames the subcommand to `scan source`, a separate migration.
-        go install github.com/google/osv-scanner/cmd/osv-scanner@v1.9.2
-        $HOME/go/bin/osv-scanner scan --recursive --format=sarif --output=osv-results.sarif . || echo "No vulnerabilities found"
+        curl -sSL -o osv-scanner \
+          https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_amd64
+        echo "d6af4b67fa5de658598bd2d445efb99e90d1734b3146962418719c4350ecb74b  osv-scanner" | sha256sum -c -
+        chmod +x osv-scanner
+        ./osv-scanner scan --recursive --format=sarif --output=osv-results.sarif . || echo "No vulnerabilities found"
 
     - name: Upload SARIF results
       if: always()
