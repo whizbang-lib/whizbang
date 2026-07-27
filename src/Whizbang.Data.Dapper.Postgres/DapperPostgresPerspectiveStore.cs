@@ -180,6 +180,12 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 used for deterministic GUID generation, not for cryptographic security")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S4790:Using weak hashing algorithms is security-sensitive",
+    Justification = "MD5 maps trusted, application-defined partition keys (usually GUIDs already) to a stable " +
+      "row GUID — an identity mapping, not a security control. Keys are never adversary-supplied text, so " +
+      "crafted-collision attacks are out of scope; and the derived GUIDs are persisted row identity in existing " +
+      "databases, so an algorithm change would orphan every existing row (a versioned data migration, not a " +
+      "lint fix). Revisit if partition keys ever become externally controllable.")]
   private static Guid _convertPartitionKeyToGuid<TPartitionKey>(TPartitionKey partitionKey) where TPartitionKey : notnull {
     if (partitionKey is Guid guid) {
       return guid;
