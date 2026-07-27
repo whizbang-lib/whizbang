@@ -37,7 +37,7 @@ jobs:
         # artifact and verifying its SHA-256 makes the toolchain byte-reproducible — table
         # stakes for the very workflow that guards the supply chain.
         # Pinned within v1 — v2 renames the subcommand to `scan source`, a separate migration.
-        curl -sSL -o osv-scanner \
+        curl -sSL --proto '=https' --proto-redir '=https' -o osv-scanner \
           https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_amd64
         echo "d6af4b67fa5de658598bd2d445efb99e90d1734b3146962418719c4350ecb74b  osv-scanner" | sha256sum -c -
         chmod +x osv-scanner
