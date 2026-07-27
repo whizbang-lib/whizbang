@@ -2,7 +2,12 @@ mode: ContinuousDeployment
 branches:
   develop:
     label: alpha
-    increment: Patch
+    # Minor (not Patch): develop prereleases compute in the NEXT-MINOR band above the last
+    # release tag, so the auto-published develop channel can never collide with (or sort
+    # below) a deliberate release. Patch-band versions are reserved for hotfix/bugfix-only
+    # releases, which come from release/vX.Y.Z branch names, not GitVersion.
+    # See docs/RELEASING.md → "Version increment rules".
+    increment: Minor
     track-merge-target: true
     regex: ^develop$
   release:
