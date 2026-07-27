@@ -44,10 +44,14 @@ jobs:
         run: dotnet restore
 
       - name: Build Solution
+        env:
+          # Env-var indirection (githubactions:S7630): never interpolate workflow inputs
+          # directly into a run block — the shell sees only the variable, not the value.
+          VERSION: ${{ inputs.version }}
         run: |
           VERSION_ARGS=""
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION_ARGS="-p:Version=${{ inputs.version }}"
+          if [ -n "$VERSION" ]; then
+            VERSION_ARGS="-p:Version=$VERSION"
           fi
           dotnet build --no-restore --configuration Release $VERSION_ARGS
 

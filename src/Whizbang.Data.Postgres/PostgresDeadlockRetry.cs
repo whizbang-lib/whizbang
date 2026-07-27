@@ -98,6 +98,9 @@ public static partial class PostgresDeadlockRetry {
   /// Computes a jittered delay: base * 2^(attempt-1) with ±25% jitter.
   /// Attempt 1 → ~50ms, Attempt 2 → ~100ms, Attempt 3 → ~200ms.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2245:Using pseudorandom number generators (PRNGs) is security-sensitive",
+    Justification = "Random supplies exponential-backoff jitter for deadlock-retry timing dispersion only; " +
+      "predictability carries no security impact and crypto-grade randomness would be wasted cost on a hot path.")]
   private static int _computeJitteredDelay(int attempt) {
     _tRandom ??= new Random();
     var baseMs = 50 * (1 << (attempt - 1)); // 50, 100, 200, ...
