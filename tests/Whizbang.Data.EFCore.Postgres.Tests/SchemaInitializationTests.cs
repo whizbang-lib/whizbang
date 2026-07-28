@@ -239,6 +239,40 @@ public class SchemaInitializationTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_ReplaysLedgerAgainstSplitStore_WhenTrackingLostAsync() {
+    // Arrange — a full init brings wh_event_store to the post-078 split shape (no inline
+    // event_data/metadata; the base ensure's BackfillExempt deliberately never restores
+    // migration-owned columns).
+    await DropAllWhizbangTablesAsync();
+    await using var dbContext1 = CreateDbContext();
+    await dbContext1.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Simulate lost migration tracking (crashed pod mid-init, a restore that skipped the
+    // tracking tables, or the hash-recheck fallback) — the initializer then replays the FULL
+    // ledger against the already-split store.
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    await using (var wipeCmd = new NpgsqlCommand(
+      "DELETE FROM wh_schema_migrations; DELETE FROM wh_schema_versions;", connection)) {
+      await wipeCmd.ExecuteNonQueryAsync();
+    }
+
+    // Act — the replay must be idempotent against the final shape: 072's NOT-NULL relax of
+    // the (already-dropped) inline body columns must no-op instead of failing with 42703.
+    await using var dbContext2 = CreateDbContext();
+    await dbContext2.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Assert — the replay completed and the split shape is intact.
+    await using var shapeCmd = new NpgsqlCommand(@"
+      SELECT COUNT(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'wh_event_store'
+        AND column_name IN ('event_data', 'metadata')", connection);
+    var inlineColumns = (long)(await shapeCmd.ExecuteScalarAsync())!;
+    await Assert.That(inlineColumns).IsEqualTo(0L)
+      .Because("a replayed ledger must keep the split store (078) without failing at 072");
+  }
+
+  [Test]
   public async Task EnsureWhizbangDatabaseInitialized_TracksPerspectivedIndividuallyAsync() {
     // Arrange
     await DropAllWhizbangTablesAsync();

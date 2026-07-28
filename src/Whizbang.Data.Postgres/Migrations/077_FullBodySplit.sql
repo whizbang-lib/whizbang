@@ -534,4 +534,14 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.wh_backfill_event_bodies IS
 'Full-split backfill (#13b4-2): copies every remaining inline wh_event_store body into wh_event_body, then NULLs the inline columns only where the body row exists. Idempotent and re-runnable; returns the number of pointers nulled. Invoked once by migration 077.';
 
-SELECT __SCHEMA__.wh_backfill_event_bodies();
+-- Guarded for LEDGER-REPLAY idempotency: on a replay against an already-split store (078 dropped
+-- the inline columns) the backfill's body would fail at execution with 42703 — there is nothing
+-- left to backfill, so skip the call. First-apply behavior (columns present) is unchanged.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_event_store')
+               AND attname = 'event_data' AND NOT attisdropped) THEN
+    PERFORM __SCHEMA__.wh_backfill_event_bodies();
+  END IF;
+END $$;

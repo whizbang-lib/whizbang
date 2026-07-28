@@ -11,6 +11,10 @@
 --              Replaces the per-type wh_ephemeral_type_ttl lookup approach (never shipped past this branch):
 --              the TTL rides WITH the event (self-describing, per-event, cross-service) while the expiry
 --              instant is DB-clock-authoritative from creation.
+--              Re-run note: this file is the LAST word on the two emit-chain functions; any in-place
+--              edit of 072/077/078 (which re-create earlier emit-fn versions) must bump this file too
+--              so a hash-driven re-run restores the final versions. Ledger order guarantees the earlier
+--              files re-run before this one.
 -- Dependencies: 078 (the emit-chain functions this reproduces)
 
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
