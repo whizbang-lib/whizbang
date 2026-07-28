@@ -118,6 +118,7 @@ public static class ServiceRegistrationCallbacks {
         // The ephemeral-mode resolver derives its ClrTypeName -> EphemeralInfo lookup from the
         // catalog just registered above, so it is only wired when a catalog exists to feed it.
         services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
+        services.TryAddSingleton<IEventMarkerResolver, EventMarkerResolver>();
       }
       // Path 1 atomic-upsert wiring fires last — it depends on JsonSerializerContext
       // statics that are populated by their own [ModuleInitializer] runs on consumer
