@@ -251,4 +251,50 @@ public class MessageTypeCatalogGeneratorTests {
     await Assert.That(code!).Contains("typeof(global::MyApp.UnpinnedEvent)");
     await Assert.That(code!).Contains("null");
   }
+
+  [Test]
+  public async Task Generator_StampsMarkerInterfaceFlagsOnEntriesAsync() {
+    // The transport receive path derives EventFlags from these compile-time stamps by type name —
+    // an incoming payload is a JsonElement there, so runtime `payload is ICollectiveEvent` checks
+    // are blind and a missing stamp silently drops the flags at every service boundary.
+    const string source = """
+
+      using System.Collections.Generic;
+      using Whizbang.Core;
+      using Whizbang.Core.Messaging;
+
+      namespace MyApp;
+
+      public record BulkAppliedCollectiveEvent : ICollectiveEvent {
+        public CollectiveScope Scope => null!;
+      }
+
+      public record BatchCompositeEvent : ICompositeEvent {
+        public IEnumerable<IMessage> InnerEvents => [];
+      }
+
+      public record PeriodCompactedEvent : ICompactedEvent;
+
+      public record PlainSourcedEvent : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
+
+    await Assert.That(code).IsNotNull();
+    var lines = code!.Split('\n');
+    var collectiveLine = lines.Single(l => l.Contains("typeof(global::MyApp.BulkAppliedCollectiveEvent)"));
+    var compositeLine = lines.Single(l => l.Contains("typeof(global::MyApp.BatchCompositeEvent)"));
+    var compactedLine = lines.Single(l => l.Contains("typeof(global::MyApp.PeriodCompactedEvent)"));
+    var sourcedLine = lines.Single(l => l.Contains("typeof(global::MyApp.PlainSourcedEvent)"));
+
+    await Assert.That(collectiveLine).Contains("IsCollective = true");
+    await Assert.That(compositeLine).Contains("IsComposite = true");
+    await Assert.That(compactedLine).Contains("IsCompacted = true");
+    // A plain Sourced event carries none of the marker stamps (the record defaults are false).
+    await Assert.That(sourcedLine.Contains("IsCollective")).IsFalse();
+    await Assert.That(sourcedLine.Contains("IsComposite")).IsFalse();
+    await Assert.That(sourcedLine.Contains("IsCompacted")).IsFalse();
+  }
 }

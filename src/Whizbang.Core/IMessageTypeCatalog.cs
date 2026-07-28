@@ -51,6 +51,33 @@ public sealed record MessageTypeCatalogEntry(
   /// </summary>
   /// <docs>fundamentals/events/type-definition-fingerprint</docs>
   public string SchemaHash { get; init; } = "";
+
+  /// <summary>
+  /// <c>true</c> when the type implements <c>ICollectiveEvent</c>, stamped by the generator at compile
+  /// time. Load-bearing on the transport receive path: an incoming payload is a <c>JsonElement</c>
+  /// there, so a runtime <c>payload is ICollectiveEvent</c> check is blind — the persisted
+  /// <c>EventFlags.Collective</c> bit (which routes the event to the collective sink) must be derived
+  /// from this compile-time stamp by type name instead.
+  /// </summary>
+  /// <docs>events/collective-events</docs>
+  public bool IsCollective { get; init; }
+
+  /// <summary>
+  /// <c>true</c> when the type implements <c>ICompositeEvent</c>, stamped by the generator at compile
+  /// time. Same transport-receive rationale as <see cref="IsCollective"/> for the
+  /// <c>EventFlags.Composite</c> bit.
+  /// </summary>
+  /// <docs>events/composite-events</docs>
+  public bool IsComposite { get; init; }
+
+  /// <summary>
+  /// <c>true</c> when the type implements <c>ICompactedEvent</c> (a permanent StateBased carry-forward
+  /// origin), stamped by the generator at compile time. Same transport-receive rationale as
+  /// <see cref="IsCollective"/> for the <c>EventFlags.Compacted</c> bit — a compaction summary crossing
+  /// a service boundary must stay Compacted (guarded, never reaped) on the receiving side too.
+  /// </summary>
+  /// <docs>fundamentals/events/carry-forward-tier2</docs>
+  public bool IsCompacted { get; init; }
 }
 
 /// <summary>

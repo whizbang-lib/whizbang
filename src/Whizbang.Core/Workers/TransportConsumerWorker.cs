@@ -59,6 +59,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly IReceptorRegistryQuery? _receptorRegistry;
   private readonly IReceptorRegistry? _runtimeReceptorRegistry;
   private readonly IEphemeralModeResolver? _ephemeralModeResolver;
+  private readonly IEventMarkerResolver? _eventMarkerResolver;
 
   // Signals when SubscribeToAllDestinationsAsync has completed and the consumer
   // is ACTUALLY bound to its transport destinations. Completes regardless of
@@ -143,7 +144,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null,
     IReceptorRegistryQuery? receptorRegistry = null,
     IReceptorRegistry? runtimeReceptorRegistry = null,
-    IEphemeralModeResolver? ephemeralModeResolver = null
+    IEphemeralModeResolver? ephemeralModeResolver = null,
+    IEventMarkerResolver? eventMarkerResolver = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -167,6 +169,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _serviceName = serviceInstanceProvider?.ServiceName;
     _receptorRegistry = receptorRegistry;
     _ephemeralModeResolver = ephemeralModeResolver;
+    _eventMarkerResolver = eventMarkerResolver;
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
@@ -820,9 +823,13 @@ public partial class TransportConsumerWorker : BackgroundService {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox", messageTypeName);
     }
 
-    var flags = (payload is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
-              | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
-              | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(payload, _ephemeralModeResolver);
+    // Name-first flag derivation: transport payloads are typically JsonElement here, where
+    // `payload is ICollectiveEvent`-style checks are blind — the compile-time catalog stamp
+    // (looked up by the wire type name) is what keeps Collective/Composite/Ephemeral/Compacted
+    // flags intact across a service boundary. Typed checks remain the fallback for types the
+    // local catalog does not know.
+    var flags = Whizbang.Core.Messaging.EventFlagsDeriver.Derive(
+      payload, messageTypeName, _eventMarkerResolver, _ephemeralModeResolver);
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
