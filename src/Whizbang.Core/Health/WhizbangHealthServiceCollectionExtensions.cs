@@ -30,13 +30,18 @@ public static class WhizbangHealthServiceCollectionExtensions {
     return services;
   }
 
-  /// <summary>Registers one managed-resource health source. Every registered source is aggregated.</summary>
+  /// <summary>
+  /// Registers one managed-resource health source. Every registered source is aggregated.
+  /// Idempotent per source type: a consumer with more than one worker pipeline (e.g. one per
+  /// DbContext) calls the pipeline registration N times, and stacking N identical sources would
+  /// evaluate the same gates N times per probe and emit duplicate component names downstream.
+  /// </summary>
   public static IServiceCollection AddWhizbangHealthSource<
       [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TSource>(
       this IServiceCollection services)
       where TSource : class, IWhizbangHealthSource {
     ArgumentNullException.ThrowIfNull(services);
-    services.AddSingleton<IWhizbangHealthSource, TSource>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IWhizbangHealthSource, TSource>());
     return services;
   }
 }

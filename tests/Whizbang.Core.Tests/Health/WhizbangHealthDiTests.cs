@@ -34,6 +34,23 @@ public class WhizbangHealthDiTests {
   }
 
   [Test]
+  public async Task AddWhizbangHealthSource_SameSourceTwice_RegistersOnceAsync() {
+    // A consumer with more than one worker pipeline (e.g. one per DbContext) calls the pipeline
+    // registration N times, which historically stacked N identical source registrations — N
+    // evaluations of the same gates per probe and duplicate component names downstream.
+    var services = new ServiceCollection();
+    services.AddWhizbangManagedHealth();
+    services.AddWhizbangHealthSource<MigratingSource>();
+    services.AddWhizbangHealthSource<MigratingSource>();
+    await using var provider = services.BuildServiceProvider();
+
+    var aggregator = provider.GetRequiredService<WhizbangHealthAggregator>();
+    var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
+
+    await Assert.That(result.Components.Count).IsEqualTo(1);
+  }
+
+  [Test]
   public async Task AddWhizbangManagedHealth_AppliesPolicyConfigurationAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangManagedHealth(o => o.Components["schema"] = HealthPolicy.Strict);
