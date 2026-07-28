@@ -42,7 +42,7 @@ public class WhizbangHealthDiTests {
     services.AddWhizbangManagedHealth();
     services.AddWhizbangHealthSource<MigratingSource>();
     services.AddWhizbangHealthSource<MigratingSource>();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var aggregator = provider.GetRequiredService<WhizbangHealthAggregator>();
     var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);

@@ -32,8 +32,10 @@ public sealed class WhizbangManagedHealthCheck : IHealthCheck {
     var data = new Dictionary<string, object>(result.Components.Count, StringComparer.Ordinal);
     foreach (var c in result.Components) {
       var key = c.Component;
-      for (var n = 2; data.ContainsKey(key); n++) {
-        key = $"{c.Component}[{n}]";
+      var suffix = 2;
+      while (data.ContainsKey(key)) {
+        key = $"{c.Component}[{suffix}]";
+        suffix++;
       }
       data[key] = c.Detail is null ? $"{c.State} => {c.Status}" : $"{c.State} => {c.Status} ({c.Detail})";
     }
