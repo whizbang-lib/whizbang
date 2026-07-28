@@ -9,6 +9,10 @@
 --              still surfaces as NULL through the LEFT JOIN), and reclassify collapses to a pure flags
 --              stamp (there is no inline body to move anymore). The 077 backfill function is dropped —
 --              its purpose is fulfilled and its body references the dropped columns.
+--              Re-run note: this file is the LAST word on the two readers (get_stream_events /
+--              fetch_events_by_ids); any in-place edit of 072 must bump this file too so a hash-driven
+--              re-run of 072 (which re-creates the 072-era readers) is followed by this file restoring
+--              the final versions. Ledger order guarantees 072 re-runs before this file.
 -- Dependencies: 077 (full split writes + backfill), 072 (readers), 074 (reclassify)
 
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(

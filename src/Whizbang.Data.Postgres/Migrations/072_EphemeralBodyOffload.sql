@@ -31,10 +31,27 @@ COMMENT ON TABLE __SCHEMA__.wh_event_body IS
   'and drop the inline columns, making wh_event_store the pure pointer table.';
 
 -- ── Relax the durable inline body so ephemeral events can null it out ───────────────────────────────
--- Idempotent (DROP NOT NULL on an already-nullable column is a no-op). Backward-compatible: existing
--- rows keep their values, and Sourced writes continue to provide event_data/metadata inline.
-ALTER TABLE __SCHEMA__.wh_event_store ALTER COLUMN event_data DROP NOT NULL;
-ALTER TABLE __SCHEMA__.wh_event_store ALTER COLUMN metadata   DROP NOT NULL;
+-- Guarded per column for LEDGER-REPLAY idempotency: on first apply (pre-split shape) the columns
+-- exist NOT NULL and get relaxed; on a replay against an already-split store — 078 dropped them,
+-- and the base ensure's BackfillExempt deliberately never restores migration-owned columns — a
+-- bare ALTER would fail with 42703 and wedge the whole init behind the schema-ready gate. A
+-- replay reaches here whenever wh_schema_migrations rows are missing or stale (crashed pod
+-- mid-init, a restore that skipped the tracking tables, the hash-recheck fallback). Note
+-- to_regclass takes __SCHEMA__ verbatim: the placeholder resolves to a quoted identifier, which
+-- is exactly the qualified-name form to_regclass parses.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_event_store')
+               AND attname = 'event_data' AND NOT attisdropped) THEN
+    ALTER TABLE __SCHEMA__.wh_event_store ALTER COLUMN event_data DROP NOT NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_event_store')
+               AND attname = 'metadata' AND NOT attisdropped) THEN
+    ALTER TABLE __SCHEMA__.wh_event_store ALTER COLUMN metadata DROP NOT NULL;
+  END IF;
+END $$;
 
 -- ── Emit chain: branch the body write on the ephemeral flag ─────────────────────────────────────
 -- CREATE OR REPLACE the two emit-chain fns (verbatim from 061) so an ephemeral event ((flags & 8) = 8)
