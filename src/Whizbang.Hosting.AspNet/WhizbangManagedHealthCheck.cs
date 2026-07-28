@@ -26,10 +26,17 @@ public sealed class WhizbangManagedHealthCheck : IHealthCheck {
   public async Task<HealthCheckResult> CheckHealthAsync(
       HealthCheckContext context, CancellationToken cancellationToken = default) {
     var result = await _aggregator.EvaluateAsync(_probe, cancellationToken).ConfigureAwait(false);
-    var data = result.Components.ToDictionary(
-      static c => c.Component,
-      static c => (object)(c.Detail is null ? $"{c.State} => {c.Status}" : $"{c.State} => {c.Status} ({c.Detail})"),
-      StringComparer.Ordinal);
+    // Sources sharing a component name must never kill the endpoint — a diagnostic bridge that
+    // throws takes the pod down in a crash loop instead of reporting the state it exists to
+    // surface. Repeated names get a stable [n] suffix so every report stays visible.
+    var data = new Dictionary<string, object>(result.Components.Count, StringComparer.Ordinal);
+    foreach (var c in result.Components) {
+      var key = c.Component;
+      for (var n = 2; data.ContainsKey(key); n++) {
+        key = $"{c.Component}[{n}]";
+      }
+      data[key] = c.Detail is null ? $"{c.State} => {c.Status}" : $"{c.State} => {c.Status} ({c.Detail})";
+    }
     var description = string.Join(", ", result.Components.Select(static c => $"{c.Component}={c.State}"));
     return result.Status switch {
       HealthStatus.Healthy => HealthCheckResult.Healthy(description, data),
