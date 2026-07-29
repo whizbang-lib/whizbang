@@ -37,10 +37,14 @@ public partial class ServiceBusConsumerWorker(
   IEnvelopeSerializer? envelopeSerializer = null,
   MessageProcessingOptions? messageProcessingOptions = null,
   IReceptorRegistryQuery? receptorRegistry = null,
-  IReceptorRegistry? runtimeReceptorRegistry = null
+  IReceptorRegistry? runtimeReceptorRegistry = null,
+  IEventMarkerResolver? eventMarkerResolver = null,
+  IEphemeralModeResolver? ephemeralModeResolver = null
   ) : BackgroundService {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly IEventMarkerResolver? _eventMarkerResolver = eventMarkerResolver;
+  private readonly IEphemeralModeResolver? _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ConcurrentBag<Task> _detachedTasks = [];
@@ -627,6 +631,12 @@ public partial class ServiceBusConsumerWorker(
 
     LogSerializeInboxMessage(_logger, envelope.MessageId.Value, simpleTypeName, isEvent, streamId);
 
+    // Name-first flag derivation: transport payloads are typically JsonElement here, where
+    // `payload is ICollectiveEvent`-style checks are blind — the compile-time catalog stamp
+    // (looked up by the wire type name) is what keeps Collective/Composite/Ephemeral/Compacted
+    // flags intact across a service boundary. Same contract as TransportConsumerWorker.
+    var flags = Whizbang.Core.Messaging.EventFlagsDeriver.Derive(
+      payload, messageTypeName, _eventMarkerResolver, _ephemeralModeResolver);
     var inboxMessage = new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
@@ -634,11 +644,13 @@ public partial class ServiceBusConsumerWorker(
       EnvelopeType = envelopeTypeFromTransport,  // Use the original type from transport!
       StreamId = streamId,
       IsEvent = isEvent,
+      Flags = flags,
       Scope = envelope.GetCurrentScope()?.Scope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
         Hops = envelope.Hops?.ToList() ?? [],
-        DispatchContext = envelope.DispatchContext
+        DispatchContext = envelope.DispatchContext,
+        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, messageTypeName, _ephemeralModeResolver)
       },
       MessageType = messageTypeName
     };

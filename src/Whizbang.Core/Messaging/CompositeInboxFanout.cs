@@ -85,6 +85,11 @@ public static partial class CompositeInboxFanout {
     var serializer = scope.GetService<IEnvelopeSerializer>()
       ?? throw new InvalidOperationException("IEnvelopeSerializer is required for composite fan-out but is not registered.");
     var eventTypeProvider = scope.GetService<IEventTypeProvider>();
+    // Inner events are typed objects here, so the typed fallback in EventFlagsDeriver covers marker
+    // interfaces even without the resolvers; the catalog-backed resolvers add [Ephemeral]-attributed
+    // (non-marker) types. Both optional — fan-out never fails for lack of them.
+    var eventMarkerResolver = scope.GetService<IEventMarkerResolver>();
+    var ephemeralModeResolver = scope.GetService<IEphemeralModeResolver>();
     // Null-object default so a dropped inner event is ALWAYS logged (NullLogger no-ops only when the
     // host has no logging configured).
     var logger = scope.GetService<ILoggerFactory>()?.CreateLogger(LOG_CATEGORY) ?? NullLogger.Instance;
@@ -129,7 +134,7 @@ public static partial class CompositeInboxFanout {
         continue;
       }
       try {
-        children.Add(_buildChildInbox(inner, source, childHops, serializer, eventTypeProvider));
+        children.Add(_buildChildInbox(inner, source, childHops, serializer, eventTypeProvider, eventMarkerResolver, ephemeralModeResolver));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         if (atomic) {
           return new FanoutResult(
@@ -163,7 +168,9 @@ public static partial class CompositeInboxFanout {
       IMessageEnvelope source,
       List<MessageHop> childHops,
       IEnvelopeSerializer serializer,
-      IEventTypeProvider? eventTypeProvider) {
+      IEventTypeProvider? eventTypeProvider,
+      IEventMarkerResolver? eventMarkerResolver,
+      IEphemeralModeResolver? ephemeralModeResolver) {
     var childEnvelope = new MessageEnvelope<IMessage> {
       Version = source.Version,
       DispatchContext = source.DispatchContext,
@@ -207,7 +214,11 @@ public static partial class CompositeInboxFanout {
       // (the composite already crossed the wire). Defense 1 is hop-based echo suppression (children
       // share the composite's Hops). Defense 2 (Phase D) is this explicit NoRebroadcast marker, which
       // the outbox-enqueue boundary hard-checks — turning the invariant into an enforced guard.
-      Flags = EventFlags.NoRebroadcast,
+      // The inner event's OWN marker flags ride along: a collective/ephemeral event inside a
+      // composite must behave on this service exactly as a locally-emitted one — losing Collective
+      // here means the emit chain never routes the child to the collective sink.
+      Flags = EventFlagsDeriver.Derive(inner, messageTypeName, eventMarkerResolver, ephemeralModeResolver)
+            | EventFlags.NoRebroadcast,
       Scope = source.GetCurrentScope()?.Scope,
       Metadata = new EnvelopeMetadata {
         MessageId = childEnvelope.MessageId,

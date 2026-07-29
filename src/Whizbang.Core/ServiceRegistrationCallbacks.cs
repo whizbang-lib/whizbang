@@ -115,19 +115,25 @@ public static class ServiceRegistrationCallbacks {
   /// container only ever sees the composite.
   /// </summary>
   private static void _registerUnionCatalog(IServiceCollection services) {
-    List<Action<IServiceCollection>> snapshot;
-    lock (_lock) {
-      snapshot = [.. _messageTypeCatalogRegistrations];
-    }
-    var probe = new ServiceCollection();
-    foreach (var register in snapshot) {
-      register(probe);
-    }
-    using var probeProvider = probe.BuildServiceProvider();
-    // Generated catalogs are stateless views over compile-time statics, so materializing the
-    // union while the probe provider is alive keeps nothing disposable alive afterwards.
-    var union = new CompositeMessageTypeCatalog(probeProvider.GetServices<IMessageTypeCatalog>());
-    services.AddSingleton<IMessageTypeCatalog>(union);
+    // Registered as a FACTORY so the accumulated registrations are snapshotted at FIRST RESOLUTION,
+    // not at AddWhizbang time: [ModuleInitializer]s run on first assembly touch, so an assembly the
+    // host has not exercised before AddWhizbang would otherwise be silently absent from the union
+    // forever. First resolution happens at host start (workers / registry populator), strictly
+    // after registration — every initializer that has run by then is included.
+    services.AddSingleton<IMessageTypeCatalog>(_ => {
+      List<Action<IServiceCollection>> snapshot;
+      lock (_lock) {
+        snapshot = [.. _messageTypeCatalogRegistrations];
+      }
+      var probe = new ServiceCollection();
+      foreach (var register in snapshot) {
+        register(probe);
+      }
+      using var probeProvider = probe.BuildServiceProvider();
+      // Generated catalogs are stateless views over compile-time statics, so materializing the
+      // union while the probe provider is alive keeps nothing disposable alive afterwards.
+      return new CompositeMessageTypeCatalog(probeProvider.GetServices<IMessageTypeCatalog>());
+    });
   }
 
   /// <summary>
