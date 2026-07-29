@@ -14,6 +14,13 @@
 --              numeric value (default) or a [Flags] string ("Collective", "Collective, …") depending on the
 --              caller's JsonSerializerOptions.
 -- Dependencies: 020, 021 (the procs redefined here), 061 (the flags column + emit-chain carry)
+--              Re-run note (2026-07-29): this file is the LAST word on store_outbox_messages /
+--              store_inbox_messages — earlier files (021, 029, 046) also define them, so ANY
+--              hash-driven re-run of those must be followed by this file restoring the final
+--              flags-aware versions. This note's addition bumps this file's hash so ledgers that
+--              replayed an earlier definition WITHOUT re-running this one (leaving store functions
+--              that silently persist flags=0 for every row) re-apply the final versions. Ledger
+--              order guarantees the earlier files re-run before this one.
 
 SELECT __SCHEMA__.drop_all_overloads('store_outbox_messages');
 
