@@ -59,4 +59,34 @@ public class ServiceRegistrationCallbacksCatalogUnionTests {
       ServiceRegistrationCallbacks.RestoreMessageTypeCatalogRegistrations(saved);
     }
   }
+
+  [Test]
+  public async Task InvokeAll_CatalogRegisteredAfterInvokeAll_IsStillInTheUnionAsync() {
+    // [ModuleInitializer]s run on first assembly TOUCH, which can be after AddWhizbang has already
+    // run InvokeAll — an eagerly-materialized union would freeze that assembly out forever. The
+    // union must snapshot at first RESOLUTION, so a late initializer's catalog still lands.
+    var saved = ServiceRegistrationCallbacks.SnapshotMessageTypeCatalogRegistrations();
+    try {
+      ServiceRegistrationCallbacks.MessageTypeCatalog = null;
+      ServiceRegistrationCallbacks.MessageTypeCatalog = static services =>
+        services.AddSingleton<IMessageTypeCatalog, HostAssemblyCatalog>();
+
+      var services = new ServiceCollection();
+      ServiceRegistrationCallbacks.InvokeAll(services, new ServiceRegistrationOptions());
+
+      // A lazily-loaded assembly's module initializer fires AFTER InvokeAll:
+      ServiceRegistrationCallbacks.MessageTypeCatalog = static services =>
+        services.AddSingleton<IMessageTypeCatalog, ContractsAssemblyCatalog>();
+
+      await using var sp = services.BuildServiceProvider();
+      var names = sp.GetRequiredService<IMessageTypeCatalog>().GetAll().Select(e => e.ClrTypeName).ToList();
+
+      await Assert.That(names).Contains(TypeNameFormatter.FormatClrTypeName(typeof(ContractsEvent)))
+        .Because("a catalog registered by a module initializer that runs after AddWhizbang must " +
+                 "still be part of the union — assembly-load order is not a correctness input.");
+      await Assert.That(names).Contains(TypeNameFormatter.FormatClrTypeName(typeof(HostEvent)));
+    } finally {
+      ServiceRegistrationCallbacks.RestoreMessageTypeCatalogRegistrations(saved);
+    }
+  }
 }

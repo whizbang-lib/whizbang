@@ -63,6 +63,13 @@ public sealed class EventMarkerResolver : IEventMarkerResolver {
     }
   }
 
+  /// <summary>
+  /// Number of distinct CLR type names indexed from the catalog — a startup diagnostic: a host-only
+  /// count here (instead of the union of all loaded assemblies) is the fingerprint of a broken
+  /// cross-assembly catalog union.
+  /// </summary>
+  public int IndexedTypeNameCount => _byClrTypeName.Count;
+
   /// <inheritdoc />
   public EventFlags? Resolve(string clrTypeName)
     => clrTypeName is not null && _byClrTypeName.TryGetValue(clrTypeName, out var flags) ? flags : null;

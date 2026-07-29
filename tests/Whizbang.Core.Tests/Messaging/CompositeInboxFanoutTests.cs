@@ -130,6 +130,25 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
+  public async Task TryExpand_CollectiveInnerEvent_ChildKeepsCollectiveFlagAsync() {
+    // A collective event carried INSIDE a composite must behave on the receiving service exactly as
+    // a locally-emitted collective event would: its child inbox row needs EventFlags.Collective or
+    // the inbox emit chain never routes it to the collective sink. NoRebroadcast must still be
+    // present — deriving the inner event's real flags never replaces the fan-out containment marker.
+    var composite = new _testComposite(new _collectiveInnerEvent(new TenantCollectiveScope("tenant-1"), []));
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Children.Count).IsEqualTo(1);
+    await Assert.That(result.Children[0].Flags & EventFlags.Collective).IsEqualTo(EventFlags.Collective)
+      .Because("the child of a composite keeps the inner event's own marker flags — a collective " +
+               "inner event that loses Collective is silently never applied on the receiving service.");
+    await Assert.That(result.Children[0].Flags & EventFlags.NoRebroadcast).IsEqualTo(EventFlags.NoRebroadcast);
+  }
+
+  [Test]
   public async Task TryExpand_OverCap_ReturnsCapExceededAsync() {
     var inners = Enumerable.Range(0, 11).Select(i => new _innerEvent($"i-{i}")).ToArray();
     var composite = new _testComposite(inners) { MaxInnerEventsAllowedOverride = 10 };
@@ -283,6 +302,7 @@ public class CompositeInboxFanoutTests {
   }
 
   private sealed record _innerEvent(string Id) : IEvent;
+  private sealed record _collectiveInnerEvent(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
 
   private sealed class _nullYieldingComposite : ICompositeEvent {
     public int MaxInnerEventsAllowed => 10;
@@ -307,10 +327,10 @@ public class CompositeInboxFanoutTests {
   }
 
   private sealed class _testComposite : ICompositeEvent {
-    public _testComposite(params _innerEvent[] inner) {
+    public _testComposite(params IEvent[] inner) {
       _inner = inner;
     }
-    private readonly _innerEvent[] _inner;
+    private readonly IEvent[] _inner;
     public int? MaxInnerEventsAllowedOverride { get; init; }
     public int MaxInnerEventsAllowed => MaxInnerEventsAllowedOverride ?? 10_000;
     public IEnumerable<IMessage> InnerEvents => _inner;
