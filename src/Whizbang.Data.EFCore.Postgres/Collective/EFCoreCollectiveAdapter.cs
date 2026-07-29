@@ -66,6 +66,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
   /// brief lock hold, and a per-batch <c>statement_timeout</c> (when configured) that Postgres enforces
   /// server-side (surviving PgBouncer pooling). Returns the total number of rows affected.
   /// </summary>
+#pragma warning disable S107 // Apply-chain seam threads the full dispatch context (entry, session, hooks, per-batch callback) — a parameter object would ripple through every driver and fake for no call-site gain
   public static async Task<int> ExecuteAsync(
       DbContext dbContext,
       ICollectiveSpec<TModel> spec,
@@ -76,6 +77,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       Guid collectiveEventId,
       Func<CancellationToken, ValueTask>? onBatchApplied = null,
       CancellationToken cancellationToken = default) {
+#pragma warning restore S107
 
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(spec);

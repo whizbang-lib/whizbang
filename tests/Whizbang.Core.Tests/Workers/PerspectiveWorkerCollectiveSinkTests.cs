@@ -523,10 +523,10 @@ public class PerspectiveWorkerCollectiveSinkTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: leaseRenewalChannel,
       perspectiveDrainChannel: harness.DrainChannel,
       deadLetterStore: deadLetterStore,
-      generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider(),
-      leaseRenewalChannel: leaseRenewalChannel);
+      generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider());
     return (worker, harness, coordinator);
   }
 

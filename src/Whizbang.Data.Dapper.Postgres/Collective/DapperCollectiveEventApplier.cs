@@ -45,6 +45,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
   /// <param name="tableName">The perspective table for <typeparamref name="TModel"/> (e.g. <c>wh_per_job</c>).</param>
   /// <param name="logger">Optional logger for transient-retry warnings (parity with the EF Core adapter).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+#pragma warning disable S107 // Apply-chain seam threads the full dispatch context (entry, session, hooks, per-batch callback) — a parameter object would ripple through every driver and fake for no call-site gain
   public static async Task<int> ApplyAsync(
       CollectiveApplyEntry entry,
       object handlerInstance,
@@ -58,6 +59,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       CollectiveApplyHookRegistry? hookRegistry = null,
       Func<CancellationToken, ValueTask>? onBatchApplied = null,
       CancellationToken cancellationToken = default) {
+#pragma warning restore S107
 
     ArgumentNullException.ThrowIfNull(entry);
     ArgumentNullException.ThrowIfNull(handlerInstance);
