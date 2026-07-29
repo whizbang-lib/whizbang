@@ -12,6 +12,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -122,9 +123,90 @@ public class TransportConsumerWorkerDiWiringTests {
     }
   }
 
+  [Test]
+  public async Task FullAddWhizbangChain_JsonElementCollectivePayload_StampsCollectiveFlagAsync() {
+    // Highest-fidelity local reproduction: the PUBLIC AddWhizbang entry point with the same fluent
+    // chain a production host uses (transport registered first, routing with shared topics, then
+    // AddTransportConsumer), worker resolved from the resulting container. Catches anything the
+    // wider AddWhizbang registration set could do to displace the catalog union or the resolvers —
+    // a gap the InvokeAll-only sibling test cannot see.
+    var saved = ServiceRegistrationCallbacks.SnapshotMessageTypeCatalogRegistrations();
+    try {
+      ServiceRegistrationCallbacks.MessageTypeCatalog = null;
+      ServiceRegistrationCallbacks.MessageTypeCatalog = static s2 =>
+        s2.AddSingleton<IMessageTypeCatalog, ContractsAssemblyCatalog>();
+      ServiceRegistrationCallbacks.MessageTypeCatalog = static s2 =>
+        s2.AddSingleton<IMessageTypeCatalog, HostAssemblyCatalog>();
+
+      var coordinator = new NoOpWorkCoordinator();
+      var transport = new DiFlagTransport();
+      var services = new ServiceCollection();
+      services.AddSingleton<ITransport>(transport);
+      services.AddScoped<IWorkCoordinator>(_ => coordinator);
+      // Host parity: a real host's builder provides logging before AddWhizbang runs, and the
+      // transport package registers JsonSerializerOptions.
+      services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
+      services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+      services.AddSingleton(new JsonSerializerOptions());
+      // A production host's generated registry claims a consumer for the collective event (the
+      // collective-apply perspective) — without one, the receive-boundary no-consumer gate drops
+      // the message before storage, which is correct behavior but not the seam under test here.
+      services.AddSingleton<IReceptorRegistryQuery>(new ClaimAllReceptorRegistryQuery());
+      services.AddWhizbang()
+        .WithRouting(r => {
+          r.Inbox.UseSharedTopic("inbox");
+          r.Outbox.UseSharedTopic("inbox");
+        })
+        .AddTransportConsumer();
+
+      await using var sp = services.BuildServiceProvider();
+      // Activate ONLY the consumer worker against the full AddWhizbang registration set — resolving
+      // every IHostedService would drag in workers whose dependencies the storage driver supplies
+      // in a real host. Optional ctor params still fill from this container, which is the seam
+      // under test.
+      var worker = ActivatorUtilities.CreateInstance<TransportConsumerWorker>(sp);
+
+      using var cts = new CancellationTokenSource();
+      await worker.StartAsync(cts.Token);
+      await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(5));
+      try {
+        var payloadType = typeof(DiContractsCollectiveEvent);
+        var envelope = new MessageEnvelope<JsonElement> {
+          MessageId = new MessageId(TrackedGuid.NewMedo()),
+          Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+          Hops = [
+            new MessageHop {
+              Type = HopType.Current,
+              Timestamp = DateTimeOffset.UtcNow,
+              ServiceInstance = ServiceInstanceInfo.Unknown
+            }
+          ],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+        };
+        var envelopeType = $"Whizbang.Core.Messaging.MessageEnvelope`1[[{payloadType.AssemblyQualifiedName}]], Whizbang.Core";
+        await transport.DeliverBatchAsync([new TransportMessage(envelope, envelopeType)]);
+
+        await Assert.That(coordinator.StoredMessages.Count).IsEqualTo(1);
+        await Assert.That(coordinator.StoredMessages[0].Flags & EventFlags.Collective).IsEqualTo(EventFlags.Collective)
+          .Because("the full AddWhizbang chain must leave the union catalog + marker resolver intact " +
+                   "all the way into the container-activated worker.");
+      } finally {
+        await worker.StopAsync(CancellationToken.None);
+      }
+    } finally {
+      ServiceRegistrationCallbacks.RestoreMessageTypeCatalogRegistrations(saved);
+    }
+  }
+
   // ============================================================
   // Test doubles
   // ============================================================
+
+  private sealed class ClaimAllReceptorRegistryQuery : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => true;
+    public bool HasInboxHandler(string messageType) => true;
+    public bool HasAnyConsumer(string messageType) => true;
+  }
 
   private sealed class DiNoOpLifecycleDeserializer : ILifecycleMessageDeserializer {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope;
