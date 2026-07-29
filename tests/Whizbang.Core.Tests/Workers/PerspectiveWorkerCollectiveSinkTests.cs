@@ -53,6 +53,39 @@ public class PerspectiveWorkerCollectiveSinkTests {
       .Because("The sink bypasses the per-stream runner.");
   }
 
+  [Test]
+  public async Task CollectiveSink_LongApply_RenewsWorkLeasePerReportedBatchAsync() {
+    // The dispatcher reports 3 apply batches; the worker must renew the sink work item's lease on
+    // EACH report — without renewal, an apply spanning many batches outlives its lease and the
+    // (idempotent) work is redelivered, re-running the full batched UPDATE for nothing.
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-lease") };
+    var dispatcher = new _batchReportingDispatcher(batches: 3);
+    var leaseChannel = new Whizbang.Testing.Workers.CapturingLeaseRenewalChannel();
+    var sinkWork = _sinkWork(streamId);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      leaseRenewalChannel: leaseChannel);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await coordinator.WaitForCyclesAsync(2, TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    var renewals = leaseChannel.Items.Where(i => i.id == sinkWork.WorkId).ToList();
+    await Assert.That(renewals.Count).IsEqualTo(3)
+      .Because("each reported apply batch must renew the leased sink work item — the lease then " +
+               "tracks the apply's true duration instead of racing it.");
+    await Assert.That(renewals.All(r => r.category == WorkCategory.PerspectiveEvent)).IsTrue();
+  }
+
   /// <summary>
   /// Gap #6 unit lock-in: the production route. <c>claim_work</c> returns a collective event's sink
   /// stream as a <see cref="WorkBatch.PerspectiveStreamIds"/> entry (DRAIN path), not a per-event
@@ -455,7 +488,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
       List<PerspectiveWork> work, _eventStore eventStore, _registry registry, ICollectiveDispatcher? dispatcher,
       List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null,
       int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
-      IReceptorInvoker? receptorInvoker = null) {
+      IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null) {
     var instanceProvider = new _instanceProvider();
     var strategy = new InstantCompletionStrategy();
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -490,6 +523,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: leaseRenewalChannel,
       perspectiveDrainChannel: harness.DrainChannel,
       deadLetterStore: deadLetterStore,
       generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider());
@@ -508,12 +542,29 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public Task FirstDispatch => _first.Task;
 
     public Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
       lock (Calls) {
         Calls.Add((evt, collectiveEventId));
       }
       _first.TrySetResult();
       return Task.FromResult(new CollectiveDispatchResult(1, 1));
+    }
+  }
+
+  /// <summary>Dispatcher that reports N apply batches through onBatchApplied — the long-apply shape.</summary>
+  private sealed class _batchReportingDispatcher(int batches) : ICollectiveDispatcher {
+    private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task FirstDispatch => _first.Task;
+
+    public async Task<CollectiveDispatchResult> DispatchAsync(
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+      for (var i = 0; i < batches; i++) {
+        if (onBatchApplied is not null) {
+          await onBatchApplied(cancellationToken);
+        }
+      }
+      _first.TrySetResult();
+      return new CollectiveDispatchResult(1, batches);
     }
   }
 
@@ -524,7 +575,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public Task FirstDispatch => _first.Task;
 
     public Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
       Interlocked.Increment(ref _calls);
       _first.TrySetResult();
       throw new InvalidOperationException(

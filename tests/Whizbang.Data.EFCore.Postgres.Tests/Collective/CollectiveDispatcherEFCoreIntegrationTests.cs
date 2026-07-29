@@ -88,6 +88,37 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await Assert.That(await _readStatusAsync(jobB2)).IsEqualTo("Active");
   }
 
+  // ── Per-batch progress: the lease-renewal seam fires once per committed batch ────────────────
+
+  [Test]
+  public async Task DispatchAsync_MultiBatchApply_InvokesOnBatchAppliedPerBatchAsync() {
+    // 5 rows with BatchSize=2 → 3 committed batches. The callback is the lease-renewal seam: a
+    // long apply that outlives its work lease gets redelivered (idempotent but wasted work), so
+    // the owning worker must be able to renew DURING the apply — once per batch.
+    for (var i = 0; i < 5; i++) {
+      await _seedJobAsync(Guid.NewGuid(), tenantId: "t-batch", status: "Active");
+    }
+
+    var progressCalls = 0;
+    var result = await _buildDispatcher(new CollectiveApplyOptions { BatchSize = 2 }).DispatchAsync(
+      evt: new _archiveJobsCollectiveEvent {
+        Scope = new TenantCollectiveScope("t-batch"),
+        OccurredAt = DateTimeOffset.UtcNow,
+      },
+      collectiveEventId: Guid.NewGuid(),
+      dbContextOrSession: _ctx!,
+      onBatchApplied: _ => {
+        progressCalls++;
+        return ValueTask.CompletedTask;
+      },
+      cancellationToken: default);
+
+    await Assert.That(result.AffectedRowCount).IsEqualTo(5);
+    await Assert.That(progressCalls).IsEqualTo(3)
+      .Because("5 rows at BatchSize=2 commit in 3 batches; the progress callback must fire after " +
+               "each one so the caller can renew its work lease for the apply's true duration.");
+  }
+
   // ── Store-managed columns: a collective apply bumps updated_at + version like a per-event apply ──
 
   [Test]
@@ -587,7 +618,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     return (reader.GetFieldValue<DateTime>(0), reader.GetInt32(1));
   }
 
-  private CollectiveDispatcher _buildDispatcher() {
+  private CollectiveDispatcher _buildDispatcher(CollectiveApplyOptions? applyOptions = null) {
     var services = new ServiceCollection();
     var handler = new _jobPerspective();
     services.AddSingleton(handler);
@@ -608,7 +639,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_jobModel>()]);
+      [new EFCoreCollectiveEventExecutor<_jobModel>(applyOptions)]);
   }
 
   // ── Apply hooks (collective path, EF Core) ────────────────────────────

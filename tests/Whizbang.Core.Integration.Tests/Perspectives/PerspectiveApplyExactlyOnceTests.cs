@@ -572,7 +572,7 @@ public class PerspectiveApplyExactlyOnceTests {
     public Task FirstDispatch => _firstDispatch.Task;
 
     public Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
       lock (Calls) {
         Calls.Add((evt, collectiveEventId, dbContextOrSession));
       }

@@ -54,6 +54,7 @@ public interface ICollectiveEventExecutor {
   /// <param name="collectiveEventId">Unique id of this collective event; emitted in the apply-completion telemetry.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Number of rows the SQL UPDATE mutated.</returns>
+#pragma warning disable S107 // Apply-chain seam threads the full dispatch context (entry, session, hooks, per-batch callback) — a parameter object would ripple through every driver and fake for no call-site gain
   Task<int> ApplyAsync(
     CollectiveApplyEntry entry,
     object handlerInstance,
@@ -61,5 +62,7 @@ public interface ICollectiveEventExecutor {
     ICollectiveScopeResolver resolver,
     object dbContextOrSession,
     Guid collectiveEventId,
-    CancellationToken cancellationToken);
+    Func<CancellationToken, ValueTask>? onBatchApplied = null,
+    CancellationToken cancellationToken = default);
+#pragma warning restore S107
 }
