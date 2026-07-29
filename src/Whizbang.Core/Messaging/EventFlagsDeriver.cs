@@ -22,7 +22,7 @@ public static class EventFlagsDeriver {
       string? wireTypeName,
       IEventMarkerResolver? markerResolver,
       IEphemeralModeResolver? ephemeralModeResolver) {
-    if (markerResolver is not null && _toClrTypeName(wireTypeName) is { } clrTypeName) {
+    if (markerResolver is not null && ToClrTypeName(wireTypeName) is { } clrTypeName) {
       var resolved = markerResolver.Resolve(clrTypeName);
       if (resolved is not null) {
         return resolved.Value;
@@ -38,7 +38,7 @@ public static class EventFlagsDeriver {
   /// catalog's no-assembly <c>ClrTypeName</c> form. Generic payload type names (containing
   /// <c>[[</c>) are not catalog-addressed — returns null so the caller uses the typed fallback.
   /// </summary>
-  private static string? _toClrTypeName(string? wireTypeName) {
+  internal static string? ToClrTypeName(string? wireTypeName) {
     if (string.IsNullOrWhiteSpace(wireTypeName) ||
         wireTypeName.Contains("[[", StringComparison.Ordinal)) {
       return null;

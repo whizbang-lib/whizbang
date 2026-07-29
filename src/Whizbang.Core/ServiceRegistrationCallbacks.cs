@@ -63,9 +63,72 @@ public static class ServiceRegistrationCallbacks {
 
   /// <summary>
   /// Callback for registering the generated <see cref="IMessageTypeCatalog"/>.
-  /// Set by the MessageTypeCatalogGenerator's module initializer in the consumer assembly.
+  /// Set by the MessageTypeCatalogGenerator's module initializer in EVERY Whizbang-compiled
+  /// assembly — the setter therefore ACCUMULATES (each assignment adds a registration) instead of
+  /// overwriting, and registration collapses the accumulated per-assembly catalogs into one
+  /// <see cref="CompositeMessageTypeCatalog"/> union. A single-valued setter let the last module
+  /// initializer win, so a host assembly's catalog displaced its contracts assembly's — leaving
+  /// receive-path flag derivation, the ephemeral resolver, the registry populators, the rename
+  /// tool, and the fingerprint reconciler blind to every type declared elsewhere (and the
+  /// reconciler's full-replace grace sync actively pruning rows for the missing types).
+  /// Assigning null clears all registrations (the test-only <see cref="Reset"/> semantics).
   /// </summary>
-  public static Action<IServiceCollection>? MessageTypeCatalog { get; set; }
+  public static Action<IServiceCollection>? MessageTypeCatalog {
+    get {
+      lock (_lock) {
+        return _messageTypeCatalogRegistrations.Count == 0 ? null : _registerUnionCatalog;
+      }
+    }
+    set {
+      lock (_lock) {
+        if (value is null) {
+          _messageTypeCatalogRegistrations.Clear();
+        } else {
+          _messageTypeCatalogRegistrations.Add(value);
+        }
+      }
+    }
+  }
+
+  private static readonly List<Action<IServiceCollection>> _messageTypeCatalogRegistrations = [];
+
+  /// <summary>Test-only: snapshot the accumulated catalog registrations for save/restore.</summary>
+  internal static IReadOnlyList<Action<IServiceCollection>> SnapshotMessageTypeCatalogRegistrations() {
+    lock (_lock) {
+      return [.. _messageTypeCatalogRegistrations];
+    }
+  }
+
+  /// <summary>Test-only: restore a previously snapshotted registration set.</summary>
+  internal static void RestoreMessageTypeCatalogRegistrations(IReadOnlyList<Action<IServiceCollection>> snapshot) {
+    lock (_lock) {
+      _messageTypeCatalogRegistrations.Clear();
+      _messageTypeCatalogRegistrations.AddRange(snapshot);
+    }
+  }
+
+  /// <summary>
+  /// Runs every accumulated per-assembly catalog registration against a probe collection, then
+  /// registers the union of the resulting catalogs as THE <see cref="IMessageTypeCatalog"/>. The
+  /// probe keeps the shipped generated callbacks working unchanged (each does a plain
+  /// <c>AddSingleton&lt;IMessageTypeCatalog, GeneratedMessageTypeCatalog&gt;</c>) while the real
+  /// container only ever sees the composite.
+  /// </summary>
+  private static void _registerUnionCatalog(IServiceCollection services) {
+    List<Action<IServiceCollection>> snapshot;
+    lock (_lock) {
+      snapshot = [.. _messageTypeCatalogRegistrations];
+    }
+    var probe = new ServiceCollection();
+    foreach (var register in snapshot) {
+      register(probe);
+    }
+    using var probeProvider = probe.BuildServiceProvider();
+    // Generated catalogs are stateless views over compile-time statics, so materializing the
+    // union while the probe provider is alive keeps nothing disposable alive afterwards.
+    var union = new CompositeMessageTypeCatalog(probeProvider.GetServices<IMessageTypeCatalog>());
+    services.AddSingleton<IMessageTypeCatalog>(union);
+  }
 
   /// <summary>
   /// Callback for registering discovered <see cref="Whizbang.Core.Messaging.IRawReceptor"/>

@@ -843,7 +843,7 @@ public partial class TransportConsumerWorker : BackgroundService {
         MessageId = envelope.MessageId,
         Hops = envelope.Hops?.ToList() ?? [],
         DispatchContext = envelope.DispatchContext,
-        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, _ephemeralModeResolver)
+        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, messageTypeName, _ephemeralModeResolver)
       },
       MessageType = messageTypeName,
       // Slice 26.6: propagate source identity from envelope → wh_inbox columns.
