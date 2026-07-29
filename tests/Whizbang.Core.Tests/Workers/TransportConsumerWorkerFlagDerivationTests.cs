@@ -35,6 +35,7 @@ public class TransportConsumerWorkerFlagDerivationTests {
   private sealed class TestCompositeMarker;
   private sealed class TestEphemeralMarker;
   private sealed class TestSourcedMarker;
+  private sealed class TestTtlMarker;
 
   private sealed class FakeCatalog : IMessageTypeCatalog {
     private static readonly IReadOnlyList<MessageTypeCatalogEntry> _entries = [
@@ -44,6 +45,9 @@ public class TransportConsumerWorkerFlagDerivationTests {
         Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.PersistedRow, -1, -1)
       },
       new(typeof(TestSourcedMarker), TypeNameFormatter.FormatClrTypeName(typeof(TestSourcedMarker)), "event", null),
+      new(typeof(TestTtlMarker), TypeNameFormatter.FormatClrTypeName(typeof(TestTtlMarker)), "event", null) {
+        Ephemeral = new EphemeralInfo(Destruction.AfterTtl, TransientStorage.PersistedRow, -1, 90)
+      },
     ];
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => _entries;
   }
@@ -68,6 +72,16 @@ public class TransportConsumerWorkerFlagDerivationTests {
     await Assert.That(stored.Flags & EventFlags.Ephemeral).IsEqualTo(EventFlags.Ephemeral)
       .Because("An ephemeral event received over the transport must keep EventFlags.Ephemeral — " +
                "it is what the receiving service's consumption-gated reaper keys on.");
+  }
+
+  [Test]
+  public async Task Batch_JsonElementAfterTtlPayload_CarriesTtlInMetadataAsync() {
+    // The TTL rides the envelope metadata ("ett") so the receiving service's emit chain can
+    // materialise ephemeral_expires_at — deriving it from payload.GetType() is blind for
+    // transport JsonElement payloads, silently dropping the TTL at every service boundary.
+    var stored = await _deliverAsync(typeof(TestTtlMarker));
+    await Assert.That(stored.Flags & EventFlags.Ephemeral).IsEqualTo(EventFlags.Ephemeral);
+    await Assert.That(stored.Metadata!.EphemeralTtlSeconds).IsEqualTo(90);
   }
 
   [Test]
@@ -116,6 +130,7 @@ public class TransportConsumerWorkerFlagDerivationTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
       eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()));
   }
 

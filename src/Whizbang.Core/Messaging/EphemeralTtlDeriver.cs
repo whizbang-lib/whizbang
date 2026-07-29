@@ -17,8 +17,26 @@ internal static class EphemeralTtlDeriver {
   /// yield <c>null</c>. The clock is deliberately NOT applied here — the expiry is anchored to the event's
   /// <c>created_at</c> at emit time, so this returns the duration, not an instant.
   /// </summary>
-  public static int? Derive(object? payload, IEphemeralModeResolver? resolver) {
-    if (payload is null || resolver is null) {
+  public static int? Derive(object? payload, IEphemeralModeResolver? resolver)
+    => Derive(payload, wireTypeName: null, resolver);
+
+  /// <summary>
+  /// Name-first TTL derivation for the transport receive path, where the payload is a
+  /// <c>JsonElement</c> and <c>payload.GetType()</c> is blind — without the wire-type-name lookup
+  /// a remote AfterTtl event silently loses its TTL stamp at every service boundary. The typed
+  /// lookup remains the fallback for payloads outside the local catalog.
+  /// </summary>
+  public static int? Derive(object? payload, string? wireTypeName, IEphemeralModeResolver? resolver) {
+    if (resolver is null) {
+      return null;
+    }
+    if (EventFlagsDeriver.ToClrTypeName(wireTypeName) is { } clrTypeName) {
+      var byName = resolver.Resolve(clrTypeName);
+      if (byName is not null) {
+        return byName.TtlSeconds >= 0 ? byName.TtlSeconds : null;
+      }
+    }
+    if (payload is null) {
       return null;
     }
     var info = resolver.Resolve(payload.GetType());
