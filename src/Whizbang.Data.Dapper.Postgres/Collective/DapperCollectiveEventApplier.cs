@@ -56,6 +56,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
       CollectiveApplyOptions options,
       ILogger? logger = null,
       CollectiveApplyHookRegistry? hookRegistry = null,
+      Func<CancellationToken, ValueTask>? onBatchApplied = null,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(entry);
@@ -146,6 +147,10 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
         logger: logger,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       total += count;
+      // Per-batch progress: the lease-renewal seam — see EFCoreCollectiveAdapter's twin note.
+      if (onBatchApplied is not null) {
+        await onBatchApplied(cancellationToken).ConfigureAwait(false);
+      }
       if (count < batchSize || maxId is null) {
         break;
       }

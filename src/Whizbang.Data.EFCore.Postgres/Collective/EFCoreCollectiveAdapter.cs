@@ -74,6 +74,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       CollectiveApplyOptions options,
       string scopeKey,
       Guid collectiveEventId,
+      Func<CancellationToken, ValueTask>? onBatchApplied = null,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(dbContext);
@@ -179,6 +180,12 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
         cancellationToken: cancellationToken).ConfigureAwait(false);
       total += count;
       batches++;
+      // Per-batch progress: lets the caller renew its work lease DURING a long apply — without
+      // this, an apply spanning many batches outlives the lease and the (idempotent) work is
+      // redelivered. Invoked after every committed batch, including the final one.
+      if (onBatchApplied is not null) {
+        await onBatchApplied(cancellationToken).ConfigureAwait(false);
+      }
       if (count < batchSize || maxId is null) {
         break;
       }

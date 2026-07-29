@@ -71,7 +71,8 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
       ICollectiveEvent evt,
       Guid collectiveEventId,
       object dbContextOrSession,
-      CancellationToken cancellationToken) {
+      Func<CancellationToken, ValueTask>? onBatchApplied = null,
+      CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(evt);
     ArgumentNullException.ThrowIfNull(dbContextOrSession);
 
@@ -144,7 +145,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
 
         var handler = _services.GetRequiredService(entry.HandlerType);
         var affected = await executor.ApplyAsync(
-          entry, handler, evt, resolver, dbContextOrSession, collectiveEventId, cancellationToken)
+          entry, handler, evt, resolver, dbContextOrSession, collectiveEventId, onBatchApplied, cancellationToken)
           .ConfigureAwait(false);
         totalAffectedRows += affected;
 

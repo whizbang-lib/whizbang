@@ -333,7 +333,7 @@ public class CollectiveDispatcherTests {
         ICollectiveScopeResolver resolver,
         object dbContextOrSession,
         Guid collectiveEventId,
-        CancellationToken cancellationToken) {
+        Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
       InvokeCount++;
       return Task.FromResult(affectedRows);
     }
@@ -344,7 +344,7 @@ public class CollectiveDispatcherTests {
     public Task<int> ApplyAsync(
         CollectiveApplyEntry entry, object handlerInstance, ICollectiveEvent evt,
         ICollectiveScopeResolver resolver, object dbContextOrSession, Guid collectiveEventId,
-        CancellationToken cancellationToken) =>
+        Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) =>
       // A non-InvalidOperation, non-OCE exception exercises the dispatcher's SQL-exception catch (span → Error).
       throw new InvalidTimeZoneException("simulated apply failure");
   }

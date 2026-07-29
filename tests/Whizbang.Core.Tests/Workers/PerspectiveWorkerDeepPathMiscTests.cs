@@ -741,7 +741,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
     private int _callCount;
     public int CallCount => Volatile.Read(ref _callCount);
 
-    public Task<CollectiveDispatchResult> DispatchAsync(ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, CancellationToken cancellationToken) {
+    public Task<CollectiveDispatchResult> DispatchAsync(ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
       Interlocked.Increment(ref _callCount);
       return Task.FromResult(new CollectiveDispatchResult(1, 1));
     }

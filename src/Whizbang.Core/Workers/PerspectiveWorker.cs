@@ -2576,7 +2576,16 @@ public partial class PerspectiveWorker(
     foreach (var envelope in collectiveEnvelopes) {
       var collectiveEvent = (ICollectiveEvent)envelope.Payload;
       try {
-        await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session, cancellationToken)
+        await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session,
+          onBatchApplied: _leaseRenewalChannel is null ? null : async ct => {
+            // A tenant-wide collective apply can span many batches and outlive the sink work item's
+            // lease — renewing on every reported batch keeps the lease tracking the apply's true
+            // duration, so the (idempotent) work is not re-offered mid-apply.
+            foreach (var workId in sinkWorkIds) {
+              await _leaseRenewalChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, workId, ct).ConfigureAwait(false);
+            }
+          },
+          cancellationToken: cancellationToken)
           .ConfigureAwait(false);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // A failing collective apply must NOT crash the host. Without this guard the exception propagates out

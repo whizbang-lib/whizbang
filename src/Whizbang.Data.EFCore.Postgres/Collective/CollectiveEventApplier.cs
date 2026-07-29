@@ -62,6 +62,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       Guid collectiveEventId,
       CollectiveApplyOptions options,
       CollectiveApplyHookRegistry? hookRegistry = null,
+      Func<CancellationToken, ValueTask>? onBatchApplied = null,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(entry);
@@ -139,6 +140,6 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
       effectiveOptions,
       scopeKey,
       collectiveEventId,
-      cancellationToken).ConfigureAwait(false);
+      onBatchApplied, cancellationToken).ConfigureAwait(false);
   }
 }

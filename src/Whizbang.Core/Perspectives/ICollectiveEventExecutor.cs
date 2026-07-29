@@ -61,5 +61,6 @@ public interface ICollectiveEventExecutor {
     ICollectiveScopeResolver resolver,
     object dbContextOrSession,
     Guid collectiveEventId,
-    CancellationToken cancellationToken);
+    Func<CancellationToken, ValueTask>? onBatchApplied = null,
+    CancellationToken cancellationToken = default);
 }
