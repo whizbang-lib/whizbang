@@ -35,9 +35,9 @@ on:
       PUSHOVER_USER_KEY_10:
         required: false
 
-permissions:
-  contents: read
-  id-token: write    # Required for NuGet OIDC trusted publishing
+# Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
+# what it needs (the push job carries id-token: write for NuGet OIDC trusted publishing).
+permissions: {}
 
 jobs:
   push:
@@ -109,6 +109,8 @@ jobs:
     if: success() && vars.PUSHOVER_ENABLED == 'true'
     continue-on-error: true
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -141,6 +143,8 @@ jobs:
     if: failure() && vars.PUSHOVER_ENABLED == 'true'
     continue-on-error: true
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
