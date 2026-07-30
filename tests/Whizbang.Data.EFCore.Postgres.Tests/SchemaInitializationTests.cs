@@ -239,6 +239,86 @@ public class SchemaInitializationTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_ReplaysLedgerAgainstSplitStore_WhenTrackingLostAsync() {
+    // Arrange — a full init brings wh_event_store to the post-078 split shape (no inline
+    // event_data/metadata; the base ensure's BackfillExempt deliberately never restores
+    // migration-owned columns).
+    await DropAllWhizbangTablesAsync();
+    await using var dbContext1 = CreateDbContext();
+    await dbContext1.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Simulate lost migration tracking (crashed pod mid-init, a restore that skipped the
+    // tracking tables, or the hash-recheck fallback) — the initializer then replays the FULL
+    // ledger against the already-split store.
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    await using (var wipeCmd = new NpgsqlCommand(
+      "DELETE FROM wh_schema_migrations; DELETE FROM wh_schema_versions;", connection)) {
+      await wipeCmd.ExecuteNonQueryAsync();
+    }
+
+    // Act — the replay must be idempotent against the final shape: 072's NOT-NULL relax of
+    // the (already-dropped) inline body columns must no-op instead of failing with 42703.
+    await using var dbContext2 = CreateDbContext();
+    await dbContext2.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Assert — the replay completed and the split shape is intact.
+    await using var shapeCmd = new NpgsqlCommand(@"
+      SELECT COUNT(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'wh_event_store'
+        AND column_name IN ('event_data', 'metadata')", connection);
+    var inlineColumns = (long)(await shapeCmd.ExecuteScalarAsync())!;
+    await Assert.That(inlineColumns).IsEqualTo(0L)
+      .Because("a replayed ledger must keep the split store (078) without failing at 072");
+  }
+
+  [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_EarlierRedefinerReRun_PullsLastWordViaClosureAsync() {
+    // The partial-replay incident, reproduced: several migrations redefine store_inbox_messages
+    // over time (021 creates it; 062 is the flags-aware last word). Forcing ONLY an
+    // earlier redefiner to re-run (a tampered ledger hash stands in for an in-place edit) used to
+    // leave the database on the earlier definition — the store procedure silently persisted
+    // flags=0 for every row. The redefinition closure must pull the last word in behind it.
+    await DropAllWhizbangTablesAsync();
+    await using var dbContext1 = CreateDbContext();
+    await dbContext1.EnsureWhizbangDatabaseInitializedAsync();
+
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    // Sanity: the fully-initialized function IS flags-aware.
+    await using (var sanityCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM (SELECT pg_get_functiondef(oid) fd FROM pg_proc WHERE proname='store_inbox_messages') x WHERE fd LIKE '%Flags%'", connection)) {
+      await Assert.That((long)(await sanityCmd.ExecuteScalarAsync())!).IsEqualTo(1L);
+    }
+
+    // Force ONLY the earlier redefiner to re-run: tamper its stored hash.
+    await using (var tamperCmd = new NpgsqlCommand(
+      "UPDATE wh_schema_migrations SET content_hash = 'tampered' WHERE file_name LIKE '021%'", connection)) {
+      var tampered = await tamperCmd.ExecuteNonQueryAsync();
+      await Assert.That(tampered).IsEqualTo(1)
+        .Because("the test must actually force the earlier redefiner to re-run.");
+    }
+
+    await using var dbContext2 = CreateDbContext();
+    await dbContext2.EnsureWhizbangDatabaseInitializedAsync();
+
+    // The last word must have re-applied AFTER the earlier file — the live function stays
+    // flags-aware instead of reverting to the 046-era definition.
+    await using var fnCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM (SELECT pg_get_functiondef(oid) fd FROM pg_proc WHERE proname='store_inbox_messages') x WHERE fd LIKE '%Flags%'", connection);
+    await Assert.That((long)(await fnCmd.ExecuteScalarAsync())!).IsEqualTo(1L)
+      .Because("re-running an earlier store-procedure definition without its last word leaves a " +
+               "function that persists flags=0 for every row — the closure must re-apply 062 after 021.");
+
+    await using var ledgerCmd = new NpgsqlCommand(
+      "SELECT status_description FROM wh_schema_migrations WHERE file_name LIKE '062%'", connection);
+    var desc = (string?)await ledgerCmd.ExecuteScalarAsync();
+    await Assert.That(desc).IsEqualTo("Re-applied (redefinition closure)")
+      .Because("the ledger must record WHY an unchanged-hash migration executed again.");
+  }
+
+  [Test]
   public async Task EnsureWhizbangDatabaseInitialized_TracksPerspectivedIndividuallyAsync() {
     // Arrange
     await DropAllWhizbangTablesAsync();

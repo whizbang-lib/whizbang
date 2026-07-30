@@ -129,6 +129,37 @@ resolved version ──► dotnet pack -p:Version="$VERSION"   (stamps assemblie
 
 ---
 
+## Version increment rules
+
+**Every release is at least a MINOR bump. The patch band is reserved for hotfix/bugfix-only
+releases.** This is a hard rule, and the branch configuration enforces it automatically:
+
+| Channel | Band | Who picks the number |
+|---|---|---|
+| develop pushes (auto prerelease) | **next-minor**: `0.(Y+1).0-alpha.N` above the last tag | GitVersion (`develop: increment: Minor`), `N` = commit height |
+| Deliberate release (`start-release`) | **minor**: `0.(Y+1).0[-alpha.1]` | You — `release_type: minor`, or `manual` into a **new minor band** |
+| Hotfix / bugfix-only | **patch**: `0.Y.Z` on an existing release line | The `release/vX.Y.Z` **branch name** (branch-name override, not GitVersion) |
+
+**Why the rule exists (learned the hard way, 2026-07):** the develop channel auto-publishes
+prereleases with GitVersion-computed heights (`-alpha.N`). A deliberate release cut into the
+*same* band uses its own numbering (`-alpha.1`) and can land **below** already-published
+develop builds — `0.959.1-alpha.1` sorted under the pre-existing `0.959.1-alpha.12`, making
+the "new" release invisible to latest-version resolution. Disjoint bands make that collision
+impossible: develop always computes one minor above the last release tag, a deliberate release
+crystallizes a fresh minor band, and hotfixes patch old lines by branch name without touching
+either.
+
+Rules of thumb:
+- **Never** pass `manual_version` inside the current patch band. If you use `manual` (e.g. for
+  a prerelease label, since `minor` produces a bare `0.X.0`), pick the **next minor**:
+  after `v0.960.0-alpha.1`, the next deliberate release is `0.961.0-alpha.1`, not `0.960.1-*`.
+- Hotfixes: branch `release/vX.Y.Z` from the release line and push — the branch-name publish
+  channel versions it; no GitVersion involvement, no band conflict.
+- The develop channel takes care of itself — after any release tag, its next build computes in
+  the following minor band automatically.
+
+---
+
 ## GitVersion synchronization — why it still works
 
 **GitVersion here derives the base version from the highest tag *repo-wide*, not by branch ancestry.**

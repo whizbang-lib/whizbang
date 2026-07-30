@@ -57,4 +57,19 @@ public class WhizbangManagedHealthCheckTests {
       .CheckHealthAsync(new HealthCheckContext());
     await Assert.That(result.Data.ContainsKey("schema")).IsTrue();
   }
+
+  [Test]
+  public async Task Result_DuplicateComponentNames_SurfacesEveryReportWithoutThrowingAsync() {
+    // Sources sharing a component name (e.g. a per-context source registered by more than one
+    // pipeline) must never kill the health endpoint — a diagnostic bridge that throws takes the
+    // pod out with a crash loop instead of reporting the very state it exists to surface.
+    var result = await _check(HealthProbe.Readiness,
+        new FakeSource("schema", ComponentState.Operational),
+        new FakeSource("schema", ComponentState.Faulted))
+      .CheckHealthAsync(new HealthCheckContext());
+
+    await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);   // worst still wins
+    await Assert.That(result.Data.ContainsKey("schema")).IsTrue();
+    await Assert.That(result.Data.ContainsKey("schema[2]")).IsTrue();
+  }
 }

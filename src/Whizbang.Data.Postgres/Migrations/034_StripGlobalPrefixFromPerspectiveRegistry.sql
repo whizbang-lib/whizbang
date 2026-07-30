@@ -1,3 +1,4 @@
+-- Objects: none  (data-only UPDATE; defines no SQL objects — closure-exempt)
 -- Migration 034: Strip global:: prefix from perspective registry CLR type names
 --
 -- The EFCoreServiceRegistrationGenerator previously wrote global::-prefixed type names

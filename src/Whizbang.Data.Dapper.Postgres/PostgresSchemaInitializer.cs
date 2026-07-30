@@ -356,15 +356,33 @@ public sealed class PostgresSchemaInitializer {
     // Step 2: Upsert version row
     var versionId = await _upsertVersionAsync(connection, cancellationToken);
 
+    // Redefinition-closure pre-pass (mirrors the EF Core schema-init): whenever a migration
+    // re-runs, every LATER migration defining any of the same SQL objects must re-run after it —
+    // otherwise a partial replay leaves the database on an earlier definition with no error
+    // anywhere. Compute the will-run set, then expand it to its fixed-point closure.
+    var ordered = migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal)).ToList();
+    var hashCache = new Dictionary<string, (string Hash, string? ExistingHash)>(StringComparer.Ordinal);
+    var toRun = new List<string>();
+    var orderedObjects = new List<(string Name, IReadOnlyCollection<string> Objects)>();
+    foreach (var migration in ordered) {
+      var preHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(migration.Sql)));
+      var preExisting = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
+      hashCache[migration.Name] = (preHash, preExisting);
+      if (preExisting != preHash) {
+        toRun.Add(migration.Name);
+      }
+      orderedObjects.Add((migration.Name, Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(migration.Sql).Objects));
+    }
+    var closureNames = Whizbang.Data.Postgres.MigrationRedefinitionClosure.Expand(orderedObjects, toRun);
+
     // Step 3: Hash-check remaining migrations
     int executionOrder = 0;
-    foreach (var migration in migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal))) {
+    foreach (var migration in ordered) {
       executionOrder++;
-      var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(migration.Sql)));
+      var (hash, existingHash) = hashCache[migration.Name];
+      var inClosure = closureNames.Contains(migration.Name);
 
-      var existingHash = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
-
-      if (existingHash == hash) {
+      if (existingHash == hash && !inClosure) {
         // Hash matches — skip execution, record as Skipped
         await _updateMigrationStatusAsync(connection, migration.Name, versionId, 3, "Skipped (hash unchanged)", cancellationToken);
         continue;
@@ -378,9 +396,11 @@ public sealed class PostgresSchemaInitializer {
         await cmd.ExecuteNonQueryAsync(cancellationToken);
 
         var status = isUpdate ? 2 : 1; // Updated vs Applied
-        var desc = isUpdate
-          ? $"Updated from hash {existingHash![..8]}..."
-          : "First apply";
+        var desc = existingHash == hash
+          ? "Re-applied (redefinition closure)"
+          : isUpdate
+            ? $"Updated from hash {existingHash![..8]}..."
+            : "First apply";
 
         // Store previous SQL content for rollback support (functions can be re-applied)
         var previousContent = isUpdate ? migration.Sql : null;

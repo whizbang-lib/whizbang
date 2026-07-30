@@ -745,6 +745,37 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       versionId = null;
     }
 
+    // Redefinition-closure pre-pass: determine which migrations WILL run (new or hash-drifted),
+    // then expand that set to every LATER migration defining any of the same SQL objects. Several
+    // files may redefine one function over time; re-running an earlier definition without re-running
+    // its last word leaves the database on the earlier version — every statement succeeds while the
+    // object is silently generations old. The closure makes the last word run last, always.
+    System.Collections.Generic.IReadOnlySet<string>? closureNames = null;
+    var hashCache = new System.Collections.Generic.Dictionary<string, (string Hash, string? ExistingHash)>(StringComparer.Ordinal);
+    if (versionId.HasValue) {
+      var toRun = new System.Collections.Generic.List<string>();
+      var orderedObjects = new System.Collections.Generic.List<(string Name, System.Collections.Generic.IReadOnlyCollection<string> Objects)>();
+      foreach (var (name, sql) in migrations) {
+        var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
+        var hash = Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(transformedSql)));
+        var existingHash = await _getExistingHashAsync(connection, name, cancellationToken);
+        hashCache[name] = (hash, existingHash);
+        if (existingHash != hash) {
+          toRun.Add(name);
+        }
+        orderedObjects.Add((name, Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(transformedSql).Objects));
+      }
+      closureNames = Whizbang.Data.Postgres.MigrationRedefinitionClosure.Expand(orderedObjects, toRun);
+      foreach (var pulledIn in closureNames) {
+        if (!toRun.Contains(pulledIn)) {
+          logger?.LogInformation(
+            "Migration {Migration}: re-running via redefinition closure — an earlier migration defining the same SQL object(s) is re-running, so this later definition must re-apply after it.",
+            pulledIn);
+        }
+      }
+    }
+
     // Execute migrations with optional hash-based change detection
     int executionOrder = 0;
     foreach (var (name, sql) in migrations) {
@@ -753,12 +784,10 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
       // If tracking is available, check hash before executing
       if (versionId.HasValue) {
-        var hash = Convert.ToHexStringLower(
-            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(transformedSql)));
+        var (hash, existingHash) = hashCache[name];
+        var inClosure = closureNames is not null && closureNames.Contains(name);
 
-        var existingHash = await _getExistingHashAsync(connection, name, cancellationToken);
-
-        if (existingHash == hash) {
+        if (existingHash == hash && !inClosure) {
           await _updateMigrationStatusAsync(connection, name, versionId.Value, 3, "Skipped (hash unchanged)", cancellationToken);
           logger?.LogDebug("Migration {Migration}: skipped (hash unchanged)", name);
           continue;
@@ -775,7 +804,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           applied++;
 
           var status = isUpdate ? 2 : 1;
-          var desc = isUpdate ? $"Updated from hash {existingHash![..8]}..." : "First apply";
+          var desc = existingHash == hash
+            ? "Re-applied (redefinition closure)"
+            : isUpdate ? $"Updated from hash {existingHash![..8]}..." : "First apply";
 
           await _upsertMigrationAsync(connection, name, hash, versionId.Value, status, desc, executionOrder, "whizbang", cancellationToken);
           logger?.LogDebug("Migration {Migration}: {Status} in {ElapsedMs}ms", name, desc, migSw.ElapsedMilliseconds);

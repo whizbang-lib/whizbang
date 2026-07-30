@@ -67,7 +67,11 @@ public partial class PerspectiveWorker(
   // PerspectiveWorker off the 250 ms-default poll loop and onto burst-driven
   // wake. The safety-net poll cadence (NotifyHealthyPollingIntervalMilliseconds,
   // default 30 s) still backstops missed signals.
-  Whizbang.Core.Notifications.IWorkNotificationListener? perspectiveNotificationListener = null
+  Whizbang.Core.Notifications.IWorkNotificationListener? perspectiveNotificationListener = null,
+  // Renewal enqueues (ILeaseRenewalChannel) are filtered by the flush against this registry —
+  // an id with no registered LeaseHandle is silently skipped. The collective sink registers its
+  // leased work rows here so per-batch renewals actually land (mirrors OutboxPublishWorker).
+  LeaseRegistry? leaseRegistry = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -163,6 +167,7 @@ public partial class PerspectiveWorker(
   private readonly RecentlyProcessedEventCache? _recentlyProcessedEventCache = recentlyProcessedEventCache;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   private readonly LeaseHandleOptions _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
+  private readonly LeaseRegistry? _leaseRegistry = leaseRegistry;
   private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _perspectiveNotificationListener = perspectiveNotificationListener;
   private readonly SemaphoreSlim _perspectiveWake = new(0, 1);
   private bool _perspectiveSignalSubscribed;
@@ -2530,6 +2535,51 @@ public partial class PerspectiveWorker(
   /// collective infrastructure isn't registered in this service — emitting a collective event a service
   /// doesn't handle is not an error.
   /// </remarks>
+  /// <summary>
+  /// Registers a <see cref="LeaseHandle"/> for each leased sink work row so the per-batch renewal
+  /// enqueues survive <c>LeaseRenewalWorker</c>'s registry filter (mirrors OutboxPublishWorker's
+  /// handle-per-work registration). TryGet-guarded: a re-offered row whose prior handle is still
+  /// registered is skipped rather than thrown — the drain caller catches only
+  /// <see cref="OperationCanceledException"/>, so a Register throw here would fault the host.
+  /// </summary>
+  private SinkLeaseScope _registerSinkLeases(IReadOnlyList<Guid> sinkWorkIds, CancellationToken cancellationToken) {
+    if (_leaseRegistry is null || sinkWorkIds.Count == 0) {
+      return new SinkLeaseScope([]);
+    }
+    var leaseDeadline = _timeProvider.GetUtcNow()
+      + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
+    var handles = new List<LeaseHandle>(sinkWorkIds.Count);
+    foreach (var workId in sinkWorkIds.Distinct()) {
+      if (_leaseRegistry.TryGet(WorkCategory.PerspectiveEvent, workId, out _)) {
+        continue;
+      }
+      var handle = new LeaseHandle(
+        workId: workId,
+        category: WorkCategory.PerspectiveEvent,
+        deadline: leaseDeadline,
+        // Uncapped: sink renewals are PROGRESS-GATED (one enqueue per committed apply batch), so a
+        // hung apply stops enqueuing and its lease expires naturally — the cap exists to surface
+        // renewals that fire regardless of progress and here would end renewal protection at batch
+        // N+1 of any longer apply while warning once per remaining batch.
+        maxRenewals: int.MaxValue,
+        timeProvider: _timeProvider,
+        linkedTokens: [cancellationToken]);
+      _leaseRegistry.Register(handle);
+      handles.Add(handle);
+    }
+    return new SinkLeaseScope(handles);
+  }
+
+  /// <summary>Disposes the sink's registered lease handles when the dispatch span ends (the registry
+  /// auto-removes each handle on dispose).</summary>
+  private readonly struct SinkLeaseScope(List<LeaseHandle> handles) : IDisposable {
+    public void Dispose() {
+      foreach (var handle in handles) {
+        handle.Dispose();
+      }
+    }
+  }
+
   private async Task _processCollectiveSinkAsync(
       AsyncServiceScope scope,
       IWorkCoordinator workCoordinator,
@@ -2551,6 +2601,11 @@ public partial class PerspectiveWorker(
 #pragma warning restore CA1848
       return;
     }
+
+    // Per-batch renewal enqueues are filtered by LeaseRenewalWorker against the LeaseRegistry —
+    // an id with no registered LeaseHandle is silently skipped, so without this the renewals
+    // never reach renew_leases and the DB lease still expires under a long multi-batch apply.
+    using var sinkLeaseScope = _registerSinkLeases(sinkWorkIds, cancellationToken);
 
     var checkpoint = await workCoordinator.GetPerspectiveCursorAsync(
       streamId, CollectiveRouting.SINK_PERSPECTIVE_NAME, cancellationToken).ConfigureAwait(false);
@@ -2576,7 +2631,16 @@ public partial class PerspectiveWorker(
     foreach (var envelope in collectiveEnvelopes) {
       var collectiveEvent = (ICollectiveEvent)envelope.Payload;
       try {
-        await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session, cancellationToken)
+        await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session,
+          onBatchApplied: _leaseRenewalChannel is null ? null : async ct => {
+            // A tenant-wide collective apply can span many batches and outlive the sink work item's
+            // lease — renewing on every reported batch keeps the lease tracking the apply's true
+            // duration, so the (idempotent) work is not re-offered mid-apply.
+            foreach (var workId in sinkWorkIds) {
+              await _leaseRenewalChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, workId, ct).ConfigureAwait(false);
+            }
+          },
+          cancellationToken: cancellationToken)
           .ConfigureAwait(false);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // A failing collective apply must NOT crash the host. Without this guard the exception propagates out

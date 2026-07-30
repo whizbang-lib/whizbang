@@ -45,7 +45,8 @@ public sealed class EFCoreCollectiveEventExecutor<TModel> : ICollectiveEventExec
       ICollectiveScopeResolver resolver,
       object dbContextOrSession,
       Guid collectiveEventId,
-      CancellationToken cancellationToken) {
+      Func<CancellationToken, ValueTask>? onBatchApplied = null,
+      CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(dbContextOrSession);
 
@@ -57,6 +58,6 @@ public sealed class EFCoreCollectiveEventExecutor<TModel> : ICollectiveEventExec
 
     return CollectiveEventApplier<TModel>.ApplyAsync(
       entry, handlerInstance, evt, resolver, dbContext,
-      collectiveEventId, _options, _hookRegistry, cancellationToken);
+      collectiveEventId, _options, _hookRegistry, onBatchApplied, cancellationToken);
   }
 }

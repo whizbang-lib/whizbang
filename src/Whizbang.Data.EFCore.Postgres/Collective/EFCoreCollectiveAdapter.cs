@@ -66,6 +66,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
   /// brief lock hold, and a per-batch <c>statement_timeout</c> (when configured) that Postgres enforces
   /// server-side (surviving PgBouncer pooling). Returns the total number of rows affected.
   /// </summary>
+#pragma warning disable S107 // Apply-chain seam threads the full dispatch context (entry, session, hooks, per-batch callback) — a parameter object would ripple through every driver and fake for no call-site gain
   public static async Task<int> ExecuteAsync(
       DbContext dbContext,
       ICollectiveSpec<TModel> spec,
@@ -74,7 +75,9 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       CollectiveApplyOptions options,
       string scopeKey,
       Guid collectiveEventId,
+      Func<CancellationToken, ValueTask>? onBatchApplied = null,
       CancellationToken cancellationToken = default) {
+#pragma warning restore S107
 
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(spec);
@@ -179,6 +182,12 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
         cancellationToken: cancellationToken).ConfigureAwait(false);
       total += count;
       batches++;
+      // Per-batch progress: lets the caller renew its work lease DURING a long apply — without
+      // this, an apply spanning many batches outlives the lease and the (idempotent) work is
+      // redelivered. Invoked after every committed batch, including the final one.
+      if (onBatchApplied is not null) {
+        await onBatchApplied(cancellationToken).ConfigureAwait(false);
+      }
       if (count < batchSize || maxId is null) {
         break;
       }

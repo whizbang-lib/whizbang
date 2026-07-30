@@ -1,3 +1,6 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Perspectives;
@@ -26,11 +29,16 @@ public interface ICollectiveDispatcher {
   /// Dapper). Forwarded as <see cref="object"/> to each executor —
   /// each driver casts to its expected type.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+  /// <param name="onBatchApplied">Optional per-batch progress callback, invoked by the driver after
+  /// each batched UPDATE commits. The worker that owns the leased work item uses it to renew the
+  /// lease DURING a long multi-batch apply — without it, an apply spanning many batches outlives
+  /// its lease and the work is redelivered (idempotently, but wastefully). Null = no reporting.</param>
   Task<CollectiveDispatchResult> DispatchAsync(
     ICollectiveEvent evt,
     Guid collectiveEventId,
     object dbContextOrSession,
-    CancellationToken cancellationToken);
+    Func<CancellationToken, ValueTask>? onBatchApplied = null,
+    CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -53,6 +53,158 @@ public class PerspectiveWorkerCollectiveSinkTests {
       .Because("The sink bypasses the per-stream runner.");
   }
 
+  [Test]
+  public async Task CollectiveSink_LongApply_RenewsWorkLeasePerReportedBatchAsync() {
+    // The dispatcher reports 3 apply batches; the worker must renew the sink work item's lease on
+    // EACH report — without renewal, an apply spanning many batches outlives its lease and the
+    // (idempotent) work is redelivered, re-running the full batched UPDATE for nothing.
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-lease") };
+    var dispatcher = new _batchReportingDispatcher(batches: 3);
+    var leaseChannel = new Whizbang.Testing.Workers.CapturingLeaseRenewalChannel();
+    var sinkWork = _sinkWork(streamId);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      leaseRenewalChannel: leaseChannel);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await coordinator.WaitForCyclesAsync(2, TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    var renewals = leaseChannel.Items.Where(i => i.id == sinkWork.WorkId).ToList();
+    await Assert.That(renewals.Count).IsEqualTo(3)
+      .Because("each reported apply batch must renew the leased sink work item — the lease then " +
+               "tracks the apply's true duration instead of racing it.");
+    await Assert.That(renewals.All(r => r.category == WorkCategory.PerspectiveEvent)).IsTrue();
+  }
+
+  [Test]
+  public async Task CollectiveSink_LongApply_RenewalLandsThroughRealWorkerAndRegistryAsync() {
+    // The sibling above proves the ENQUEUE with a capturing fake; this proves the renewal LANDS.
+    // In production LeaseRenewalWorker's flush renews only ids whose LeaseHandle is registered in
+    // the LeaseRegistry — an enqueued id with no handle is silently skipped (Debug-level log). The
+    // sink must therefore create + register a handle for each leased sink work row before
+    // dispatching, as OutboxPublishWorker does for outbox work; otherwise a multi-batch collective
+    // apply enqueues renewals that never reach RenewLeasesAsync and the DB lease still expires.
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-lease-real") };
+    var dispatcher = new _gatedBatchReportingDispatcher();
+    var sinkWork = _sinkWork(streamId);
+
+    var leaseRegistry = new LeaseRegistry();
+    var renewCoordinator = new _renewCapturingCoordinator();
+    var renewalServices = new ServiceCollection();
+    renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
+    await using var renewalProvider = renewalServices.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var renewalWorker = new LeaseRenewalWorker(
+      renewalProvider.GetRequiredService<IServiceScopeFactory>(),
+      gate,
+      Options.Create(new LeaseRenewalWorkerOptions {
+        Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
+      }),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
+      leaseRegistry);
+    await renewalWorker.StartAsync(CancellationToken.None);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      leaseRenewalChannel: renewalWorker,
+      leaseRegistry: leaseRegistry);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    try {
+      var renewed = await renewCoordinator.FirstRenewal.WaitAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(renewed.Category).IsEqualTo(WorkCategory.PerspectiveEvent);
+      await Assert.That(renewed.Ids).Contains(sinkWork.WorkId)
+        .Because("an enqueued sink renewal must survive the registry filter and reach " +
+                 "IWorkCoordinator.RenewLeasesAsync — without a registered LeaseHandle the flush " +
+                 "silently drops it and the DB lease still expires mid-apply.");
+    } finally {
+      dispatcher.ReleaseDispatch.TrySetResult();
+      cts.Cancel();
+      try { await workerTask; } catch (OperationCanceledException) { }
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+      await renewalWorker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
+  public async Task CollectiveSink_ManyBatchApply_RenewalsAreNotCappedAsync() {
+    // Renewal enqueues from the sink are PROGRESS-GATED: one fires only when an apply batch has
+    // committed, so a hung apply stops enqueuing and its lease expires naturally. The
+    // MaxRenewalsPerWork cap exists to surface renewals that fire regardless of progress (timers);
+    // applied to the sink it makes every apply longer than the cap lose renewal protection at
+    // batch N+1 and spam a warning per remaining batch. Eight acked batches must therefore produce
+    // eight renewals through the REAL worker + registry — the default cap of six fails batch 7.
+    const int BATCHES = 8;
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-lease-uncapped") };
+    var sinkWork = _sinkWork(streamId);
+
+    var leaseRegistry = new LeaseRegistry();
+    var renewCoordinator = new _renewCapturingCoordinator();
+    var dispatcher = new _ackedBatchReportingDispatcher(
+      BATCHES, batchNumber => renewCoordinator.WaitForRenewalCountAsync(sinkWork.WorkId, batchNumber));
+    var renewalServices = new ServiceCollection();
+    renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
+    await using var renewalProvider = renewalServices.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var renewalWorker = new LeaseRenewalWorker(
+      renewalProvider.GetRequiredService<IServiceScopeFactory>(),
+      gate,
+      Options.Create(new LeaseRenewalWorkerOptions {
+        Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
+      }),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
+      leaseRegistry);
+    await renewalWorker.StartAsync(CancellationToken.None);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      leaseRenewalChannel: renewalWorker,
+      leaseRegistry: leaseRegistry);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    try {
+      // Each batch is acked only after ITS renewal reached RenewLeasesAsync, so reaching the full
+      // count proves no renewal was dropped by the cap. Under the capped default, batch 7's
+      // renewal never arrives and this wait times out — the RED signal.
+      await renewCoordinator.WaitForRenewalCountAsync(sinkWork.WorkId, BATCHES).WaitAsync(TimeSpan.FromSeconds(15));
+      await Assert.That(renewCoordinator.RenewalCount(sinkWork.WorkId)).IsGreaterThanOrEqualTo(BATCHES)
+        .Because("a progress-gated sink renewal fires per committed batch and must never be " +
+                 "dropped by MaxRenewalsPerWork — capping it ends renewal protection mid-apply " +
+                 "for any apply longer than the cap.");
+    } finally {
+      cts.Cancel();
+      try { await workerTask; } catch (OperationCanceledException) { }
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+      await renewalWorker.StopAsync(CancellationToken.None);
+    }
+  }
+
   /// <summary>
   /// Gap #6 unit lock-in: the production route. <c>claim_work</c> returns a collective event's sink
   /// stream as a <see cref="WorkBatch.PerspectiveStreamIds"/> entry (DRAIN path), not a per-event
@@ -455,7 +607,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
       List<PerspectiveWork> work, _eventStore eventStore, _registry registry, ICollectiveDispatcher? dispatcher,
       List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null,
       int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
-      IReceptorInvoker? receptorInvoker = null) {
+      IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null,
+      LeaseRegistry? leaseRegistry = null) {
     var instanceProvider = new _instanceProvider();
     var strategy = new InstantCompletionStrategy();
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -490,9 +643,11 @@ public class PerspectiveWorkerCollectiveSinkTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: leaseRenewalChannel,
       perspectiveDrainChannel: harness.DrainChannel,
       deadLetterStore: deadLetterStore,
-      generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider());
+      generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider(),
+      leaseRegistry: leaseRegistry);
     return (worker, harness, coordinator);
   }
 
@@ -508,12 +663,106 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public Task FirstDispatch => _first.Task;
 
     public Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
       lock (Calls) {
         Calls.Add((evt, collectiveEventId));
       }
       _first.TrySetResult();
       return Task.FromResult(new CollectiveDispatchResult(1, 1));
+    }
+  }
+
+  /// <summary>Dispatcher that reports N apply batches through onBatchApplied — the long-apply shape.</summary>
+  private sealed class _batchReportingDispatcher(int batches) : ICollectiveDispatcher {
+    private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task FirstDispatch => _first.Task;
+
+    public async Task<CollectiveDispatchResult> DispatchAsync(
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+      for (var i = 0; i < batches; i++) {
+        if (onBatchApplied is not null) {
+          await onBatchApplied(cancellationToken);
+        }
+      }
+      _first.TrySetResult();
+      return new CollectiveDispatchResult(1, batches);
+    }
+  }
+
+  /// <summary>Reports one apply batch, then parks until released — keeps the dispatch (and any
+  /// lease handles the worker holds for it) alive while the renewal flush runs, deterministically.</summary>
+  private sealed class _gatedBatchReportingDispatcher : ICollectiveDispatcher {
+    public TaskCompletionSource ReleaseDispatch { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task<CollectiveDispatchResult> DispatchAsync(
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+      if (onBatchApplied is not null) {
+        await onBatchApplied(cancellationToken);
+      }
+      await ReleaseDispatch.Task.WaitAsync(cancellationToken);
+      return new CollectiveDispatchResult(1, 1);
+    }
+  }
+
+  /// <summary>Reports one batch at a time, awaiting an ack between batches — used to prove each
+  /// batch's renewal individually traversed the real flush before the next batch reports.</summary>
+  private sealed class _ackedBatchReportingDispatcher(int batches, Func<int, Task> ackForBatch) : ICollectiveDispatcher {
+    public async Task<CollectiveDispatchResult> DispatchAsync(
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+      for (var batch = 1; batch <= batches; batch++) {
+        if (onBatchApplied is not null) {
+          await onBatchApplied(cancellationToken);
+        }
+        await ackForBatch(batch).WaitAsync(cancellationToken);
+      }
+      return new CollectiveDispatchResult(1, batches);
+    }
+  }
+
+  /// <summary>Coordinator for the REAL LeaseRenewalWorker's flush scope — records what actually
+  /// reaches RenewLeasesAsync (i.e. what survived the LeaseRegistry handle filter).</summary>
+  private sealed class _renewCapturingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    private readonly TaskCompletionSource<(WorkCategory Category, IReadOnlyList<Guid> Ids)> _first =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Lock _lock = new();
+    private readonly Dictionary<Guid, int> _renewalCounts = [];
+    private readonly List<(Guid Id, int Count, TaskCompletionSource Signal)> _waiters = [];
+
+    public Task<(WorkCategory Category, IReadOnlyList<Guid> Ids)> FirstRenewal => _first.Task;
+
+    public int RenewalCount(Guid id) {
+      lock (_lock) {
+        return _renewalCounts.GetValueOrDefault(id);
+      }
+    }
+
+    /// <summary>Completes once <paramref name="id"/> has been renewed at least <paramref name="count"/> times.</summary>
+    public Task WaitForRenewalCountAsync(Guid id, int count) {
+      lock (_lock) {
+        if (_renewalCounts.GetValueOrDefault(id) >= count) {
+          return Task.CompletedTask;
+        }
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiters.Add((id, count, tcs));
+        return tcs.Task;
+      }
+    }
+
+    public Task<int> RenewLeasesAsync(WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds = 300, CancellationToken cancellationToken = default) {
+      _first.TrySetResult((category, [.. ids]));
+      lock (_lock) {
+        foreach (var id in ids) {
+          _renewalCounts[id] = _renewalCounts.GetValueOrDefault(id) + 1;
+        }
+        for (var i = _waiters.Count - 1; i >= 0; i--) {
+          var (id, count, signal) = _waiters[i];
+          if (_renewalCounts.GetValueOrDefault(id) >= count) {
+            signal.TrySetResult();
+            _waiters.RemoveAt(i);
+          }
+        }
+      }
+      return Task.FromResult(ids.Count);
     }
   }
 
@@ -524,7 +773,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public Task FirstDispatch => _first.Task;
 
     public Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
       Interlocked.Increment(ref _calls);
       _first.TrySetResult();
       throw new InvalidOperationException(

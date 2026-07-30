@@ -60,7 +60,8 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
       ICollectiveScopeResolver resolver,
       object dbContextOrSession,
       Guid collectiveEventId,
-      CancellationToken cancellationToken) {
+      Func<CancellationToken, ValueTask>? onBatchApplied = null,
+      CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(dbContextOrSession);
 
@@ -72,6 +73,7 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
 
     return DapperCollectiveEventApplier<TModel>.ApplyAsync(
       entry, handlerInstance, evt, resolver, connectionFactory, _tableName, _siblingTables, _options,
-      logger: _logger, hookRegistry: _hookRegistry, cancellationToken: cancellationToken);
+      logger: _logger, hookRegistry: _hookRegistry, onBatchApplied: onBatchApplied,
+      cancellationToken: cancellationToken);
   }
 }

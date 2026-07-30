@@ -40,6 +40,17 @@ new file for a fix.
 10. **Connection `search_path`** is defense-in-depth, not the contract — never rely on it alone
     (pgbouncer/Aspire/pooled EF connections strip it). Rule 3 is what makes the SQL correct.
 
+11. **Same-object chains re-run automatically (redefinition closure)** — several files may
+    redefine one object over time (the store procedures, the emit chain). When the ledger re-runs
+    ANY file (new or hash-changed), it automatically re-runs every LATER file defining the same
+    SQL objects, so the database always ends on each object's last-word definition. Object lists
+    are extracted from each file's `CREATE`/`ALTER`/`DROP` statements; files whose definitions
+    hide in dynamic SQL (or that define nothing) MUST declare them explicitly with a
+    `-- Objects: name1, name2` (or `-- Objects: none`) header — a regression test fails any file
+    that neither parses to an object nor declares one. The older convention of manually
+    hash-bumping the last-word file still works but is no longer load-bearing; "Re-run note"
+    comments are documentation now, not the mechanism.
+
 **Rule 3 is enforced** by `scripts/Lint-MigrationSql.ps1` (CI step in the `format` job) — it fails on
 any bare `wh_` ref inside a function body. The historical debt has been **burned down to zero**
 (baseline empty); the lint now holds it at zero. `-Fix` auto-qualifies flagged refs; `-UpdateBaseline`

@@ -135,9 +135,22 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         EphemeralRewindGraceSeconds: rewindGrace,
         EphemeralTtlSeconds: ttlSeconds,
         SettingsHash: _computeSettingsHash(ephemeral),
-        SchemaHash: _computeSchemaHash(typeSymbol)
+        SchemaHash: _computeSchemaHash(typeSymbol),
+        IsCollective: _implementsInterface(typeSymbol, COLLECTIVE_EVENT_INTERFACE),
+        IsComposite: _implementsInterface(typeSymbol, COMPOSITE_EVENT_INTERFACE),
+        IsCompacted: _implementsInterface(typeSymbol, COMPACTED_EVENT_INTERFACE)
     );
   }
+
+  // Marker interfaces stamped onto the entry so the transport receive path can derive EventFlags by
+  // type name — an incoming payload is a JsonElement there, so runtime `payload is` checks are blind.
+  private const string COLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
+  private const string COMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICompositeEvent";
+  private const string COMPACTED_EVENT_INTERFACE = "global::Whizbang.Core.ICompactedEvent";
+
+  private static bool _implementsInterface(INamedTypeSymbol typeSymbol, string fullyQualifiedInterface)
+    => typeSymbol.AllInterfaces.Any(i =>
+      i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == fullyQualifiedInterface);
 
   // ── Type-definition fingerprint (F-3) ────────────────────────────────────────────────────────────
   // Deterministic per-type content hashes stamped onto the catalog entry so the startup reconciler can
@@ -270,6 +283,15 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
           $"{info.EphemeralRewindGraceSeconds}, " +
           $"{info.EphemeralTtlSeconds})");
       }
+      if (info.IsCollective) {
+        initParts.Add("IsCollective = true");
+      }
+      if (info.IsComposite) {
+        initParts.Add("IsComposite = true");
+      }
+      if (info.IsCompacted) {
+        initParts.Add("IsCompacted = true");
+      }
       // Type-definition fingerprint (F-3): every entry carries its deterministic settings + schema hashes.
       // These two are always added, so initParts is never empty — the initializer is unconditional.
       initParts.Add($"SettingsHash = \"{info.SettingsHash}\"");
@@ -314,5 +336,8 @@ internal sealed record MessageTypeCatalogEntryInfo(
     int EphemeralRewindGraceSeconds = -1,
     int EphemeralTtlSeconds = -1,
     string SettingsHash = "",
-    string SchemaHash = ""
+    string SchemaHash = "",
+    bool IsCollective = false,
+    bool IsComposite = false,
+    bool IsCompacted = false
 );
