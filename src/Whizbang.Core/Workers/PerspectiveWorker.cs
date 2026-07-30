@@ -2557,7 +2557,11 @@ public partial class PerspectiveWorker(
         workId: workId,
         category: WorkCategory.PerspectiveEvent,
         deadline: leaseDeadline,
-        maxRenewals: _leaseHandleOptions.MaxRenewalsPerWork,
+        // Uncapped: sink renewals are PROGRESS-GATED (one enqueue per committed apply batch), so a
+        // hung apply stops enqueuing and its lease expires naturally — the cap exists to surface
+        // renewals that fire regardless of progress and here would end renewal protection at batch
+        // N+1 of any longer apply while warning once per remaining batch.
+        maxRenewals: int.MaxValue,
         timeProvider: _timeProvider,
         linkedTokens: [cancellationToken]);
       _leaseRegistry.Register(handle);
