@@ -205,6 +205,61 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
   }
 
+  [Test]
+  public async Task CollectiveSink_DrainReofferDuringCompletionFlush_SkipsRedispatchAsync() {
+    // Production echo: the drain loop re-offers a sink stream while the first dispatch's
+    // completion flush is still in flight — the rows are already in the processed-event cache
+    // (they sit there until the DB acks their DELETE) but the refetch still sees them and the
+    // cursor read doesn't reflect the advance yet, so the sink re-reads the same collective
+    // envelope and re-runs the entire batched UPDATE. Observed live as same-second full-count
+    // or 0-row re-applies. The sink must consult the processed-event cache exactly like the
+    // per-event path's duplicate filter and skip the re-dispatch (notifying the dedup observer).
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var workId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-echo") };
+    var dispatcher = new _recordingDispatcher();
+    var observer = new _sinkDedupObserver();
+    var envelope = _envelope(eventId, collectiveEvent);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      work: [],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      drainStreamIds: [streamId],
+      streamEvents: [_raw(streamId, eventId, eventWorkId: workId)],
+      processedEventCacheObserver: observer);
+
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    try {
+      await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+      // The sink completes its rows synchronously at the end of the dispatch pass (they enter the
+      // processed-event cache there); the completion channel write is the observable tail of that.
+      await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
+
+      // Re-offer the same drain stream — the production refetch during the flush window.
+      coordinator.OfferDrainAgain();
+
+      // GREEN: the re-offer is recognized as already-completed and skipped via the dedup
+      // observer. RED: no dedup ever fires (the sink re-dispatches instead) and this times out.
+      await observer.FirstSinkDedup.WaitAsync(TimeSpan.FromSeconds(10));
+    } finally {
+      cts.Cancel();
+      try { await workerTask; } catch (OperationCanceledException) { }
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    }
+
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
+      .Because("a drain re-offer of an already-completed sink row (completion flush in flight) " +
+               "must not re-run the collective apply — the processed-event cache knows the row " +
+               "is done, exactly as the per-event duplicate filter does.");
+    await Assert.That(observer.Deduped.Any(d => d.PerspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
+        && d.Ids.Contains(workId))).IsTrue();
+  }
+
   /// <summary>
   /// Gap #6 unit lock-in: the production route. <c>claim_work</c> returns a collective event's sink
   /// stream as a <see cref="WorkBatch.PerspectiveStreamIds"/> entry (DRAIN path), not a per-event
@@ -608,7 +663,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
       List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null,
       int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
       IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null,
-      LeaseRegistry? leaseRegistry = null) {
+      LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null) {
     var instanceProvider = new _instanceProvider();
     var strategy = new InstantCompletionStrategy();
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -640,6 +695,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
       tracingOptions: null,
       strategy,
       eventTypeProvider: registry,
+      processedEventCacheObserver: processedEventCacheObserver,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
@@ -781,6 +837,27 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
   }
 
+  /// <summary>Signals when the sink dedups a re-offered, already-completed work row.</summary>
+  private sealed class _sinkDedupObserver : IProcessedEventCacheObserver {
+    private readonly TaskCompletionSource _firstSink = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<(IReadOnlyList<Guid> Ids, string PerspectiveName, Guid StreamId)> Deduped { get; } = [];
+    public Task FirstSinkDedup => _firstSink.Task;
+
+    public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) {
+      lock (Deduped) {
+        Deduped.Add((dedupedEventIds, perspectiveName, streamId));
+      }
+      if (perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
+        _firstSink.TrySetResult();
+      }
+    }
+
+    public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) { }
+    public void OnRetentionActivated(int count) { }
+    public void OnEvicted(int count) { }
+    public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }
+  }
+
   private sealed class _stubSessionAccessor : ICollectiveSessionAccessor {
     public object GetSession(IServiceProvider scopedServiceProvider) => new object();
   }
@@ -847,11 +924,16 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
     public Task WaitForCyclesAsync(int minCycles, TimeSpan timeout) =>
       _waiters.GetOrAdd(minCycles, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task.WaitAsync(timeout);
+    private int _extraDrainOffers;
+    /// <summary>Re-offers the drain stream ids on the next claim cycle — models the production
+    /// drain refetch re-serving a stream whose completion flush hasn't landed yet.</summary>
+    public void OfferDrainAgain() => Interlocked.Increment(ref _extraDrainOffers);
     public new Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
       var c = Interlocked.Increment(ref _cycle);
       foreach (var kv in _waiters) { if (c >= kv.Key) { kv.Value.TrySetResult(); } }
       var pw = c == 1 ? new List<PerspectiveWork>(work) : [];
-      var sids = c == 1 ? new List<Guid>(DrainStreamIds) : [];
+      var reoffer = Interlocked.Exchange(ref _extraDrainOffers, 0) > 0;
+      var sids = c == 1 || reoffer ? new List<Guid>(DrainStreamIds) : [];
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = pw, PerspectiveStreamIds = sids });
     }
     // Explicit interface implementation so the worker's interface call routes here, overriding the

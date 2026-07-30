@@ -2542,13 +2542,13 @@ public partial class PerspectiveWorker(
   /// registered is skipped rather than thrown — the drain caller catches only
   /// <see cref="OperationCanceledException"/>, so a Register throw here would fault the host.
   /// </summary>
-  private SinkLeaseScope _registerSinkLeases(IReadOnlyList<Guid> sinkWorkIds, CancellationToken cancellationToken) {
-    if (_leaseRegistry is null || sinkWorkIds.Count == 0) {
+  private SinkLeaseScope _registerSinkLeases(Guid[] sinkWorkIds, CancellationToken cancellationToken) {
+    if (_leaseRegistry is null || sinkWorkIds.Length == 0) {
       return new SinkLeaseScope([]);
     }
     var leaseDeadline = _timeProvider.GetUtcNow()
       + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
-    var handles = new List<LeaseHandle>(sinkWorkIds.Count);
+    var handles = new List<LeaseHandle>(sinkWorkIds.Length);
     foreach (var workId in sinkWorkIds.Distinct()) {
       if (_leaseRegistry.TryGet(WorkCategory.PerspectiveEvent, workId, out _)) {
         continue;
@@ -2584,8 +2584,21 @@ public partial class PerspectiveWorker(
       AsyncServiceScope scope,
       IWorkCoordinator workCoordinator,
       Guid streamId,
-      IReadOnlyList<Guid> sinkWorkIds,
+      Guid[] sinkWorkIds,
       CancellationToken cancellationToken) {
+
+    // Drain re-offer during the completion-flush window: a prior dispatch already completed these
+    // rows (they sit in the processed-event cache until the DB acks their DELETE) but the refetch
+    // still sees them and the cursor read may not reflect the advance yet — without this guard the
+    // sink re-reads the same collective envelope and re-runs the entire batched UPDATE (idempotent,
+    // N× the DB work; observed live as same-second full-count/0-row re-applies). Mirror of the
+    // per-event path's _filterDuplicateWorkItems. Only the ALL-completed case skips — a mixed set
+    // means a new collective event arrived and the cursor-driven dispatch below handles ordering.
+    if (sinkWorkIds.Length > 0 && sinkWorkIds.All(id => id == Guid.Empty || _processedEventCache.Contains(id))) {
+      _processedEventCache.Observer.OnEventsDeduped(
+        sinkWorkIds, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
+      return;
+    }
 
     var dispatcher = scope.ServiceProvider.GetService<ICollectiveDispatcher>();
     var sessionAccessor = scope.ServiceProvider.GetService<ICollectiveSessionAccessor>();
@@ -2745,11 +2758,11 @@ public partial class PerspectiveWorker(
   /// dedup cache so a re-lease inside the flush window is short-circuited. Called on both the successful-
   /// dispatch path and the no-collective-event path of <see cref="_processCollectiveSinkAsync"/>.
   /// </summary>
-  private void _completeCollectiveSinkWorkRows(IReadOnlyList<Guid> sinkWorkIds) {
-    if (sinkWorkIds.Count == 0) {
+  private void _completeCollectiveSinkWorkRows(Guid[] sinkWorkIds) {
+    if (sinkWorkIds.Length == 0) {
       return;
     }
-    var completedWorkIds = new List<Guid>(sinkWorkIds.Count);
+    var completedWorkIds = new List<Guid>(sinkWorkIds.Length);
     foreach (var workId in sinkWorkIds) {
       if (workId == Guid.Empty) {
         continue;
