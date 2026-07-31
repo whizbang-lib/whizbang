@@ -122,6 +122,18 @@
       "formerNames": []
     },
     {
+      "pinnedId": "7d2a9c4e-5b83-4f1a-9e67-0c8d3b2a1f54",
+      "clrTypeName": "Whizbang.Core.Messaging.IntegrityCheckpoint",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "a1e6d8c2-3f7b-4a95-8d21-6e4c9b0f7a38",
+      "clrTypeName": "Whizbang.Core.Messaging.IntegrityGapDetected",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
       "pinnedId": "b3d9f2a1-6c47-4e0d-9a58-1f2e3c4d5b6a",
       "clrTypeName": "Whizbang.Core.Messaging.RedeliveryComposite",
       "kind": "message",

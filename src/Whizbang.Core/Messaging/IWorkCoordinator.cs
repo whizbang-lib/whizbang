@@ -583,6 +583,43 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RedeliveryEvent>>([]);
 
   /// <summary>
+  /// Stream-integrity Phase B: atomically advances this origin's checkpoint watermark to the
+  /// highest STAMPED commit sequence and returns the per-(tenant, type) emission counts inside the
+  /// advanced window — the payload of one <see cref="IntegrityCheckpoint"/>. Multi-instance safe:
+  /// the watermark advance is an optimistic compare-and-swap, so exactly one instance wins each
+  /// window (the others get null and skip the cycle). The FIRST call baselines (returns an empty
+  /// window at the current watermark) so history is never counted retroactively. At-most-once
+  /// schedule occurrences and checkpoints themselves are excluded from the counts. Default: null
+  /// (engines without commit-sequence stamping cannot checkpoint).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The advanced window, or null when unsupported / lost the advance race.</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointAdvanceTests.cs</tests>
+  Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IntegrityCheckpointWindow?>(null);
+
+  /// <summary>
+  /// Stream-integrity Phase B, consumer side: counts the events THIS service has persisted from
+  /// the given origin inside an origin commit-sequence window, per (tenant, type) — the local half
+  /// of a checkpoint comparison. Keys on the origin identity every received event already persists
+  /// (<c>origin_service_id</c> + <c>origin_commit_sequence</c>). Default: empty (engines without
+  /// origin stamping cannot verify).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose window is being verified.</param>
+  /// <param name="fromCommitSequence">Exclusive window floor.</param>
+  /// <param name="toCommitSequence">Inclusive window watermark.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Per-(tenant, type) receipt counts inside the window.</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointAdvanceTests.cs</tests>
+  Task<IReadOnlyList<CheckpointBucket>> CountReceivedFromOriginAsync(
+    Guid originServiceId,
+    long fromCommitSequence,
+    long toCommitSequence,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<CheckpointBucket>>([]);
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is

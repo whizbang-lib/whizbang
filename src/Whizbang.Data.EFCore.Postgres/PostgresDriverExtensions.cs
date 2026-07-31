@@ -115,6 +115,10 @@ public static class PostgresDriverExtensions {
         // RequestRedeliveryCommand drives the selection + targeted re-delivery pump. Same rationale as above.
         selector.Services.AddHostedService<RedeliveryRequestReceptorRegistrar>();
 
+        // TURNKEY: stream-integrity B2/B3 — runtime-register IntegrityCheckpointReceptor so received
+        // checkpoints drive windowed gap detection (and ladder-gated auto-repair). Same rationale as above.
+        selector.Services.AddHostedService<IntegrityCheckpointReceptorRegistrar>();
+
         // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
         // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
         // initializer's registration order in the IHostedService chain doesn't matter — even

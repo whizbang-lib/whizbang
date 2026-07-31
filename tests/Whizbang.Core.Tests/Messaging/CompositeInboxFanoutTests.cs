@@ -109,6 +109,56 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
+  public async Task TryExpand_IdentityComposite_ChildrenCarryOriginIdentityAsync() {
+    // Stream-integrity Phase B: windowed integrity accounting keys on each event's ORIGIN identity
+    // (origin service + origin commit sequence). Re-delivered children must carry the ORIGINALS —
+    // under the bundle's own identity a repaired window would never recount as filled.
+    var streamId = Guid.NewGuid();
+    var origin = Guid.NewGuid();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      Inner = [new _innerEvent("A"), new _innerEvent("B"), new _innerEvent("C")],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()],
+      OriginServiceId = origin,
+      InnerCommitSequences = [10, 11, null],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children[0].SourceServiceId).IsEqualTo(origin)
+      .Because("the bundle names the ORIGIN the events were emitted by — children carry it, not " +
+               "the repair bundle's own source identity.");
+    await Assert.That(result.Children[1].SourceServiceId).IsEqualTo(origin);
+    await Assert.That(result.Children[0].SourceCommitSequence).IsEqualTo(10L);
+    await Assert.That(result.Children[1].SourceCommitSequence).IsEqualTo(11L);
+    await Assert.That(result.Children[2].SourceCommitSequence).IsEqualTo(source.SourceCommitSequence)
+      .Because("a null entry means the event predates commit-sequence stamping — fall back to the " +
+               "composite envelope's value rather than inventing one.");
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_SequenceCountMismatch_FailsAsync() {
+    // Strict, mirroring the id pairing: a machine-built bundle with desynchronized sequences is a
+    // producer bug — fail the whole expansion rather than misattribute origin windows.
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      Inner = [new _innerEvent("A"), new _innerEvent("B")],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
+      InnerCommitSequences = [10],
+    };
+    var source = _sourceEnvelope(composite.StreamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Children).IsEmpty();
+  }
+
+  [Test]
   public async Task TryExpand_IdentityPreservingComposite_IdCountMismatch_FailsAsync() {
     // Strict: a machine-built repair bundle with desynchronized ids/inners is a producer bug —
     // fail the whole expansion (DLQ route) rather than guess at the pairing.

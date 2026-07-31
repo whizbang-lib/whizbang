@@ -93,6 +93,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<LeaseRenewalWorker>();
     services.TryAddSingleton<InboxHandlerWorker>();
     services.TryAddSingleton<MaintenanceWorker>();
+    services.TryAddSingleton<IntegrityCheckpointWorker>();
+    services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityGapTracker>();
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();
     services.TryAddSingleton<OutboxDrainWorker>();
@@ -211,6 +213,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<LeaseRenewalWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxHandlerWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<MaintenanceWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<IntegrityCheckpointWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());

@@ -73,6 +73,11 @@ public class RedeliveryRequestReceptorTests {
     var composite = serializer.Captured[0].Payload;
     await Assert.That(composite.InnerEventIds).IsEquivalentTo([e1, e2])
       .Because("original event ids ride the bundle — identity is what makes convergence idempotent.");
+    await Assert.That(composite.OriginServiceId).IsEqualTo(coordinator.LocalServiceId)
+      .Because("the receptor names THIS origin on the bundle so repaired children recount under " +
+               "the origin identity Phase B accounting keys on.");
+    await Assert.That(composite.InnerCommitSequences!).IsEquivalentTo([(long?)1, 2])
+      .Because("each child's ORIGINAL commit sequence rides the bundle.");
   }
 
   [Test]
@@ -195,11 +200,15 @@ public class RedeliveryRequestReceptorTests {
   private sealed class _selectingCoordinator : IWorkCoordinator {
     public RedeliveryRequest? LastRequest { get; private set; }
     public IReadOnlyList<RedeliveryEvent> Selection { get; set; } = [];
+    public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
 
     public Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(RedeliveryRequest request, CancellationToken cancellationToken = default) {
       LastRequest = request;
       return Task.FromResult(Selection);
     }
+
+    public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(LocalServiceId);
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });

@@ -59,11 +59,14 @@ public sealed partial class RedeliveryRequestReceptor(
       return;
     }
 
+    // Phase B: the bundle names THIS origin so fanned-out children carry their original source
+    // identity and repaired windows recount correctly at the consumer.
+    var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
     var pump = new RedeliveryPump(
       transport, eventStore, eventTypeProvider, envelopeSerializer,
       services.GetService<IServiceInstanceProvider>(), options);
     var composites = await pump
-      .PublishAsync(selected, message.Topic, message.RequesterService, cancellationToken)
+      .PublishAsync(selected, message.Topic, message.RequesterService, originServiceId, cancellationToken)
       .ConfigureAwait(false);
     LogRedeliveryPublished(logger, selected.Count, composites, message.RequesterService, message.Topic);
   }

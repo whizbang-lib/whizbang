@@ -1244,6 +1244,154 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    const string WATERMARK_KEY = "integrity_checkpoint_watermark";
+    var settings = "wh_settings"; // public (created bare, mig 028) — NOT the service schema; see a6ca8dd4
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+
+    // Head watermark = the highest STAMPED sequence (the async stamper's barrier guarantees
+    // everything at/below it is committed and stable), plus the previously advanced watermark.
+    long current;
+    long? prior;
+    await using (var read = conn.CreateCommand()) {
+      read.CommandText =
+        $"SELECT COALESCE((SELECT MAX(commit_sequence) FROM {schema}.wh_event_store), 0), " +
+        $"       (SELECT setting_value FROM {settings} WHERE setting_key = @p_key)";
+      read.Parameters.Add(new Npgsql.NpgsqlParameter("p_key", WATERMARK_KEY));
+      await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+      await reader.ReadAsync(cancellationToken);
+      current = reader.GetInt64(0);
+      prior = reader.IsDBNull(1)
+        ? null
+        : long.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    if (prior is null) {
+      // First run: BASELINE at the current head without counting history — a fresh consumer set
+      // has nothing to compare retroactive counts against, and a startup count storm helps no one.
+      await using var init = conn.CreateCommand();
+      init.CommandText =
+        $"INSERT INTO {settings} (setting_key, setting_value, value_type, description) " +
+        "VALUES (@p_key, @p_value, 'integer', 'Stream-integrity checkpoint watermark (highest commit_sequence already checkpointed)') " +
+        "ON CONFLICT DO NOTHING";
+      init.Parameters.Add(new Npgsql.NpgsqlParameter("p_key", WATERMARK_KEY));
+      init.Parameters.Add(new Npgsql.NpgsqlParameter("p_value", current.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+      var inserted = await init.ExecuteNonQueryAsync(cancellationToken);
+      return inserted == 1
+        ? new IntegrityCheckpointWindow { FromCommitSequence = current, ToCommitSequence = current }
+        : null;   // another instance baselined first — it owns this window
+    }
+
+    if (current < prior.Value) {
+      current = prior.Value;   // the watermark never regresses
+    }
+
+    // Optimistic advance: exactly one instance wins each window; losers skip the cycle. An
+    // unchanged watermark (quiet window) still "wins" — the empty checkpoint is the liveness beat.
+    await using (var cas = conn.CreateCommand()) {
+      cas.CommandText =
+        $"UPDATE {settings} SET setting_value = @p_new WHERE setting_key = @p_key AND setting_value = @p_old";
+      cas.Parameters.Add(new Npgsql.NpgsqlParameter("p_new", current.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+      cas.Parameters.Add(new Npgsql.NpgsqlParameter("p_key", WATERMARK_KEY));
+      cas.Parameters.Add(new Npgsql.NpgsqlParameter("p_old", prior.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+      if (await cas.ExecuteNonQueryAsync(cancellationToken) != 1) {
+        return null;   // lost the advance race
+      }
+    }
+
+    var buckets = new List<CheckpointBucket>();
+    if (current > prior.Value) {
+      // At-most-once occurrences are excluded (non-delivery is their declared behavior, not a
+      // gap); checkpoints never count themselves. Reaped ephemeral bodies LEFT-JOIN to null
+      // metadata and stay INCLUDED — the consumer received them live and counts them too.
+      await using var count = conn.CreateCommand();
+      count.CommandText = $"""
+        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, COUNT(*)::int
+        FROM {schema}.wh_event_store es
+        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+        WHERE es.commit_sequence > @p_from AND es.commit_sequence <= @p_to
+          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+          AND es.event_type <> @p_checkpoint_type
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+        """;
+      count.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", prior.Value));
+      count.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", current));
+      count.Parameters.Add(new Npgsql.NpgsqlParameter("p_checkpoint_type",
+        TypeNameFormatter.FormatClrTypeName(typeof(IntegrityCheckpoint))));
+      await using var reader = await count.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        var tenant = reader.GetString(0);
+        buckets.Add(new CheckpointBucket {
+          TenantScope = tenant.Length == 0 ? null : tenant,
+          EventType = reader.GetString(1),
+          Count = reader.GetInt32(2)
+        });
+      }
+    }
+
+    return new IntegrityCheckpointWindow {
+      FromCommitSequence = prior.Value,
+      ToCommitSequence = current,
+      Buckets = buckets
+    };
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<CheckpointBucket>> CountReceivedFromOriginAsync(
+    Guid originServiceId,
+    long fromCommitSequence,
+    long toCommitSequence,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    // Received events persist the ORIGIN identity (1:1 forward stamping) — the consumer's half of
+    // a checkpoint comparison counts by it, windowed on the ORIGIN's commit sequence.
+    cmd.CommandText = $"""
+      SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, COUNT(*)::int
+      FROM {schema}.wh_event_store es
+      WHERE es.origin_service_id = @p_origin
+        AND es.origin_commit_sequence > @p_from AND es.origin_commit_sequence <= @p_to
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+      """;
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", fromCommitSequence));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", toCommitSequence));
+
+    var results = new List<CheckpointBucket>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      var tenant = reader.GetString(0);
+      results.Add(new CheckpointBucket {
+        TenantScope = tenant.Length == 0 ? null : tenant,
+        EventType = reader.GetString(1),
+        Count = reader.GetInt32(2)
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
