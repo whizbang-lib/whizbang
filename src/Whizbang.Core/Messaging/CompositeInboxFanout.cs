@@ -107,7 +107,12 @@ public static partial class CompositeInboxFanout {
     // ids parallel to the inner events. STRICT pairing: any desync (count mismatch, null inner)
     // fails the whole expansion — these bundles are machine-built, so a mismatch is a producer
     // bug and guessing at the pairing would re-mint identities that consumers dedup on.
-    var identityIds = (composite as IIdentityPreservingComposite)?.InnerEventIds;
+    var identityComposite = composite as IIdentityPreservingComposite;
+    var identityIds = identityComposite?.InnerEventIds;
+    // Phase B: original ORIGIN identity — windowed integrity accounting keys on (origin service,
+    // origin commit sequence), so repaired children must recount inside their original window.
+    var identitySequences = identityComposite?.InnerCommitSequences;
+    var originOverride = identityComposite?.OriginServiceId ?? Guid.Empty;
     var children = new List<InboxMessage>();
     var count = 0;
     var droppedCount = 0;
@@ -118,6 +123,12 @@ public static partial class CompositeInboxFanout {
         return new FanoutResult(
           FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
           $"Identity-preserving composite '{compositeTypeName}' yielded more inner events than InnerEventIds ({identityIds.Count}).",
+          compositeTypeName);
+      }
+      if (identitySequences is not null && count > identitySequences.Count) {
+        return new FanoutResult(
+          FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+          $"Identity-preserving composite '{compositeTypeName}' yielded more inner events than InnerCommitSequences ({identitySequences.Count}).",
           compositeTypeName);
       }
       if (count > max) {
@@ -152,7 +163,8 @@ public static partial class CompositeInboxFanout {
       }
       try {
         children.Add(_buildChildInbox(
-          inner, source, childHops, identityIds?[count - 1], serializer, eventTypeProvider, eventMarkerResolver, ephemeralModeResolver));
+          inner, source, childHops, identityIds?[count - 1], originOverride, identitySequences?[count - 1],
+          serializer, eventTypeProvider, eventMarkerResolver, ephemeralModeResolver));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         if (atomic) {
           return new FanoutResult(
@@ -178,6 +190,12 @@ public static partial class CompositeInboxFanout {
         $"Identity-preserving composite '{compositeTypeName}' carries {identityIds.Count} InnerEventIds for {count} inner events.",
         compositeTypeName);
     }
+    if (identitySequences is not null && identitySequences.Count != count) {
+      return new FanoutResult(
+        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        $"Identity-preserving composite '{compositeTypeName}' carries {identitySequences.Count} InnerCommitSequences for {count} inner events.",
+        compositeTypeName);
+    }
 
     return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName);
   }
@@ -193,10 +211,17 @@ public static partial class CompositeInboxFanout {
       IMessageEnvelope source,
       List<MessageHop> childHops,
       Guid? originalId,
+      Guid originOverride,
+      long? sequenceOverride,
       IEnvelopeSerializer serializer,
       IEventTypeProvider? eventTypeProvider,
       IEventMarkerResolver? eventMarkerResolver,
       IEphemeralModeResolver? ephemeralModeResolver) {
+    // Phase B: a re-delivery bundle names the ORIGIN its events were emitted by, and each child's
+    // ORIGINAL commit sequence — windowed integrity accounting keys on both, so a repaired window
+    // must recount under the identity the live delivery would have carried.
+    var sourceServiceId = originOverride != Guid.Empty ? originOverride : source.SourceServiceId;
+    var sourceCommitSequence = sequenceOverride ?? source.SourceCommitSequence;
     var childEnvelope = new MessageEnvelope<IMessage> {
       Version = source.Version,
       DispatchContext = source.DispatchContext,
@@ -207,8 +232,8 @@ public static partial class CompositeInboxFanout {
       // Composite-lineage hop chain (shared by reference across the batch): the creation hop traces
       // each child back to the parent composite; the composite's own journey follows for audit.
       Hops = childHops,
-      SourceServiceId = source.SourceServiceId,
-      SourceCommitSequence = source.SourceCommitSequence,
+      SourceServiceId = sourceServiceId,
+      SourceCommitSequence = sourceCommitSequence,
       CausedByServiceId = source.CausedByServiceId,
       CausedByCommitSequence = source.CausedByCommitSequence,
       // No-rebroadcast guard (Phase D): the child is confined to the inbox → event-store → local path.
@@ -254,8 +279,8 @@ public static partial class CompositeInboxFanout {
         DispatchContext = childEnvelope.DispatchContext,
       },
       MessageType = messageTypeName,
-      SourceServiceId = source.SourceServiceId,
-      SourceCommitSequence = source.SourceCommitSequence,
+      SourceServiceId = sourceServiceId,
+      SourceCommitSequence = sourceCommitSequence,
     };
   }
 

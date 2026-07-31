@@ -30,11 +30,12 @@ public class RedeliveryPumpTests {
     var b1 = TrackedGuid.NewMedo().Value;
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
+    var origin = TrackedGuid.NewMedo().Value;
     var pump = new RedeliveryPump(transport, new _mapEventStore(), new _typeProvider(), serializer);
 
     var published = await pump.PublishAsync(
       [_evt(streamA, a1, 1), _evt(streamA, a2, 2), _evt(streamB, b1, 1)],
-      topic: "repair-topic", target: "svc-x");
+      topic: "repair-topic", target: "svc-x", originServiceId: origin);
 
     await Assert.That(published).IsEqualTo(2)
       .Because("two streams → two composites (one repair bundle per stream).");
@@ -51,10 +52,15 @@ public class RedeliveryPumpTests {
     await Assert.That(compositeA.InnerEventIds).IsEquivalentTo([a1, a2])
       .Because("original ids, in version order — identity is what makes convergence idempotent.");
     await Assert.That(compositeA.Inner.Count).IsEqualTo(2);
+    await Assert.That(compositeA.OriginServiceId).IsEqualTo(origin)
+      .Because("Phase B accounting keys on the origin — the bundle names the service the events came from.");
+    await Assert.That(compositeA.InnerCommitSequences!).IsEquivalentTo([(long?)1, 2])
+      .Because("original commit sequences ride the bundle so repaired events recount in their window.");
 
     var compositeB = serializer.Captured[1].Payload;
     await Assert.That(compositeB.StreamId).IsEqualTo(streamB);
     await Assert.That(compositeB.InnerEventIds).IsEquivalentTo([b1]);
+    await Assert.That(compositeB.InnerCommitSequences!).IsEquivalentTo([(long?)1]);
   }
 
   [Test]

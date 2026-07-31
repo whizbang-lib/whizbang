@@ -108,7 +108,9 @@ public class StreamIntegrityRedeliveryE2ETests {
     var pump = new RedeliveryPump(
       harness.Wire, new _originStore(), new _typeProvider(),
       new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    var published = await pump.PublishAsync(events, MultiServiceHarnessDefaults.SHARED_TOPIC, target: "damaged-svc");
+    var originServiceId = TrackedGuid.NewMedo().Value;
+    var published = await pump.PublishAsync(
+      events, MultiServiceHarnessDefaults.SHARED_TOPIC, target: "damaged-svc", originServiceId: originServiceId);
     await Assert.That(published).IsEqualTo(1);
 
     // Sentinel broadcast AFTER the repair: per-subscriber delivery is ordered, so once a service
@@ -139,6 +141,11 @@ public class StreamIntegrityRedeliveryE2ETests {
       .Because("children enter the inbox under the ORIGINAL event ids, so dedup and the event-store " +
                "conflict skip treat re-delivery exactly like the live delivery it replaces — " +
                "convergence is idempotent by identity, not by coincidence.");
+    await Assert.That(fanout.Children.Select(c => c.SourceServiceId).ToList())
+      .IsEquivalentTo([originServiceId, originServiceId])
+      .Because("children carry the ORIGIN's identity across the wire (Phase B windowed accounting).");
+    await Assert.That(fanout.Children.Select(c => c.SourceCommitSequence).ToList()).IsEquivalentTo([1L, 2L])
+      .Because("each child's ORIGINAL commit sequence survives the wire — a repaired window recounts as filled.");
   }
 
   // ── helpers / fakes ─────────────────────────────────────────────────────

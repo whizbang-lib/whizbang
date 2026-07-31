@@ -22,6 +22,21 @@ namespace Whizbang.Core.Messaging;
 public interface IIdentityPreservingComposite : ICompositeEvent {
   /// <summary>Original message ids, parallel to the inner events (same order and count).</summary>
   IReadOnlyList<Guid> InnerEventIds { get; }
+
+  /// <summary>
+  /// The origin service the bundled events were emitted by, or <see cref="Guid.Empty"/> when
+  /// unknown. When set, fanned-out children carry it as their source identity — a repaired window
+  /// recounts under the SAME origin the live delivery would have (stream-integrity Phase B).
+  /// </summary>
+  Guid OriginServiceId => Guid.Empty;
+
+  /// <summary>
+  /// Original origin commit sequences, parallel to <see cref="InnerEventIds"/> (same order and
+  /// count when non-null; null entries = the event predates commit-sequence stamping). Null list =
+  /// not carried. When present, fanned-out children carry each event's ORIGINAL sequence so
+  /// windowed integrity accounting sees the repaired events inside their original window.
+  /// </summary>
+  IReadOnlyList<long?>? InnerCommitSequences => null;
 }
 
 /// <summary>
@@ -43,5 +58,15 @@ public sealed class RedeliveryComposite : CompositeEventBase, IIdentityPreservin
   /// <summary>Original message ids, parallel to <see cref="CompositeEventBase.Inner"/>.</summary>
   public List<Guid> InnerEventIds { get; init; } = [];
 
+  /// <summary>The origin service the bundled events were emitted by (Guid.Empty = unknown).</summary>
+  public Guid OriginServiceId { get; init; }
+
+  /// <summary>Original origin commit sequences, parallel to <see cref="InnerEventIds"/> (null = not carried).</summary>
+  public List<long?>? InnerCommitSequences { get; init; }
+
   IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
+
+  Guid IIdentityPreservingComposite.OriginServiceId => OriginServiceId;
+
+  IReadOnlyList<long?>? IIdentityPreservingComposite.InnerCommitSequences => InnerCommitSequences;
 }

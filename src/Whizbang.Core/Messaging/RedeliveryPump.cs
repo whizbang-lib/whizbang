@@ -81,11 +81,15 @@ public sealed class RedeliveryPump {
   /// <param name="events">Selection output — MUST be ordered (stream, version), as the coordinator returns it.</param>
   /// <param name="topic">Wire topic (the same topic the original events published to).</param>
   /// <param name="target">Directed-message target (logical service identity), or null to broadcast.</param>
+  /// <param name="originServiceId">This origin's service id, stamped on the bundle so fanned-out
+  /// children carry their ORIGINAL source identity (Phase B windowed accounting). Default empty =
+  /// unknown (children inherit the bundle envelope's source identity).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   public async Task<int> PublishAsync(
       IReadOnlyList<RedeliveryEvent> events,
       string topic,
       string? target,
+      Guid originServiceId = default,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(events);
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
@@ -107,7 +111,7 @@ public sealed class RedeliveryPump {
       if (!boundary) {
         continue;
       }
-      await _publishChunkAsync(chunk, destination, target, eventTypes, cancellationToken).ConfigureAwait(false);
+      await _publishChunkAsync(chunk, destination, target, originServiceId, eventTypes, cancellationToken).ConfigureAwait(false);
       published++;
       chunk.Clear();
     }
@@ -118,6 +122,7 @@ public sealed class RedeliveryPump {
       List<RedeliveryEvent> chunk,
       TransportDestination destination,
       string? target,
+      Guid originServiceId,
       IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken) {
     var raws = new List<StreamEventData>(chunk.Count);
@@ -151,6 +156,10 @@ public sealed class RedeliveryPump {
       StreamId = chunk[0].StreamId,
       Inner = inner,
       InnerEventIds = [.. chunk.Select(c => c.EventId)],
+      // Phase B: the ORIGINAL origin identity rides the bundle — fanned-out children recount
+      // inside their original commit-sequence window at the consumer.
+      OriginServiceId = originServiceId,
+      InnerCommitSequences = [.. chunk.Select(c => c.CommitSequence)],
     };
 
     var wireEnvelope = new MessageEnvelope<RedeliveryComposite> {
