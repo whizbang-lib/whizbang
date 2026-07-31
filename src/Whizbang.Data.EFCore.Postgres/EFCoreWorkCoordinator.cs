@@ -1578,6 +1578,180 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return results;
   }
 
+  private const string ZERO_ORIGIN_UUID = "00000000-0000-0000-0000-000000000000";
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand();
+    // A1c: the incrementally-maintained buckets — a plain indexed read (PK prefix), no recompute.
+    cmd.CommandText = $"""
+      SELECT scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at
+      FROM {schema}.wh_stream_digests
+      WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
+        AND ((@p_types::text[]) IS NULL OR event_type = ANY(@p_types::text[]))
+      ORDER BY 1, 2, 3
+      """;
+    _addDigestFilterParams(cmd, originServiceId, eventTypes);
+
+    var results = new List<StreamDigest>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      var tenant = reader.GetString(0);
+      results.Add(new StreamDigest {
+        TenantScope = tenant.Length == 0 ? null : tenant,
+        EventType = reader.GetString(1),
+        StreamId = reader.GetGuid(2),
+        DigestLo = reader.GetInt64(3),
+        DigestHi = reader.GetInt64(4),
+        EventCount = reader.GetInt32(5),
+        UpdatedAt = reader.GetFieldValue<DateTimeOffset>(6)
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<StreamDigest>> GetTypeDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand();
+    // A1c: the per-(tenant, type) roll-up — XOR of the type's stream buckets equals folding every
+    // event of the type, because the buckets partition them. MAX(updated_at) drives settle-skip.
+    cmd.CommandText = $"""
+      SELECT scope_tenant, event_type, bit_xor(digest_lo), bit_xor(digest_hi),
+             SUM(event_count)::int, MAX(updated_at)
+      FROM {schema}.wh_stream_digests
+      WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
+        AND ((@p_types::text[]) IS NULL OR event_type = ANY(@p_types::text[]))
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+      """;
+    _addDigestFilterParams(cmd, originServiceId, eventTypes);
+
+    var results = new List<StreamDigest>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      var tenant = reader.GetString(0);
+      results.Add(new StreamDigest {
+        TenantScope = tenant.Length == 0 ? null : tenant,
+        EventType = reader.GetString(1),
+        StreamId = Guid.Empty,
+        DigestLo = reader.GetInt64(2),
+        DigestHi = reader.GetInt64(3),
+        EventCount = reader.GetInt32(4),
+        UpdatedAt = reader.GetFieldValue<DateTimeOffset>(5)
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  public async Task<DigestVerificationResult> VerifyDigestTableAsync(
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand();
+    // A1c trust-but-verify: one statement, one snapshot — recompute settled buckets from the event
+    // store and heal the table three ways (update drifted / delete phantom / insert missing). The
+    // settle gates (bucket updated_at, event created_at) keep in-flight folds out of both sides:
+    // a bucket touched inside the window is skipped this pass, and a fresh event with no bucket is
+    // not "missing" — it simply hasn't settled. Data-modifying CTEs share the statement snapshot;
+    // the three heal sets are disjoint by construction, so ordering between them is immaterial.
+    cmd.CommandText = $"""
+      WITH recomputed AS (
+        SELECT COALESCE(es.origin_service_id, '{ZERO_ORIGIN_UUID}'::uuid) AS origin_service_id,
+               COALESCE(es.scope->>'t', '') AS scope_tenant, es.event_type, es.stream_id,
+               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
+               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               COUNT(*)::int AS event_count
+        FROM {schema}.wh_event_store es
+        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+        WHERE COALESCE(es.flags, 0) & 8 = 0
+          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+          AND es.created_at < NOW() - @p_settle::interval
+        GROUP BY 1, 2, 3, 4
+      ),
+      drift_updated AS (
+        UPDATE {schema}.wh_stream_digests d
+        SET digest_lo = r.digest_lo, digest_hi = r.digest_hi, event_count = r.event_count, updated_at = NOW()
+        FROM recomputed r
+        WHERE d.origin_service_id = r.origin_service_id AND d.scope_tenant = r.scope_tenant
+          AND d.event_type = r.event_type AND d.stream_id = r.stream_id
+          AND d.updated_at < NOW() - @p_settle::interval
+          AND (d.digest_lo <> r.digest_lo OR d.digest_hi <> r.digest_hi OR d.event_count <> r.event_count)
+        RETURNING 1
+      ),
+      drift_removed AS (
+        DELETE FROM {schema}.wh_stream_digests d
+        WHERE d.updated_at < NOW() - @p_settle::interval
+          AND NOT EXISTS (
+            SELECT 1 FROM recomputed r
+            WHERE r.origin_service_id = d.origin_service_id AND r.scope_tenant = d.scope_tenant
+              AND r.event_type = d.event_type AND r.stream_id = d.stream_id)
+        RETURNING 1
+      ),
+      drift_added AS (
+        INSERT INTO {schema}.wh_stream_digests
+          (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count)
+        SELECT r.origin_service_id, r.scope_tenant, r.event_type, r.stream_id,
+               r.digest_lo, r.digest_hi, r.event_count
+        FROM recomputed r
+        WHERE NOT EXISTS (
+          SELECT 1 FROM {schema}.wh_stream_digests d
+          WHERE d.origin_service_id = r.origin_service_id AND d.scope_tenant = r.scope_tenant
+            AND d.event_type = r.event_type AND d.stream_id = r.stream_id)
+        ON CONFLICT (origin_service_id, scope_tenant, event_type, stream_id) DO NOTHING
+        RETURNING 1
+      )
+      SELECT (SELECT COUNT(*)::int FROM {schema}.wh_stream_digests
+              WHERE updated_at < NOW() - @p_settle::interval),
+             (SELECT COUNT(*)::int FROM drift_updated),
+             (SELECT COUNT(*)::int FROM drift_removed),
+             (SELECT COUNT(*)::int FROM drift_added)
+      """;
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
+
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    await reader.ReadAsync(cancellationToken);
+    return new DigestVerificationResult {
+      BucketsChecked = reader.GetInt32(0),
+      DriftUpdated = reader.GetInt32(1),
+      DriftRemoved = reader.GetInt32(2),
+      DriftAdded = reader.GetInt32(3),
+    };
+  }
+
+  private static void _addDigestFilterParams(
+      System.Data.Common.DbCommand cmd, Guid? originServiceId, IReadOnlyList<string>? eventTypes) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = (object?)originServiceId ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
+    });
+  }
+
   /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(

@@ -135,7 +135,13 @@ public enum IntegrityRepairMode {
 /// (tenant, type, stream)'s events. Two-lane 64-bit XOR of <c>hashtextextended(event_id, seed)</c>
 /// with seeds 0/1: 128-bit-equivalent collision resistance, self-inverse (deletions need no
 /// bookkeeping), arrival-order independent (origins fold in commit order, consumers in receive
-/// order — same digest). Computed on demand at audit time; never maintained incrementally.
+/// order — same digest). A1c: maintained INCREMENTALLY in <c>wh_stream_digests</c> by the write
+/// paths (emit-chain folds, close/reclassify subtraction) and read via
+/// <see cref="IWorkCoordinator.GetStreamDigestsAsync"/>; the on-demand recompute
+/// (<see cref="IWorkCoordinator.ComputeStreamDigestsAsync"/>) remains the trust-but-verify sweep.
+/// At <see cref="ManifestLevel.Types"/> the same record carries a per-(tenant, type) roll-up with
+/// <see cref="StreamId"/> = <see cref="Guid.Empty"/> — valid because stream buckets partition the
+/// type's events, so XOR-ing them equals folding every event of the type.
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
 public sealed record StreamDigest {
@@ -145,7 +151,7 @@ public sealed record StreamDigest {
   /// <summary>Stored event type name.</summary>
   public required string EventType { get; init; }
 
-  /// <summary>The stream.</summary>
+  /// <summary>The stream, or <see cref="Guid.Empty"/> for a type-level roll-up.</summary>
   public required Guid StreamId { get; init; }
 
   /// <summary>XOR lane 0 (seed 0).</summary>
@@ -156,6 +162,35 @@ public sealed record StreamDigest {
 
   /// <summary>Events folded into the digest.</summary>
   public required int EventCount { get; init; }
+
+  /// <summary>When the bucket last changed (table reads only; null on recomputed rows). Both
+  /// audit sides skip comparing buckets updated inside the settle window — the incremental
+  /// equivalent of the recompute's created-at settle filter.</summary>
+  public DateTimeOffset? UpdatedAt { get; init; }
+}
+
+/// <summary>
+/// Stream-integrity A1c: the outcome of one <see cref="IWorkCoordinator.VerifyDigestTableAsync"/>
+/// pass — the trust-but-verify reconcile of the incrementally-maintained digest table against a
+/// full recompute. Any non-zero drift means an unaccounted write path touched audited rows; the
+/// pass HEALS the table (update/remove/add to match the recompute) and the caller alarms.
+/// </summary>
+/// <docs>proposals/stream-integrity</docs>
+public sealed record DigestVerificationResult {
+  /// <summary>Settled buckets the pass checked.</summary>
+  public required int BucketsChecked { get; init; }
+
+  /// <summary>Buckets whose digest/count disagreed with the recompute (healed in place).</summary>
+  public required int DriftUpdated { get; init; }
+
+  /// <summary>Phantom buckets with no backing events (removed).</summary>
+  public required int DriftRemoved { get; init; }
+
+  /// <summary>Buckets the table was missing entirely (added).</summary>
+  public required int DriftAdded { get; init; }
+
+  /// <summary>Total drifted buckets — zero means the incremental maintenance is provably clean.</summary>
+  public int TotalDrift => DriftUpdated + DriftRemoved + DriftAdded;
 }
 
 /// <summary>
@@ -238,4 +273,20 @@ public sealed class StreamIntegrityOptions {
 
   /// <summary>Phase L: storm cap on local rebuilds dispatched per audit cycle (default 5).</summary>
   public int MaxAutoRebuildsPerAudit { get; set; } = 5;
+
+  /// <summary>
+  /// A1c: every Nth audit cycle is a FULL SWEEP (default 7 — weekly at the daily default): the
+  /// worker verifies + heals its own digest table against a full recompute
+  /// (<see cref="IWorkCoordinator.VerifyDigestTableAsync"/>) and the manifest exchange runs on
+  /// recomputed digests end to end — covering buckets whose steady traffic settle-skips them on
+  /// table-driven cycles. 0 or negative disables sweeps (table-driven cycles only).
+  /// </summary>
+  public int FullSweepEveryNthAudit { get; set; } = 7;
+
+  /// <summary>
+  /// A1c: storm cap on the DRILL-DOWN — how many mismatched types one type-level manifest may
+  /// escalate to stream-level manifest requests (default 10). Remaining mismatches re-audit next
+  /// cycle; a healthy system drills down for zero.
+  /// </summary>
+  public int MaxDrillDownTypesPerAudit { get; set; } = 10;
 }

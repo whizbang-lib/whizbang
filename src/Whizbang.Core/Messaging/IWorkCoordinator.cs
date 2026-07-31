@@ -700,6 +700,65 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([]);
 
   /// <summary>
+  /// Stream-integrity A1c: reads the incrementally-maintained per-(tenant, type, stream) digests
+  /// from <c>wh_stream_digests</c> — O(buckets) instead of a store-wide recompute. Same origin
+  /// semantics as <see cref="ComputeStreamDigestsAsync"/> (null = own emissions; a value = events
+  /// received from that origin). Rows carry <see cref="StreamDigest.UpdatedAt"/> so compare-time
+  /// settle-skipping replaces the recompute's created-at settle filter. Default: empty (engines
+  /// without the digest table cannot serve table-driven audits — callers fall back to recompute).
+  /// </summary>
+  /// <param name="originServiceId">Null = own emissions; a value = received from that origin.</param>
+  /// <param name="eventTypes">Optional type filter.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Digest rows ordered by (tenant, type, stream), with bucket update times.</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.cs</tests>
+  Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<StreamDigest>>([]);
+
+  /// <summary>
+  /// Stream-integrity A1c: per-(tenant, type) digest roll-ups from <c>wh_stream_digests</c> —
+  /// XOR of the type's stream buckets (valid because they partition the type's events) with
+  /// summed counts and the newest bucket update time. The wire unit of the hierarchical audit:
+  /// O(types) instead of O(streams) per exchange; mismatched types drill down to stream level.
+  /// Rows carry <see cref="StreamDigest.StreamId"/> = <see cref="Guid.Empty"/>. Default: empty.
+  /// </summary>
+  /// <param name="originServiceId">Null = own emissions; a value = received from that origin.</param>
+  /// <param name="eventTypes">Optional type filter.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Type-level roll-ups ordered by (tenant, type).</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.cs</tests>
+  Task<IReadOnlyList<StreamDigest>> GetTypeDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<StreamDigest>>([]);
+
+  /// <summary>
+  /// Stream-integrity A1c: the trust-but-verify sweep — reconciles the incrementally-maintained
+  /// digest table against a full recompute and HEALS it: drifted buckets updated in place,
+  /// phantom buckets removed, missing buckets added. Only settled state participates (buckets
+  /// updated inside <paramref name="settleWindow"/> and events created inside it are ignored) so
+  /// in-flight folds never read as drift. Non-zero drift means an unaccounted write path touched
+  /// audited rows — the caller alarms. Default: zeros (nothing to verify).
+  /// </summary>
+  /// <param name="settleWindow">Buckets/events younger than this are ignored.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Checked/healed bucket counts.</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.cs</tests>
+  Task<DigestVerificationResult> VerifyDigestTableAsync(
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(new DigestVerificationResult {
+      BucketsChecked = 0,
+      DriftUpdated = 0,
+      DriftRemoved = 0,
+      DriftAdded = 0,
+    });
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is
