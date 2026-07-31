@@ -55,7 +55,7 @@ public class IntegrityCheckpointReceptorTests {
 
   [Test]
   public async Task DeficitPersistingPastNextCheckpoint_ConfirmsAndReportsAsync() {
-    var fx = _fixture();
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly });
     fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));   // deficit → pending
@@ -69,7 +69,7 @@ public class IntegrityCheckpointReceptorTests {
       .Because("the report carries the recount at confirmation time, not the original sighting.");
     await Assert.That(report.OriginServiceId).IsEqualTo(fx.OriginId);
     await Assert.That(report.AutoRepairRequested).IsFalse()
-      .Because("the ladder default is ReportOnly — an operator decides what to repair.");
+      .Because("the ReportOnly rung reports without repairing — the operator's explicit opt-down.");
     await Assert.That(fx.Transport.Published).IsEmpty();
   }
 
@@ -184,7 +184,9 @@ public class IntegrityCheckpointReceptorTests {
     public Guid OriginId { get; } = TrackedGuid.NewMedo().Value;
   }
 
-  private static _fixtureState _fixture(StreamIntegrityOptions? options = null) {
+  private static _fixtureState _fixture(
+      StreamIntegrityOptions? options = null,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null) {
     var coordinator = new _verifyCoordinator();
     var dispatcher = new _captureDispatcher();
     var transport = new _captureTransport();
@@ -192,6 +194,8 @@ public class IntegrityCheckpointReceptorTests {
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<ITransport>(transport);
+    services.AddSingleton(metrics
+      ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
     services.AddSingleton(new IntegrityGapTracker());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IEventTypeProvider>(new _typeProvider());
@@ -208,6 +212,38 @@ public class IntegrityCheckpointReceptorTests {
       Receptor = new IntegrityCheckpointReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityCheckpointReceptor>.Instance),
     };
+  }
+
+  [Test]
+  public async Task ConfirmedGap_WithDefaultOptions_EmitsGapAndRepairCountersAsync() {
+    // Filter on THIS test's meter INSTANCE (not the name) — parallel tests share the meter name.
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var meter = metrics.GapsDetected.Meter;
+    var measurements = new Dictionary<string, long>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, meter)) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
+      lock (measurements) {
+        measurements[instrument.Name] = measurements.GetValueOrDefault(instrument.Name) + value;
+      }
+    });
+    listener.Start();
+
+    var fx = _fixture(metrics: metrics);   // DEFAULT options — the self-healing posture
+    fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));   // deficit → pending
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));   // confirms
+
+    await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.checkpoints_received")).IsEqualTo(2L);
+    await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.gaps_detected")).IsEqualTo(1L)
+      .Because("the confirmed gap must be countable — sustained non-zero is the operator's alarm.");
+    await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.repairs_requested")).IsEqualTo(1L)
+      .Because("the DEFAULT posture auto-repairs; the counter proves the healer acted, not just detected.");
   }
 
   private static IntegrityCheckpoint _checkpoint(_fixtureState fx, long from, long to, int count, bool emptyBuckets = false) => new() {

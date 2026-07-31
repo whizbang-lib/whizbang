@@ -123,10 +123,12 @@ public sealed record IntegrityGapDetected : IEvent {
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
 public enum IntegrityRepairMode {
-  /// <summary>Report confirmed gaps (default) — an operator decides what to repair.</summary>
+  /// <summary>Report confirmed gaps only — the explicit opt-DOWN for operators who want
+  /// report-and-decide (every report still states exactly what auto-repair would have done).</summary>
   ReportOnly = 0,
 
-  /// <summary>Report AND send a scoped re-delivery request per confirmed gap, capped per checkpoint.</summary>
+  /// <summary>Report AND repair (default): a scoped re-delivery request / local rebuild per
+  /// confirmed gap, hard-capped at every rung so a mass divergence can never storm.</summary>
   AutoRepairCapped = 1,
 }
 
@@ -222,10 +224,12 @@ public enum ConsumedTypeBackfillStatus {
 }
 
 /// <summary>
-/// Stream-integrity tuning. Checkpoints and gap detection are ON by default — integrity
-/// verification should not require opting in; disable explicitly for hosts that genuinely do not
-/// want it. Repair stays at <see cref="IntegrityRepairMode.ReportOnly"/> until an operator climbs
-/// the ladder.
+/// Stream-integrity tuning. The out-of-the-box posture is SELF-HEALING: checkpoints, gap
+/// detection, backfill, and the deep audit are ON, and repair runs at
+/// <see cref="IntegrityRepairMode.AutoRepairCapped"/> — every rung hard-capped so a mass
+/// divergence reports loudly instead of storming. Operators who want report-and-decide opt DOWN
+/// to <see cref="IntegrityRepairMode.ReportOnly"/> (reports still state exactly what auto-repair
+/// would have done).
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
 public sealed class StreamIntegrityOptions {
@@ -238,8 +242,9 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Verify received counts against other origins' checkpoints (default true).</summary>
   public bool GapDetectionEnabled { get; set; } = true;
 
-  /// <summary>What to do with a CONFIRMED gap (default ReportOnly — the ladder's bottom rung).</summary>
-  public IntegrityRepairMode RepairMode { get; set; } = IntegrityRepairMode.ReportOnly;
+  /// <summary>What to do with a CONFIRMED gap (default <see cref="IntegrityRepairMode.AutoRepairCapped"/>
+  /// — self-healing out of the box; <see cref="IntegrityRepairMode.ReportOnly"/> is the opt-down).</summary>
+  public IntegrityRepairMode RepairMode { get; set; } = IntegrityRepairMode.AutoRepairCapped;
 
   /// <summary>Storm cap: at most this many auto-repair requests per received checkpoint (default 10).</summary>
   public int MaxAutoRepairRequestsPerCheckpoint { get; set; } = 10;

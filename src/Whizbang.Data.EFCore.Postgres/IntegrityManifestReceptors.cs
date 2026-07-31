@@ -99,6 +99,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
         cancellationToken: cancellationToken).ConfigureAwait(false);
       chunks++;
     }
+    services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestChunksSent.Add(chunks,
+      new KeyValuePair<string, object?>("level", message.Level.ToString()));
     LogManifestSent(logger, digests.Count, chunks, message.RequesterService);
   }
 
@@ -173,8 +175,15 @@ public sealed partial class IntegrityManifestReceptor(
       }
 
       var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0;
+      var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+      metrics?.DivergencesDetected.Add(1,
+        new KeyValuePair<string, object?>("origin", message.OriginServiceName),
+        new KeyValuePair<string, object?>("event_type", origin.EventType));
       if (autoRepair) {
         repairBudget--;
+        metrics?.RepairsRequested.Add(1,
+          new KeyValuePair<string, object?>("source", "audit"),
+          new KeyValuePair<string, object?>("origin", message.OriginServiceName));
         await _sendRepairRequestAsync(services, options, message, origin, cancellationToken).ConfigureAwait(false);
       }
       await dispatcher.PublishAsync(new IntegrityDivergenceDetected {
@@ -262,6 +271,8 @@ public sealed partial class IntegrityManifestReceptor(
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope, new TransportDestination(topic), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
+    services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.DrillDownsRequested.Add(1,
+      new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     LogDrillDown(logger, drillDown.Count, mismatched.Count, message.OriginServiceName);
   }
 

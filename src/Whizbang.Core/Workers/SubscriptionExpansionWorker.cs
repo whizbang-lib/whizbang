@@ -98,6 +98,7 @@ public sealed partial class SubscriptionExpansionWorker(
 
     if (await _sendBackfillRequestAsync(services, pending, cancellationToken).ConfigureAwait(false)) {
       await coordinator.MarkConsumedTypeBackfillRequestedAsync(pending, cancellationToken).ConfigureAwait(false);
+      services.GetService<Observability.StreamIntegrityMetrics>()?.BackfillsRequested.Add(pending.Count);
       LogBackfillRequested(_logger, pending.Count);
     }
   }

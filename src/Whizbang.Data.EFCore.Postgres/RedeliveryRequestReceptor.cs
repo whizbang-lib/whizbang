@@ -41,6 +41,7 @@ public sealed partial class RedeliveryRequestReceptor(
       return;
     }
 
+    services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.RedeliveryRequestsReceived.Add(1);
     var options = services.GetService<RedeliveryPumpOptions>() ?? new RedeliveryPumpOptions();
     var cap = options.MaxEventsPerRequest;
     var maxEvents = message.MaxEvents is { } requested ? Math.Min(requested, cap) : cap;

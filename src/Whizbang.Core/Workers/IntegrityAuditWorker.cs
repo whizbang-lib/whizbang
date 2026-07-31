@@ -81,6 +81,7 @@ public sealed partial class IntegrityAuditWorker(
       return;
     }
     var settle = TimeSpan.FromMinutes(_options.AuditSettleWindowMinutes);
+    var metrics = services.GetService<Observability.StreamIntegrityMetrics>();
 
     // ── A1c: the full-sweep cadence ──────────────────────────────────────
     // Steady-state cycles run on the incrementally-maintained digest table (O(buckets), with
@@ -91,7 +92,11 @@ public sealed partial class IntegrityAuditWorker(
     var sweep = _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0;
     if (sweep) {
       var verification = await coordinator.VerifyDigestTableAsync(settle, cancellationToken).ConfigureAwait(false);
+      metrics?.DigestBucketsVerified.Add(verification.BucketsChecked);
       if (verification.TotalDrift > 0) {
+        metrics?.DigestDriftHealed.Add(verification.DriftUpdated, new KeyValuePair<string, object?>("kind", "updated"));
+        metrics?.DigestDriftHealed.Add(verification.DriftRemoved, new KeyValuePair<string, object?>("kind", "removed"));
+        metrics?.DigestDriftHealed.Add(verification.DriftAdded, new KeyValuePair<string, object?>("kind", "added"));
         LogDigestDrift(_logger, verification.TotalDrift, verification.DriftUpdated,
           verification.DriftRemoved, verification.DriftAdded, verification.BucketsChecked);
       } else {
@@ -104,8 +109,10 @@ public sealed partial class IntegrityAuditWorker(
     var rebuildBudget = _options.MaxAutoRebuildsPerAudit;
     foreach (var gap in gaps) {
       var autoRebuild = _options.RepairMode == IntegrityRepairMode.AutoRepairCapped && rebuildBudget > 0;
+      metrics?.CoverageGapsDetected.Add(1, new KeyValuePair<string, object?>("perspective", gap.PerspectiveName));
       if (autoRebuild) {
         rebuildBudget--;
+        metrics?.RebuildsRequested.Add(1, new KeyValuePair<string, object?>("perspective", gap.PerspectiveName));
         await dispatcher.SendAsync(new RebuildPerspectiveCommand(
           PerspectiveNames: [gap.PerspectiveName],
           IncludeStreamIds: [gap.StreamId])).ConfigureAwait(false);
@@ -161,6 +168,9 @@ public sealed partial class IntegrityAuditWorker(
       var serialized = serializer.SerializeEnvelope(envelope);
       await transport.PublishAsync(serialized.JsonEnvelope, new TransportDestination(topic), serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
+      metrics?.ManifestsRequested.Add(1,
+        new KeyValuePair<string, object?>("origin", originName),
+        new KeyValuePair<string, object?>("sweep", sweep));
       LogManifestRequested(_logger, originName, originId);
     }
   }

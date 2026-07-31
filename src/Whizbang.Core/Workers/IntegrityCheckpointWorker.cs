@@ -87,6 +87,7 @@ public sealed partial class IntegrityCheckpointWorker(
       Buckets = [.. window.Buckets],
     }).ConfigureAwait(false);
     LogPublished(_logger, window.FromCommitSequence, window.ToCommitSequence, window.Buckets.Count);
+    scope.ServiceProvider.GetService<Observability.StreamIntegrityMetrics>()?.CheckpointsPublished.Add(1);
 
     // Consumer-side liveness (every service is both origin and consumer): an origin whose
     // checkpoints stopped arriving is itself an integrity signal — 3× the interval by convention.

@@ -93,6 +93,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<LeaseRenewalWorker>();
     services.TryAddSingleton<InboxHandlerWorker>();
     services.TryAddSingleton<MaintenanceWorker>();
+    // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
+    // registration constructable (the F2-era lesson: extensions must be self-contained).
+    services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
+    services.TryAddSingleton<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     services.TryAddSingleton<IntegrityCheckpointWorker>();
     services.TryAddSingleton<SubscriptionExpansionWorker>();
     services.TryAddSingleton<IntegrityAuditWorker>();
