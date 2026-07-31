@@ -135,7 +135,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEventTypeProvider>(new StubEventTypeProvider());
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.Configure<RoutingOptions>(_ => { });
     var sp = services.BuildServiceProvider();
 
@@ -254,7 +254,10 @@ public class TransportConsumerWorkerDirectedTargetTests {
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
-      string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+      string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
+      _ = (envelope, destination, envelopeType, preSerializedBytes, cancellationToken);
+      return Task.CompletedTask;
+    }
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination, CancellationToken cancellationToken = default) {
@@ -288,7 +291,10 @@ public class TransportConsumerWorkerDirectedTargetTests {
   private sealed class StubSubscription : ISubscription {
     public bool IsActive => true;
     public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
-    public Task UnsubscribeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task UnsubscribeAsync(CancellationToken cancellationToken = default) {
+      _ = cancellationToken;
+      return Task.CompletedTask;
+    }
     public Task PauseAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
     public void Dispose() { OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs()); }

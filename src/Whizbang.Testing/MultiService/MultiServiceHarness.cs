@@ -75,9 +75,9 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
           ServiceInstance = ServiceInstanceInfo.Unknown
         }
       ],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Target = target
     };
-    envelope.Target = target;
     var envelopeType =
       $"Whizbang.Core.Messaging.MessageEnvelope`1[[{typeof(TMessage).AssemblyQualifiedName}]], Whizbang.Core";
     await Wire.PublishAsync(envelope, new TransportDestination(topic), envelopeType);
@@ -190,10 +190,11 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
           services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
           services.AddSingleton(wireOptions);
           services.AddSingleton<ITransport>(wire);
-          // Per-service identity: a real host's IServiceInstanceProvider names THAT service;
-          // the harness default would give every service this test process's entry-assembly
-          // name, making them indistinguishable to identity-aware seams (directed-message
-          // targeting, hop attribution). Registered before AddWhizbang so TryAdd defers to it.
+          // Per-service identity. A real host's instance provider reports that service's own
+          // name, but the harness default would report this test process's entry-assembly name
+          // for every simulated service, making them indistinguishable to identity-aware seams
+          // such as directed-message targeting and hop attribution. Registered before
+          // AddWhizbang so the framework's TryAdd defers to it.
           services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
             new HarnessServiceInstanceProvider(definition.Name));
           services.AddScoped<IWorkCoordinator>(_ => inbox);
@@ -235,14 +236,10 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
 /// <summary>Shared defaults for the multi-service harness.</summary>
 /// <summary>Per-service identity for harness services — a real host's provider names the
 /// service; the harness names each simulated service by its harness name.</summary>
-internal sealed class HarnessServiceInstanceProvider : Whizbang.Core.Observability.IServiceInstanceProvider {
-  public HarnessServiceInstanceProvider(string serviceName) {
-    ServiceName = serviceName;
-    InstanceId = Guid.NewGuid();
-  }
-
-  public Guid InstanceId { get; }
-  public string ServiceName { get; }
+internal sealed class HarnessServiceInstanceProvider(string serviceName)
+    : Whizbang.Core.Observability.IServiceInstanceProvider {
+  public Guid InstanceId { get; } = Guid.NewGuid();
+  public string ServiceName { get; } = serviceName;
   public string HostName => "multi-service-harness";
   public int ProcessId => Environment.ProcessId;
   public Whizbang.Core.Observability.ServiceInstanceInfo ToInfo() => new() {
