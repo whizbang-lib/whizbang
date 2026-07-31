@@ -103,12 +103,23 @@ public static partial class CompositeInboxFanout {
     // composite X" is queryable, followed by the composite's own journey. Built once and shared by
     // reference across all children — same causation for the whole batch, no per-child allocation.
     var childHops = _buildLineageHops(composite, source);
+    // Identity-preserving composites (re-delivery bundles) carry the children's ORIGINAL message
+    // ids parallel to the inner events. STRICT pairing: any desync (count mismatch, null inner)
+    // fails the whole expansion — these bundles are machine-built, so a mismatch is a producer
+    // bug and guessing at the pairing would re-mint identities that consumers dedup on.
+    var identityIds = (composite as IIdentityPreservingComposite)?.InnerEventIds;
     var children = new List<InboxMessage>();
     var count = 0;
     var droppedCount = 0;
 
     foreach (var inner in inners) {
       count++;
+      if (identityIds is not null && count > identityIds.Count) {
+        return new FanoutResult(
+          FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+          $"Identity-preserving composite '{compositeTypeName}' yielded more inner events than InnerEventIds ({identityIds.Count}).",
+          compositeTypeName);
+      }
       if (count > max) {
         // Cap breach is a producer bug (runaway enumerator), not a per-child fault — whole composite
         // dead-letters regardless of atomicity; stop at the first yield past the cap.
@@ -118,6 +129,12 @@ public static partial class CompositeInboxFanout {
           compositeTypeName);
       }
       if (inner is null) {
+        if (identityIds is not null) {
+          return new FanoutResult(
+            FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+            $"Identity-preserving composite '{compositeTypeName}' yielded a null inner event at position {count - 1} — the id pairing cannot be preserved.",
+            compositeTypeName);
+        }
         if (atomic) {
           return new FanoutResult(
             FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
@@ -134,7 +151,8 @@ public static partial class CompositeInboxFanout {
         continue;
       }
       try {
-        children.Add(_buildChildInbox(inner, source, childHops, serializer, eventTypeProvider, eventMarkerResolver, ephemeralModeResolver));
+        children.Add(_buildChildInbox(
+          inner, source, childHops, identityIds?[count - 1], serializer, eventTypeProvider, eventMarkerResolver, ephemeralModeResolver));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         if (atomic) {
           return new FanoutResult(
@@ -154,6 +172,13 @@ public static partial class CompositeInboxFanout {
       LogDroppedSummary(logger, compositeTypeName, droppedCount);
     }
 
+    if (identityIds is not null && identityIds.Count != count) {
+      return new FanoutResult(
+        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        $"Identity-preserving composite '{compositeTypeName}' carries {identityIds.Count} InnerEventIds for {count} inner events.",
+        compositeTypeName);
+    }
+
     return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName);
   }
 
@@ -167,6 +192,7 @@ public static partial class CompositeInboxFanout {
       IMessage inner,
       IMessageEnvelope source,
       List<MessageHop> childHops,
+      Guid? originalId,
       IEnvelopeSerializer serializer,
       IEventTypeProvider? eventTypeProvider,
       IEventMarkerResolver? eventMarkerResolver,
@@ -174,7 +200,9 @@ public static partial class CompositeInboxFanout {
     var childEnvelope = new MessageEnvelope<IMessage> {
       Version = source.Version,
       DispatchContext = source.DispatchContext,
-      MessageId = MessageId.New(),
+      // Identity-preserving composites (re-delivery) keep the child's ORIGINAL id — consumer
+      // convergence rides the event-id conflict skip. Everything else gets a fresh id as before.
+      MessageId = originalId is { } oid ? new MessageId(oid) : MessageId.New(),
       Payload = inner,
       // Composite-lineage hop chain (shared by reference across the batch): the creation hop traces
       // each child back to the parent composite; the composite's own journey follows for audit.

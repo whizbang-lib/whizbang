@@ -83,6 +83,50 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
+  public async Task TryExpand_IdentityPreservingComposite_ChildrenCarryProvidedIdsAsync() {
+    // Re-delivery bundles carry PREVIOUSLY PERSISTED events: their original ids are what make
+    // consumer convergence free (event-id conflict skip). A fresh fan-out id would append a
+    // duplicate instead of skipping an already-present event.
+    var streamId = Guid.NewGuid();
+    var idA = Guid.NewGuid();
+    var idB = Guid.NewGuid();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      Inner = [new _innerEvent("A"), new _innerEvent("B")],
+      InnerEventIds = [idA, idB],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    await Assert.That(result.Children[0].MessageId).IsEqualTo(idA)
+      .Because("an identity-preserving composite's children must keep their caller-supplied " +
+               "(original) ids — identity is what makes re-delivery idempotent at consumers.");
+    await Assert.That(result.Children[1].MessageId).IsEqualTo(idB);
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityPreservingComposite_IdCountMismatch_FailsAsync() {
+    // Strict: a machine-built repair bundle with desynchronized ids/inners is a producer bug —
+    // fail the whole expansion (DLQ route) rather than guess at the pairing.
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      Inner = [new _innerEvent("A"), new _innerEvent("B")],
+      InnerEventIds = [Guid.NewGuid()],
+    };
+    var source = _sourceEnvelope(composite.StreamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Children).IsEmpty();
+  }
+
+  [Test]
   public async Task TryExpand_ChildrenAreMarkedAsEventsAsync() {
     var composite = new _testComposite(new _innerEvent("E"));
     var source = _sourceEnvelope(Guid.NewGuid());
