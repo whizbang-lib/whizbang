@@ -71,7 +71,10 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
       Payload = payloadJson,
       Hops = envelope.Hops?.ToList() ?? [],
       ReceptorInvocations = envelope.ReceptorInvocations?.ToList(),
-      DispatchContext = envelope.DispatchContext
+      DispatchContext = envelope.DispatchContext,
+      // A directed envelope stays directed through the conversion — dropping Target here would
+      // broadcast a point-to-point message (stream-integrity R0).
+      Target = envelope.Target
     };
 
     return new SerializedEnvelope(

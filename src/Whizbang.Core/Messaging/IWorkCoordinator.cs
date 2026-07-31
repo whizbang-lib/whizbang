@@ -566,6 +566,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<EphemeralSnapshotTarget>>([]);
 
   /// <summary>
+  /// Stream-integrity R1: selects persisted events from THIS service's event store for re-delivery
+  /// to the wire, in original stored form, ordered by <c>(stream_id, version)</c> so per-stream
+  /// bundles replay in append order. All <see cref="RedeliveryRequest"/> filters are conjunctive.
+  /// The selection itself excludes at-most-once schedule occurrences (their delivery guarantee
+  /// forbids re-delivery) and reaped ephemeral events (the body join — an absent body cannot be
+  /// re-delivered). Default: empty (engines without an event store cannot re-deliver).
+  /// </summary>
+  /// <param name="request">Selection criteria and cap.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Selected events, capped at <see cref="RedeliveryRequest.MaxEvents"/>.</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs</tests>
+  Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(
+    RedeliveryRequest request,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RedeliveryEvent>>([]);
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is
