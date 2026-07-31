@@ -575,6 +575,10 @@ public partial class TransportConsumerWorker : BackgroundService {
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
+    if (_shouldDiscardForeignTarget(envelope, messageType, messageTypeTag)) {
+      return (null, null);
+    }
+
     if (_shouldDiscardOwnedEcho(envelope, envelopeType, messageType, messageTypeTag)) {
       return (null, null);
     }
@@ -650,6 +654,31 @@ public partial class TransportConsumerWorker : BackgroundService {
       return true;
     }
     return false;
+  }
+
+  /// <summary>
+  /// Directed-message gate: a non-null envelope <see cref="IMessageEnvelope.Target"/> naming a
+  /// DIFFERENT service discards the message before deserialization, inbox storage, or fan-out —
+  /// targeted traffic (repair / control-plane / response) is point-to-point, and every
+  /// non-target's copy is noise by definition. An absent target is broadcast (the default,
+  /// unchanged). When this service's own name is unknown (no instance provider wired) targeted
+  /// messages are ACCEPTED — fail-open: acceptance is idempotent downstream via the event-id
+  /// conflict skip, while a wrong discard could starve the legitimate target.
+  /// </summary>
+  /// <docs>fundamentals/messaging/directed-messages</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
+  private bool _shouldDiscardForeignTarget(
+      IMessageEnvelope envelope,
+      string messageType,
+      KeyValuePair<string, object?> messageTypeTag) {
+    var target = envelope.Target;
+    if (target is null || _serviceName is null
+        || string.Equals(target, _serviceName, StringComparison.Ordinal)) {
+      return false;
+    }
+    LogForeignTargetDiscarded(_logger, messageType, target, _serviceName);
+    _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
+    return true;
   }
 
   /// <summary>
@@ -1014,6 +1043,15 @@ public partial class TransportConsumerWorker : BackgroundService {
     Message = "Self-echo discarded: {MessageType} from {ServiceName}"
   )]
   private static partial void LogSelfEchoDiscarded(ILogger logger, string messageType, string serviceName);
+
+  /// <summary>Logs that a directed message targeted at a different service was discarded at the receive seam.</summary>
+  /// <docs>fundamentals/messaging/directed-messages</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Directed message discarded: {MessageType} targeted at {Target} — this service is {ServiceName}"
+  )]
+  private static partial void LogForeignTargetDiscarded(ILogger logger, string messageType, string target, string serviceName);
 
   /// <summary>Logs that a detached lifecycle stage failed during fire-and-forget execution.</summary>
   [LoggerMessage(

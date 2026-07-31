@@ -181,6 +181,17 @@ public interface IMessageEnvelope {
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_IgnoresCausationHopsAsync</tests>
   [Obsolete("Use GetCurrentScope() instead. This method returns the old SecurityContext type.")]
   SecurityContext? GetCurrentSecurityContext();
+  /// <summary>
+  /// Logical service identity this message is directed at, or <c>null</c> for broadcast (the
+  /// default). A targeted message is point-to-point by definition: non-target services discard it
+  /// at the transport receive seam before deserialization or fan-out, and it is excluded from the
+  /// broadcast-integrity universe. Direction is intended for control-plane, repair, and response
+  /// traffic — domain facts should broadcast. Default interface implementation returns null so
+  /// existing implementors are unaffected.
+  /// </summary>
+  /// <docs>fundamentals/messaging/directed-messages</docs>
+  string? Target => null;
+
 }
 
 /// <summary>
