@@ -82,6 +82,44 @@ public class StreamDigestTests : EFCoreTestBase {
       .Because("a missing event changes the fold — the audit names this (tenant, type, stream) bucket.");
   }
 
+  [Test]
+  public async Task CoverageGaps_FindUncursoredPerspectiveHistoryAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+
+    var covered = TrackedGuid.NewMedo().Value;
+    var uncovered = TrackedGuid.NewMedo().Value;
+    var coveredEvent = TrackedGuid.NewMedo().Value;
+    await _seedAsync(conn, covered, 1, TENANT_A, "Contracts.TypeX", coveredEvent, aged: true);
+    await _seedAsync(conn, uncovered, 1, TENANT_A, "Contracts.TypeX", TrackedGuid.NewMedo().Value, aged: true);
+    await _seedAsync(conn, uncovered, 2, TENANT_A, "Contracts.TypeX", TrackedGuid.NewMedo().Value, aged: true);
+
+    // The perspective association + a cursor on ONE of the two streams.
+    await using (var assoc = conn.CreateCommand()) {
+      assoc.CommandText = @"
+        INSERT INTO wh_message_associations (message_type, normalized_message_type, association_type, target_name, service_name)
+        VALUES ('Contracts.TypeX', 'Contracts.TypeX', 'perspective', 'CoverageProbePerspective', 'test-svc')
+        ON CONFLICT DO NOTHING";
+      await assoc.ExecuteNonQueryAsync();
+    }
+    await using (var cursor = conn.CreateCommand()) {
+      cursor.CommandText = @"
+        INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id)
+        VALUES (@stream, 'CoverageProbePerspective', @last)";
+      cursor.Parameters.AddWithValue("stream", covered);
+      cursor.Parameters.AddWithValue("last", coveredEvent);
+      await cursor.ExecuteNonQueryAsync();
+    }
+
+    var gaps = await coordinator.GetPerspectiveCoverageGapsAsync(TimeSpan.FromMinutes(60));
+
+    var gap = gaps.Single(g => g.PerspectiveName == "CoverageProbePerspective");
+    await Assert.That(gap.StreamId).IsEqualTo(uncovered)
+      .Because("the cursored stream is covered; the stream the perspective NEVER folded is the gap.");
+    await Assert.That(gap.EventCount).IsEqualTo(2);
+  }
+
   // ── seeding ──────────────────────────────────────────────────────────────
 
   private static async Task _seedAsync(

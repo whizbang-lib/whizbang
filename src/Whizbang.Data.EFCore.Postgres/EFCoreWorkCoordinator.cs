@@ -1536,6 +1536,49 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand();
+    // A gap = settled non-ephemeral events + a registered perspective association + NO cursor for
+    // that (stream, perspective) + no pending work item — the pipeline is not on it, and never was.
+    cmd.CommandText = $"""
+      SELECT es.stream_id, ma.target_name, COUNT(*)::int
+      FROM {schema}.wh_event_store es
+      JOIN {schema}.wh_message_associations ma
+        ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective'
+      WHERE es.created_at < NOW() - @p_settle::interval
+        AND COALESCE(es.flags, 0) & 8 = 0
+        AND NOT EXISTS (
+          SELECT 1 FROM {schema}.wh_perspective_cursors c
+          WHERE c.stream_id = es.stream_id AND c.perspective_name = ma.target_name)
+        AND NOT EXISTS (
+          SELECT 1 FROM {schema}.wh_perspective_events pe
+          WHERE pe.event_id = es.event_id AND pe.processed_at IS NULL)
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+      """;
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
+
+    var results = new List<PerspectiveCoverageGap>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new PerspectiveCoverageGap {
+        StreamId = reader.GetGuid(0),
+        PerspectiveName = reader.GetString(1),
+        EventCount = reader.GetInt32(2)
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),

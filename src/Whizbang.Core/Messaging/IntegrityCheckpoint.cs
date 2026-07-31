@@ -219,4 +219,23 @@ public sealed class StreamIntegrityOptions {
   /// RECORDS the expansion as Pending — the audit reports "pending backfill", not divergence.
   /// </summary>
   public bool BackfillOnSubscriptionGrowth { get; set; } = true;
+
+  /// <summary>Phase A/L: run the scheduled deep audit (default true).</summary>
+  public bool AuditEnabled { get; set; } = true;
+
+  /// <summary>Phase A/L: audit cadence in minutes (default 1440 — daily).</summary>
+  public int AuditIntervalMinutes { get; set; } = 1440;
+
+  /// <summary>Phase A: both sides fold only events older than this (minutes, default 60) — an
+  /// in-flight delivery must never read as divergence.</summary>
+  public int AuditSettleWindowMinutes { get; set; } = 60;
+
+  /// <summary>Phase A: digest rows per manifest chunk (default 500 — bounded payloads).</summary>
+  public int MaxDigestsPerManifest { get; set; } = 500;
+
+  /// <summary>Phase A: storm cap on stream-scoped repair requests per received manifest chunk (default 25).</summary>
+  public int MaxAutoRepairRequestsPerAudit { get; set; } = 25;
+
+  /// <summary>Phase L: storm cap on local rebuilds dispatched per audit cycle (default 5).</summary>
+  public int MaxAutoRebuildsPerAudit { get; set; } = 5;
 }

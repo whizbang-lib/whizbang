@@ -685,6 +685,21 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<StreamDigest>>([]);
 
   /// <summary>
+  /// Stream-integrity Phase L: finds LOCAL coverage gaps — streams holding settled, non-ephemeral
+  /// events that a registered perspective (message association) should fold, where that
+  /// perspective has NO cursor on the stream and the events have no pending work items (typically:
+  /// the perspective was born after the history). Repair is a LOCAL rebuild. Default: empty.
+  /// </summary>
+  /// <param name="settleWindow">Only events older than this count (in-flight work is not a gap).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Distinct (stream, perspective) gaps with their settled event counts.</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
+  Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([]);
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is
