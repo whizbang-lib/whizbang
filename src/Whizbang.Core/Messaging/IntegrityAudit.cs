@@ -5,10 +5,28 @@ using Whizbang.Core.Attributes;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
+/// Stream-integrity A1c: the granularity of a manifest exchange. The scheduled audit starts at
+/// <see cref="Types"/> — O(types) wire cost — and drills down to <see cref="Streams"/> only for
+/// the (capped) types whose roll-ups disagree.
+/// </summary>
+/// <docs>proposals/stream-integrity</docs>
+public enum ManifestLevel {
+  /// <summary>Per-(tenant, type, stream) digest rows — the drill-down + repair granularity.</summary>
+  Streams = 0,
+
+  /// <summary>Per-(tenant, type) roll-ups (<see cref="StreamDigest.StreamId"/> = empty) — the
+  /// cheap first pass of the hierarchical audit.</summary>
+  Types = 1,
+}
+
+/// <summary>
 /// Stream-integrity Phase A: asks an origin for its identity manifest — the digests of its OWN
 /// emissions for the requester's subscribed types. Sent DIRECTED at the origin (envelope Target);
 /// the origin answers with <see cref="IntegrityManifest"/> events targeted back at
-/// <see cref="RequesterService"/> on <see cref="Topic"/>.
+/// <see cref="RequesterService"/> on <see cref="Topic"/>. A1c: <see cref="Level"/> picks the
+/// granularity (the worker asks for <see cref="ManifestLevel.Types"/> first);
+/// <see cref="UseRecompute"/> forces the full-sweep recompute instead of the maintained table —
+/// the trust-but-verify cycle that also covers busy buckets settle-skipped on table-driven cycles.
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
@@ -22,6 +40,14 @@ public sealed record RequestIntegrityManifest : ICommand {
 
   /// <summary>Types to manifest (the requester's subscribed set); null = all.</summary>
   public IReadOnlyList<string>? EventTypes { get; init; }
+
+  /// <summary>Requested granularity (default <see cref="ManifestLevel.Streams"/> — wire-compatible
+  /// with pre-A1c requests).</summary>
+  public ManifestLevel Level { get; init; }
+
+  /// <summary>True = answer from a full recompute over the event store (the sweep cycle);
+  /// false (default) = answer from the maintained digest table.</summary>
+  public bool UseRecompute { get; init; }
 }
 
 /// <summary>
@@ -47,6 +73,14 @@ public sealed record IntegrityManifest : IEvent {
 
   /// <summary>Digest rows for this chunk.</summary>
   public List<StreamDigest> Digests { get; init; } = [];
+
+  /// <summary>Granularity of <see cref="Digests"/> (default <see cref="ManifestLevel.Streams"/>).</summary>
+  public ManifestLevel Level { get; init; }
+
+  /// <summary>True when the digests came from a full recompute (the sweep cycle) — the consumer
+  /// then compares against its OWN recompute; false = table-driven, compared against the
+  /// consumer's table with settle-skipping. Drill-down requests inherit this flag.</summary>
+  public bool Recomputed { get; init; }
 }
 
 /// <summary>
