@@ -261,6 +261,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination, CancellationToken cancellationToken = default) {
+      _ = (destination, cancellationToken);
       _handler = handler;
       _subscribeSignal.Release();
       return Task.FromResult<ISubscription>(new StubSubscription());
