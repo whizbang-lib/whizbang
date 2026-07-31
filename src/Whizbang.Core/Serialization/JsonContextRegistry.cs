@@ -496,6 +496,64 @@ public static class JsonContextRegistry {
   }
 
   /// <summary>
+  /// Gets the cycle-safe LAZY polymorphic typeinfo for a base interface, bound to the GIVEN options.
+  /// Generated contexts use this for nested interface-typed members (a composite's inner
+  /// <c>IMessage</c> list) so derived types registered by ANY assembly visible to the serializing
+  /// options resolve. The context-bound eager properties bind to the owning context's OWN options,
+  /// which can only resolve that assembly's types — a composite defined in one assembly carrying
+  /// another assembly's events would silently serialize them as empty base objects.
+  /// </summary>
+  /// <docs>fundamentals/messages/json-serialization</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryCompositeWireSerializationTests.cs</tests>
+  public static JsonTypeInfo<TBase>? GetLazyPolymorphicTypeInfo<TBase>(JsonSerializerOptions options)
+    where TBase : notnull {
+    ArgumentNullException.ThrowIfNull(options);
+    return (JsonTypeInfo<TBase>?)_getLazyPolymorphicTypeInfo<TBase>(options);
+  }
+
+  /// <summary>
+  /// Lazy counterpart of <see cref="GetPolymorphicListTypeInfo{TBase}"/> bound to the given options —
+  /// see <see cref="GetLazyPolymorphicTypeInfo{TBase}"/> for why generated contexts bind nested
+  /// interface-typed members to the serializing options rather than their own.
+  /// </summary>
+  /// <docs>fundamentals/messages/json-serialization</docs>
+  public static JsonTypeInfo<List<TBase>>? GetLazyPolymorphicListTypeInfo<TBase>(JsonSerializerOptions options)
+    where TBase : notnull {
+    ArgumentNullException.ThrowIfNull(options);
+    var elementTypeInfo = (JsonTypeInfo<TBase>?)_getLazyPolymorphicTypeInfo<TBase>(options);
+    if (elementTypeInfo is null) {
+      return null;
+    }
+    var cacheKey = (typeof(List<TBase>), options.GetHashCode());
+    var cached = _resolverPolymorphicCache.GetOrAdd(cacheKey, _ =>
+      JsonMetadataServices.CreateListInfo<List<TBase>, TBase>(
+        options,
+        collectionInfo: new JsonCollectionInfoValues<List<TBase>> {
+          ObjectCreator = () => [],
+          ElementInfo = elementTypeInfo
+        }));
+    return (JsonTypeInfo<List<TBase>>)cached;
+  }
+
+  /// <summary>
+  /// Lazy counterpart of <see cref="GetPolymorphicEnvelopeTypeInfo{TBase}"/> bound to the given
+  /// options — see <see cref="GetLazyPolymorphicTypeInfo{TBase}"/>.
+  /// </summary>
+  /// <docs>fundamentals/messages/json-serialization</docs>
+  public static JsonTypeInfo<MessageEnvelope<TBase>>? GetLazyPolymorphicEnvelopeTypeInfo<TBase>(JsonSerializerOptions options)
+    where TBase : class {
+    ArgumentNullException.ThrowIfNull(options);
+    var payloadTypeInfo = (JsonTypeInfo<TBase>?)_getLazyPolymorphicTypeInfo<TBase>(options);
+    if (payloadTypeInfo is null) {
+      return null;
+    }
+    var cacheKey = (typeof(MessageEnvelope<TBase>), options.GetHashCode());
+    var cached = _resolverPolymorphicCache.GetOrAdd(cacheKey, _ =>
+      _createPolymorphicEnvelopeTypeInfo<TBase>(options, payloadTypeInfo));
+    return (JsonTypeInfo<MessageEnvelope<TBase>>)cached;
+  }
+
+  /// <summary>
   /// Builds a polymorphic typeinfo for an interface base WITHOUT forcing derived-type resolution.
   /// This is the cycle-safe counterpart to <see cref="_createPolymorphicTypeInfo{TBase}"/>: it does
   /// not call <c>options.GetTypeInfo(derivedType)</c> / <c>MakeReadOnly</c> / <c>Properties</c> during

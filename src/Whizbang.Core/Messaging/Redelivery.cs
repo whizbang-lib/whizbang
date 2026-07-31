@@ -1,3 +1,5 @@
+using Whizbang.Core.Attributes;
+
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
@@ -71,4 +73,47 @@ public sealed record RedeliveryEvent {
 
   /// <summary>Persisted <see cref="EventFlags"/> bits.</summary>
   public int Flags { get; init; }
+}
+
+/// <summary>
+/// Stream-integrity R1b: asks an origin service to re-deliver persisted events matching the given
+/// selection. A damaged consumer (or an operator) dispatches this command with the envelope's
+/// <see cref="Whizbang.Core.Observability.IMessageEnvelope.Target"/> set to the origin service's
+/// name — directed messaging routes it there without any domain-level ownership of a framework
+/// command. The origin's built-in receptor (driver assembly) runs the selection and pumps the
+/// results back as targeted <see cref="RedeliveryComposite"/> bundles on <see cref="Topic"/>,
+/// directed at <see cref="RequesterService"/>.
+/// </summary>
+/// <remarks>
+/// Selection fields mirror <see cref="RedeliveryRequest"/>; <see cref="MaxEvents"/> is a REQUEST,
+/// clamped by the origin's configured <c>RedeliveryPumpOptions.MaxEventsPerRequest</c> — the origin
+/// owns its own storm cap, a requester can never raise it.
+/// </remarks>
+/// <docs>proposals/stream-integrity</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
+[PinnedId("4f8e2b7a-9d31-4c6e-8b5f-2a1d0c9e7f43")]
+public sealed record RequestRedeliveryCommand : ICommand {
+  /// <summary>Optional tenant filter (scope <c>t</c> key), as in <see cref="RedeliveryRequest.TenantScope"/>.</summary>
+  public string? TenantScope { get; init; }
+
+  /// <summary>Optional stored event-type-name filter; null = all types.</summary>
+  public IReadOnlyList<string>? EventTypes { get; init; }
+
+  /// <summary>Optional stream filter; null = all streams.</summary>
+  public IReadOnlyList<Guid>? StreamIds { get; init; }
+
+  /// <summary>Exclusive commit-sequence floor; null = from the beginning.</summary>
+  public long? FromCommitSequence { get; init; }
+
+  /// <summary>Inclusive commit-sequence ceiling; null = to the head.</summary>
+  public long? ToCommitSequence { get; init; }
+
+  /// <summary>Requested event cap; null = the origin's configured cap. Always clamped by the origin.</summary>
+  public int? MaxEvents { get; init; }
+
+  /// <summary>The requesting (damaged) service's logical name — becomes the re-delivery bundles' Target.</summary>
+  public required string RequesterService { get; init; }
+
+  /// <summary>Wire topic the bundles publish to (the same topic the original events published to).</summary>
+  public required string Topic { get; init; }
 }
