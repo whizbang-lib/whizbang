@@ -1391,9 +1391,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return results;
   }
 
-  /// <inheritdoc />
-  public async Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(
-    CancellationToken cancellationToken = default) {
+  /// <summary>
+  /// Shared acquire for the raw-SQL coordinator paths: throughput gate → resolved schema →
+  /// dedicated coordinator connection scope → command. The operation receives the command and
+  /// the schema; every resource disposes when it completes.
+  /// </summary>
+  private async Task<T> _withCoordinatorCommandAsync<T>(
+      Func<System.Data.Common.DbCommand, string, Task<T>> operation,
+      CancellationToken cancellationToken) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
@@ -1401,18 +1406,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCommand();
-    cmd.CommandText = $"SELECT event_type, backfill_status FROM {schema}.wh_consumed_types ORDER BY event_type";
-
-    var results = new List<ConsumedTypeRegistration>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new ConsumedTypeRegistration {
-        EventType = reader.GetString(0),
-        Status = (ConsumedTypeBackfillStatus)reader.GetInt16(1)
-      });
-    }
-    return results;
+    return await operation(cmd, schema).ConfigureAwait(false);
   }
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(
+    CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<IReadOnlyList<ConsumedTypeRegistration>>(async (cmd, schema) => {
+      cmd.CommandText = $"SELECT event_type, backfill_status FROM {schema}.wh_consumed_types ORDER BY event_type";
+
+      var results = new List<ConsumedTypeRegistration>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        results.Add(new ConsumedTypeRegistration {
+          EventType = reader.GetString(0),
+          Status = (ConsumedTypeBackfillStatus)reader.GetInt16(1)
+        });
+      }
+      return results;
+    }, cancellationToken);
 
   /// <inheritdoc />
   public async Task RegisterConsumedTypesAsync(
@@ -1423,26 +1435,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (eventTypes.Count == 0) {
       return;
     }
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
-
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = __scope.Connection.CreateCommand();
-    // ON CONFLICT DO NOTHING: idempotent + multi-instance safe — the first booting instance wins
-    // each row; a row already registered (any status) is never demoted or re-pended.
-    cmd.CommandText =
-      $"INSERT INTO {schema}.wh_consumed_types (event_type, backfill_status) " +
-      "SELECT t, @p_status FROM unnest(@p_types::text[]) AS t " +
-      "ON CONFLICT (event_type) DO NOTHING";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-      Value = eventTypes.ToArray()
-    });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_status", NpgsqlTypes.NpgsqlDbType.Smallint) {
-      Value = (short)(asBaseline ? ConsumedTypeBackfillStatus.Baseline : ConsumedTypeBackfillStatus.Pending)
-    });
-    await cmd.ExecuteNonQueryAsync(cancellationToken);
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // ON CONFLICT DO NOTHING: idempotent + multi-instance safe — the first booting instance wins
+      // each row; a row already registered (any status) is never demoted or re-pended.
+      cmd.CommandText =
+        $"INSERT INTO {schema}.wh_consumed_types (event_type, backfill_status) " +
+        "SELECT t, @p_status FROM unnest(@p_types::text[]) AS t " +
+        "ON CONFLICT (event_type) DO NOTHING";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes.ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_status", NpgsqlTypes.NpgsqlDbType.Smallint) {
+        Value = (short)(asBaseline ? ConsumedTypeBackfillStatus.Baseline : ConsumedTypeBackfillStatus.Pending)
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -1453,209 +1460,160 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (eventTypes.Count == 0) {
       return;
     }
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
-
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = __scope.Connection.CreateCommand();
-    // Only Pending rows transition — Baseline never backfills, Requested never re-stamps.
-    cmd.CommandText =
-      $"UPDATE {schema}.wh_consumed_types SET backfill_status = @p_requested, backfill_requested_at = NOW() " +
-      "WHERE event_type = ANY(@p_types::text[]) AND backfill_status = @p_pending";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_requested", NpgsqlTypes.NpgsqlDbType.Smallint) {
-      Value = (short)ConsumedTypeBackfillStatus.Requested
-    });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-      Value = eventTypes.ToArray()
-    });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_pending", NpgsqlTypes.NpgsqlDbType.Smallint) {
-      Value = (short)ConsumedTypeBackfillStatus.Pending
-    });
-    await cmd.ExecuteNonQueryAsync(cancellationToken);
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // Only Pending rows transition — Baseline never backfills, Requested never re-stamps.
+      cmd.CommandText =
+        $"UPDATE {schema}.wh_consumed_types SET backfill_status = @p_requested, backfill_requested_at = NOW() " +
+        "WHERE event_type = ANY(@p_types::text[]) AND backfill_status = @p_pending";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_requested", NpgsqlTypes.NpgsqlDbType.Smallint) {
+        Value = (short)ConsumedTypeBackfillStatus.Requested
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes.ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_pending", NpgsqlTypes.NpgsqlDbType.Smallint) {
+        Value = (short)ConsumedTypeBackfillStatus.Pending
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<StreamDigest>> ComputeStreamDigestsAsync(
+  public Task<IReadOnlyList<StreamDigest>> ComputeStreamDigestsAsync(
     Guid? originServiceId,
     IReadOnlyList<string>? eventTypes,
     TimeSpan settleWindow,
-    CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // Two-lane 64-bit XOR of hashtextextended(event_id, seed) — order-independent, self-inverse
+      // (deleted rows simply stop contributing; no subtraction bookkeeping). Origin flavor
+      // (@p_origin NULL) folds LOCALLY-ORIGINATED rows — what this service publishes; consumer
+      // flavor folds rows RECEIVED from that origin. Ephemeral (mode-excluded) and at-most-once
+      // occurrences are excluded, matching Phase B. The settle window keeps in-flight deliveries
+      // out of both sides' digests.
+      cmd.CommandText = $"""
+        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
+               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
+               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               COUNT(*)::int
+        FROM {schema}.wh_event_store es
+        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+        WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
+               OR es.origin_service_id = @p_origin)
+          AND ((@p_types::text[]) IS NULL OR es.event_type = ANY(@p_types::text[]))
+          AND COALESCE(es.flags, 0) & 8 = 0
+          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+          AND es.created_at < NOW() - @p_settle::interval
+        GROUP BY 1, 2, 3
+        ORDER BY 1, 2, 3
+        """;
+      _addDigestFilterParams(cmd, originServiceId, eventTypes);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
 
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = __scope.Connection.CreateCommand();
-    // Two-lane 64-bit XOR of hashtextextended(event_id, seed) — order-independent, self-inverse
-    // (deleted rows simply stop contributing; no subtraction bookkeeping). Origin flavor
-    // (@p_origin NULL) folds LOCALLY-ORIGINATED rows — what this service publishes; consumer
-    // flavor folds rows RECEIVED from that origin. Ephemeral (mode-excluded) and at-most-once
-    // occurrences are excluded, matching Phase B. The settle window keeps in-flight deliveries
-    // out of both sides' digests.
-    cmd.CommandText = $"""
-      SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
-             bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-             bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
-             COUNT(*)::int
-      FROM {schema}.wh_event_store es
-      LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
-      WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
-             OR es.origin_service_id = @p_origin)
-        AND ((@p_types::text[]) IS NULL OR es.event_type = ANY(@p_types::text[]))
-        AND COALESCE(es.flags, 0) & 8 = 0
-        AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
-        AND es.created_at < NOW() - @p_settle::interval
-      GROUP BY 1, 2, 3
-      ORDER BY 1, 2, 3
-      """;
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) {
-      Value = (object?)originServiceId ?? DBNull.Value
-    });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-      Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
-    });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
-
-    var results = new List<StreamDigest>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
-      var tenant = reader.GetString(0);
-      results.Add(new StreamDigest {
-        TenantScope = tenant.Length == 0 ? null : tenant,
-        EventType = reader.GetString(1),
-        StreamId = reader.GetGuid(2),
-        DigestLo = reader.GetInt64(3),
-        DigestHi = reader.GetInt64(4),
-        EventCount = reader.GetInt32(5)
-      });
-    }
-    return results;
-  }
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken)
+        .ConfigureAwait(false);
+    }, cancellationToken);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
+  public Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
     TimeSpan settleWindow,
-    CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<IReadOnlyList<PerspectiveCoverageGap>>(async (cmd, schema) => {
+      // A gap = settled non-ephemeral events + a registered perspective association + NO cursor for
+      // that (stream, perspective) + no pending work item — the pipeline is not on it, and never was.
+      cmd.CommandText = $"""
+        SELECT es.stream_id, ma.target_name, COUNT(*)::int
+        FROM {schema}.wh_event_store es
+        JOIN {schema}.wh_message_associations ma
+          ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective'
+        WHERE es.created_at < NOW() - @p_settle::interval
+          AND COALESCE(es.flags, 0) & 8 = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM {schema}.wh_perspective_cursors c
+            WHERE c.stream_id = es.stream_id AND c.perspective_name = ma.target_name)
+          AND NOT EXISTS (
+            SELECT 1 FROM {schema}.wh_perspective_events pe
+            WHERE pe.event_id = es.event_id AND pe.processed_at IS NULL)
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
 
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = __scope.Connection.CreateCommand();
-    // A gap = settled non-ephemeral events + a registered perspective association + NO cursor for
-    // that (stream, perspective) + no pending work item — the pipeline is not on it, and never was.
-    cmd.CommandText = $"""
-      SELECT es.stream_id, ma.target_name, COUNT(*)::int
-      FROM {schema}.wh_event_store es
-      JOIN {schema}.wh_message_associations ma
-        ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective'
-      WHERE es.created_at < NOW() - @p_settle::interval
-        AND COALESCE(es.flags, 0) & 8 = 0
-        AND NOT EXISTS (
-          SELECT 1 FROM {schema}.wh_perspective_cursors c
-          WHERE c.stream_id = es.stream_id AND c.perspective_name = ma.target_name)
-        AND NOT EXISTS (
-          SELECT 1 FROM {schema}.wh_perspective_events pe
-          WHERE pe.event_id = es.event_id AND pe.processed_at IS NULL)
-      GROUP BY 1, 2
-      ORDER BY 1, 2
-      """;
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
-
-    var results = new List<PerspectiveCoverageGap>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new PerspectiveCoverageGap {
-        StreamId = reader.GetGuid(0),
-        PerspectiveName = reader.GetString(1),
-        EventCount = reader.GetInt32(2)
-      });
-    }
-    return results;
-  }
+      var results = new List<PerspectiveCoverageGap>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        results.Add(new PerspectiveCoverageGap {
+          StreamId = reader.GetGuid(0),
+          PerspectiveName = reader.GetString(1),
+          EventCount = reader.GetInt32(2)
+        });
+      }
+      return results;
+    }, cancellationToken);
 
   private const string ZERO_ORIGIN_UUID = "00000000-0000-0000-0000-000000000000";
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
+  public Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
     Guid? originServiceId,
     IReadOnlyList<string>? eventTypes,
-    CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // A1c: the incrementally-maintained buckets — a plain indexed read (PK prefix), no recompute.
+      cmd.CommandText = $"""
+        SELECT scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at
+        FROM {schema}.wh_stream_digests
+        WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
+          AND ((@p_types::text[]) IS NULL OR event_type = ANY(@p_types::text[]))
+        ORDER BY 1, 2, 3
+        """;
+      _addDigestFilterParams(cmd, originServiceId, eventTypes);
 
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = __scope.Connection.CreateCommand();
-    // A1c: the incrementally-maintained buckets — a plain indexed read (PK prefix), no recompute.
-    cmd.CommandText = $"""
-      SELECT scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at
-      FROM {schema}.wh_stream_digests
-      WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
-        AND ((@p_types::text[]) IS NULL OR event_type = ANY(@p_types::text[]))
-      ORDER BY 1, 2, 3
-      """;
-    _addDigestFilterParams(cmd, originServiceId, eventTypes);
-
-    var results = new List<StreamDigest>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
-      var tenant = reader.GetString(0);
-      results.Add(new StreamDigest {
-        TenantScope = tenant.Length == 0 ? null : tenant,
-        EventType = reader.GetString(1),
-        StreamId = reader.GetGuid(2),
-        DigestLo = reader.GetInt64(3),
-        DigestHi = reader.GetInt64(4),
-        EventCount = reader.GetInt32(5),
-        UpdatedAt = reader.GetFieldValue<DateTimeOffset>(6)
-      });
-    }
-    return results;
-  }
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: true, typeLevel: false, cancellationToken)
+        .ConfigureAwait(false);
+    }, cancellationToken);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<StreamDigest>> GetTypeDigestsAsync(
+  public Task<IReadOnlyList<StreamDigest>> GetTypeDigestsAsync(
     Guid? originServiceId,
     IReadOnlyList<string>? eventTypes,
-    CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // A1c: the per-(tenant, type) roll-up — XOR of the type's stream buckets equals folding every
+      // event of the type, because the buckets partition them. MAX(updated_at) drives settle-skip.
+      cmd.CommandText = $"""
+        SELECT scope_tenant, event_type, bit_xor(digest_lo), bit_xor(digest_hi),
+               SUM(event_count)::int, MAX(updated_at)
+        FROM {schema}.wh_stream_digests
+        WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
+          AND ((@p_types::text[]) IS NULL OR event_type = ANY(@p_types::text[]))
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+        """;
+      _addDigestFilterParams(cmd, originServiceId, eventTypes);
 
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = __scope.Connection.CreateCommand();
-    // A1c: the per-(tenant, type) roll-up — XOR of the type's stream buckets equals folding every
-    // event of the type, because the buckets partition them. MAX(updated_at) drives settle-skip.
-    cmd.CommandText = $"""
-      SELECT scope_tenant, event_type, bit_xor(digest_lo), bit_xor(digest_hi),
-             SUM(event_count)::int, MAX(updated_at)
-      FROM {schema}.wh_stream_digests
-      WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
-        AND ((@p_types::text[]) IS NULL OR event_type = ANY(@p_types::text[]))
-      GROUP BY 1, 2
-      ORDER BY 1, 2
-      """;
-    _addDigestFilterParams(cmd, originServiceId, eventTypes);
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: true, typeLevel: true, cancellationToken)
+        .ConfigureAwait(false);
+    }, cancellationToken);
 
+  /// <summary>Materializes digest rows. Stream-level column order is (tenant, type, stream, lo,
+  /// hi, count[, updated]); type-level omits the stream column and carries <see cref="Guid.Empty"/>.
+  /// Recomputed reads have no update time.</summary>
+  private static async Task<IReadOnlyList<StreamDigest>> _readStreamDigestsAsync(
+      System.Data.Common.DbCommand cmd, bool hasUpdatedAt, bool typeLevel, CancellationToken cancellationToken) {
     var results = new List<StreamDigest>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    var idx = typeLevel ? 2 : 3;
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       var tenant = reader.GetString(0);
       results.Add(new StreamDigest {
         TenantScope = tenant.Length == 0 ? null : tenant,
         EventType = reader.GetString(1),
-        StreamId = Guid.Empty,
-        DigestLo = reader.GetInt64(2),
-        DigestHi = reader.GetInt64(3),
-        EventCount = reader.GetInt32(4),
-        UpdatedAt = reader.GetFieldValue<DateTimeOffset>(5)
+        StreamId = typeLevel ? Guid.Empty : reader.GetGuid(2),
+        DigestLo = reader.GetInt64(idx),
+        DigestHi = reader.GetInt64(idx + 1),
+        EventCount = reader.GetInt32(idx + 2),
+        UpdatedAt = hasUpdatedAt ? reader.GetFieldValue<DateTimeOffset>(idx + 3) : null,
       });
     }
     return results;
@@ -1665,13 +1623,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<DigestVerificationResult> VerifyDigestTableAsync(
     TimeSpan settleWindow,
     CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    return await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      _prepareVerifyDigestCommand(cmd, schema, settleWindow);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      await reader.ReadAsync(cancellationToken);
+      return new DigestVerificationResult {
+        BucketsChecked = reader.GetInt32(0),
+        DriftUpdated = reader.GetInt32(1),
+        DriftRemoved = reader.GetInt32(2),
+        DriftAdded = reader.GetInt32(3),
+      };
+    }, cancellationToken).ConfigureAwait(false);
+  }
 
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = __scope.Connection.CreateCommand();
+  private static void _prepareVerifyDigestCommand(
+      System.Data.Common.DbCommand cmd, string schema, TimeSpan settleWindow) {
     // A1c trust-but-verify: one statement, one snapshot — recompute settled buckets from the event
     // store and heal the table three ways (update drifted / delete phantom / insert missing). The
     // settle gates (bucket updated_at, event created_at) keep in-flight folds out of both sides:
@@ -1731,15 +1697,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
              (SELECT COUNT(*)::int FROM drift_added)
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
-
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    await reader.ReadAsync(cancellationToken);
-    return new DigestVerificationResult {
-      BucketsChecked = reader.GetInt32(0),
-      DriftUpdated = reader.GetInt32(1),
-      DriftRemoved = reader.GetInt32(2),
-      DriftAdded = reader.GetInt32(3),
-    };
   }
 
   private static void _addDigestFilterParams(
