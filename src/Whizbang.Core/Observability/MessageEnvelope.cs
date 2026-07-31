@@ -138,6 +138,17 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public Messaging.EventFlags Flags { get; init; } = Messaging.EventFlags.None;
 
   /// <summary>
+  /// Logical service identity this message is directed at (<see cref="IMessageEnvelope.Target"/>);
+  /// <c>null</c> = broadcast. Serialized as <c>tgt</c> and omitted when null so undirected
+  /// envelopes pay zero wire cost. Settable: the directed publisher (re-delivery pump, manifest
+  /// responder) stamps it on an already-built envelope.
+  /// </summary>
+  /// <docs>fundamentals/messaging/directed-messages</docs>
+  [JsonPropertyName("tgt")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+  public string? Target { get; set; }
+
+  /// <summary>
   /// Parameterless constructor for object initializer syntax.
   /// </summary>
   public MessageEnvelope() {

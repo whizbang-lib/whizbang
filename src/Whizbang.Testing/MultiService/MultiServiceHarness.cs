@@ -60,7 +60,10 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
   /// payload type must be registered in a <c>JsonSerializerContext</c> visible to
   /// <see cref="JsonContextRegistry"/> (the same requirement production has).
   /// </summary>
-  public async Task PublishAsync<TMessage>(TMessage payload, string topic = MultiServiceHarnessDefaults.SHARED_TOPIC)
+  public async Task PublishAsync<TMessage>(
+      TMessage payload,
+      string topic = MultiServiceHarnessDefaults.SHARED_TOPIC,
+      string? target = null)
       where TMessage : notnull {
     var envelope = new MessageEnvelope<TMessage> {
       MessageId = new MessageId(TrackedGuid.NewMedo()),
@@ -74,6 +77,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
+    envelope.Target = target;
     var envelopeType =
       $"Whizbang.Core.Messaging.MessageEnvelope`1[[{typeof(TMessage).AssemblyQualifiedName}]], Whizbang.Core";
     await Wire.PublishAsync(envelope, new TransportDestination(topic), envelopeType);
@@ -186,6 +190,12 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
           services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
           services.AddSingleton(wireOptions);
           services.AddSingleton<ITransport>(wire);
+          // Per-service identity: a real host's IServiceInstanceProvider names THAT service;
+          // the harness default would give every service this test process's entry-assembly
+          // name, making them indistinguishable to identity-aware seams (directed-message
+          // targeting, hop attribution). Registered before AddWhizbang so TryAdd defers to it.
+          services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+            new HarnessServiceInstanceProvider(definition.Name));
           services.AddScoped<IWorkCoordinator>(_ => inbox);
           services.AddSingleton<IReceptorRegistryQuery>(new ClaimAllReceptorRegistryQuery());
           definition.ConfigureServices?.Invoke(services);
@@ -223,6 +233,26 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
 }
 
 /// <summary>Shared defaults for the multi-service harness.</summary>
+/// <summary>Per-service identity for harness services — a real host's provider names the
+/// service; the harness names each simulated service by its harness name.</summary>
+internal sealed class HarnessServiceInstanceProvider : Whizbang.Core.Observability.IServiceInstanceProvider {
+  public HarnessServiceInstanceProvider(string serviceName) {
+    ServiceName = serviceName;
+    InstanceId = Guid.NewGuid();
+  }
+
+  public Guid InstanceId { get; }
+  public string ServiceName { get; }
+  public string HostName => "multi-service-harness";
+  public int ProcessId => Environment.ProcessId;
+  public Whizbang.Core.Observability.ServiceInstanceInfo ToInfo() => new() {
+    ServiceName = ServiceName,
+    InstanceId = InstanceId,
+    HostName = HostName,
+    ProcessId = ProcessId
+  };
+}
+
 public static class MultiServiceHarnessDefaults {
   /// <summary>The shared inbox/outbox topic every harness service subscribes to.</summary>
   public const string SHARED_TOPIC = "inbox";
