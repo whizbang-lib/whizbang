@@ -1348,6 +1348,50 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<CheckpointBucket>> CountReceivedFromOriginAsync(
+    Guid originServiceId,
+    long fromCommitSequence,
+    long toCommitSequence,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    // Received events persist the ORIGIN identity (1:1 forward stamping) — the consumer's half of
+    // a checkpoint comparison counts by it, windowed on the ORIGIN's commit sequence.
+    cmd.CommandText = $"""
+      SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, COUNT(*)::int
+      FROM {schema}.wh_event_store es
+      WHERE es.origin_service_id = @p_origin
+        AND es.origin_commit_sequence > @p_from AND es.origin_commit_sequence <= @p_to
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+      """;
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", fromCommitSequence));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", toCommitSequence));
+
+    var results = new List<CheckpointBucket>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      var tenant = reader.GetString(0);
+      results.Add(new CheckpointBucket {
+        TenantScope = tenant.Length == 0 ? null : tenant,
+        EventType = reader.GetString(1),
+        Count = reader.GetInt32(2)
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),

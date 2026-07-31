@@ -74,7 +74,54 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     await Assert.That(quiet.Buckets).IsEmpty();
   }
 
+  [Test]
+  public async Task CountReceivedFromOrigin_CountsWindowedByOriginIdentityAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+
+    var origin = TrackedGuid.NewMedo().Value;
+    var otherOrigin = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.NewMedo().Value;
+    // Received events persist the ORIGIN identity; locally-originated rows have neither column.
+    await _seedReceivedAsync(conn, stream, 1, TENANT_A, "Contracts.TypeX", origin, originSeq: 11);
+    await _seedReceivedAsync(conn, stream, 2, TENANT_A, "Contracts.TypeX", origin, originSeq: 12);
+    await _seedReceivedAsync(conn, stream, 3, TENANT_A, "Contracts.TypeY", origin, originSeq: 13);
+    await _seedReceivedAsync(conn, stream, 4, TENANT_A, "Contracts.TypeX", origin, originSeq: 25);   // outside window
+    await _seedReceivedAsync(conn, stream, 5, TENANT_A, "Contracts.TypeX", otherOrigin, originSeq: 12);   // other origin
+    await _seedAsync(conn, stream, 6, TENANT_A, "Contracts.TypeX");   // local — no origin stamp
+
+    var counts = await coordinator.CountReceivedFromOriginAsync(origin, fromCommitSequence: 10, toCommitSequence: 20);
+
+    var byType = counts.ToDictionary(b => b.EventType, b => b);
+    await Assert.That(byType["Contracts.TypeX"].Count).IsEqualTo(2)
+      .Because("only THIS origin's events inside the ORIGIN's commit-sequence window count — " +
+               "other origins, out-of-window rows, and locally-originated rows are all excluded.");
+    await Assert.That(byType["Contracts.TypeX"].TenantScope).IsEqualTo(TENANT_A);
+    await Assert.That(byType["Contracts.TypeY"].Count).IsEqualTo(1);
+    await Assert.That(counts.Count).IsEqualTo(2);
+  }
+
   // ── seeding ──────────────────────────────────────────────────────────────
+
+  /// <summary>Seeds one RECEIVED event: origin identity stamped, as the 1:1 forward persist does.</summary>
+  private static async Task _seedReceivedAsync(
+      NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
+      Guid originServiceId, long originSeq) {
+    var eventId = TrackedGuid.NewMedo().Value;
+    await using var store = conn.CreateCommand();
+    store.CommandText = @"
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags, origin_service_id, origin_commit_sequence)
+      VALUES (@event, @stream, @stream, 'TestAggregate', @type, @scope::jsonb, @version, nextval('wh_commit_seq'), 0, @origin, @oseq)";
+    store.Parameters.AddWithValue("event", eventId);
+    store.Parameters.AddWithValue("stream", streamId);
+    store.Parameters.AddWithValue("type", eventType);
+    store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
+    store.Parameters.AddWithValue("version", version);
+    store.Parameters.AddWithValue("origin", originServiceId);
+    store.Parameters.AddWithValue("oseq", originSeq);
+    await store.ExecuteNonQueryAsync();
+  }
 
   private static async Task _resetWatermarkAsync(NpgsqlConnection conn) {
     await using var cmd = conn.CreateCommand();

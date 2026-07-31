@@ -87,6 +87,16 @@ public sealed partial class IntegrityCheckpointWorker(
       Buckets = [.. window.Buckets],
     }).ConfigureAwait(false);
     LogPublished(_logger, window.FromCommitSequence, window.ToCommitSequence, window.Buckets.Count);
+
+    // Consumer-side liveness (every service is both origin and consumer): an origin whose
+    // checkpoints stopped arriving is itself an integrity signal — 3× the interval by convention.
+    var tracker = scope.ServiceProvider.GetService<IntegrityGapTracker>();
+    if (tracker is not null) {
+      var staleAfter = TimeSpan.FromSeconds(_options.CheckpointIntervalSeconds * 3L);
+      foreach (var (staleOriginId, staleOriginName, lastSeen) in tracker.GetStaleOrigins(staleAfter, DateTimeOffset.UtcNow)) {
+        LogStaleOrigin(_logger, staleOriginName, staleOriginId, lastSeen);
+      }
+    }
   }
 
   [LoggerMessage(EventId = 60, Level = LogLevel.Information,
@@ -104,4 +114,9 @@ public sealed partial class IntegrityCheckpointWorker(
   [LoggerMessage(EventId = 63, Level = LogLevel.Error,
     Message = "Integrity checkpoint cycle failed; will retry next interval")]
   static partial void LogError(ILogger logger, Exception exception);
+
+  [LoggerMessage(EventId = 64, Level = LogLevel.Warning,
+    Message = "Origin '{OriginServiceName}' ({OriginServiceId}) has not checkpointed since {LastSeen:o} — " +
+              "its continuity can no longer be verified (liveness alarm)")]
+  static partial void LogStaleOrigin(ILogger logger, string originServiceName, Guid originServiceId, DateTimeOffset lastSeen);
 }
