@@ -62,6 +62,11 @@ public sealed class IntegrityGapTracker {
     }
   }
 
+  /// <summary>Every origin this consumer has seen a checkpoint from — the deep audit's origin set
+  /// (an origin that never checkpoints is already a liveness alarm, not an audit target).</summary>
+  public IReadOnlyList<(Guid OriginServiceId, string OriginServiceName)> GetOrigins() =>
+    [.. _origins.Select(kv => (kv.Key, kv.Value.Name))];
+
   /// <summary>
   /// Origins whose last checkpoint is older than <paramref name="staleAfter"/> — the liveness
   /// alarm surface ("the origin stopped checkpointing", 3× interval by convention).

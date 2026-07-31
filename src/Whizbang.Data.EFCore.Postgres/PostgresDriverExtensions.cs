@@ -119,6 +119,10 @@ public static class PostgresDriverExtensions {
         // checkpoints drive windowed gap detection (and ladder-gated auto-repair). Same rationale as above.
         selector.Services.AddHostedService<IntegrityCheckpointReceptorRegistrar>();
 
+        // TURNKEY: stream-integrity Phase A — runtime-register the manifest receptors so the deep
+        // audit's request/response exchange works out of the box. Same rationale as above.
+        selector.Services.AddHostedService<IntegrityManifestReceptorRegistrar>();
+
         // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
         // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
         // initializer's registration order in the IHostedService chain doesn't matter — even

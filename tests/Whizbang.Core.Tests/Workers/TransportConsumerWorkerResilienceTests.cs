@@ -325,14 +325,16 @@ public class TransportConsumerWorkerResilienceTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(100); // Let subscriptions complete
+    // Completion signal, not a sleep: under full-suite load a fixed delay samples before the
+    // subscription loop has run and reads 0.
+    await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
     var initialSubscribeCount = transport.SubscribeCallCount;
     await Assert.That(initialSubscribeCount).IsEqualTo(2);
 
-    // Act - simulate recovery
+    // Act - simulate recovery. SimulateRecoveryAsync AWAITS the worker's recovery handler, which
+    // re-subscribes inline — no wait needed afterwards.
     await transport.SimulateRecoveryAsync();
-    await Task.Delay(100); // Let re-subscription complete
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(4) // 2 initial + 2 recovery

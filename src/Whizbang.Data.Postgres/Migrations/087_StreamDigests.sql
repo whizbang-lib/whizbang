@@ -1,0 +1,838 @@
+-- Migration: 087_StreamDigests.sql
+-- Date: 2026-07-31
+-- Description: Stream Integrity A1c — the incrementally-maintained digest table. wh_stream_digests
+--              holds one two-lane 64-bit XOR digest per (origin, tenant, event_type, stream) bucket,
+--              kept current by the write paths themselves so the deep audit reads digests in O(buckets)
+--              instead of recomputing over the whole event store every cycle:
+--                • The two emit-chain functions (re-created VERBATIM from 080) gain a digest_folds CTE
+--                  that XOR-folds each newly-stored, digest-eligible event into its bucket.
+--                • The inbox flavor ALSO starts stamping wh_event_store.origin_service_id /
+--                  origin_commit_sequence from the wh_inbox source columns (normalized: self/zero =
+--                  locally-originated = NULL). The 046 columns documented exactly this contract but no
+--                  writer ever populated them — consumer-side origin-keyed verification (Phase B counts,
+--                  Phase A consumer digests) needs them live.
+--                • close_stream (re-created VERBATIM from 085) and reclassify_events_ephemeral
+--                  (re-created VERBATIM from 078) subtract the rows they remove from the audited set —
+--                  XOR is self-inverse, so subtraction = folding the same hashes again. These two are
+--                  the ONLY deletion paths that touch audited buckets (the reaper and pointer-prune act
+--                  exclusively on ephemeral rows, which are excluded from digests by flags & 8).
+--              The backfill seeds buckets from existing rows (ON CONFLICT DO NOTHING — a replay never
+--              clobbers incrementally-maintained values). Digest math matches ComputeStreamDigestsAsync
+--              (hashtextextended(event_id, 0|1), bit_xor), which remains the trust-but-verify recompute.
+--              Re-run note: this file is now the LAST word on the two emit-chain functions, close_stream,
+--              and reclassify_events_ephemeral; any in-place edit of 072/077/078/080/084/085 (which
+--              create earlier versions) must bump this file too so a hash-driven re-run restores these
+--              final versions. Ledger order guarantees the earlier files re-run before this one.
+-- Dependencies: 080 (emit chain), 085 (close_stream), 078 (reclassify), 046 (origin columns), 062 (store_inbox_messages source stamp)
+
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_stream_digests (
+  origin_service_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  scope_tenant      TEXT NOT NULL DEFAULT '',
+  event_type        TEXT NOT NULL,
+  stream_id         UUID NOT NULL,
+  digest_lo         BIGINT NOT NULL,
+  digest_hi         BIGINT NOT NULL,
+  event_count       INTEGER NOT NULL,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (origin_service_id, scope_tenant, event_type, stream_id)
+);
+
+COMMENT ON TABLE __SCHEMA__.wh_stream_digests IS
+  'Stream Integrity A1c: incrementally-maintained two-lane XOR digests per (origin, tenant, event_type, '
+  'stream) bucket. origin_service_id zero-uuid = locally-originated events (this service''s own lane); '
+  'a non-zero origin = the local copy of events received FROM that origin. Maintained by the emit-chain '
+  'digest_folds CTE (add) and close_stream / reclassify_events_ephemeral (subtract); verified and healed '
+  'against the ComputeStreamDigestsAsync recompute by the periodic full sweep.';
+
+-- Seed buckets from existing history. DO NOTHING: on a ledger replay the incrementally-maintained
+-- values are already correct and must never be clobbered; on first apply every bucket inserts.
+INSERT INTO __SCHEMA__.wh_stream_digests
+  (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count)
+SELECT
+  COALESCE(es.origin_service_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  COALESCE(es.scope ->> 't', ''),
+  es.event_type,
+  es.stream_id,
+  bit_xor(hashtextextended(es.event_id::text, 0)),
+  bit_xor(hashtextextended(es.event_id::text, 1)),
+  COUNT(*)::int
+FROM __SCHEMA__.wh_event_store es
+LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
+WHERE COALESCE(es.flags, 0) & 8 = 0
+  AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
+GROUP BY 1, 2, 3, 4
+ON CONFLICT (origin_service_id, scope_tenant, event_type, stream_id) DO NOTHING;
+
+-- ============================================================================
+-- Emit chain — re-created VERBATIM from 080 + digest_folds (and, inbox flavor,
+-- the origin_service_id / origin_commit_sequence stamp).
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
+  p_outbox_message_ids UUID[],
+  p_instance_id UUID,
+  p_lease_expiry TIMESTAMPTZ,
+  p_now TIMESTAMPTZ,
+  p_partition_count INTEGER DEFAULT 10000
+) RETURNS INTEGER AS $$
+DECLARE
+  v_stored_event_ids UUID[];
+  v_count INTEGER;
+  c_field_message_id CONSTANT TEXT := 'MessageId';
+  c_field_hops CONSTANT TEXT := 'Hops';
+  c_source_perspective CONSTANT TEXT := 'perspective';
+  -- Migration 061: collective routing sink + flag bit (EventFlags.Collective = 1 << 0).
+  c_collective_sink CONSTANT TEXT := '__collective__';
+  c_flag_collective CONSTANT INTEGER := 1;
+BEGIN
+  IF p_outbox_message_ids IS NULL OR cardinality(p_outbox_message_ids) = 0 THEN
+    RETURN 0;
+  END IF;
+
+  -- Per-stream advisory locks. Without these, two concurrent transactions can both
+  -- read MAX(version)=N from wh_event_store and both attempt INSERT at version=N+1,
+  -- violating idx_event_store_stream UNIQUE(stream_id, version) (PG error 23505). The
+  -- legacy process_work_batch ran serially through one ProcessWorkBatchAsync call so
+  -- the race didn't exist; the new path lets parallel handlers / strategy flushes
+  -- target the same stream concurrently.
+  --
+  -- Lock order is hashtext(stream_id::text), sorted ascending — ensures deadlock-free
+  -- nesting between any pair of transactions touching overlapping stream sets.
+  -- pg_advisory_xact_lock auto-releases at commit/rollback.
+  PERFORM pg_advisory_xact_lock(hashtext('wh_event_store:' || sid::text))
+  FROM (
+    SELECT DISTINCT o.stream_id AS sid
+    FROM __SCHEMA__.wh_outbox o
+    WHERE o.message_id = ANY(p_outbox_message_ids)
+      AND o.is_event = true
+      AND o.stream_id IS NOT NULL
+    ORDER BY o.stream_id
+  ) AS streams_to_lock;
+
+  -- Phase 4.5A-equivalent: store outbox events into wh_event_store with sequential versioning.
+  -- Phase H step 10 slice 1: ORDER BY o.message_id (UUIDv7 = chronological at the source)
+  -- so version assignment matches canonical event_id ordering. Without this, two events stored
+  -- "out of wall-clock order" (e.g., one took longer to land) would receive versions that
+  -- disagree with their UUIDv7 ordering — perspective cursors advance by version, then later
+  -- see an "earlier" event_id and trip the cursor-inversion detector + full replay.
+  -- Phase H step 10 slice 3: version is computed via a correlated subquery rather than a
+  -- pre-materialized CTE. Inside the per-stream advisory lock the values are equivalent, but
+  -- the per-row form is defensive — if a future refactor weakens or bypasses the lock, the
+  -- per-row MAX read still picks up any concurrent commits.
+  -- Migration 061: o.flags carried into wh_event_store.flags (was dropped here previously).
+  WITH outbox_events AS (
+    SELECT
+      o.message_id,
+      o.stream_id,
+      o.message_type,
+      o.event_data,
+      o.metadata,
+      o.scope,
+      o.flags,
+      o.created_at,
+      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.message_id) AS row_num
+    FROM __SCHEMA__.wh_outbox o
+    WHERE o.message_id = ANY(p_outbox_message_ids)
+      AND o.is_event = true
+      AND o.stream_id IS NOT NULL
+  ),
+  -- Migration 072: materialise the extracted payload + built metadata ONCE, so the pointer INSERT
+  -- and the ephemeral body offload read identical values without recomputing the JSON extraction.
+  computed AS (
+    SELECT
+      oe.message_id,
+      oe.stream_id,
+      SPLIT_PART(__SCHEMA__.normalize_event_type(oe.message_type), ',', 1) AS aggregate_type,
+      __SCHEMA__.normalize_event_type(oe.message_type) AS event_type,
+      COALESCE(oe.event_data::jsonb -> 'p', oe.event_data::jsonb -> 'Payload', oe.event_data::jsonb -> 'payload') AS body_data,
+      jsonb_build_object(
+        c_field_message_id, COALESCE(oe.event_data::jsonb -> 'id', oe.event_data::jsonb -> c_field_message_id, oe.event_data::jsonb -> 'messageId'),
+        c_field_hops, COALESCE(oe.event_data::jsonb -> 'h', oe.event_data::jsonb -> c_field_hops, oe.event_data::jsonb -> 'hops', '[]'::jsonb)
+      ) || CASE
+        WHEN oe.metadata IS NOT NULL
+             AND jsonb_typeof(oe.metadata::jsonb -> 'ett') = 'number'
+        THEN jsonb_build_object('ephemeral_expires_at',
+               p_now + ((oe.metadata::jsonb ->> 'ett')::int * INTERVAL '1 second'))
+        ELSE '{}'::jsonb
+      END AS body_meta,
+      oe.scope,
+      oe.row_num,
+      oe.flags
+    FROM outbox_events oe
+  ),
+  stored_events AS (
+    INSERT INTO __SCHEMA__.wh_event_store (
+      event_id, stream_id, aggregate_id, aggregate_type, event_type,
+      scope, version, created_at, flags
+    )
+    SELECT
+      c.message_id,
+      c.stream_id,
+      c.stream_id,
+      c.aggregate_type,
+      c.event_type,
+      c.scope,
+      COALESCE((SELECT MAX(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = c.stream_id), 0) + c.row_num,
+      p_now,
+      c.flags
+    FROM computed c
+    -- Phase H step 10 slice 4: DO NOTHING with NO constraint specifier so PG handles BOTH the
+    -- event_id PK conflict (idempotent re-store) AND the idx_event_store_stream (stream_id, version)
+    -- UNIQUE conflict gracefully. Conflicting rows are silently skipped; the next claim_work cycle
+    -- re-attempts them with a fresh MAX(version) snapshot.
+    ON CONFLICT DO NOTHING
+    RETURNING event_id
+  ),
+  -- Migration 077 (full split): offload EVERY body. Joined to stored_events so only events actually
+  -- stored this call get a body row; ON CONFLICT keeps re-store idempotent.
+  stored_bodies AS (
+    INSERT INTO __SCHEMA__.wh_event_body (event_id, event_data, metadata)
+    SELECT c.message_id, c.body_data, c.body_meta
+    FROM computed c
+    JOIN stored_events se ON se.event_id = c.message_id
+    -- Constraint-LESS form (event_id PK is wh_event_body's only constraint, so semantics are
+    -- identical) — keeps the emit-chain source free of constraint-specific ON CONFLICT forms,
+    -- which the version-ordering regression lock forbids (a specific-constraint form on
+    -- wh_event_store once let idx_event_store_stream conflicts bubble up as PG 23505).
+    ON CONFLICT DO NOTHING
+    RETURNING event_id
+  ),
+  -- Migration 087 (A1c): incrementally fold the just-stored events into wh_stream_digests.
+  -- Bucket + predicates mirror ComputeStreamDigestsAsync (the full-sweep recompute) exactly:
+  -- ephemeral (flags & 8) and at-most-once occurrences are excluded; XOR is self-inverse, so
+  -- ON CONFLICT folds new hashes in by XOR. Joined to stored_events so an idempotent re-store
+  -- (ON CONFLICT DO NOTHING above) never double-folds. Bucket conflicts across concurrent
+  -- transactions are impossible here: the bucket key contains stream_id and the per-stream
+  -- advisory locks serialize same-stream emits; ORDER BY is belt-and-suspenders lock ordering.
+  -- The zero-uuid origin bucket = locally-originated events; a non-zero origin = events
+  -- received FROM that origin (inbox flavor only).
+  digest_folds AS (
+    INSERT INTO __SCHEMA__.wh_stream_digests AS d
+      (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at)
+    SELECT
+      '00000000-0000-0000-0000-000000000000'::uuid,
+      COALESCE(c.scope::jsonb ->> 't', ''),
+      c.event_type,
+      c.stream_id,
+      bit_xor(hashtextextended(c.message_id::text, 0)),
+      bit_xor(hashtextextended(c.message_id::text, 1)),
+      COUNT(*)::int,
+      p_now
+    FROM computed c
+    JOIN stored_events se ON se.event_id = c.message_id
+    WHERE COALESCE(c.flags, 0) & 8 = 0
+      AND COALESCE((c.body_meta ->> 'deliveryGuarantee')::integer, 0) <> 1
+    GROUP BY 1, 2, 3, 4
+    ORDER BY 1, 2, 3, 4
+    ON CONFLICT (origin_service_id, scope_tenant, event_type, stream_id) DO UPDATE SET
+      digest_lo = d.digest_lo # EXCLUDED.digest_lo,
+      digest_hi = d.digest_hi # EXCLUDED.digest_hi,
+      event_count = d.event_count + EXCLUDED.event_count,
+      updated_at = EXCLUDED.updated_at
+  )
+  SELECT array_agg(event_id) INTO v_stored_event_ids FROM stored_events;
+  v_stored_event_ids := COALESCE(v_stored_event_ids, '{}');
+  v_count := cardinality(v_stored_event_ids);
+
+  IF v_count = 0 THEN
+    RETURN 0;
+  END IF;
+
+  -- Phase 4.6-equivalent: auto-create perspective events for matching event types.
+  -- Phase H step 6 slice 2: populate partition_number via compute_partition(stream_id, p_partition_count)
+  -- so claim_orphaned_perspective_events can apply partition-modulo load balancing symmetric
+  -- with the outbox / inbox claim paths.
+  -- Slice 26.14: route the lease through wh_active_streams. When a live owner is pinned for
+  -- the stream, lease to that owner regardless of which instance ran the commit — eliminates
+  -- the cross-instance saga race (different instances commit to the same stream, each
+  -- selfishly leasing to themselves, drainer races) that produced the residual ~1000 cursor
+  -- inversions in a production run. When no live owner is pinned yet (new stream OR stale owner),
+  -- fall back to the commit instance so sync paths (UI waiting on a perspective checkpoint)
+  -- don't pay claim_orphaned-polling-interval latency on first-event-per-stream.
+  INSERT INTO __SCHEMA__.wh_perspective_events (
+    event_work_id, stream_id, perspective_name, event_id,
+    partition_number, status, attempts, created_at, instance_id, lease_expiry
+  )
+  SELECT DISTINCT
+    gen_random_uuid(),
+    es.stream_id,
+    ma.target_name,
+    es.event_id,
+    __SCHEMA__.compute_partition(es.stream_id, p_partition_count),
+    1,                  -- Stored flag
+    0,
+    p_now,
+    -- Slice 26.14: when caller is actively leasing (p_lease_expiry IS NOT NULL),
+    -- route through wh_active_streams to the stream's pinned owner. When caller passed
+    -- NULL p_lease_expiry / NULL p_instance_id (strategy-flush path — "leave unleased so
+    -- claim_orphaned picks it up"), preserve that contract; otherwise we'd land in
+    -- instance_id-set-but-lease-NULL purgatory that claim_orphaned's filter excludes.
+    CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
+    p_lease_expiry
+  FROM __SCHEMA__.wh_event_store es
+  INNER JOIN __SCHEMA__.wh_message_associations ma
+    ON es.event_type = ma.normalized_message_type
+    AND ma.association_type = c_source_perspective
+  LEFT JOIN LATERAL (
+    SELECT ast.assigned_instance_id
+    FROM __SCHEMA__.wh_active_streams ast
+    WHERE ast.stream_id = es.stream_id
+      AND ast.assigned_instance_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_service_instances si
+        WHERE si.instance_id = ast.assigned_instance_id
+      )
+  ) owner ON TRUE
+  WHERE es.event_id = ANY(v_stored_event_ids)
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_perspective_events pe_check
+      WHERE pe_check.stream_id = es.stream_id
+        AND pe_check.perspective_name = ma.target_name
+        AND pe_check.event_id = es.event_id
+    )
+  ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
+
+  -- Migration 061: collective-event routing. A collective event carries no perspective
+  -- association — route it to the single fixed __collective__ sink so the perspective worker
+  -- dispatches it via ICollectiveDispatcher exactly once (the dispatcher fans out to every
+  -- matching model handler internally). One sink row per collective event, driven by the
+  -- flag bit, independent of associations. Same partition / owner-lease / dedupe semantics as
+  -- the association branch above.
+  INSERT INTO __SCHEMA__.wh_perspective_events (
+    event_work_id, stream_id, perspective_name, event_id,
+    partition_number, status, attempts, created_at, instance_id, lease_expiry
+  )
+  SELECT DISTINCT
+    gen_random_uuid(),
+    es.stream_id,
+    c_collective_sink,
+    es.event_id,
+    __SCHEMA__.compute_partition(es.stream_id, p_partition_count),
+    1,                  -- Stored flag
+    0,
+    p_now,
+    CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
+    p_lease_expiry
+  FROM __SCHEMA__.wh_event_store es
+  LEFT JOIN LATERAL (
+    SELECT ast.assigned_instance_id
+    FROM __SCHEMA__.wh_active_streams ast
+    WHERE ast.stream_id = es.stream_id
+      AND ast.assigned_instance_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_service_instances si
+        WHERE si.instance_id = ast.assigned_instance_id
+      )
+  ) owner ON TRUE
+  WHERE es.event_id = ANY(v_stored_event_ids)
+    AND (es.flags & c_flag_collective) = c_flag_collective
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_perspective_events pe_check
+      WHERE pe_check.stream_id = es.stream_id
+        AND pe_check.perspective_name = c_collective_sink
+        AND pe_check.event_id = es.event_id
+    )
+  ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
+
+  -- Slice 26.4: wake the commit-order stamper. PG buffers NOTIFY until COMMIT and
+  -- dedups (channel, payload) within the transaction, so a tx storing 10k events
+  -- delivers exactly one wh_committed notification to each LISTEN-er. The stamper
+  -- is the only listener; on wake it runs stamp_pending_commit_sequences within ~1ms
+  -- instead of waiting for its polling tick.
+  PERFORM pg_notify('wh_committed', '');
+
+  RETURN v_count;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(
+  p_instance_id UUID,
+  p_lease_expiry TIMESTAMPTZ,
+  p_now TIMESTAMPTZ,
+  p_partition_count INTEGER DEFAULT 10000
+) RETURNS INTEGER AS $$
+DECLARE
+  v_stored_event_ids UUID[];
+  v_count INTEGER;
+  v_local_service_id UUID;
+  c_field_message_id CONSTANT TEXT := 'MessageId';
+  c_field_hops CONSTANT TEXT := 'Hops';
+  c_source_perspective CONSTANT TEXT := 'perspective';
+  -- Migration 061: collective routing sink + flag bit (EventFlags.Collective = 1 << 0).
+  c_collective_sink CONSTANT TEXT := '__collective__';
+  c_flag_collective CONSTANT INTEGER := 1;
+BEGIN
+  -- Migration 087: resolve the LOCAL service id once. store_inbox_messages (062) COALESCEs a
+  -- missing envelope SourceServiceId to the local id, so a wh_inbox row attributed to SELF (or
+  -- zero) is a locally-originated event (loopback) — its origin_service_id must stay NULL,
+  -- matching the 046 contract ("NULL for locally-originated events").
+  SELECT service_id INTO v_local_service_id FROM __SCHEMA__.wh_service_config LIMIT 1;
+
+  -- Phase H step 10 slice 2: per-stream advisory locks. Mirrors _emit_event_store_chain (lines
+  -- 311-329). Without these, two concurrent claim_work calls (e.g., NOTIFY-driven wake racing
+  -- a heartbeat-driven poll) can both read MAX(version)=N from wh_event_store for the same
+  -- stream and both attempt INSERT at version=N+1, violating idx_event_store_stream
+  -- UNIQUE(stream_id, version) (PG error 23505). Reproduced in production on a consumer's
+  -- service during job creation. Lock order is hashtext(stream_id::text), sorted ASC —
+  -- ensures deadlock-free nesting between any pair of transactions touching overlapping stream
+  -- sets. pg_advisory_xact_lock auto-releases at commit/rollback.
+  PERFORM pg_advisory_xact_lock(hashtext('wh_event_store:' || sid::text))
+  FROM (
+    SELECT DISTINCT i.stream_id AS sid
+    FROM __SCHEMA__.wh_inbox i
+    WHERE i.instance_id = p_instance_id
+      AND i.lease_expiry > p_now
+      AND i.processed_at IS NULL
+      AND i.is_event = true
+      AND i.stream_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id
+      )
+    ORDER BY i.stream_id
+  ) AS streams_to_lock;
+
+  -- Auto-create event_store rows for inbox rows owned by this instance that:
+  --   • are events (is_event = true)
+  --   • have a stream_id
+  --   • aren't yet in wh_event_store (idempotent — ON CONFLICT swallows duplicates)
+  -- Bounded by lease ownership so we don't scan the whole inbox every tick.
+  -- Phase H step 10 slice 1: ORDER BY i.message_id (UUIDv7 = chronological at the source) so
+  -- version assignment matches canonical event_id order. See _emit_event_store_chain above
+  -- for the rationale — same fix applies to the inbox backfill path.
+  -- Migration 061: i.flags carried into wh_event_store.flags (was dropped here previously).
+  WITH inbox_events AS (
+    SELECT
+      i.message_id,
+      i.stream_id,
+      i.message_type,
+      i.event_data,
+      i.metadata,
+      i.scope,
+      i.flags,
+      i.source_service_id,
+      i.source_commit_sequence,
+      i.received_at,
+      ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.message_id) AS row_num
+    FROM __SCHEMA__.wh_inbox i
+    WHERE i.instance_id = p_instance_id
+      AND i.lease_expiry > p_now
+      AND i.processed_at IS NULL
+      AND i.is_event = true
+      AND i.stream_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id
+      )
+  ),
+  -- Phase H step 10 slice 3: version computed via correlated subquery rather than a
+  -- pre-materialized CTE. Inside the per-stream advisory lock the values are equivalent, but
+  -- the per-row form is defensive — see _emit_event_store_chain above for the rationale.
+  -- Migration 072: materialise the extracted payload + built metadata ONCE (see outbox fn above).
+  computed AS (
+    SELECT
+      ie.message_id,
+      ie.stream_id,
+      SPLIT_PART(__SCHEMA__.normalize_event_type(ie.message_type), ',', 1) AS aggregate_type,
+      __SCHEMA__.normalize_event_type(ie.message_type) AS event_type,
+      COALESCE(ie.event_data::jsonb -> 'p', ie.event_data::jsonb -> 'Payload', ie.event_data::jsonb -> 'payload') AS body_data,
+      jsonb_build_object(
+        c_field_message_id, COALESCE(ie.event_data::jsonb -> 'id', ie.event_data::jsonb -> c_field_message_id, ie.event_data::jsonb -> 'messageId'),
+        c_field_hops, COALESCE(ie.event_data::jsonb -> 'h', ie.event_data::jsonb -> c_field_hops, ie.event_data::jsonb -> 'hops', '[]'::jsonb)
+      ) || CASE
+        WHEN ie.metadata IS NOT NULL
+             AND jsonb_typeof(ie.metadata::jsonb -> 'ett') = 'number'
+        THEN jsonb_build_object('ephemeral_expires_at',
+               p_now + ((ie.metadata::jsonb ->> 'ett')::int * INTERVAL '1 second'))
+        ELSE '{}'::jsonb
+      END AS body_meta,
+      ie.scope,
+      ie.row_num,
+      ie.flags,
+      -- Migration 087: normalize the received origin — self/zero means locally-originated (NULL).
+      CASE
+        WHEN ie.source_service_id IS NULL
+             OR ie.source_service_id = '00000000-0000-0000-0000-000000000000'::uuid
+             OR ie.source_service_id = v_local_service_id
+        THEN NULL
+        ELSE ie.source_service_id
+      END AS origin_service_id,
+      NULLIF(ie.source_commit_sequence, 0) AS origin_commit_sequence
+    FROM inbox_events ie
+  ),
+  stored_events AS (
+    INSERT INTO __SCHEMA__.wh_event_store (
+      event_id, stream_id, aggregate_id, aggregate_type, event_type,
+      scope, version, created_at, flags, origin_service_id, origin_commit_sequence
+    )
+    SELECT
+      c.message_id,
+      c.stream_id,
+      c.stream_id,
+      c.aggregate_type,
+      c.event_type,
+      c.scope,
+      COALESCE((SELECT MAX(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = c.stream_id), 0) + c.row_num,
+      p_now,
+      c.flags,
+      -- Migration 087: stamp the origin identity the transport delivered (046 columns were never
+      -- populated by the emit chain before this — consumer-side origin-keyed verification needs them).
+      c.origin_service_id,
+      CASE WHEN c.origin_service_id IS NULL THEN NULL ELSE c.origin_commit_sequence END
+    FROM computed c
+    -- Phase H step 10 slice 4: DO NOTHING with NO constraint specifier so PG handles BOTH the
+    -- event_id PK conflict (idempotent re-store) AND the idx_event_store_stream (stream_id, version)
+    -- UNIQUE conflict gracefully. Conflicting rows are silently skipped; the next claim_work cycle
+    -- re-attempts them with a fresh MAX(version) snapshot.
+    ON CONFLICT DO NOTHING
+    RETURNING event_id
+  ),
+  -- Migration 077 (full split): offload EVERY body (see outbox fn above).
+  stored_bodies AS (
+    INSERT INTO __SCHEMA__.wh_event_body (event_id, event_data, metadata)
+    SELECT c.message_id, c.body_data, c.body_meta
+    FROM computed c
+    JOIN stored_events se ON se.event_id = c.message_id
+    -- Constraint-LESS form (event_id PK is wh_event_body's only constraint, so semantics are
+    -- identical) — keeps the emit-chain source free of constraint-specific ON CONFLICT forms,
+    -- which the version-ordering regression lock forbids (a specific-constraint form on
+    -- wh_event_store once let idx_event_store_stream conflicts bubble up as PG 23505).
+    ON CONFLICT DO NOTHING
+    RETURNING event_id
+  ),
+  -- Migration 087 (A1c): incrementally fold the just-stored events into wh_stream_digests.
+  -- Bucket + predicates mirror ComputeStreamDigestsAsync (the full-sweep recompute) exactly:
+  -- ephemeral (flags & 8) and at-most-once occurrences are excluded; XOR is self-inverse, so
+  -- ON CONFLICT folds new hashes in by XOR. Joined to stored_events so an idempotent re-store
+  -- (ON CONFLICT DO NOTHING above) never double-folds. Bucket conflicts across concurrent
+  -- transactions are impossible here: the bucket key contains stream_id and the per-stream
+  -- advisory locks serialize same-stream emits; ORDER BY is belt-and-suspenders lock ordering.
+  -- The zero-uuid origin bucket = locally-originated events; a non-zero origin = events
+  -- received FROM that origin (inbox flavor only).
+  digest_folds AS (
+    INSERT INTO __SCHEMA__.wh_stream_digests AS d
+      (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at)
+    SELECT
+      COALESCE(c.origin_service_id, '00000000-0000-0000-0000-000000000000'::uuid),
+      COALESCE(c.scope::jsonb ->> 't', ''),
+      c.event_type,
+      c.stream_id,
+      bit_xor(hashtextextended(c.message_id::text, 0)),
+      bit_xor(hashtextextended(c.message_id::text, 1)),
+      COUNT(*)::int,
+      p_now
+    FROM computed c
+    JOIN stored_events se ON se.event_id = c.message_id
+    WHERE COALESCE(c.flags, 0) & 8 = 0
+      AND COALESCE((c.body_meta ->> 'deliveryGuarantee')::integer, 0) <> 1
+    GROUP BY 1, 2, 3, 4
+    ORDER BY 1, 2, 3, 4
+    ON CONFLICT (origin_service_id, scope_tenant, event_type, stream_id) DO UPDATE SET
+      digest_lo = d.digest_lo # EXCLUDED.digest_lo,
+      digest_hi = d.digest_hi # EXCLUDED.digest_hi,
+      event_count = d.event_count + EXCLUDED.event_count,
+      updated_at = EXCLUDED.updated_at
+  )
+  SELECT array_agg(event_id) INTO v_stored_event_ids FROM stored_events;
+  v_stored_event_ids := COALESCE(v_stored_event_ids, '{}');
+  v_count := cardinality(v_stored_event_ids);
+
+  IF v_count = 0 THEN
+    RETURN 0;
+  END IF;
+
+  -- Auto-create perspective_events for the newly-stored events.
+  -- Phase H step 6 slice 2: populate partition_number for symmetric load balancing.
+  -- Slice 26.14: route the lease through wh_active_streams (live owner wins; fall back to
+  -- commit instance when no live owner). Mirror of the outbox-side change in
+  -- _emit_event_store_chain.
+  INSERT INTO __SCHEMA__.wh_perspective_events (
+    event_work_id, stream_id, perspective_name, event_id,
+    partition_number, status, attempts, created_at, instance_id, lease_expiry
+  )
+  SELECT DISTINCT
+    gen_random_uuid(),
+    es.stream_id,
+    ma.target_name,
+    es.event_id,
+    __SCHEMA__.compute_partition(es.stream_id, p_partition_count),
+    1,                  -- Stored flag
+    0,
+    p_now,
+    -- Slice 26.14: when caller is actively leasing (p_lease_expiry IS NOT NULL),
+    -- route through wh_active_streams to the stream's pinned owner. When caller passed
+    -- NULL p_lease_expiry / NULL p_instance_id (strategy-flush path — "leave unleased so
+    -- claim_orphaned picks it up"), preserve that contract; otherwise we'd land in
+    -- instance_id-set-but-lease-NULL purgatory that claim_orphaned's filter excludes.
+    CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
+    p_lease_expiry
+  FROM __SCHEMA__.wh_event_store es
+  INNER JOIN __SCHEMA__.wh_message_associations ma
+    ON es.event_type = ma.normalized_message_type
+    AND ma.association_type = c_source_perspective
+  LEFT JOIN LATERAL (
+    SELECT ast.assigned_instance_id
+    FROM __SCHEMA__.wh_active_streams ast
+    WHERE ast.stream_id = es.stream_id
+      AND ast.assigned_instance_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_service_instances si
+        WHERE si.instance_id = ast.assigned_instance_id
+      )
+  ) owner ON TRUE
+  WHERE es.event_id = ANY(v_stored_event_ids)
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_perspective_events pe_check
+      WHERE pe_check.stream_id = es.stream_id
+        AND pe_check.perspective_name = ma.target_name
+        AND pe_check.event_id = es.event_id
+    )
+  ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
+
+  -- Migration 061: collective-event routing (inbox path). See _emit_event_store_chain above.
+  INSERT INTO __SCHEMA__.wh_perspective_events (
+    event_work_id, stream_id, perspective_name, event_id,
+    partition_number, status, attempts, created_at, instance_id, lease_expiry
+  )
+  SELECT DISTINCT
+    gen_random_uuid(),
+    es.stream_id,
+    c_collective_sink,
+    es.event_id,
+    __SCHEMA__.compute_partition(es.stream_id, p_partition_count),
+    1,                  -- Stored flag
+    0,
+    p_now,
+    CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
+    p_lease_expiry
+  FROM __SCHEMA__.wh_event_store es
+  LEFT JOIN LATERAL (
+    SELECT ast.assigned_instance_id
+    FROM __SCHEMA__.wh_active_streams ast
+    WHERE ast.stream_id = es.stream_id
+      AND ast.assigned_instance_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_service_instances si
+        WHERE si.instance_id = ast.assigned_instance_id
+      )
+  ) owner ON TRUE
+  WHERE es.event_id = ANY(v_stored_event_ids)
+    AND (es.flags & c_flag_collective) = c_flag_collective
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_perspective_events pe_check
+      WHERE pe_check.stream_id = es.stream_id
+        AND pe_check.perspective_name = c_collective_sink
+        AND pe_check.event_id = es.event_id
+    )
+  ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
+
+  -- Slice 26.4: wake the commit-order stamper. See _emit_event_store_chain above for
+  -- the rationale and dedup semantics. Inbox backfill is generally a smaller fan-in
+  -- than outbox-emit, but the NOTIFY is just as cheap and keeps the stamper hot path
+  -- responsive whether events arrive locally or via transport.
+  PERFORM pg_notify('wh_committed', '');
+
+  RETURN v_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- close_stream — re-created VERBATIM from 085 + digest subtraction before the truncate.
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.close_stream(
+  p_stream_id UUID, p_through_version BIGINT, p_archive BOOLEAN DEFAULT FALSE)
+RETURNS TABLE(close_status TEXT, events_truncated BIGINT) AS $$
+DECLARE
+  v_debug BOOLEAN;
+  v_blocked BIGINT;
+  v_carry BIGINT;
+  v_deleted BIGINT;
+BEGIN
+  -- debug_mode retains forensic history — a close is a truncation, so skip it entirely (like the reaper).
+  SELECT (setting_value = 'true') INTO v_debug FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode';
+  IF COALESCE(v_debug, FALSE) THEN
+    RETURN QUERY SELECT 'debug_skipped'::TEXT, 0::BIGINT;
+    RETURN;
+  END IF;
+
+  -- (1) Consumption gate: any perspective work item for an event in this stream at/below the close point that
+  -- is still UNPROCESSED blocks the close.
+  SELECT count(*) INTO v_blocked
+  FROM __SCHEMA__.wh_perspective_events pe
+  JOIN __SCHEMA__.wh_event_store es ON es.event_id = pe.event_id
+  WHERE es.stream_id = p_stream_id
+    AND es.version <= p_through_version
+    AND pe.processed_at IS NULL;
+
+  IF v_blocked > 0 THEN
+    RETURN QUERY SELECT 'blocked'::TEXT, 0::BIGINT;
+    RETURN;
+  END IF;
+
+  -- (2) Carry-forward guard: refuse to discard a stream's entire history — there must be a surviving event
+  -- above the close point (the domain's closing event / new origin).
+  SELECT count(*) INTO v_carry
+  FROM __SCHEMA__.wh_event_store es
+  WHERE es.stream_id = p_stream_id AND es.version > p_through_version;
+
+  IF v_carry = 0 THEN
+    RETURN QUERY SELECT 'no_carry_forward'::TEXT, 0::BIGINT;
+    RETURN;
+  END IF;
+
+  -- Archive BEFORE truncate. Same transaction as the DELETEs below => atomic: a failure here rolls back the
+  -- whole close, so the detail is never lost (stays hot) nor left half-archived. Body columns come from
+  -- wh_event_body (post-split every body lives there); LEFT JOIN tolerates an already-reaped body defensively.
+  IF p_archive THEN
+    INSERT INTO __SCHEMA__.wh_event_archive
+      (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, created_at)
+    SELECT es.event_id, es.stream_id, es.aggregate_id, es.aggregate_type, es.event_type,
+           eb.event_data, eb.metadata, es.scope, es.version, es.created_at
+    FROM __SCHEMA__.wh_event_store es
+    LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
+    WHERE es.stream_id = p_stream_id AND es.version <= p_through_version
+    ON CONFLICT (event_id) DO NOTHING;
+  END IF;
+
+  -- Migration 087 (A1c): subtract the about-to-be-truncated rows from wh_stream_digests BEFORE
+  -- the delete (bodies must still exist for the metadata predicate). Only rows that ever
+  -- contributed to a digest (non-ephemeral, not at-most-once) are XOR-ed back out — XOR is
+  -- self-inverse, so folding the same hashes again removes them. A missing bucket is a no-op;
+  -- the periodic full-sweep verification heals any residual drift.
+  UPDATE __SCHEMA__.wh_stream_digests d
+  SET digest_lo = d.digest_lo # s.digest_lo,
+      digest_hi = d.digest_hi # s.digest_hi,
+      event_count = d.event_count - s.event_count,
+      updated_at = NOW()
+  FROM (
+    SELECT COALESCE(es.origin_service_id, '00000000-0000-0000-0000-000000000000'::uuid) AS origin_service_id,
+           COALESCE(es.scope ->> 't', '') AS scope_tenant,
+           es.event_type,
+           es.stream_id,
+           bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
+           bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+           COUNT(*)::int AS event_count
+    FROM __SCHEMA__.wh_event_store es
+    LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
+    WHERE es.stream_id = p_stream_id
+      AND es.version <= p_through_version
+      AND COALESCE(es.flags, 0) & 8 = 0
+      AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
+    GROUP BY 1, 2, 3, 4
+  ) s
+  WHERE d.origin_service_id = s.origin_service_id
+    AND d.scope_tenant = s.scope_tenant
+    AND d.event_type = s.event_type
+    AND d.stream_id = s.stream_id;
+
+  -- Drop buckets the subtraction emptied (a fully-truncated (type, stream) bucket). Separate
+  -- statement so the UPDATE above is visible.
+  DELETE FROM __SCHEMA__.wh_stream_digests d
+  WHERE d.stream_id = p_stream_id AND d.event_count <= 0;
+
+  -- Truncate the detail at/below the close point: bodies first, then pointers (no FK, but keep it tidy).
+  DELETE FROM __SCHEMA__.wh_event_body eb
+  USING __SCHEMA__.wh_event_store es
+  WHERE eb.event_id = es.event_id
+    AND es.stream_id = p_stream_id
+    AND es.version <= p_through_version;
+
+  DELETE FROM __SCHEMA__.wh_event_store es
+  WHERE es.stream_id = p_stream_id AND es.version <= p_through_version;
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+
+  RETURN QUERY SELECT 'closed'::TEXT, v_deleted;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- reclassify_events_ephemeral — re-created VERBATIM from 078 + digest subtraction.
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.reclassify_events_ephemeral(p_event_types TEXT[])
+RETURNS TABLE(
+  events_reclassified BIGINT,
+  streams_reclassified BIGINT,
+  streams_blocked BIGINT
+) AS $$
+DECLARE
+  c_flag_ephemeral CONSTANT INTEGER := 8;
+  v_names TEXT[];
+  v_events BIGINT := 0;
+  v_streams BIGINT := 0;
+  v_blocked BIGINT := 0;
+BEGIN
+  -- Normalize every name the logical type was ever stored under (current + former).
+  SELECT array_agg(__SCHEMA__.normalize_event_type(t)) INTO v_names
+  FROM unnest(p_event_types) AS t;
+
+  IF v_names IS NULL OR array_length(v_names, 1) IS NULL THEN
+    RETURN QUERY SELECT 0::BIGINT, 0::BIGINT, 0::BIGINT;
+    RETURN;
+  END IF;
+
+  -- Count streams that would become MIXED: they hold the target type (under any of its names) AND a Sourced
+  -- (flags & 8 = 0) event whose type is NOT one of those names. Reclassifying the target there would violate
+  -- the homogeneous-stream invariant, so these are skipped by the offload/stamp below and reported here.
+  SELECT COUNT(DISTINCT es.stream_id) INTO v_blocked
+  FROM __SCHEMA__.wh_event_store es
+  WHERE es.event_type = ANY(v_names)
+    AND EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_event_store b
+      WHERE b.stream_id = es.stream_id
+        AND NOT (b.event_type = ANY(v_names))
+        AND (b.flags & c_flag_ephemeral) = 0
+    );
+
+  -- Full split (078): bodies live in wh_event_body from birth for BOTH classes, so reclassification is
+  -- purely a flags stamp — there is no inline body to offload or null out anymore.
+  WITH reclassified AS (
+    UPDATE __SCHEMA__.wh_event_store es
+    SET flags = es.flags | c_flag_ephemeral
+    WHERE es.event_type = ANY(v_names)
+      AND (es.flags & c_flag_ephemeral) = 0
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_event_store b
+        WHERE b.stream_id = es.stream_id
+          AND NOT (b.event_type = ANY(v_names))
+          AND (b.flags & c_flag_ephemeral) = 0
+      )
+    RETURNING es.event_id, es.stream_id, es.event_type, es.scope, es.origin_service_id
+  ),
+  -- Migration 087 (A1c): the reclassified rows leave the audited digest set (flags & 8 excluded),
+  -- so XOR them back out of wh_stream_digests. Reads the pre-statement bucket snapshot (data-
+  -- modifying CTEs can't see each other's table effects) — safe: buckets pre-exist and only this
+  -- statement touches them. A missing bucket is a no-op; the full-sweep verification heals drift.
+  digest_subtract AS (
+    UPDATE __SCHEMA__.wh_stream_digests d
+    SET digest_lo = d.digest_lo # s.digest_lo,
+        digest_hi = d.digest_hi # s.digest_hi,
+        event_count = d.event_count - s.event_count,
+        updated_at = NOW()
+    FROM (
+      SELECT COALESCE(r.origin_service_id, '00000000-0000-0000-0000-000000000000'::uuid) AS origin_service_id,
+             COALESCE(r.scope ->> 't', '') AS scope_tenant,
+             r.event_type,
+             r.stream_id,
+             bit_xor(hashtextextended(r.event_id::text, 0)) AS digest_lo,
+             bit_xor(hashtextextended(r.event_id::text, 1)) AS digest_hi,
+             COUNT(*)::int AS event_count
+      FROM reclassified r
+      LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = r.event_id
+      WHERE COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
+      GROUP BY 1, 2, 3, 4
+    ) s
+    WHERE d.origin_service_id = s.origin_service_id
+      AND d.scope_tenant = s.scope_tenant
+      AND d.event_type = s.event_type
+      AND d.stream_id = s.stream_id
+  )
+  SELECT COUNT(*), COUNT(DISTINCT stream_id) INTO v_events, v_streams FROM reclassified;
+
+  -- Migration 087: drop buckets the subtraction emptied (separate statement so it sees the
+  -- digest_subtract UPDATE; scoped to the reclassified type names).
+  DELETE FROM __SCHEMA__.wh_stream_digests d
+  WHERE d.event_type = ANY(v_names) AND d.event_count <= 0;
+
+  RETURN QUERY SELECT v_events, v_streams, v_blocked;
+END;
+$$ LANGUAGE plpgsql;
