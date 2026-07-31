@@ -72,5 +72,4 @@ public class DirectedMessageE2ETests {
 /// <summary>JSON context for the directed-message E2E payloads (production-parity registration).</summary>
 [JsonSerializable(typeof(DirectedMessageE2ETests.DirectedProbeEvent))]
 [JsonSerializable(typeof(MessageEnvelope<DirectedMessageE2ETests.DirectedProbeEvent>))]
-public sealed partial class DirectedMessageE2EJsonContext : JsonSerializerContext {
-}
+public sealed partial class DirectedMessageE2EJsonContext : JsonSerializerContext;
