@@ -620,6 +620,48 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<CheckpointBucket>>([]);
 
   /// <summary>
+  /// Stream-integrity Phase S: the consumed-type registry — when each event type joined this
+  /// service's consumed set, and its backfill status. Default: empty (engines without the
+  /// registry table cannot track expansions).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Every registered consumed type with its backfill status.</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedTypeRegistryTests.cs</tests>
+  Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ConsumedTypeRegistration>>([]);
+
+  /// <summary>
+  /// Stream-integrity Phase S: registers newly-consumed event types. First boot registers the
+  /// whole catalog as <see cref="ConsumedTypeBackfillStatus.Baseline"/> (nothing existed to miss);
+  /// later boots register additions as <see cref="ConsumedTypeBackfillStatus.Pending"/>
+  /// (an expansion — history exists this service never received). Idempotent and multi-instance
+  /// safe (<c>ON CONFLICT DO NOTHING</c> — the first instance to boot wins each row). Default: no-op.
+  /// </summary>
+  /// <param name="eventTypes">Stored event type names to register.</param>
+  /// <param name="asBaseline">True = first-boot registration (no backfill); false = expansion (Pending).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedTypeRegistryTests.cs</tests>
+  Task RegisterConsumedTypesAsync(
+    IReadOnlyList<string> eventTypes,
+    bool asBaseline,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Stream-integrity Phase S: marks pending expansions as
+  /// <see cref="ConsumedTypeBackfillStatus.Requested"/> after the broadcast re-delivery request is
+  /// sent. Only Pending rows transition (Baseline/Requested rows are untouched). Default: no-op.
+  /// </summary>
+  /// <param name="eventTypes">The requested types.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedTypeRegistryTests.cs</tests>
+  Task MarkConsumedTypeBackfillRequestedAsync(
+    IReadOnlyList<string> eventTypes,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is
