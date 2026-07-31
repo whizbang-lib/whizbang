@@ -46,25 +46,30 @@ public sealed class RedeliveryPumpOptions {
 /// <docs>proposals/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpTests.cs</tests>
 public sealed class RedeliveryPump {
-  private static readonly string _envelopeType =
-    $"Whizbang.Core.Messaging.MessageEnvelope`1[[{typeof(RedeliveryComposite).AssemblyQualifiedName}]], Whizbang.Core";
-
   private readonly ITransport _transport;
   private readonly IEventStore _eventStore;
   private readonly IEventTypeProvider _eventTypeProvider;
+  private readonly IEnvelopeSerializer _envelopeSerializer;
   private readonly IServiceInstanceProvider? _instanceProvider;
   private readonly RedeliveryPumpOptions _options;
 
-  /// <summary>Creates the pump over the transport + the event store's AOT deserialization path.</summary>
+  /// <summary>
+  /// Creates the pump over the transport + the event store's AOT deserialization path. The envelope
+  /// serializer is the same seam the outbox uses for composites: the typed bundle is converted to a
+  /// <c>MessageEnvelope&lt;JsonElement&gt;</c> with the wire envelope-type derived from the payload's
+  /// runtime type, so the transport never needs generic type info for the composite envelope.
+  /// </summary>
   public RedeliveryPump(
       ITransport transport,
       IEventStore eventStore,
       IEventTypeProvider eventTypeProvider,
+      IEnvelopeSerializer envelopeSerializer,
       IServiceInstanceProvider? instanceProvider = null,
       RedeliveryPumpOptions? options = null) {
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
     _eventTypeProvider = eventTypeProvider ?? throw new ArgumentNullException(nameof(eventTypeProvider));
+    _envelopeSerializer = envelopeSerializer ?? throw new ArgumentNullException(nameof(envelopeSerializer));
     _instanceProvider = instanceProvider;
     _options = options ?? new RedeliveryPumpOptions();
   }
@@ -162,7 +167,9 @@ public sealed class RedeliveryPump {
       Target = target
     };
 
-    await _transport.PublishAsync(wireEnvelope, destination, _envelopeType, cancellationToken: cancellationToken)
+    // The outbox's composite seam: typed → MessageEnvelope<JsonElement> + payload-derived wire type.
+    var serialized = _envelopeSerializer.SerializeEnvelope<RedeliveryComposite>(wireEnvelope);
+    await _transport.PublishAsync(serialized.JsonEnvelope, destination, serialized.EnvelopeType, cancellationToken: cancellationToken)
       .ConfigureAwait(false);
   }
 }

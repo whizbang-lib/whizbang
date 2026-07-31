@@ -34,11 +34,12 @@ public class RedeliveryRequestReceptorTests {
   public async Task Receptor_MapsSelectionAndPublishesTargetedCompositesAsync() {
     var coordinator = new _selectingCoordinator();
     var transport = new _captureTransport();
+    var serializer = new _captureSerializer();
     var streamId = TrackedGuid.NewMedo().Value;
     var e1 = TrackedGuid.NewMedo().Value;
     var e2 = TrackedGuid.NewMedo().Value;
     coordinator.Selection = [_evt(streamId, e1, 1), _evt(streamId, e2, 2)];
-    await using var sp = _buildProvider(coordinator, transport);
+    await using var sp = _buildProvider(coordinator, transport, serializer);
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
@@ -69,7 +70,7 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(destination.Address).IsEqualTo("events-topic");
     await Assert.That(envelope.Target).IsEqualTo("damaged-svc")
       .Because("re-delivery bundles are DIRECTED at the requester — every other consumer discards them.");
-    var composite = ((IMessageEnvelope<RedeliveryComposite>)envelope).Payload;
+    var composite = serializer.Captured[0].Payload;
     await Assert.That(composite.InnerEventIds).IsEquivalentTo([e1, e2])
       .Because("original event ids ride the bundle — identity is what makes convergence idempotent.");
   }
@@ -162,12 +163,14 @@ public class RedeliveryRequestReceptorTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static ServiceProvider _buildProvider(
-      _selectingCoordinator coordinator, _captureTransport transport, RedeliveryPumpOptions? options = null) {
+      _selectingCoordinator coordinator, _captureTransport transport,
+      _captureSerializer? serializer = null, RedeliveryPumpOptions? options = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IEventStore>(new _mapEventStore());
     services.AddSingleton<IEventTypeProvider>(new _typeProvider());
+    services.AddSingleton<IEnvelopeSerializer>(serializer ?? new _captureSerializer());
     if (options is not null) {
       services.AddSingleton(options);
     }
@@ -237,6 +240,30 @@ public class RedeliveryRequestReceptorTests {
 
   private sealed class _typeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(_probeEvent)];
+  }
+
+  /// <summary>Captures the typed composite envelope at the serializer seam and returns a
+  /// field-copied JsonElement envelope, as the real serializer does.</summary>
+  private sealed class _captureSerializer : IEnvelopeSerializer {
+    public List<IMessageEnvelope<RedeliveryComposite>> Captured { get; } = [];
+
+    public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
+      Captured.Add((IMessageEnvelope<RedeliveryComposite>)envelope);
+      var payloadType = envelope.Payload!.GetType();
+      return new SerializedEnvelope(
+        new MessageEnvelope<System.Text.Json.JsonElement> {
+          MessageId = envelope.MessageId,
+          Payload = default,
+          Hops = [.. envelope.Hops],
+          DispatchContext = envelope.DispatchContext,
+          Target = envelope.Target
+        },
+        $"Whizbang.Core.Observability.MessageEnvelope`1[[{payloadType.AssemblyQualifiedName}]], Whizbang.Core",
+        payloadType.AssemblyQualifiedName!);
+    }
+
+    public object DeserializeMessage(MessageEnvelope<System.Text.Json.JsonElement> jsonEnvelope, string messageTypeName) =>
+      throw new NotSupportedException();
   }
 
   private sealed class _captureTransport : ITransport {

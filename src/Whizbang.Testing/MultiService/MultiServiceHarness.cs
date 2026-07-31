@@ -36,14 +36,29 @@ namespace Whizbang.Testing.MultiService;
 public sealed class MultiServiceHarness : IAsyncDisposable {
   private readonly List<ServiceRuntime> _services;
   private readonly JsonSerializerOptions _wireOptions;
+  private readonly WireFaultInjector _faults;
 
   /// <summary>The shared wire connecting every service in the harness.</summary>
   public InMemoryWireTransport Wire { get; }
 
-  private MultiServiceHarness(InMemoryWireTransport wire, List<ServiceRuntime> services, JsonSerializerOptions wireOptions) {
+  private MultiServiceHarness(InMemoryWireTransport wire, List<ServiceRuntime> services, JsonSerializerOptions wireOptions, WireFaultInjector faults) {
     Wire = wire;
     _services = services;
     _wireOptions = wireOptions;
+    _faults = faults;
+  }
+
+  /// <summary>
+  /// Injects a delivery fault: messages matching <paramref name="shouldDrop"/> (or ALL messages
+  /// when null) are dropped at the named service's receive seam — the wire still delivers to every
+  /// other service, simulating the per-consumer outage class stream integrity repairs. Dispose the
+  /// returned registration to lift the fault. Delivery inside the harness is synchronous with
+  /// publish, so a fault scoped around <see cref="PublishAsync"/> calls drops exactly those
+  /// deliveries — no timing.
+  /// </summary>
+  public IDisposable SuppressDeliveries(string serviceName, Func<TransportMessage, bool>? shouldDrop = null) {
+    _ = GetService(serviceName);   // fail fast on an unknown name
+    return _faults.Register(serviceName, shouldDrop ?? (static _ => true));
   }
 
   /// <summary>Starts building a harness. Add services, then <see cref="Builder.StartAsync"/>.</summary>
@@ -169,6 +184,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
 
       var wireOptions = JsonContextRegistry.CreateCombinedOptions();
       var wire = new InMemoryWireTransport(wireOptions);
+      var faults = new WireFaultInjector();
       var runtimes = new List<ServiceRuntime>();
 
       foreach (var definition in _definitions) {
@@ -189,7 +205,9 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
           services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
           services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
           services.AddSingleton(wireOptions);
-          services.AddSingleton<ITransport>(wire);
+          // The service's receive seam: the shared wire behind a per-service tap, so injected
+          // delivery faults (SuppressDeliveries) drop messages for THIS service only.
+          services.AddSingleton<ITransport>(new ServiceWireTap(wire, definition.Name, faults));
           // Per-service identity. A real host's instance provider reports that service's own
           // name, but the harness default would report this test process's entry-assembly name
           // for every simulated service, making them indistinguishable to identity-aware seams
@@ -222,7 +240,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
         }
       }
 
-      return new MultiServiceHarness(wire, runtimes, wireOptions);
+      return new MultiServiceHarness(wire, runtimes, wireOptions, faults);
     }
   }
 
