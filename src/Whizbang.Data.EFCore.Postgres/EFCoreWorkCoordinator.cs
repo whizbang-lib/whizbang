@@ -1391,6 +1391,93 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return results;
   }
 
+  /// <summary>
+  /// Shared acquire for the raw-SQL coordinator paths: throughput gate → resolved schema →
+  /// dedicated coordinator connection scope → command. The operation receives the command and
+  /// the schema; every resource disposes when it completes.
+  /// </summary>
+  private async Task<T> _withCoordinatorCommandAsync<T>(
+      Func<System.Data.Common.DbCommand, string, Task<T>> operation,
+      CancellationToken cancellationToken) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand();
+    return await operation(cmd, schema).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(
+    CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<IReadOnlyList<ConsumedTypeRegistration>>(async (cmd, schema) => {
+      cmd.CommandText = $"SELECT event_type, backfill_status FROM {schema}.wh_consumed_types ORDER BY event_type";
+
+      var results = new List<ConsumedTypeRegistration>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        results.Add(new ConsumedTypeRegistration {
+          EventType = reader.GetString(0),
+          Status = (ConsumedTypeBackfillStatus)reader.GetInt16(1)
+        });
+      }
+      return results;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task RegisterConsumedTypesAsync(
+    IReadOnlyList<string> eventTypes,
+    bool asBaseline,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    if (eventTypes.Count == 0) {
+      return;
+    }
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // ON CONFLICT DO NOTHING: idempotent + multi-instance safe — the first booting instance wins
+      // each row; a row already registered (any status) is never demoted or re-pended.
+      cmd.CommandText =
+        $"INSERT INTO {schema}.wh_consumed_types (event_type, backfill_status) " +
+        "SELECT t, @p_status FROM unnest(@p_types::text[]) AS t " +
+        "ON CONFLICT (event_type) DO NOTHING";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes.ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_status", NpgsqlTypes.NpgsqlDbType.Smallint) {
+        Value = (short)(asBaseline ? ConsumedTypeBackfillStatus.Baseline : ConsumedTypeBackfillStatus.Pending)
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public async Task MarkConsumedTypeBackfillRequestedAsync(
+    IReadOnlyList<string> eventTypes,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    if (eventTypes.Count == 0) {
+      return;
+    }
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // Only Pending rows transition — Baseline never backfills, Requested never re-stamps.
+      cmd.CommandText =
+        $"UPDATE {schema}.wh_consumed_types SET backfill_status = @p_requested, backfill_requested_at = NOW() " +
+        "WHERE event_type = ANY(@p_types::text[]) AND backfill_status = @p_pending";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_requested", NpgsqlTypes.NpgsqlDbType.Smallint) {
+        Value = (short)ConsumedTypeBackfillStatus.Requested
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes.ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_pending", NpgsqlTypes.NpgsqlDbType.Smallint) {
+        Value = (short)ConsumedTypeBackfillStatus.Pending
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
   /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(

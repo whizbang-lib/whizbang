@@ -90,6 +90,7 @@ public sealed class RedeliveryPump {
       string topic,
       string? target,
       Guid originServiceId = default,
+      bool stateOnly = false,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(events);
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
@@ -111,7 +112,7 @@ public sealed class RedeliveryPump {
       if (!boundary) {
         continue;
       }
-      await _publishChunkAsync(chunk, destination, target, originServiceId, eventTypes, cancellationToken).ConfigureAwait(false);
+      await _publishChunkAsync(chunk, destination, target, originServiceId, stateOnly, eventTypes, cancellationToken).ConfigureAwait(false);
       published++;
       chunk.Clear();
     }
@@ -123,6 +124,7 @@ public sealed class RedeliveryPump {
       TransportDestination destination,
       string? target,
       Guid originServiceId,
+      bool stateOnly,
       IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken) {
     var raws = new List<StreamEventData>(chunk.Count);
@@ -173,7 +175,9 @@ public sealed class RedeliveryPump {
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
-      Target = target
+      Target = target,
+      // Phase S: backfill bundles build state only — children must not re-fire trigger receptors.
+      StateOnly = stateOnly
     };
 
     // The outbox's composite seam: typed → MessageEnvelope<JsonElement> + payload-derived wire type.

@@ -236,6 +236,9 @@ public static partial class CompositeInboxFanout {
       SourceCommitSequence = sourceCommitSequence,
       CausedByServiceId = source.CausedByServiceId,
       CausedByCommitSequence = source.CausedByCommitSequence,
+      // Phase S: a state-only bundle's children are state-only too — event-stored and projected,
+      // never fired at trigger receptors.
+      StateOnly = source.StateOnly,
       // No-rebroadcast guard (Phase D): the child is confined to the inbox → event-store → local path.
       // The outbox-enqueue boundary drops any message whose source envelope carries this flag.
       Flags = EventFlags.NoRebroadcast,

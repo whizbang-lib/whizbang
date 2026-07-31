@@ -131,6 +131,34 @@ public enum IntegrityRepairMode {
 }
 
 /// <summary>
+/// Stream-integrity Phase S: one row of the consumed-type registry — when an event type joined
+/// this service's consumed set, and where its backfill stands.
+/// </summary>
+/// <docs>proposals/stream-integrity</docs>
+public sealed record ConsumedTypeRegistration {
+  /// <summary>Stored event type name (catalog wire name).</summary>
+  public required string EventType { get; init; }
+
+  /// <summary>The expansion's backfill lifecycle position.</summary>
+  public required ConsumedTypeBackfillStatus Status { get; init; }
+}
+
+/// <summary>
+/// Stream-integrity Phase S: the backfill lifecycle of a consumed-type registration.
+/// </summary>
+/// <docs>proposals/stream-integrity</docs>
+public enum ConsumedTypeBackfillStatus {
+  /// <summary>Registered on FIRST boot — nothing existed to miss, no backfill.</summary>
+  Baseline = 0,
+
+  /// <summary>Expansion detected, backfill not yet requested — the audit surface when backfill is disabled.</summary>
+  Pending = 1,
+
+  /// <summary>The broadcast re-delivery request was sent (completion graduates via the audit phases).</summary>
+  Requested = 2,
+}
+
+/// <summary>
 /// Stream-integrity tuning. Checkpoints and gap detection are ON by default — integrity
 /// verification should not require opting in; disable explicitly for hosts that genuinely do not
 /// want it. Repair stays at <see cref="IntegrityRepairMode.ReportOnly"/> until an operator climbs
@@ -156,4 +184,11 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Wire topic repair requests publish to AND bundles return on. Null (default) = the
   /// consumer's first subscribed destination.</summary>
   public string? RepairTopic { get; set; }
+
+  /// <summary>
+  /// Phase S: when the consumed-type set GROWS (a later boot adds event types), broadcast a
+  /// state-only re-delivery request for the new types' history (default true). Disabling still
+  /// RECORDS the expansion as Pending — the audit reports "pending backfill", not divergence.
+  /// </summary>
+  public bool BackfillOnSubscriptionGrowth { get; set; } = true;
 }

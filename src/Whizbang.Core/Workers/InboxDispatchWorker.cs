@@ -389,10 +389,19 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         return;
       }
 
-      await InvokeInboxLifecycleStageAsync(
-        work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
-        "PreInbox", ct, detachedCancellationToken: stoppingToken);
-      LogDiagPreInboxReturned(_logger, work.MessageId);
+      // Stream-integrity Phase S: a state-only delivery (backfill) builds STATE — the event is
+      // stored and projected exactly as normal via the commit below — but its trigger-receptor
+      // stages are SKIPPED: backfilled history must never re-run business reactions. The
+      // perspective-side lifecycle completion stages still fire (completion accounting, not
+      // domain triggers).
+      var stateOnly = work.Envelope.StateOnly;
+
+      if (!stateOnly) {
+        await InvokeInboxLifecycleStageAsync(
+          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+          "PreInbox", ct, detachedCancellationToken: stoppingToken);
+        LogDiagPreInboxReturned(_logger, work.MessageId);
+      }
 
       // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
       // calls commit_handler_batch.
@@ -401,14 +410,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogDiagCommitEnqueued(_logger, work.MessageId, commitRequest.InboxCompletion.Status);
 
       // PostInbox lands AFTER event storage.
-      await InvokeInboxLifecycleStageAsync(
-        work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
-        "PostInbox", ct, detachedCancellationToken: stoppingToken);
-      LogDiagPostInboxReturned(_logger, work.MessageId);
+      if (!stateOnly) {
+        await InvokeInboxLifecycleStageAsync(
+          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+          "PostInbox", ct, detachedCancellationToken: stoppingToken);
+        LogDiagPostInboxReturned(_logger, work.MessageId);
+      }
 
       // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
-      if (_hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
+      if (!stateOnly && _hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
         await InvokeInboxLifecycleStageAsync(
           work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
           "PostAllPerspectives", ct, detachedCancellationToken: stoppingToken);
