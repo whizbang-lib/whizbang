@@ -96,6 +96,72 @@ public class IntegrityAuditWorkerTests {
       .Because("the request restricts the manifest to the types this consumer actually subscribes to.");
   }
 
+  // ── A1c: hierarchical requests + the full-sweep cadence ─────────────────
+
+  [Test]
+  public async Task DefaultCycle_RequestsTypeLevelTableManifests_NoVerifyAsync() {
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow);
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.Level).IsEqualTo(ManifestLevel.Types)
+      .Because("the scheduled audit starts at type granularity — O(types) wire cost; mismatches drill down.");
+    await Assert.That(request.UseRecompute).IsFalse()
+      .Because("steady-state cycles run on the maintained digest table, not a store-wide recompute.");
+    await Assert.That(coordinator.VerifyCalls).IsEqualTo(0)
+      .Because("the trust-but-verify heal is the sweep cycle's job (default every 7th).");
+  }
+
+  [Test]
+  public async Task SweepCycle_ForcesRecomputeAndVerifiesDigestTableAsync() {
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow);
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.UseRecompute).IsTrue()
+      .Because("the sweep cycle exchanges recomputed digests end to end — busy buckets get their coverage here.");
+    await Assert.That(request.Level).IsEqualTo(ManifestLevel.Types)
+      .Because("even the sweep starts at type level; only mismatched types pay stream-level wire cost.");
+    await Assert.That(coordinator.VerifyCalls).IsEqualTo(1)
+      .Because("each sweep also verifies + heals this service's OWN digest table against the recompute.");
+  }
+
+  [Test]
+  public async Task SweepDisabled_NeverVerifiesAsync() {
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow);
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.VerifyCalls).IsEqualTo(0);
+    await Assert.That(transport.Published.All(p => !_deserializeRequest(p.Envelope).UseRecompute)).IsTrue()
+      .Because("0 disables sweeps — every cycle stays table-driven.");
+  }
+
+  private static RequestIntegrityManifest _deserializeRequest(IMessageEnvelope envelope) {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    return (RequestIntegrityManifest)JsonSerializer.Deserialize(
+      ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
+      options.GetTypeInfo(typeof(RequestIntegrityManifest)))!;
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static IntegrityAuditWorker _buildWorker(
@@ -139,10 +205,22 @@ public class IntegrityAuditWorkerTests {
 
   private sealed class _auditCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<PerspectiveCoverageGap> Gaps { get; init; } = [];
+    public int VerifyCalls { get; private set; }
 
     public Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
       TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>(Gaps);
+
+    public Task<DigestVerificationResult> VerifyDigestTableAsync(
+      TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+      VerifyCalls++;
+      return Task.FromResult(new DigestVerificationResult {
+        BucketsChecked = 0,
+        DriftUpdated = 0,
+        DriftRemoved = 0,
+        DriftAdded = 0,
+      });
+    }
   }
 
   private sealed class _captureDispatcher : FakeDispatcher, IDispatcher {

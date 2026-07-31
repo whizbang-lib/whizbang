@@ -36,6 +36,7 @@ public sealed partial class IntegrityAuditWorker(
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<IntegrityAuditWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private int _cycleCount;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -80,6 +81,23 @@ public sealed partial class IntegrityAuditWorker(
       return;
     }
     var settle = TimeSpan.FromMinutes(_options.AuditSettleWindowMinutes);
+
+    // ── A1c: the full-sweep cadence ──────────────────────────────────────
+    // Steady-state cycles run on the incrementally-maintained digest table (O(buckets), with
+    // settle-skip on busy buckets). Every Nth cycle is the trust-but-verify sweep: heal our OWN
+    // table against a full recompute (non-zero drift = an unaccounted write path — alarm), and
+    // exchange recomputed digests end to end so busy buckets get their coverage too.
+    var cycle = Interlocked.Increment(ref _cycleCount);
+    var sweep = _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0;
+    if (sweep) {
+      var verification = await coordinator.VerifyDigestTableAsync(settle, cancellationToken).ConfigureAwait(false);
+      if (verification.TotalDrift > 0) {
+        LogDigestDrift(_logger, verification.TotalDrift, verification.DriftUpdated,
+          verification.DriftRemoved, verification.DriftAdded, verification.BucketsChecked);
+      } else {
+        LogDigestVerified(_logger, verification.BucketsChecked);
+      }
+    }
 
     // ── L: local perspective coverage ────────────────────────────────────
     var gaps = await coordinator.GetPerspectiveCoverageGapsAsync(settle, cancellationToken).ConfigureAwait(false);
@@ -127,6 +145,8 @@ public sealed partial class IntegrityAuditWorker(
           RequesterService = requester,
           Topic = topic,
           EventTypes = subscribed,
+          Level = ManifestLevel.Types,
+          UseRecompute = sweep,
         },
         Hops = [
           new MessageHop {
@@ -164,4 +184,14 @@ public sealed partial class IntegrityAuditWorker(
   [LoggerMessage(EventId = 84, Level = LogLevel.Error,
     Message = "Integrity audit cycle failed; will retry next interval")]
   static partial void LogError(ILogger logger, Exception exception);
+
+  [LoggerMessage(EventId = 85, Level = LogLevel.Warning,
+    Message = "DIGEST DRIFT healed on sweep: {TotalDrift} bucket(s) (updated {DriftUpdated}, removed {DriftRemoved}, " +
+              "added {DriftAdded}) of {BucketsChecked} checked — an unaccounted write path touched audited rows")]
+  static partial void LogDigestDrift(ILogger logger, int totalDrift, int driftUpdated, int driftRemoved,
+    int driftAdded, int bucketsChecked);
+
+  [LoggerMessage(EventId = 86, Level = LogLevel.Information,
+    Message = "Digest table verified clean on sweep ({BucketsChecked} settled bucket(s))")]
+  static partial void LogDigestVerified(ILogger logger, int bucketsChecked);
 }
