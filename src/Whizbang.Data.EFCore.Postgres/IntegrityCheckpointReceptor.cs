@@ -50,6 +50,8 @@ public sealed partial class IntegrityCheckpointReceptor(
     }
 
     tracker.RecordCheckpoint(message.OriginServiceId, message.OriginServiceName, DateTimeOffset.UtcNow);
+    var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
 
     // 1) Two-cycle confirmation: deficits recorded on the PREVIOUS checkpoint, recounted now.
@@ -63,8 +65,14 @@ public sealed partial class IntegrityCheckpointReceptor(
       }
 
       var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0;
+      metrics?.GapsDetected.Add(1,
+        new KeyValuePair<string, object?>("origin", pending.OriginServiceName),
+        new KeyValuePair<string, object?>("event_type", pending.EventType));
       if (autoRepair) {
         repairBudget--;
+        metrics?.RepairsRequested.Add(1,
+          new KeyValuePair<string, object?>("source", "checkpoint"),
+          new KeyValuePair<string, object?>("origin", pending.OriginServiceName));
         await _sendRepairRequestAsync(services, options, pending, cancellationToken).ConfigureAwait(false);
       }
       await dispatcher.PublishAsync(new IntegrityGapDetected {

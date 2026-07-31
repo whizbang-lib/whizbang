@@ -93,7 +93,14 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange
     var startedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var (worker, coordinator, _, harness) = _createWorker();
-    worker.OnWorkProcessingStarted += () => { startedSignal.TrySetResult(); };
+    // Sample IsIdle INSIDE the handler: the worker flips Active BEFORE invoking the event, so the
+    // capture is deterministic — asserting after StopAsync raced the idle-threshold polls, which
+    // could legitimately flip the worker back to idle under load before the assertion sampled.
+    bool? idleWhenStartedFired = null;
+    worker.OnWorkProcessingStarted += () => {
+      idleWhenStartedFired = worker.IsIdle;
+      startedSignal.TrySetResult();
+    };
 
     // Return work on first call
     var streamId = Guid.NewGuid();
@@ -122,8 +129,8 @@ public class PerspectiveWorkerCoverageTests {
     // Assert
     await Assert.That(startedSignal.Task.IsCompleted).IsTrue()
       .Because("OnWorkProcessingStarted should fire when work appears");
-    await Assert.That(worker.IsIdle).IsFalse()
-      .Because("Worker should be active after processing work");
+    await Assert.That(idleWhenStartedFired).IsEqualTo(false)
+      .Because("the worker transitions to Active BEFORE firing OnWorkProcessingStarted — a fire without the state flip is the regression this locks");
   }
 
   [Test]

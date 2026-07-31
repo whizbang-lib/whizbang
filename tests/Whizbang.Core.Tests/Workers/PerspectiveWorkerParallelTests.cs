@@ -35,9 +35,10 @@ public sealed class PerspectiveWorkerParallelTests {
 
     var (worker, harness) = _createWorker(coordinator, registry, maxConcurrentPerspectives: perspectiveCount);
 
-    // Act — start worker, then push work to the channel
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    var workerTask = worker.StartAsync(cts.Token);
+    // Act — pre-enqueue ALL work BEFORE starting the worker so its first drain pulls all 5 into
+    // ONE batch (the sibling throttle test's lesson: enqueue-after-start races batch composition
+    // under load — a partial first batch blocks on the gate and the countdown never reaches 0).
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     foreach (var name in perspectiveNames) {
       await harness.EnqueueWorkAsync(new PerspectiveWork {
         WorkId = Guid.CreateVersion7(),
@@ -45,10 +46,11 @@ public sealed class PerspectiveWorkerParallelTests {
         PerspectiveName = name
       }, cts.Token);
     }
+    var workerTask = worker.StartAsync(cts.Token);
 
     // Wait for all 5 runners to enter RunAsync simultaneously.
     // If sequential, only 1 enters at a time → CountdownEvent never reaches 0 → timeout.
-    var allEnteredInTime = allEntered.Wait(TimeSpan.FromSeconds(5));
+    var allEnteredInTime = allEntered.Wait(TimeSpan.FromSeconds(10));
 
     // Release gate so runners can complete
     gate.Release(perspectiveCount);

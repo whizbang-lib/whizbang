@@ -59,13 +59,14 @@ public class IntegrityAuditWorkerTests {
       Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
     };
     var dispatcher = new _captureDispatcher();
-    var worker = _buildWorker(coordinator, dispatcher, new _captureTransport(), new StreamIntegrityOptions());
+    var worker = _buildWorker(coordinator, dispatcher, new _captureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly });
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
     var report = (PerspectiveCoverageGapDetected)dispatcher.Published.Single();
     await Assert.That(report.AutoRebuildRequested).IsFalse()
-      .Because("the ladder default is ReportOnly — an operator decides what to rebuild.");
+      .Because("the ReportOnly rung reports without rebuilding — the operator's explicit opt-down.");
     await Assert.That(dispatcher.Sent).IsEmpty();
   }
 
@@ -162,11 +163,50 @@ public class IntegrityAuditWorkerTests {
       options.GetTypeInfo(typeof(RequestIntegrityManifest)))!;
   }
 
+  // ── OTel: the self-healing loop must be observable ──────────────────────
+
+  [Test]
+  public async Task AuditCycle_EmitsGapRebuildAndManifestCountersAsync() {
+    // Filter on THIS test's meter INSTANCE (not the name) — parallel tests share the meter name.
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var meter = metrics.CoverageGapsDetected.Meter;
+    var measurements = new Dictionary<string, long>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, meter)) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
+      lock (measurements) {
+        measurements[instrument.Name] = measurements.GetValueOrDefault(instrument.Name) + value;
+      }
+    });
+    listener.Start();
+
+    var coordinator = new _auditCoordinator {
+      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
+    };
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow);
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker, metrics);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.coverage_gaps_detected")).IsEqualTo(1L)
+      .Because("self-healing by default only works when operators can SEE what the healer detects.");
+    await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.rebuilds_requested")).IsEqualTo(1L)
+      .Because("the default AutoRepairCapped rung dispatched a rebuild — the counter proves it.");
+    await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.manifests_requested")).IsEqualTo(1L);
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static IntegrityAuditWorker _buildWorker(
       _auditCoordinator coordinator, _captureDispatcher dispatcher, _captureTransport transport,
-      StreamIntegrityOptions options, IntegrityGapTracker? tracker = null) {
+      StreamIntegrityOptions options, IntegrityGapTracker? tracker = null,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
@@ -175,6 +215,8 @@ public class IntegrityAuditWorkerTests {
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("auditor-svc"));
     services.AddSingleton<IEventTypeProvider>(new _typeProvider());
+    services.AddSingleton(metrics
+      ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
