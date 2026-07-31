@@ -1166,6 +1166,83 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }
 
+  /// <summary>
+  /// Stream-integrity R1a selection (see <see cref="IWorkCoordinator.SelectRedeliveryEventsAsync"/>).
+  /// Joins the event body so reaped ephemeral events are excluded structurally, filters
+  /// at-most-once occurrences by their envelope-metadata delivery guarantee, and returns rows
+  /// ordered (stream, version) under a hard LIMIT.
+  /// </summary>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs</tests>
+  public async Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(
+    RedeliveryRequest request,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+
+    var sql = $"""
+      SELECT es.event_id, es.stream_id, es.version::bigint, es.commit_sequence,
+             es.event_type, eb.event_data::text, eb.metadata::text, es.scope::text,
+             COALESCE(es.flags, 0)
+      FROM {schema}.wh_event_store es
+      JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+      WHERE (@p_tenant IS NULL OR es.scope->>'t' = @p_tenant)
+        AND ((@p_types::text[]) IS NULL OR es.event_type = ANY(@p_types::text[]))
+        AND ((@p_streams::uuid[]) IS NULL OR es.stream_id = ANY(@p_streams::uuid[]))
+        AND (@p_from_seq::bigint IS NULL OR es.commit_sequence > @p_from_seq)
+        AND (@p_to_seq::bigint IS NULL OR es.commit_sequence <= @p_to_seq)
+        AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+      ORDER BY es.stream_id, es.version
+      LIMIT @p_max
+      """;
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant", NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = (object?)request.TenantScope ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = request.EventTypes is null ? DBNull.Value : request.EventTypes.ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = request.StreamIds is null ? DBNull.Value : request.StreamIds.ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from_seq", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = (object?)request.FromCommitSequence ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to_seq", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = (object?)request.ToCommitSequence ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_max", NpgsqlTypes.NpgsqlDbType.Integer) {
+      Value = request.MaxEvents
+    });
+
+    var results = new List<RedeliveryEvent>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new RedeliveryEvent {
+        EventId = reader.GetGuid(0),
+        StreamId = reader.GetGuid(1),
+        Version = reader.GetInt64(2),
+        CommitSequence = reader.IsDBNull(3) ? null : reader.GetInt64(3),
+        EventType = reader.GetString(4),
+        EventData = reader.GetString(5),
+        Metadata = reader.IsDBNull(6) ? null : reader.GetString(6),
+        Scope = reader.IsDBNull(7) ? null : reader.GetString(7),
+        Flags = reader.GetInt32(8)
+      });
+    }
+    return results;
+  }
+
   /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(
