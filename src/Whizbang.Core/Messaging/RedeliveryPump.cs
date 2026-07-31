@@ -18,6 +18,13 @@ public sealed class RedeliveryPumpOptions {
   /// receiver); this bounds the sender. Default 500.
   /// </summary>
   public int MaxInnerEventsPerComposite { get; set; } = 500;
+
+  /// <summary>
+  /// Hard per-request event cap the origin enforces on <see cref="RequestRedeliveryCommand"/> —
+  /// a requester's <see cref="RequestRedeliveryCommand.MaxEvents"/> is clamped to this, never
+  /// raised above it. Default 10,000 (matches <see cref="RedeliveryRequest.MaxEvents"/>).
+  /// </summary>
+  public int MaxEventsPerRequest { get; set; } = 10_000;
 }
 
 /// <summary>

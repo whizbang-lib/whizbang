@@ -111,6 +111,10 @@ public static class PostgresDriverExtensions {
         // "close the books" schedule occurrence drives IStreamCloser.CloseAsync. Same rationale as above.
         selector.Services.AddHostedService<ScheduledStreamCloseReceptorRegistrar>();
 
+        // TURNKEY: stream-integrity R1b — runtime-register RedeliveryRequestReceptor so a received
+        // RequestRedeliveryCommand drives the selection + targeted re-delivery pump. Same rationale as above.
+        selector.Services.AddHostedService<RedeliveryRequestReceptorRegistrar>();
+
         // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
         // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
         // initializer's registration order in the IHostedService chain doesn't matter — even

@@ -128,6 +128,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "4f8e2b7a-9d31-4c6e-8b5f-2a1d0c9e7f43",
+      "clrTypeName": "Whizbang.Core.Messaging.RequestRedeliveryCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
       "pinnedId": "d4e8c1a6-9b03-4f27-8a5e-1c7b2d9e6f04",
       "clrTypeName": "Whizbang.Core.Perspectives.Compacted",
       "kind": "event",
