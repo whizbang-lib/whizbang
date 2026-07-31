@@ -662,6 +662,29 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// Stream-integrity Phase A: computes the order-independent identity digests of this store's
+  /// events per (tenant, type, stream). <paramref name="originServiceId"/> null = OWN emissions
+  /// (locally-originated rows — what this service publishes as an origin); a value = events
+  /// RECEIVED from that origin (the consumer's half of a manifest comparison). Ephemeral events
+  /// (mode-excluded from the deep audit) and at-most-once occurrences are excluded, matching
+  /// Phase B's counts. The computation is bounded to events older than
+  /// <paramref name="settleWindow"/> so in-flight deliveries never read as divergence.
+  /// Default: empty (engines without the store cannot audit).
+  /// </summary>
+  /// <param name="originServiceId">Null = own emissions; a value = received from that origin.</param>
+  /// <param name="eventTypes">Optional type filter (the consumer restricts to subscribed types).</param>
+  /// <param name="settleWindow">Only events older than this are folded (default 1 hour).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Digest rows ordered by (tenant, type, stream).</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
+  Task<IReadOnlyList<StreamDigest>> ComputeStreamDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<StreamDigest>>([]);
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is

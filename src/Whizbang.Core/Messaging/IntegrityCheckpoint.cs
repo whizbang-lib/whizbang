@@ -131,6 +131,34 @@ public enum IntegrityRepairMode {
 }
 
 /// <summary>
+/// Stream-integrity Phase A: one digest bucket — the order-independent identity hash of a
+/// (tenant, type, stream)'s events. Two-lane 64-bit XOR of <c>hashtextextended(event_id, seed)</c>
+/// with seeds 0/1: 128-bit-equivalent collision resistance, self-inverse (deletions need no
+/// bookkeeping), arrival-order independent (origins fold in commit order, consumers in receive
+/// order — same digest). Computed on demand at audit time; never maintained incrementally.
+/// </summary>
+/// <docs>proposals/stream-integrity</docs>
+public sealed record StreamDigest {
+  /// <summary>Tenant scope (<c>t</c> key), or null for unscoped events.</summary>
+  public string? TenantScope { get; init; }
+
+  /// <summary>Stored event type name.</summary>
+  public required string EventType { get; init; }
+
+  /// <summary>The stream.</summary>
+  public required Guid StreamId { get; init; }
+
+  /// <summary>XOR lane 0 (seed 0).</summary>
+  public required long DigestLo { get; init; }
+
+  /// <summary>XOR lane 1 (seed 1).</summary>
+  public required long DigestHi { get; init; }
+
+  /// <summary>Events folded into the digest.</summary>
+  public required int EventCount { get; init; }
+}
+
+/// <summary>
 /// Stream-integrity Phase S: one row of the consumed-type registry — when an event type joined
 /// this service's consumed set, and where its backfill stands.
 /// </summary>

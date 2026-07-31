@@ -1477,6 +1477,65 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<StreamDigest>> ComputeStreamDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand();
+    // Two-lane 64-bit XOR of hashtextextended(event_id, seed) — order-independent, self-inverse
+    // (deleted rows simply stop contributing; no subtraction bookkeeping). Origin flavor
+    // (@p_origin NULL) folds LOCALLY-ORIGINATED rows — what this service publishes; consumer
+    // flavor folds rows RECEIVED from that origin. Ephemeral (mode-excluded) and at-most-once
+    // occurrences are excluded, matching Phase B. The settle window keeps in-flight deliveries
+    // out of both sides' digests.
+    cmd.CommandText = $"""
+      SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
+             bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
+             bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+             COUNT(*)::int
+      FROM {schema}.wh_event_store es
+      LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+      WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
+             OR es.origin_service_id = @p_origin)
+        AND ((@p_types::text[]) IS NULL OR es.event_type = ANY(@p_types::text[]))
+        AND COALESCE(es.flags, 0) & 8 = 0
+        AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+        AND es.created_at < NOW() - @p_settle::interval
+      GROUP BY 1, 2, 3
+      ORDER BY 1, 2, 3
+      """;
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = (object?)originServiceId ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
+
+    var results = new List<StreamDigest>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      var tenant = reader.GetString(0);
+      results.Add(new StreamDigest {
+        TenantScope = tenant.Length == 0 ? null : tenant,
+        EventType = reader.GetString(1),
+        StreamId = reader.GetGuid(2),
+        DigestLo = reader.GetInt64(3),
+        DigestHi = reader.GetInt64(4),
+        EventCount = reader.GetInt32(5)
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
