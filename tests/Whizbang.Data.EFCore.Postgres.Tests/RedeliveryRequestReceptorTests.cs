@@ -53,7 +53,8 @@ public class RedeliveryRequestReceptorTests {
       ToCommitSequence = 99,
       MaxEvents = 5,
       RequesterService = "damaged-svc",
-      Topic = "events-topic"
+      Topic = "events-topic",
+      StateOnly = true
     });
 
     var request = coordinator.LastRequest!;
@@ -78,6 +79,8 @@ public class RedeliveryRequestReceptorTests {
                "the origin identity Phase B accounting keys on.");
     await Assert.That(composite.InnerCommitSequences!).IsEquivalentTo([(long?)1, 2])
       .Because("each child's ORIGINAL commit sequence rides the bundle.");
+    await Assert.That(transport.Published[0].Envelope.StateOnly).IsTrue()
+      .Because("the requester's StateOnly intent (backfill vs repair) rides through to the bundles.");
   }
 
   [Test]
@@ -265,7 +268,8 @@ public class RedeliveryRequestReceptorTests {
           Payload = default,
           Hops = [.. envelope.Hops],
           DispatchContext = envelope.DispatchContext,
-          Target = envelope.Target
+          Target = envelope.Target,
+          StateOnly = envelope.StateOnly
         },
         $"Whizbang.Core.Observability.MessageEnvelope`1[[{payloadType.AssemblyQualifiedName}]], Whizbang.Core",
         payloadType.AssemblyQualifiedName!);

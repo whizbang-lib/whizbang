@@ -66,7 +66,7 @@ public sealed partial class RedeliveryRequestReceptor(
       transport, eventStore, eventTypeProvider, envelopeSerializer,
       services.GetService<IServiceInstanceProvider>(), options);
     var composites = await pump
-      .PublishAsync(selected, message.Topic, message.RequesterService, originServiceId, cancellationToken)
+      .PublishAsync(selected, message.Topic, message.RequesterService, originServiceId, message.StateOnly, cancellationToken)
       .ConfigureAwait(false);
     LogRedeliveryPublished(logger, selected.Count, composites, message.RequesterService, message.Topic);
   }

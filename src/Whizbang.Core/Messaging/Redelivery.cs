@@ -116,4 +116,11 @@ public sealed record RequestRedeliveryCommand : ICommand {
 
   /// <summary>Wire topic the bundles publish to (the same topic the original events published to).</summary>
   public required string Topic { get; init; }
+
+  /// <summary>
+  /// Phase S: true = the bundles deliver STATE-ONLY (event-stored and projected, trigger receptors
+  /// skipped) — the backfill semantics. False (default) = repair semantics: the delivery a live
+  /// subscriber missed, receptors and all.
+  /// </summary>
+  public bool StateOnly { get; init; }
 }

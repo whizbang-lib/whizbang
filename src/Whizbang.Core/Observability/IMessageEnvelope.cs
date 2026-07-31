@@ -192,6 +192,16 @@ public interface IMessageEnvelope {
   /// <docs>fundamentals/messaging/directed-messages</docs>
   string? Target => null;
 
+  /// <summary>
+  /// Stream-integrity Phase S: state-only delivery — the payload builds STATE (event store +
+  /// perspectives) but never fires trigger receptors at the consumer. Stamped on backfill bundles
+  /// (history a subscription expansion needs must not re-run business reactions) and inherited by
+  /// their fanned-out children. Default false = normal delivery semantics.
+  /// </summary>
+  /// <docs>proposals/stream-integrity</docs>
+  [JsonPropertyName("sto")]
+  bool StateOnly => false;
+
 }
 
 /// <summary>

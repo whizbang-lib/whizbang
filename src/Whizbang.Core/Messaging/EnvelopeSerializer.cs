@@ -74,7 +74,10 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
       DispatchContext = envelope.DispatchContext,
       // A directed envelope stays directed through the conversion — dropping Target here would
       // broadcast a point-to-point message (stream-integrity R0).
-      Target = envelope.Target
+      Target = envelope.Target,
+      // State-only delivery survives the conversion too — losing it would re-fire triggers on
+      // backfilled history (stream-integrity Phase S).
+      StateOnly = envelope.StateOnly
     };
 
     return new SerializedEnvelope(

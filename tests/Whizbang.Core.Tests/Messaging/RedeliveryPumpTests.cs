@@ -74,7 +74,7 @@ public class RedeliveryPumpTests {
 
     var published = await pump.PublishAsync(
       [.. ids.Select((id, i) => _evt(stream, id, i + 1))],
-      topic: "repair-topic", target: null);
+      topic: "repair-topic", target: null, stateOnly: true);
 
     await Assert.That(published).IsEqualTo(3)
       .Because("five events at a chunk bound of two → composites of 2 + 2 + 1.");
@@ -86,6 +86,8 @@ public class RedeliveryPumpTests {
     await Assert.That(chunkIds[2]).IsEquivalentTo([ids[4]]);
     await Assert.That(transport.Published.All(p => p.Envelope.Target is null)).IsTrue()
       .Because("a null target is an operator broadcast repair — everyone considers it.");
+    await Assert.That(transport.Published.All(p => p.Envelope.StateOnly)).IsTrue()
+      .Because("a state-only bundle carries the marker on every chunk's envelope (Phase S backfill).");
   }
 
   // ── helpers / fakes ─────────────────────────────────────────────────────
@@ -145,7 +147,8 @@ public class RedeliveryPumpTests {
           Payload = default,
           Hops = [.. envelope.Hops],
           DispatchContext = envelope.DispatchContext,
-          Target = envelope.Target
+          Target = envelope.Target,
+          StateOnly = envelope.StateOnly
         },
         $"Whizbang.Core.Observability.MessageEnvelope`1[[{payloadType.AssemblyQualifiedName}]], Whizbang.Core",
         payloadType.AssemblyQualifiedName!);
