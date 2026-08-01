@@ -294,6 +294,14 @@ public sealed class StreamIntegrityOptions {
   public int MaxAutoRebuildsPerAudit { get; set; } = 5;
 
   /// <summary>
+  /// Phase L: hard cap on coverage-gap REPORTS per audit cycle (default 100) — and the bound on
+  /// the gap query itself. A systematically-uncovered perspective can surface thousands of gaps
+  /// in one cycle; an unbounded report loop flooded a live consumer's dispatcher at startup and
+  /// crashlooped the pod. The remainder re-audits next cycle as repairs shrink it.
+  /// </summary>
+  public int MaxCoverageGapReportsPerAudit { get; set; } = 100;
+
+  /// <summary>
   /// A1c: every Nth audit cycle is a FULL SWEEP (default 7 — weekly at the daily default): the
   /// worker verifies + heals its own digest table against a full recompute
   /// (<see cref="IWorkCoordinator.VerifyDigestTableAsync"/>) and the manifest exchange runs on

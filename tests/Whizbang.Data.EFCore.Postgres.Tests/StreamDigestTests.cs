@@ -112,7 +112,7 @@ public class StreamDigestTests : EFCoreTestBase {
       await cursor.ExecuteNonQueryAsync();
     }
 
-    var gaps = await coordinator.GetPerspectiveCoverageGapsAsync(TimeSpan.FromMinutes(60));
+    var gaps = await coordinator.GetPerspectiveCoverageGapsAsync(TimeSpan.FromMinutes(60), 100);
 
     var gap = gaps.Single(g => g.PerspectiveName == "CoverageProbePerspective");
     await Assert.That(gap.StreamId).IsEqualTo(uncovered)
