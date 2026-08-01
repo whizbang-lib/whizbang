@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Checkout (for action)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
 
       - name: Build notification content
         id: content
