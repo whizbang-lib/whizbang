@@ -36,7 +36,7 @@ public record RebuildPerspectiveCommand(
     Guid[]? IncludeStreamIds = null,
     Guid[]? ExcludeStreamIds = null,
     long? FromEventId = null
-) : ICommand;
+) : ICommand, Messaging.IControlPlaneMessage;
 
 /// <summary>
 /// Command to cancel an in-progress perspective rebuild.

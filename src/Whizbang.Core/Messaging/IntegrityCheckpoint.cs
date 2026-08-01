@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
 [PinnedId("7d2a9c4e-5b83-4f1a-9e67-0c8d3b2a1f54")]
 [Ephemeral]
-public sealed record IntegrityCheckpoint : IEvent {
+public sealed record IntegrityCheckpoint : IEvent, IControlPlaneMessage {
   /// <summary>The checkpoint stream — the origin's service id (one stream per origin).</summary>
   [StreamId]
   public required Guid CheckpointStreamId { get; init; }
@@ -85,7 +85,7 @@ public sealed record IntegrityCheckpointWindow {
 /// <docs>proposals/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointReceptorTests.cs</tests>
 [PinnedId("a1e6d8c2-3f7b-4a95-8d21-6e4c9b0f7a38")]
-public sealed record IntegrityGapDetected : IEvent {
+public sealed record IntegrityGapDetected : IEvent, IControlPlaneMessage {
   /// <summary>Report stream (one stream per report — reports are standalone ops facts).</summary>
   [StreamId]
   public required Guid ReportStreamId { get; init; }
