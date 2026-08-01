@@ -1517,6 +1517,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
     TimeSpan settleWindow,
+    int maxGaps,
     CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync<IReadOnlyList<PerspectiveCoverageGap>>(async (cmd, schema) => {
       // A gap = settled non-ephemeral events + a registered perspective association + NO cursor for
@@ -1536,8 +1537,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
             WHERE pe.event_id = es.event_id AND pe.processed_at IS NULL)
         GROUP BY 1, 2
         ORDER BY 1, 2
+        LIMIT @p_max
         """;
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_max", Math.Max(1, maxGaps)));
 
       var results = new List<PerspectiveCoverageGap>();
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);

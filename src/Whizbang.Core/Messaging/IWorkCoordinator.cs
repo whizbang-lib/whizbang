@@ -691,12 +691,16 @@ public interface IWorkCoordinator {
   /// the perspective was born after the history). Repair is a LOCAL rebuild. Default: empty.
   /// </summary>
   /// <param name="settleWindow">Only events older than this count (in-flight work is not a gap).</param>
+  /// <param name="maxGaps">Hard bound on returned gaps — the report cap belongs in the query
+  /// (fetching thousands of rows to report a hundred is the same flood one layer down).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>Distinct (stream, perspective) gaps with their settled event counts.</returns>
+  /// <returns>Distinct (stream, perspective) gaps with their settled event counts, at most
+  /// <paramref name="maxGaps"/> rows.</returns>
   /// <docs>proposals/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
   Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
     TimeSpan settleWindow,
+    int maxGaps,
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([]);
 
   /// <summary>

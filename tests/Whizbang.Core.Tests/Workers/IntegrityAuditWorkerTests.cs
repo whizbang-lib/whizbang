@@ -201,6 +201,45 @@ public class IntegrityAuditWorkerTests {
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.manifests_requested")).IsEqualTo(1L);
   }
 
+  // ── coverage-gap report cap ─────────────────────────────────────────────
+
+  [Test]
+  public async Task MassCoverageGaps_ReportsAreCapped_WithOneSummaryAsync() {
+    // A systematically-uncovered perspective can surface THOUSANDS of gaps in one cycle. Reports
+    // must be bounded — an unbounded report loop flooded a live consumer's dispatcher at startup
+    // and crashlooped the pod (probe timeout). Detection is still complete: the summary names the
+    // total; the remainder re-audits next cycle after repairs shrink it.
+    var coordinator = new _auditCoordinator {
+      Gaps = [.. Enumerable.Range(0, 500).Select(i => new PerspectiveCoverageGap {
+        StreamId = TrackedGuid.NewMedo().Value,
+        PerspectiveName = "FloodedPerspective",
+        EventCount = 2,
+      })]
+    };
+    var dispatcher = new _captureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, new _captureTransport(),
+      new StreamIntegrityOptions { MaxCoverageGapReportsPerAudit = 100 });
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(dispatcher.Published.OfType<PerspectiveCoverageGapDetected>().Count()).IsEqualTo(100)
+      .Because("the report loop is hard-capped — a mass gap must never flood the dispatcher/outbox.");
+    await Assert.That(dispatcher.Sent.Count).IsEqualTo(5)
+      .Because("rebuilds keep their own cap (MaxAutoRebuildsPerAudit default 5) within the capped set.");
+  }
+
+  [Test]
+  public async Task CoverageGapQuery_IsBoundedByTheReportCapAsync() {
+    var coordinator = new _auditCoordinator();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { MaxCoverageGapReportsPerAudit = 42 });
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.LastMaxGaps).IsEqualTo(42)
+      .Because("the bound belongs in the QUERY too — fetching thousands of rows to report 100 is the same flood one layer down.");
+  }
+
   // ── startup audit timing ────────────────────────────────────────────────
 
   [Test]
@@ -273,10 +312,13 @@ public class IntegrityAuditWorkerTests {
   private sealed class _auditCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<PerspectiveCoverageGap> Gaps { get; init; } = [];
     public int VerifyCalls { get; private set; }
+    public int? LastMaxGaps { get; private set; }
 
     public Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
-      TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
-      Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>(Gaps);
+      TimeSpan settleWindow, int maxGaps, CancellationToken cancellationToken = default) {
+      LastMaxGaps = maxGaps;
+      return Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([.. Gaps.Take(maxGaps)]);
+    }
 
     public Task<DigestVerificationResult> VerifyDigestTableAsync(
       TimeSpan settleWindow, CancellationToken cancellationToken = default) {

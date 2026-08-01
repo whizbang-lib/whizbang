@@ -125,7 +125,15 @@ public sealed partial class IntegrityAuditWorker(
     }
 
     // ── L: local perspective coverage ────────────────────────────────────
-    var gaps = await coordinator.GetPerspectiveCoverageGapsAsync(settle, cancellationToken).ConfigureAwait(false);
+    // Both the query and the report loop are bounded by MaxCoverageGapReportsPerAudit — a
+    // systematically-uncovered perspective can surface thousands of gaps in one cycle, and an
+    // unbounded report loop flooded a live consumer's dispatcher at startup (crashloop). The
+    // remainder re-audits next cycle as repairs shrink it.
+    var maxGapReports = Math.Max(1, _options.MaxCoverageGapReportsPerAudit);
+    var gaps = await coordinator.GetPerspectiveCoverageGapsAsync(settle, maxGapReports, cancellationToken).ConfigureAwait(false);
+    if (gaps.Count >= maxGapReports) {
+      LogCoverageGapsCapped(_logger, maxGapReports);
+    }
     var rebuildBudget = _options.MaxAutoRebuildsPerAudit;
     foreach (var gap in gaps) {
       var autoRebuild = _options.RepairMode == IntegrityRepairMode.AutoRepairCapped && rebuildBudget > 0;
@@ -224,4 +232,8 @@ public sealed partial class IntegrityAuditWorker(
   [LoggerMessage(EventId = 86, Level = LogLevel.Information,
     Message = "Digest table verified clean on sweep ({BucketsChecked} settled bucket(s))")]
   static partial void LogDigestVerified(ILogger logger, int bucketsChecked);
+
+  [LoggerMessage(EventId = 87, Level = LogLevel.Warning,
+    Message = "Coverage-gap reports reached the per-cycle cap ({MaxGapReports}) — more gaps likely remain; they re-audit next cycle as repairs shrink the set")]
+  static partial void LogCoverageGapsCapped(ILogger logger, int maxGapReports);
 }
