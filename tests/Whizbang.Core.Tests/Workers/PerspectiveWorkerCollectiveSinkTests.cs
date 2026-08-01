@@ -41,7 +41,9 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
     var workerTask = worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await coordinator.WaitForCyclesAsync(2, TimeSpan.FromSeconds(10));
+    // Deterministic wait on the dispatch itself — the channel consumer processes the claimed work
+    // asynchronously, so a claim-cycle count can tick over (and cancel the worker) before it runs.
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -75,7 +77,11 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
     var workerTask = worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await coordinator.WaitForCyclesAsync(2, TimeSpan.FromSeconds(10));
+    // Deterministic wait: _batchReportingDispatcher signals FirstDispatch only AFTER all 3
+    // onBatchApplied reports, and each report enqueues its renewal synchronously before returning —
+    // so every renewal is captured by the time this completes. A claim-cycle count instead races
+    // the channel consumer: cycle 2 can tick over (cancelling the worker) before the dispatch runs.
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
