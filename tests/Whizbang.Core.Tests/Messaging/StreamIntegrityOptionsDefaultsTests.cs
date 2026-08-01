@@ -25,6 +25,10 @@ public class StreamIntegrityOptionsDefaultsTests {
     await Assert.That(options.GapDetectionEnabled).IsTrue();
     await Assert.That(options.AuditEnabled).IsTrue();
     await Assert.That(options.BackfillOnSubscriptionGrowth).IsTrue();
+    await Assert.That(options.AuditOnStartup).IsTrue()
+      .Because("historical divergence must heal shortly after deploy, not a full interval later — A1c made startup audits cheap (O(types) wire).");
+    await Assert.That(options.StartupAuditMaxJitterSeconds).IsEqualTo(300)
+      .Because("the jitter splay de-synchronizes a fleet deploy so startup audits never storm.");
   }
 
   [Test]

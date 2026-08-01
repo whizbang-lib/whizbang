@@ -53,11 +53,19 @@ public sealed partial class IntegrityAuditWorker(
       return;
     }
 
+    var firstCycle = true;
     while (!stoppingToken.IsCancellationRequested) {
-      // Interval FIRST: an audit storm at every deploy would drown the signal — the first audit
-      // runs one interval after boot, and Phase B covers the fresh window meanwhile.
+      // Startup-first by default: the first audit fires after a jittered startup window so
+      // historical divergence heals minutes after a deploy — the jitter de-synchronizes a fleet
+      // rollout and A1c's type-level exchange keeps each audit at O(types) wire cost. Opting out
+      // (AuditOnStartup=false) restores interval-first scheduling; Phase B covers the fresh
+      // window either way.
+      var delay = firstCycle
+        ? ComputeFirstAuditDelay(_options, Random.Shared.NextDouble)
+        : TimeSpan.FromMinutes(_options.AuditIntervalMinutes);
+      firstCycle = false;
       try {
-        await Task.Delay(TimeSpan.FromMinutes(_options.AuditIntervalMinutes), stoppingToken);
+        await Task.Delay(delay, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }
@@ -70,6 +78,18 @@ public sealed partial class IntegrityAuditWorker(
       }
     }
   }
+
+  /// <summary>
+  /// The first cycle's delay: a jittered startup window (30s floor + up to
+  /// <see cref="StreamIntegrityOptions.StartupAuditMaxJitterSeconds"/> splay) when
+  /// <see cref="StreamIntegrityOptions.AuditOnStartup"/> is on; the full interval otherwise.
+  /// </summary>
+  /// <param name="options">Integrity options.</param>
+  /// <param name="jitter">Uniform [0,1) source (injectable for deterministic tests).</param>
+  internal static TimeSpan ComputeFirstAuditDelay(StreamIntegrityOptions options, Func<double> jitter) =>
+    options.AuditOnStartup
+      ? TimeSpan.FromSeconds(30 + (Math.Max(0, options.StartupAuditMaxJitterSeconds) * jitter()))
+      : TimeSpan.FromMinutes(options.AuditIntervalMinutes);
 
   /// <summary>One audit cycle: the local coverage half, then the cross-service manifest requests.</summary>
   public async Task RunAuditOnceAsync(CancellationToken cancellationToken) {

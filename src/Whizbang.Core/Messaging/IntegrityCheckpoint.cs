@@ -266,6 +266,20 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Phase A/L: audit cadence in minutes (default 1440 — daily).</summary>
   public int AuditIntervalMinutes { get; set; } = 1440;
 
+  /// <summary>
+  /// Run the FIRST deep audit shortly after startup (default true) instead of waiting a full
+  /// interval — historical divergence (a consumer that drifted before this boot) heals minutes
+  /// after a deploy, not a day later. The startup audit fires after a 30-second floor plus a
+  /// random splay of up to <see cref="StartupAuditMaxJitterSeconds"/>, so a fleet deploy's
+  /// audits de-synchronize instead of storming; A1c's type-level exchange keeps each one at
+  /// O(types) wire cost. False restores interval-first scheduling.
+  /// </summary>
+  public bool AuditOnStartup { get; set; } = true;
+
+  /// <summary>Max random splay (seconds, default 300) added to the startup audit's 30-second
+  /// floor — the deploy de-synchronizer.</summary>
+  public int StartupAuditMaxJitterSeconds { get; set; } = 300;
+
   /// <summary>Phase A: both sides fold only events older than this (minutes, default 60) — an
   /// in-flight delivery must never read as divergence.</summary>
   public int AuditSettleWindowMinutes { get; set; } = 60;
