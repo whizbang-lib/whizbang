@@ -201,6 +201,31 @@ public class IntegrityAuditWorkerTests {
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.manifests_requested")).IsEqualTo(1L);
   }
 
+  // ── startup audit timing ────────────────────────────────────────────────
+
+  [Test]
+  public async Task FirstAuditDelay_OnStartupDefault_IsJitteredStartupWindowAsync() {
+    var options = new StreamIntegrityOptions();   // AuditOnStartup default true
+
+    var atFloor = IntegrityAuditWorker.ComputeFirstAuditDelay(options, () => 0.0);
+    var atCeiling = IntegrityAuditWorker.ComputeFirstAuditDelay(options, () => 1.0);
+
+    await Assert.That(atFloor).IsEqualTo(TimeSpan.FromSeconds(30))
+      .Because("the floor gives the schema gate + baseline registration a moment to settle before auditing.");
+    await Assert.That(atCeiling).IsEqualTo(TimeSpan.FromSeconds(30 + 300))
+      .Because("jitter spreads a fleet deploy's startup audits across the splay window — no audit storm.");
+  }
+
+  [Test]
+  public async Task FirstAuditDelay_StartupDisabled_IsFullIntervalAsync() {
+    var options = new StreamIntegrityOptions { AuditOnStartup = false };
+
+    var delay = IntegrityAuditWorker.ComputeFirstAuditDelay(options, () => 0.5);
+
+    await Assert.That(delay).IsEqualTo(TimeSpan.FromMinutes(options.AuditIntervalMinutes))
+      .Because("opting out restores the original interval-first behavior.");
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static IntegrityAuditWorker _buildWorker(
