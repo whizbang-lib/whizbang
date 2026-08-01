@@ -92,7 +92,7 @@ public sealed record RedeliveryEvent {
 /// <docs>proposals/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
 [PinnedId("4f8e2b7a-9d31-4c6e-8b5f-2a1d0c9e7f43")]
-public sealed record RequestRedeliveryCommand : ICommand {
+public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage {
   /// <summary>Optional tenant filter (scope <c>t</c> key), as in <see cref="RedeliveryRequest.TenantScope"/>.</summary>
   public string? TenantScope { get; init; }
 

@@ -142,6 +142,16 @@ public sealed class DefaultMessageSecurityContextProvider(
     // JsonElement is an intermediate representation (outbox) - don't require security
     // The real message type will be checked after deserialization
     if (!_options.AllowAnonymous && !isJsonElement) {
+      // Framework CONTROL-PLANE signals (integrity checkpoints, audit manifests, re-delivery
+      // requests, repair commands) publish from background workers with no ambient user BY
+      // DESIGN — they are infrastructure traffic authenticated at the transport/cluster
+      // boundary, not user actions. Refusing them under a strict policy storms the logs on
+      // every checkpoint cycle and, worse, silences the consumer-side integrity receptors
+      // entirely (this same gate guards receptor invocation).
+      if (typeof(Messaging.IControlPlaneMessage).IsAssignableFrom(payloadType)) {
+        return null;
+      }
+
       // Check if envelope already carries scope from an upstream security check.
       // After outbox/transport serialization, the typed message may have no extractor,
       // but the envelope's hops contain the ScopeDelta from the original authentication.

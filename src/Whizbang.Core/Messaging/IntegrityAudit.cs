@@ -31,7 +31,7 @@ public enum ManifestLevel {
 /// <docs>proposals/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
 [PinnedId("c9f4b1e7-2a6d-4c38-9b05-7e1f8d3a6c92")]
-public sealed record RequestIntegrityManifest : ICommand {
+public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// <summary>The auditing consumer's logical name — becomes the manifests' Target.</summary>
   public required string RequesterService { get; init; }
 
@@ -60,7 +60,7 @@ public sealed record RequestIntegrityManifest : ICommand {
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
 [PinnedId("e2b7d9f4-6c15-4a83-b270-9d4e1c8f5a36")]
 [Ephemeral]
-public sealed record IntegrityManifest : IEvent {
+public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// <summary>The manifest stream — the origin's service id.</summary>
   [StreamId]
   public required Guid ManifestStreamId { get; init; }
@@ -91,7 +91,7 @@ public sealed record IntegrityManifest : IEvent {
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
 [PinnedId("f8a3c6e1-9d47-4b28-a5c1-3e7b0d9f2a64")]
-public sealed record IntegrityDivergenceDetected : IEvent {
+public sealed record IntegrityDivergenceDetected : IEvent, IControlPlaneMessage {
   /// <summary>Report stream (one per report).</summary>
   [StreamId]
   public required Guid ReportStreamId { get; init; }
@@ -129,7 +129,7 @@ public sealed record IntegrityDivergenceDetected : IEvent {
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
 [PinnedId("b5e8d2a7-4f91-4c36-8a05-6d3c9e1b7f48")]
-public sealed record PerspectiveCoverageGapDetected : IEvent {
+public sealed record PerspectiveCoverageGapDetected : IEvent, IControlPlaneMessage {
   /// <summary>Report stream (one per report).</summary>
   [StreamId]
   public required Guid ReportStreamId { get; init; }
