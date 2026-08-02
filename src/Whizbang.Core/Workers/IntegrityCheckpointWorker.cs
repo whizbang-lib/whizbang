@@ -2,8 +2,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
+using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Workers;
 
@@ -78,14 +82,28 @@ public sealed partial class IntegrityCheckpointWorker(
     var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
     var originServiceName = scope.ServiceProvider.GetService<IServiceInstanceProvider>()?.ServiceName ?? string.Empty;
 
-    await dispatcher.PublishAsync(new IntegrityCheckpoint {
+    var checkpoint = new IntegrityCheckpoint {
       CheckpointStreamId = originServiceId,
       OriginServiceId = originServiceId,
       OriginServiceName = originServiceName,
       FromCommitSequence = window.FromCommitSequence,
       ToCommitSequence = window.ToCommitSequence,
       Buckets = [.. window.Buckets],
-    }).ConfigureAwait(false);
+    };
+
+    // ROUTING: the checkpoint rides the ORIGIN'S OWN event topics — the topics its consumers
+    // already subscribe to. Namespace-routing it (the dispatcher default) sends it to a
+    // control-plane topic that, in a domain-ownership topology, no consumer subscribes to — the
+    // broker silently drops every copy, origin tracking never populates, and the deep audit is
+    // permanently inert. One publish per DISTINCT topic across the window's types UNION the
+    // historically-emitted (own-lane digest) types, so quiet periods still heartbeat every
+    // covered topic. Falls back to the dispatcher when the transport infrastructure (or any
+    // resolvable topic) is absent — in-memory hosts keep the original behavior.
+    var topicsPublished = await _tryPublishToOwnEventTopicsAsync(
+      scope.ServiceProvider, coordinator, checkpoint, window, cancellationToken).ConfigureAwait(false);
+    if (topicsPublished == 0) {
+      await dispatcher.PublishAsync(checkpoint).ConfigureAwait(false);
+    }
     LogPublished(_logger, window.FromCommitSequence, window.ToCommitSequence, window.Buckets.Count);
     scope.ServiceProvider.GetService<Observability.StreamIntegrityMetrics>()?.CheckpointsPublished.Add(1);
 
@@ -98,6 +116,70 @@ public sealed partial class IntegrityCheckpointWorker(
         LogStaleOrigin(_logger, staleOriginName, staleOriginId, lastSeen);
       }
     }
+  }
+
+  /// <summary>
+  /// Publishes the checkpoint envelope once per DISTINCT topic of this origin's audited event
+  /// types. Returns the number of topics published to; 0 means the caller should use the
+  /// dispatcher fallback (missing transport infrastructure, or no type resolved to a topic).
+  /// </summary>
+  private async Task<int> _tryPublishToOwnEventTopicsAsync(
+      IServiceProvider services, IWorkCoordinator coordinator, IntegrityCheckpoint checkpoint,
+      IntegrityCheckpointWindow window, CancellationToken cancellationToken) {
+    var transport = services.GetService<ITransport>();
+    var serializer = services.GetService<IEnvelopeSerializer>();
+    var routing = services.GetService<IOutboxRoutingStrategy>();
+    var catalog = services.GetService<IMessageTypeCatalog>();
+    if (transport is null || serializer is null || routing is null || catalog is null) {
+      return 0;
+    }
+
+    var typeNames = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var bucket in window.Buckets) {
+      typeNames.Add(bucket.EventType);
+    }
+    foreach (var emitted in await coordinator.GetOwnAuditedEventTypesAsync(cancellationToken).ConfigureAwait(false)) {
+      typeNames.Add(emitted);
+    }
+    if (typeNames.Count == 0) {
+      return 0;
+    }
+
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup(
+      [.. catalog.GetAll().Where(e => e.Kind == "event").Select(e => e.Type)]);
+    var ownedDomains = services.GetService<IOptions<RoutingOptions>>()?.Value
+      .OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+    var destinations = new Dictionary<string, TransportDestination>(StringComparer.Ordinal);
+    foreach (var typeName in typeNames) {
+      if (EventTypeMatchingHelper.TryResolveType(lookup, typeName, out var eventType)) {
+        var destination = routing.GetDestination(eventType, ownedDomains, MessageKind.Event);
+        destinations.TryAdd(destination.Address, destination);
+      }
+    }
+    if (destinations.Count == 0) {
+      return 0;
+    }
+
+    var instanceProvider = services.GetService<IServiceInstanceProvider>();
+    var envelope = new MessageEnvelope<IntegrityCheckpoint> {
+      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      Payload = checkpoint,
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
+        }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+    };
+    var serialized = serializer.SerializeEnvelope(envelope);
+    foreach (var destination in destinations.Values) {
+      await transport.PublishAsync(serialized.JsonEnvelope, destination, serialized.EnvelopeType,
+        cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+    LogPublishedToTopics(_logger, destinations.Count, typeNames.Count);
+    return destinations.Count;
   }
 
   [LoggerMessage(EventId = 60, Level = LogLevel.Information,
@@ -115,6 +197,10 @@ public sealed partial class IntegrityCheckpointWorker(
   [LoggerMessage(EventId = 63, Level = LogLevel.Error,
     Message = "Integrity checkpoint cycle failed; will retry next interval")]
   static partial void LogError(ILogger logger, Exception exception);
+
+  [LoggerMessage(EventId = 65, Level = LogLevel.Debug,
+    Message = "Integrity checkpoint published to {TopicCount} own event topic(s) covering {TypeCount} audited type(s)")]
+  static partial void LogPublishedToTopics(ILogger logger, int topicCount, int typeCount);
 
   [LoggerMessage(EventId = 64, Level = LogLevel.Warning,
     Message = "Origin '{OriginServiceName}' ({OriginServiceId}) has not checkpointed since {LastSeen:o} — " +

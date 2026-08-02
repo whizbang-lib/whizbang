@@ -1554,6 +1554,26 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return results;
     }, cancellationToken);
 
+  /// <inheritdoc />
+  public Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<IReadOnlyList<string>>(async (cmd, schema) => {
+      // The zero-guid lane holds this service's OWN emissions — its distinct types are the topics
+      // the checkpoint heartbeat must cover even when the current window is quiet.
+      cmd.CommandText = $"""
+        SELECT DISTINCT event_type
+        FROM {schema}.wh_stream_digests
+        WHERE origin_service_id = '{ZERO_ORIGIN_UUID}'::uuid
+        ORDER BY 1
+        """;
+
+      var results = new List<string>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        results.Add(reader.GetString(0));
+      }
+      return results;
+    }, cancellationToken);
+
   private const string ZERO_ORIGIN_UUID = "00000000-0000-0000-0000-000000000000";
 
   /// <inheritdoc />

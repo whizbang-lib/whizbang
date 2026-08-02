@@ -120,6 +120,38 @@ public class StreamDigestTests : EFCoreTestBase {
     await Assert.That(gap.EventCount).IsEqualTo(2);
   }
 
+  [Test]
+  public async Task OwnAuditedEventTypes_AreTheZeroGuidLane_DistinctAsync() {
+    // The checkpoint heartbeat fans out to the topics of this origin's own emitted types — the
+    // received-from-elsewhere lane must NOT contribute (those are another origin's topics), and
+    // duplicates collapse (one topic per type regardless of stream count).
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = @"
+        INSERT INTO wh_stream_digests (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count)
+        VALUES
+          ('00000000-0000-0000-0000-000000000000', 'tenant-a', 'Contracts.Own.TypeA', @s1, 1, 1, 1),
+          ('00000000-0000-0000-0000-000000000000', 'tenant-b', 'Contracts.Own.TypeA', @s2, 2, 2, 1),
+          ('00000000-0000-0000-0000-000000000000', '',         'Contracts.Own.TypeB', @s3, 3, 3, 1),
+          (@origin,                                 'tenant-a', 'Contracts.Foreign.TypeC', @s4, 4, 4, 1)";
+      seed.Parameters.AddWithValue("s1", TrackedGuid.NewMedo().Value);
+      seed.Parameters.AddWithValue("s2", TrackedGuid.NewMedo().Value);
+      seed.Parameters.AddWithValue("s3", TrackedGuid.NewMedo().Value);
+      seed.Parameters.AddWithValue("s4", TrackedGuid.NewMedo().Value);
+      seed.Parameters.AddWithValue("origin", TrackedGuid.NewMedo().Value);
+      await seed.ExecuteNonQueryAsync();
+    }
+
+    var types = await coordinator.GetOwnAuditedEventTypesAsync();
+
+    await Assert.That(types).IsEquivalentTo(["Contracts.Own.TypeA", "Contracts.Own.TypeB"])
+      .Because("only the zero-guid (own emissions) lane feeds the heartbeat fan-out, deduplicated " +
+               "across tenants and streams — received-lane types belong to ANOTHER origin's topics.");
+  }
+
   // ── seeding ──────────────────────────────────────────────────────────────
 
   private static async Task _seedAsync(

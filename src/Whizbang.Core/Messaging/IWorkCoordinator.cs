@@ -704,6 +704,20 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([]);
 
   /// <summary>
+  /// Stream-integrity Phase B: the DISTINCT event types this service has ever emitted into its own
+  /// audited lane (the own-emissions digest rows). The checkpoint publisher fans its heartbeat out
+  /// to these types' topics — the topics this origin's consumers already subscribe to — so a quiet
+  /// period (no new emissions in the window) still heartbeats every historically-covered topic.
+  /// Default: empty (engines without the digest table publish through the dispatcher fallback).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Distinct stored event-type names from the own-emissions digest lane.</returns>
+  /// <docs>proposals/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
+  Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<string>>([]);
+
+  /// <summary>
   /// Stream-integrity A1c: reads the incrementally-maintained per-(tenant, type, stream) digests
   /// from <c>wh_stream_digests</c> — O(buckets) instead of a store-wide recompute. Same origin
   /// semantics as <see cref="ComputeStreamDigestsAsync"/> (null = own emissions; a value = events
