@@ -213,6 +213,43 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task GetOrphanedLifecycleEventsAsync_GlobalCapBoundsBatchAcrossTypesAsync() {
+    // The reconcile batch is capped GLOBALLY (oldest first) across every registered type — the
+    // per-type query loop it replaces had a per-type limit but no overall bound, and over a
+    // thousand sequential per-type round-trips could stall a large host past its liveness budget.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openConnectionAsync(dbContext);
+
+    var s1 = (Guid)TrackedGuid.NewMedo();
+    var s2 = (Guid)TrackedGuid.NewMedo();
+    var s3 = (Guid)TrackedGuid.NewMedo();
+    var e1 = (Guid)TrackedGuid.NewMedo();
+    var e2 = (Guid)TrackedGuid.NewMedo();
+    var e3 = (Guid)TrackedGuid.NewMedo();
+    await _insertEventStoreRowAsync(connection, e1, s1, "Whizbang.Tests.OrphanEvent");
+    await _insertEventStoreRowAsync(connection, e2, s2, "Whizbang.Tests.OtherOrphanEvent");
+    await _insertEventStoreRowAsync(connection, e3, s3, "Whizbang.Tests.OrphanEvent");
+    await _insertCursorAsync(connection, s1, "P.One", e1, status: 1);
+    await _insertCursorAsync(connection, s2, "P.One", e2, status: 1);
+    await _insertCursorAsync(connection, s3, "P.One", e3, status: 1);
+
+    var map = new Dictionary<string, IReadOnlyList<string>> {
+      ["Whizbang.Tests.OrphanEvent"] = _onePerspective,
+      ["Whizbang.Tests.OtherOrphanEvent"] = _onePerspective,
+    };
+
+    var coordinator = _createCoordinator(dbContext);
+    var capped = await coordinator.GetOrphanedLifecycleEventsAsync(map, TimeSpan.FromHours(1), maxOrphans: 2);
+    var all = await coordinator.GetOrphanedLifecycleEventsAsync(map, TimeSpan.FromHours(1));
+
+    await Assert.That(all.Count).IsEqualTo(3)
+      .Because("one set-based pass finds qualifying orphans across EVERY registered type.");
+    await Assert.That(capped.Count).IsEqualTo(2)
+      .Because("maxOrphans bounds the whole batch, not each type — the caller drains via " +
+               "repeated bounded passes.");
+  }
+
+  [Test]
   public async Task GetOrphanedLifecycleEventsAsync_EmptyOrPerspectivelessMap_ReturnsEmptyAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);

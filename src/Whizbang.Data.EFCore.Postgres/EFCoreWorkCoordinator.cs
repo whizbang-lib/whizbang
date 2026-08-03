@@ -1406,6 +1406,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCommand();
+    // Every query on this path is integrity/audit machinery (digests, coverage gaps, registered
+    // types) — best-effort maintenance that retries next cycle. Bound it so a degraded or very
+    // large store times a cycle out instead of holding the host's resources until the liveness
+    // probe kills the process.
+    cmd.CommandTimeout = 120;
     return await operation(cmd, schema).ConfigureAwait(false);
   }
 
@@ -2243,6 +2248,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<OrphanedLifecycleEvent>> GetOrphanedLifecycleEventsAsync(
     Dictionary<string, IReadOnlyList<string>> perspectivesPerEventType,
     TimeSpan lookbackWindow,
+    int maxOrphans = 100,
     CancellationToken cancellationToken = default) {
 
     if (perspectivesPerEventType.Count == 0) {
@@ -2261,57 +2267,78 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var cutoff = DateTimeOffset.UtcNow - lookbackWindow;
     var orphaned = new List<OrphanedLifecycleEvent>();
 
-    // For each event type that has registered perspectives, find events where:
-    // 1. The event was created within the lookback window
-    // 2. All expected perspectives have cursor.last_event_id >= event.event_id (UUIDv7 ordering)
-    // 3. No lifecycle completion marker exists
+    // ONE set-based pass over ALL registered types (the per-type loop ran a query per catalog
+    // entry — over a thousand sequential round-trips on a large consumer, enough sustained DB
+    // work to stall the host past its liveness budget at startup). The expectation pairs ride
+    // as parallel unnest arrays; an event qualifies when every expected perspective for its
+    // type has a cursor at/past it, no completion marker exists, and it is inside the lookback
+    // window. The batch is GLOBALLY capped (oldest first) — the caller loops bounded passes.
+    var pairTypes = new List<string>();
+    var pairNames = new List<string>();
     foreach (var (eventTypeKey, expectedPerspectives) in perspectivesPerEventType) {
-      if (expectedPerspectives.Count == 0) {
-        continue;
+      foreach (var perspectiveName in expectedPerspectives) {
+        pairTypes.Add(eventTypeKey);
+        pairNames.Add(perspectiveName);
       }
+    }
+    if (pairTypes.Count == 0) {
+      return [];
+    }
 
 #pragma warning disable S2077
-      var sql = $@"
-        SELECT e.event_id, e.stream_id, eb.event_data AS event_data, eb.metadata AS metadata, e.event_type, e.scope
-        FROM {eventStoreTable} e
-        LEFT JOIN {bodyTable} eb ON eb.event_id = e.event_id
-        WHERE e.event_type = {{0}}
-          AND e.created_at >= {{1}}
-          AND NOT EXISTS (
-            SELECT 1 FROM {completionsTable} lc WHERE lc.event_id = e.event_id
-          )
-          AND (
-            SELECT COUNT(DISTINCT pc.perspective_name)
-            FROM {cursorsTable} pc
-            WHERE pc.stream_id = e.stream_id
-              AND pc.perspective_name = ANY({{2}})
-              AND pc.last_event_id >= e.event_id
-          ) = {{3}}
-        ORDER BY e.created_at
-        LIMIT 100";
+    var sql = $@"
+      WITH expected AS (
+        SELECT * FROM unnest({{0}}::text[], {{1}}::text[]) AS x(event_type, perspective_name)
+      ),
+      expected_counts AS (
+        SELECT event_type, COUNT(*) AS cnt FROM expected GROUP BY event_type
+      )
+      SELECT e.event_id, e.stream_id, eb.event_data AS event_data, eb.metadata AS metadata, e.event_type, e.scope
+      FROM {eventStoreTable} e
+      JOIN expected_counts ec ON ec.event_type = e.event_type
+      LEFT JOIN {bodyTable} eb ON eb.event_id = e.event_id
+      WHERE e.created_at >= {{2}}
+        AND NOT EXISTS (
+          SELECT 1 FROM {completionsTable} lc WHERE lc.event_id = e.event_id
+        )
+        AND (
+          SELECT COUNT(DISTINCT pc.perspective_name)
+          FROM {cursorsTable} pc
+          JOIN expected x ON x.event_type = e.event_type AND x.perspective_name = pc.perspective_name
+          WHERE pc.stream_id = e.stream_id
+            AND pc.last_event_id >= e.event_id
+        ) = ec.cnt
+      ORDER BY e.created_at
+      LIMIT {{3}}";
 #pragma warning restore S2077
 
-      var perspectiveNamesArray = expectedPerspectives.ToArray();
-
+    try {
+      // Bounded even when the store is degraded: the reconcile may time out a pass and retry
+      // later — it must never hold the host's resources indefinitely.
+      var previousTimeout = _dbContext.Database.GetCommandTimeout();
+      _dbContext.Database.SetCommandTimeout(120);
+      List<OrphanedEventRow> rows;
       try {
-        var rows = await _dbContext.Database
-          .SqlQueryRaw<OrphanedEventRow>(sql, eventTypeKey, cutoff, perspectiveNamesArray, expectedPerspectives.Count)
+        rows = await _dbContext.Database
+          .SqlQueryRaw<OrphanedEventRow>(sql, pairTypes.ToArray(), pairNames.ToArray(), cutoff, Math.Max(1, maxOrphans))
           .ToListAsync(cancellationToken);
+      } finally {
+        _dbContext.Database.SetCommandTimeout(previousTimeout);
+      }
 
-        foreach (var row in rows) {
-          try {
-            var envelope = _deserializeEventEnvelope(row);
-            orphaned.Add(new OrphanedLifecycleEvent(row.EventId, row.StreamId, envelope));
-          } catch (Exception ex) {
-            if (_logger?.IsEnabled(LogLevel.Warning) == true) {
-              _logger.LogWarning(ex, "Failed to deserialize orphaned event {EventId} (type: {EventType}) for reconciliation", row.EventId, row.EventType);
-            }
+      foreach (var row in rows) {
+        try {
+          var envelope = _deserializeEventEnvelope(row);
+          orphaned.Add(new OrphanedLifecycleEvent(row.EventId, row.StreamId, envelope));
+        } catch (Exception ex) {
+          if (_logger?.IsEnabled(LogLevel.Warning) == true) {
+            _logger.LogWarning(ex, "Failed to deserialize orphaned event {EventId} (type: {EventType}) for reconciliation", row.EventId, row.EventType);
           }
         }
-      } catch (Exception ex) {
-        if (_logger?.IsEnabled(LogLevel.Warning) == true) {
-          _logger.LogWarning(ex, "Failed to query orphaned lifecycle events for type {EventType}", eventTypeKey);
-        }
+      }
+    } catch (Exception ex) {
+      if (_logger?.IsEnabled(LogLevel.Warning) == true) {
+        _logger.LogWarning(ex, "Failed to query orphaned lifecycle events ({TypeCount} type(s))", perspectivesPerEventType.Count);
       }
     }
 

@@ -424,12 +424,16 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="perspectivesPerEventType">Registry map: event type key → expected perspective names.</param>
   /// <param name="lookbackWindow">How far back to scan for orphaned events.</param>
+  /// <param name="maxOrphans">GLOBAL cap on the returned batch (oldest first) — the reconcile is a
+  /// bounded unit of work the caller loops, never an unbounded startup scan that can stall a host
+  /// past its liveness budget on a large store.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Orphaned events with their envelopes for PostLifecycle replay.</returns>
   /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
   Task<IReadOnlyList<OrphanedLifecycleEvent>> GetOrphanedLifecycleEventsAsync(
     Dictionary<string, IReadOnlyList<string>> perspectivesPerEventType,
     TimeSpan lookbackWindow,
+    int maxOrphans = 100,
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<OrphanedLifecycleEvent>>([]);
 
   /// <summary>

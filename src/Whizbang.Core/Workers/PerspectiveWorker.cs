@@ -675,37 +675,59 @@ public partial class PerspectiveWorker(
         return;
       }
 
-      var orphaned = await workCoordinator.GetOrphanedLifecycleEventsAsync(
-        _perspectivesPerEventType, TimeSpan.FromMinutes(30), ct);
-
-      if (orphaned.Count == 0) {
-        return;
-      }
-
-      LogReconciliationStarting(_logger, orphaned.Count);
-
-      foreach (var orphan in orphaned) {
-        try {
-          var tracking = lifecycleCoordinator.BeginTracking(
-            orphan.EventId, orphan.Envelope,
-            LifecycleStage.PostAllPerspectivesDetached, MessageSource.Local,
-            orphan.StreamId);
-
-          await _establishSecurityContextAsync(orphan.Envelope, scope.ServiceProvider, ct);
-          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scope.ServiceProvider, ct);
-          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scope.ServiceProvider, ct);
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, ct);
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, ct);
-
-          await workCoordinator.RecordLifecycleCompletionAsync(orphan.EventId, ct);
-          LogReconciliationCompleted(_logger, orphan.EventId);
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          LogReconciliationError(_logger, ex, orphan.EventId);
+      // Bounded drain: each pass is a capped unit of work (one set-based query + a capped replay
+      // batch), looped until the backlog drains or the pass budget runs out — an unbounded
+      // startup scan on a large store can stall the host past its liveness budget, and every
+      // probe kill orphans MORE lifecycles, making the loop self-sustaining.
+      const int MAX_ORPHANS_PER_PASS = 100;
+      const int MAX_PASSES = 20;
+      for (var pass = 0; pass < MAX_PASSES && !ct.IsCancellationRequested; pass++) {
+        var drained = await _reconcileOrphanedLifecyclesPassAsync(
+          workCoordinator, lifecycleCoordinator, scope.ServiceProvider, MAX_ORPHANS_PER_PASS, ct);
+        if (drained) {
+          return;
         }
+        await Task.Yield();
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogReconciliationFailed(_logger, ex);
     }
+  }
+
+  /// <summary>One bounded reconcile pass. Returns true when the backlog is drained (partial batch).</summary>
+  private async Task<bool> _reconcileOrphanedLifecyclesPassAsync(
+      IWorkCoordinator workCoordinator, ILifecycleCoordinator lifecycleCoordinator,
+      IServiceProvider services, int maxOrphans, CancellationToken ct) {
+    var orphaned = await workCoordinator.GetOrphanedLifecycleEventsAsync(
+        _perspectivesPerEventType!, TimeSpan.FromMinutes(30), maxOrphans, ct);
+
+    if (orphaned.Count == 0) {
+      return true;
+    }
+
+    LogReconciliationStarting(_logger, orphaned.Count);
+
+    foreach (var orphan in orphaned) {
+      try {
+        var tracking = lifecycleCoordinator.BeginTracking(
+          orphan.EventId, orphan.Envelope,
+          LifecycleStage.PostAllPerspectivesDetached, MessageSource.Local,
+          orphan.StreamId);
+
+        await _establishSecurityContextAsync(orphan.Envelope, services, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, services, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, services, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, services, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, services, ct);
+
+        await workCoordinator.RecordLifecycleCompletionAsync(orphan.EventId, ct);
+        LogReconciliationCompleted(_logger, orphan.EventId);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogReconciliationError(_logger, ex, orphan.EventId);
+      }
+    }
+
+    return orphaned.Count < maxOrphans;
   }
 
   /// <summary>
