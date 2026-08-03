@@ -128,9 +128,13 @@ public sealed partial class IntegrityCheckpointWorker(
       IntegrityCheckpointWindow window, CancellationToken cancellationToken) {
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
-    var routing = services.GetService<IOutboxRoutingStrategy>();
     var catalog = services.GetService<IMessageTypeCatalog>();
-    if (transport is null || serializer is null || routing is null || catalog is null) {
+    // Destination resolution mirrors the dispatcher's two layers: the outbox routing strategy
+    // when registered, else the generated topic registry (+ optional topic routing strategy).
+    var routing = services.GetService<IOutboxRoutingStrategy>();
+    var topicRegistry = services.GetService<ITopicRegistry>();
+    if (transport is null || serializer is null || catalog is null
+        || (routing is null && topicRegistry is null)) {
       return 0;
     }
 
@@ -149,12 +153,23 @@ public sealed partial class IntegrityCheckpointWorker(
       [.. catalog.GetAll().Where(e => e.Kind == "event").Select(e => e.Type)]);
     var ownedDomains = services.GetService<IOptions<RoutingOptions>>()?.Value
       .OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+    var topicStrategy = services.GetService<ITopicRoutingStrategy>();
     var destinations = new Dictionary<string, TransportDestination>(StringComparer.Ordinal);
     foreach (var typeName in typeNames) {
-      if (EventTypeMatchingHelper.TryResolveType(lookup, typeName, out var eventType)) {
+      if (!EventTypeMatchingHelper.TryResolveType(lookup, typeName, out var eventType)) {
+        continue;
+      }
+      if (routing is not null) {
         var destination = routing.GetDestination(eventType, ownedDomains, MessageKind.Event);
         destinations.TryAdd(destination.Address, destination);
+        continue;
       }
+      var baseTopic = topicRegistry!.GetBaseTopic(eventType);
+      if (baseTopic is null) {
+        continue;   // not a registry-known event — no topic to ride.
+      }
+      var address = topicStrategy?.ResolveTopic(eventType, baseTopic) ?? baseTopic;
+      destinations.TryAdd(address, new TransportDestination(address));
     }
     if (destinations.Count == 0) {
       return 0;
