@@ -120,6 +120,14 @@ public sealed partial class InboxDrainWorker : BackgroundService {
           if (distinctStreams.Count > 0) {
             await _drainStreamBatchAsync(distinctStreams.ToList(), stoppingToken);
           }
+        } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+          throw;
+        } catch (Exception ex) {
+          // A transient infrastructure failure (pool exhaustion, a DB blip) must never fault
+          // this worker: the host default (StopHost) would turn it into a full service outage.
+          // Inbox rows are durable and the claim backstop re-offers the streams — log and
+          // continue loses nothing.
+          LogBatchDrainFailed(_logger, ex);
         } finally {
           _setIdleState(active: false);
         }
@@ -359,6 +367,10 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 4, Level = LogLevel.Error,
     Message = "InboxDrainWorker: drain failed for stream {StreamId}")]
   static partial void LogDrainError(ILogger logger, Guid streamId, Exception ex);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Error,
+    Message = "Inbox drain batch failed on a transient error; the streams re-offer via the claim backstop")]
+  static partial void LogBatchDrainFailed(ILogger logger, Exception exception);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Error,
     Message = "InboxDrainWorker: failed to deserialize envelope for {MessageId}")]

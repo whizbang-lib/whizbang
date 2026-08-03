@@ -386,19 +386,22 @@ public class InboxDrainWorkerGapTests {
 
   /// <summary>
   /// Covers the batched-fetch failure path: FetchInboxBatchAsync throws a non-OCE exception,
-  /// the finally block (lines 235-242) still releases the draining marker for every stream,
-  /// the idle transition fires (inner finally in ExecuteAsync), and the unhandled exception
-  /// propagates out of ExecuteAsync (worker's ExecuteTask faults — there is no catch-all).
+  /// the finally block still releases the draining marker for every stream, the idle
+  /// transition fires, the failure is logged (EventId 6) — and the worker SURVIVES. An escaped
+  /// exception would fault the BackgroundService and, under the host default
+  /// (BackgroundServiceExceptionBehavior.StopHost), stop the whole host — observed live as a
+  /// clean-exit restart loop when connection-pool exhaustion made the fetch throw.
   /// </summary>
   [Test]
-  public async Task ExecuteAsync_BatchFetchThrows_MarksStreamsDrained_FiresIdle_ExecuteTaskFaultsAsync() {
+  public async Task ExecuteAsync_BatchFetchThrows_MarksStreamsDrained_FiresIdle_WorkerSurvivesAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var coord = new ScriptedCoordinator { ThrowOnFetch = new InvalidOperationException("fetch-boom") };
     var drain = new RecordingDrainChannel();
     var writer = new TestInboxWriter();
+    var logger = new RecordingLogger(LogLevel.Information);
 
     var worker = _buildWorker(coord, drain, writer,
-      new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 });
+      new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }, logger);
 
     var startedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var idleTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -412,21 +415,19 @@ public class InboxDrainWorkerGapTests {
     await startedTcs.Task.WaitAsync(_timeout);
     await idleTcs.Task.WaitAsync(_timeout);
 
-    var executeTask = worker.ExecuteTask ?? Task.CompletedTask;
-    try {
-      await executeTask.WaitAsync(_timeout);
-    } catch (InvalidOperationException) {
-      // Expected: the fetch exception faults ExecuteTask; the fault is asserted below.
-    }
-
     // The stream was marked draining before the fetch, and the finally block must
     // release the marker even when the batched fetch throws.
     await Assert.That(drain.Draining.ToList()).Contains(streamId);
     await Assert.That(drain.Drained.ToList()).Contains(streamId);
     await Assert.That(writer.Written.Count).IsEqualTo(0);
-    await Assert.That(executeTask.IsFaulted).IsTrue()
-      .Because("a non-OCE fetch exception is not caught by ExecuteAsync");
-    await Assert.That(executeTask.Exception?.InnerException is InvalidOperationException).IsTrue();
+
+    var executeTask = worker.ExecuteTask ?? Task.CompletedTask;
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("a transient fetch failure is logged and the loop continues — a faulted " +
+               "BackgroundService stops the whole host under the StopHost default, turning " +
+               "one DB blip into a service outage.");
+    await Assert.That(logger.Entries.Count(e => e.EventId == 6)).IsEqualTo(1)
+      .Because("the failure is loud (LogBatchDrainFailed), never silent.");
 
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }

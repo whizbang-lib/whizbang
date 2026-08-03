@@ -351,6 +351,88 @@ public class InboxDrainWorkerTests {
   }
 
   /// <summary>
+  /// A transient infrastructure failure in the batch fetch (connection-pool exhaustion, a DB
+  /// blip) must NEVER fault the worker: with the host's default
+  /// BackgroundServiceExceptionBehavior=StopHost an escaped exception STOPS THE WHOLE HOST —
+  /// observed live as a clean-exit restart loop on a large consumer whose pool was exhausted.
+  /// Inbox rows are durable and the claim backstop re-offers the streams, so log-and-continue
+  /// loses nothing.
+  /// </summary>
+  [Test]
+  public async Task InboxDrainWorker_TransientFetchFailure_SurvivesAndDrainsNextBatchAsync() {
+    var streamA = (Guid)TrackedGuid.NewMedo();
+    var streamB = (Guid)TrackedGuid.NewMedo();
+    var coord = new ThrowingFirstFetchFakeWorkCoordinator();
+    coord.RowsByStream[streamB] = [_row((Guid)TrackedGuid.NewMedo(), streamB)];
+
+    var drainChannel = new FakeInboxDrainChannel();
+    var inbox = new CapturingInboxChannel { TargetCount = 1 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, inbox, gate,
+      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    // First batch: the fetch throws (simulated pool exhaustion).
+    _ = drainChannel.TryWrite(streamA);
+    await coord.FirstFetchFailed.Task.WaitAsync(TimeSpan.FromSeconds(15));
+
+    // Second batch: the worker must still be alive to drain it.
+    _ = drainChannel.TryWrite(streamB);
+    _ = await Task.WhenAny(inbox.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(inbox.Written.Count).IsEqualTo(1)
+      .Because("a transient fetch failure is logged and the loop continues — an escaped " +
+               "exception faults the BackgroundService and (StopHost default) takes down the " +
+               "entire host, turning one DB blip into a service outage.");
+  }
+
+  private sealed class ThrowingFirstFetchFakeWorkCoordinator : IWorkCoordinator {
+    public Dictionary<Guid, List<InboxBatchRow>> RowsByStream { get; } = [];
+    public TaskCompletionSource FirstFetchFailed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _calls;
+
+    public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+      IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
+      if (Interlocked.Increment(ref _calls) == 1) {
+        FirstFetchFailed.TrySetResult();
+        throw new InvalidOperationException("simulated transient pool exhaustion");
+      }
+      var result = new List<InboxBatchRow>();
+      foreach (var sid in streamIds) {
+        if (RowsByStream.TryGetValue(sid, out var rows)) {
+          result.AddRange(rows);
+          rows.Clear();
+        }
+      }
+      return Task.FromResult<IReadOnlyList<InboxBatchRow>>(result);
+    }
+
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>
   /// v0.685 lock-in — when the InboxDrainWorker receives a sliding-window batch
   /// containing multiple distinct stream_ids, it MUST drain them via a SINGLE
   /// multi-stream <c>FetchInboxBatchAsync</c> call rather than looping per-stream.
