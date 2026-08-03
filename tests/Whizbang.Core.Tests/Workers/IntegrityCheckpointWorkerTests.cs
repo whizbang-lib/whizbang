@@ -124,6 +124,34 @@ public class IntegrityCheckpointWorkerTests {
   }
 
   [Test]
+  public async Task RunCheckpointOnce_RegistryRoutedHost_PublishesToOwnEventTopicsAsync() {
+    // Production hosts may route via the generated ITopicRegistry (+ optional topic routing
+    // strategy) with NO IOutboxRoutingStrategy registered — the dispatcher supports both layers,
+    // so the checkpoint fan-out must too, or those hosts silently fall back to the dead
+    // namespace-routed publish this fix exists to replace.
+    var ordersType = typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent);
+    var usersType = typeof(CheckpointTopicProbes.Users.UsersProbeEvent);
+    var coordinator = new _checkpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 9, ToCommitSequence = 9 },
+      OwnAuditedEventTypes = [TypeNameFormatter.Format(ordersType), TypeNameFormatter.Format(usersType)],
+    };
+    var dispatcher = new _captureDispatcher();
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, dispatcher, serviceName: "origin-svc",
+      transport: transport, catalog: new _catalog(ordersType, usersType),
+      outboxRouting: false, topicRegistry: new _topicRegistry(
+        (ordersType, "app.orders"), (usersType, "app.users")));
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    var addresses = transport.Published.Select(p => p.Destination.Address).Order().ToList();
+    await Assert.That(addresses).IsEquivalentTo(["app.orders", "app.users"])
+      .Because("the fan-out honors the registry + topic-routing layer exactly as the dispatcher " +
+               "does when no outbox routing strategy is registered.");
+    await Assert.That(dispatcher.Published).IsEmpty();
+  }
+
+  [Test]
   public async Task RunCheckpointOnce_TransportButNoResolvableTypes_FallsBackToDispatcherAsync() {
     // No catalog (or nothing resolvable) means no topics can be derived — publish through the
     // dispatcher as before rather than silently dropping the heartbeat.
@@ -146,7 +174,8 @@ public class IntegrityCheckpointWorkerTests {
 
   private static IntegrityCheckpointWorker _buildWorker(
       _checkpointCoordinator coordinator, _captureDispatcher dispatcher, string serviceName,
-      _captureTransport? transport = null, IMessageTypeCatalog? catalog = null) {
+      _captureTransport? transport = null, IMessageTypeCatalog? catalog = null,
+      bool outboxRouting = true, ITopicRegistry? topicRegistry = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
@@ -154,7 +183,12 @@ public class IntegrityCheckpointWorkerTests {
     if (transport is not null) {
       services.AddSingleton<ITransport>(transport);
       services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-      services.AddSingleton<IOutboxRoutingStrategy>(new DomainTopicOutboxStrategy());
+      if (outboxRouting) {
+        services.AddSingleton<IOutboxRoutingStrategy>(new DomainTopicOutboxStrategy());
+      }
+    }
+    if (topicRegistry is not null) {
+      services.AddSingleton(topicRegistry);
     }
     if (catalog is not null) {
       services.AddSingleton(catalog);
@@ -202,6 +236,11 @@ public class IntegrityCheckpointWorkerTests {
       HostName = HostName,
       ProcessId = ProcessId
     };
+  }
+
+  private sealed class _topicRegistry(params (Type Type, string Topic)[] map) : ITopicRegistry {
+    public string? GetBaseTopic(Type messageType) =>
+      map.Where(m => m.Type == messageType).Select(m => m.Topic).FirstOrDefault();
   }
 
   private sealed class _catalog(params Type[] eventTypes) : IMessageTypeCatalog {
