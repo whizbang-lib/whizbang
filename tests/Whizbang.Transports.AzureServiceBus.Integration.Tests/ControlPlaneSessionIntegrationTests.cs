@@ -1,5 +1,5 @@
-using Azure.Messaging.ServiceBus;
 using System.Threading.Channels;
+using Azure.Messaging.ServiceBus;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
