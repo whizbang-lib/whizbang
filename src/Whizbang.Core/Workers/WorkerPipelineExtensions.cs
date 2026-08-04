@@ -189,7 +189,8 @@ public static class WorkerPipelineExtensions {
     // InboxDispatchWorker uses this to skip lifecycle deserialize for cross-service events
     // that the local service has no receptor for. Registered as a singleton — adapter is
     // stateless and just forwards to the static generated lookup.
-    services.TryAddSingleton<IReceptorRegistryQuery, WhizbangReceptorRegistryQueryAdapter>();
+    services.TryAddSingleton<IReceptorRegistryQuery>(sp =>
+      new WhizbangReceptorRegistryQueryAdapter(sp.GetService<IReceptorRegistry>()));
 
     // Message-discard policy: shared "should this message be skipped?" decision used by
     // the transport-receive, inbox-dispatch, and outbox-publish gates. Owns the structured
