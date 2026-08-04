@@ -22,6 +22,6 @@ namespace Whizbang.Core.Messaging;
 /// Consumers may mark their own infrastructure signals the same way.
 /// </para>
 /// </remarks>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/ControlPlaneSecurityExemptionTests.cs</tests>
 public interface IControlPlaneMessage;

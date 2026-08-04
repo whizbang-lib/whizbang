@@ -20,7 +20,7 @@ namespace Whizbang.Core.Messaging;
 /// selectable.</item>
 /// </list>
 /// </remarks>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed record RedeliveryRequest {
   /// <summary>Tenant filter — matches the event scope's tenant (<c>scope-&gt;&gt;'t'</c>) exactly when set.</summary>
   public string? TenantScope { get; init; }
@@ -45,7 +45,7 @@ public sealed record RedeliveryRequest {
 /// One selected event in original stored form — the unit the re-delivery pump bundles into
 /// per-stream composites. <see cref="EventData"/>/<see cref="Metadata"/> are the raw stored JSON.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed record RedeliveryEvent {
   /// <summary>Original event id — preserved so consumers converge via the event-id conflict skip.</summary>
   public required Guid EventId { get; init; }
@@ -89,7 +89,7 @@ public sealed record RedeliveryEvent {
 /// clamped by the origin's configured <c>RedeliveryPumpOptions.MaxEventsPerRequest</c> — the origin
 /// owns its own storm cap, a requester can never raise it.
 /// </remarks>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
 [PinnedId("4f8e2b7a-9d31-4c6e-8b5f-2a1d0c9e7f43")]
 public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage {

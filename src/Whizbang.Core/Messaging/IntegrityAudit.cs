@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// <see cref="Types"/> — O(types) wire cost — and drills down to <see cref="Streams"/> only for
 /// the (capped) types whose roll-ups disagree.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public enum ManifestLevel {
   /// <summary>Per-(tenant, type, stream) digest rows — the drill-down + repair granularity.</summary>
   Streams = 0,
@@ -28,7 +28,7 @@ public enum ManifestLevel {
 /// <see cref="UseRecompute"/> forces the full-sweep recompute instead of the maintained table —
 /// the trust-but-verify cycle that also covers busy buckets settle-skipped on table-driven cycles.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
 [PinnedId("c9f4b1e7-2a6d-4c38-9b05-7e1f8d3a6c92")]
 public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
@@ -56,7 +56,7 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
 /// per-bucket independent, so chunks need no assembly protocol — a lost chunk's buckets simply
 /// re-audit next cycle.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
 [PinnedId("e2b7d9f4-6c15-4a83-b270-9d4e1c8f5a36")]
 [Ephemeral]
@@ -89,7 +89,7 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
 /// fold). The ops report; at <see cref="IntegrityRepairMode.AutoRepairCapped"/> a stream-scoped
 /// re-delivery request also goes back to the origin.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 [PinnedId("f8a3c6e1-9d47-4b28-a5c1-3e7b0d9f2a64")]
 public sealed record IntegrityDivergenceDetected : IEvent, IControlPlaneMessage {
   /// <summary>Report stream (one per report).</summary>
@@ -127,7 +127,7 @@ public sealed record IntegrityDivergenceDetected : IEvent, IControlPlaneMessage 
 /// (typically: the perspective was born after the history). Repair is LOCAL (rebuild), never
 /// cross-service.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 [PinnedId("b5e8d2a7-4f91-4c36-8a05-6d3c9e1b7f48")]
 public sealed record PerspectiveCoverageGapDetected : IEvent, IControlPlaneMessage {
   /// <summary>Report stream (one per report).</summary>
@@ -151,7 +151,7 @@ public sealed record PerspectiveCoverageGapDetected : IEvent, IControlPlaneMessa
 /// Stream-integrity Phase L: one local coverage gap, as returned by
 /// <see cref="IWorkCoordinator.GetPerspectiveCoverageGapsAsync"/>.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed record PerspectiveCoverageGap {
   /// <summary>The stream with unfolded history.</summary>
   public required Guid StreamId { get; init; }

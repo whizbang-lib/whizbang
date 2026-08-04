@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// comparison is per-bucket, so absence means nothing to audit, and a lost chunk's buckets
 /// simply re-audit next cycle.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
 public sealed partial class IntegrityManifestRequestReceptor(
     IServiceScopeFactory scopeFactory,
@@ -126,7 +126,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
 /// origin, capped per chunk. Local EXTRAS are reported by the taxonomy as investigation items and
 /// never auto-deleted; extra detection needs the full manifest set and rides a later increment.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
 public sealed partial class IntegrityManifestReceptor(
     IServiceScopeFactory scopeFactory,
@@ -351,7 +351,7 @@ public sealed partial class IntegrityManifestReceptor(
 /// <summary>
 /// Stream-integrity A1c: shared digest arithmetic for the hierarchical exchange.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 internal static class IntegrityDigestMath {
   /// <summary>Rolls stream-level digests up to per-(tenant, type) rows — XOR the lanes, sum the
   /// counts. Valid because stream buckets partition the type's events. Recomputed inputs carry no
@@ -383,7 +383,7 @@ internal static class IntegrityDigestMath {
 /// Registers the Phase A manifest receptors with <see cref="IReceptorRegistry"/> at startup — the
 /// same runtime-registration rationale as every framework receptor in this assembly.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
 internal sealed class IntegrityManifestReceptorRegistrar(
     IServiceProvider services,

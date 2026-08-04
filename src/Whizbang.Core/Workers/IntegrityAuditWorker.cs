@@ -25,7 +25,7 @@ namespace Whizbang.Core.Workers;
 /// comparison happens in the manifest receptor.</item>
 /// </list>
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
 public sealed partial class IntegrityAuditWorker(
   IServiceScopeFactory scopeFactory,

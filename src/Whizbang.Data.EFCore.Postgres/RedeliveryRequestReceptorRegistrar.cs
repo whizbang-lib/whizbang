@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// command reaches it whether dispatched in-process (operator-initiated) or arriving over the inbox from
 /// a damaged consumer. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
 internal sealed class RedeliveryRequestReceptorRegistrar(
     IServiceProvider services,

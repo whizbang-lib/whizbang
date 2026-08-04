@@ -9,7 +9,7 @@ namespace Whizbang.Core.Transports;
 /// into the destination metadata — the same <c>StreamId</c> key the outbox publish path uses,
 /// which session-ordering transports translate into the broker session id.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
 public static class ControlPlaneDestination {
   /// <summary>A destination for <paramref name="address"/> carrying <paramref name="sessionStreamId"/> as the session key.</summary>
