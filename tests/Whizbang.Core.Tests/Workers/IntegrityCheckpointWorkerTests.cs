@@ -118,6 +118,10 @@ public class IntegrityCheckpointWorkerTests {
                "buckets UNION historical own-lane types) — exactly the topics its consumers " +
                "already subscribe to.");
     await Assert.That(transport.Published.All(p => p.EnvelopeType!.Contains(nameof(IntegrityCheckpoint)))).IsTrue();
+    await Assert.That(transport.Published.All(p =>
+        p.Destination.Metadata?["StreamId"].GetString() == coordinator.LocalServiceId.ToString())).IsTrue()
+      .Because("session-enabled subscriptions dead-letter sessionless deliveries — every fan-out " +
+               "destination must carry the checkpoint stream (the origin id) as its session key.");
     await Assert.That(dispatcher.Published).IsEmpty()
       .Because("the namespace-routed publish went to a topic with no subscribers — it must be " +
                "replaced, not duplicated.");
@@ -148,6 +152,9 @@ public class IntegrityCheckpointWorkerTests {
     await Assert.That(addresses).IsEquivalentTo(["app.orders", "app.users"])
       .Because("the fan-out honors the registry + topic-routing layer exactly as the dispatcher " +
                "does when no outbox routing strategy is registered.");
+    await Assert.That(transport.Published.All(p =>
+        p.Destination.Metadata?["StreamId"].GetString() == coordinator.LocalServiceId.ToString())).IsTrue()
+      .Because("the registry-routed path needs the session key just as much as the strategy path.");
     await Assert.That(dispatcher.Published).IsEmpty();
   }
 

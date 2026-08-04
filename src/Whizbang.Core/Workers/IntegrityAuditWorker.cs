@@ -194,7 +194,8 @@ public sealed partial class IntegrityAuditWorker(
         Target = originName,
       };
       var serialized = serializer.SerializeEnvelope(envelope);
-      await transport.PublishAsync(serialized.JsonEnvelope, new TransportDestination(topic), serialized.EnvelopeType,
+      await transport.PublishAsync(serialized.JsonEnvelope,
+        ControlPlaneDestination.For(topic, envelope.MessageId.Value), serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       metrics?.ManifestsRequested.Add(1,
         new KeyValuePair<string, object?>("origin", originName),

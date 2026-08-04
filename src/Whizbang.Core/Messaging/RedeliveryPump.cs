@@ -98,7 +98,6 @@ public sealed class RedeliveryPump {
       return 0;
     }
 
-    var destination = new TransportDestination(topic);
     var eventTypes = _eventTypeProvider.GetEventTypes();
     var published = 0;
 
@@ -112,7 +111,7 @@ public sealed class RedeliveryPump {
       if (!boundary) {
         continue;
       }
-      await _publishChunkAsync(chunk, destination, target, originServiceId, stateOnly, eventTypes, cancellationToken).ConfigureAwait(false);
+      await _publishChunkAsync(chunk, topic, target, originServiceId, stateOnly, eventTypes, cancellationToken).ConfigureAwait(false);
       published++;
       chunk.Clear();
     }
@@ -121,7 +120,7 @@ public sealed class RedeliveryPump {
 
   private async Task _publishChunkAsync(
       List<RedeliveryEvent> chunk,
-      TransportDestination destination,
+      string topic,
       string? target,
       Guid originServiceId,
       bool stateOnly,
@@ -181,8 +180,11 @@ public sealed class RedeliveryPump {
     };
 
     // The outbox's composite seam: typed → MessageEnvelope<JsonElement> + payload-derived wire type.
+    // Session-enabled subscriptions dead-letter sessionless deliveries; per-stream chunking makes
+    // the chunk's stream id the natural session key — redelivered bundles keep stream FIFO.
     var serialized = _envelopeSerializer.SerializeEnvelope<RedeliveryComposite>(wireEnvelope);
-    await _transport.PublishAsync(serialized.JsonEnvelope, destination, serialized.EnvelopeType, cancellationToken: cancellationToken)
-      .ConfigureAwait(false);
+    await _transport.PublishAsync(serialized.JsonEnvelope,
+      Transports.ControlPlaneDestination.For(topic, chunk[0].StreamId), serialized.EnvelopeType,
+      cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 }

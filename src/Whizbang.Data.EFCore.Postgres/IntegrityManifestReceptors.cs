@@ -69,7 +69,10 @@ public sealed partial class IntegrityManifestRequestReceptor(
     var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var originName = instanceProvider?.ServiceName ?? string.Empty;
-    var destination = new TransportDestination(message.Topic);
+    // All chunks of one manifest share the manifest stream (the origin id) as their session —
+    // session-enabled subscriptions dead-letter sessionless deliveries, and a shared session
+    // keeps chunk order.
+    var destination = Whizbang.Core.Transports.ControlPlaneDestination.For(message.Topic, originServiceId);
     var chunks = 0;
 
     for (var offset = 0; offset < digests.Count; offset += options.MaxDigestsPerManifest) {
@@ -269,7 +272,8 @@ public sealed partial class IntegrityManifestReceptor(
       Target = message.OriginServiceName,
     };
     var serialized = serializer.SerializeEnvelope(envelope);
-    await transport.PublishAsync(serialized.JsonEnvelope, new TransportDestination(topic), serialized.EnvelopeType,
+    await transport.PublishAsync(serialized.JsonEnvelope,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(topic, envelope.MessageId.Value), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.DrillDownsRequested.Add(1,
       new KeyValuePair<string, object?>("origin", message.OriginServiceName));
@@ -327,7 +331,8 @@ public sealed partial class IntegrityManifestReceptor(
       Target = manifest.OriginServiceName,
     };
     var serialized = serializer.SerializeEnvelope(envelope);
-    await transport.PublishAsync(serialized.JsonEnvelope, new TransportDestination(topic), serialized.EnvelopeType,
+    await transport.PublishAsync(serialized.JsonEnvelope,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(topic, bucket.StreamId), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 
