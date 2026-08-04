@@ -68,6 +68,18 @@ public interface IReceptorRegistry {
   void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage;
 
   /// <summary>
+  /// True when a RUNTIME-registered receptor consumes the given CLR type name (the storage form
+  /// <c>TypeNameFormatter.Format</c> writes, or a bare FullName). The receive/inbox discard gates
+  /// consult this alongside the source-generated tables — runtime-registered control-plane
+  /// receptors (integrity checkpoints/manifests, rebuild commands) are otherwise invisible to
+  /// them and their messages get silently discarded as "no consumer". Default: false (registries
+  /// without runtime registration support change nothing).
+  /// </summary>
+  /// <param name="clrTypeName">The payload CLR type name as carried on the wire/rows.</param>
+  /// <docs>internals/message-discard-policy</docs>
+  bool HasRuntimeConsumerFor(string clrTypeName) => false;
+
+  /// <summary>
   /// Unregisters a previously registered void receptor.
   /// </summary>
   /// <typeparam name="TMessage">The message type to unregister from.</typeparam>

@@ -90,6 +90,25 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
   }
 
   /// <summary>
+  /// True when a runtime-registered receptor consumes the given CLR type name (the storage form
+  /// TypeNameFormatter.Format writes, or a bare FullName). The receive/inbox discard gates
+  /// consult this so runtime-registered control-plane receptors count as consumers.
+  /// </summary>
+  public bool HasRuntimeConsumerFor(string clrTypeName) {
+    if (string.IsNullOrEmpty(clrTypeName) || _runtimeRegistrations.IsEmpty) {
+      return false;
+    }
+    foreach (var key in _runtimeRegistrations.Keys) {
+      var messageType = key.MessageType;
+      if (global::Whizbang.Core.TypeNameFormatter.Format(messageType) == clrTypeName
+          || messageType.FullName == clrTypeName) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
   /// Registers a void receptor at a specific lifecycle stage for runtime invocation.
   /// AOT-compatible: all types known at compile time via generic parameters.
   /// </summary>
