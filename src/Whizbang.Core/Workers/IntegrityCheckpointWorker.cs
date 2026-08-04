@@ -159,8 +159,11 @@ public sealed partial class IntegrityCheckpointWorker(
       if (!EventTypeMatchingHelper.TryResolveType(lookup, typeName, out var eventType)) {
         continue;
       }
+      // Session-enabled subscriptions dead-letter sessionless deliveries — the checkpoint's own
+      // stream identity (one homogeneous checkpoint stream per origin) is the session key.
       if (routing is not null) {
-        var destination = routing.GetDestination(eventType, ownedDomains, MessageKind.Event);
+        var destination = ControlPlaneDestination.WithSession(
+          routing.GetDestination(eventType, ownedDomains, MessageKind.Event), checkpoint.CheckpointStreamId);
         destinations.TryAdd(destination.Address, destination);
         continue;
       }
@@ -169,7 +172,7 @@ public sealed partial class IntegrityCheckpointWorker(
         continue;   // not a registry-known event — no topic to ride.
       }
       var address = topicStrategy?.ResolveTopic(eventType, baseTopic) ?? baseTopic;
-      destinations.TryAdd(address, new TransportDestination(address));
+      destinations.TryAdd(address, ControlPlaneDestination.For(address, checkpoint.CheckpointStreamId));
     }
     if (destinations.Count == 0) {
       return 0;

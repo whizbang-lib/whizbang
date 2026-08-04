@@ -95,6 +95,9 @@ public class IntegrityAuditWorkerTests {
     await Assert.That(request.RequesterService).IsEqualTo("auditor-svc");
     await Assert.That(request.EventTypes!).IsEquivalentTo([TypeNameFormatter.FormatClrTypeName(typeof(AuditProbeEvent))])
       .Because("the request restricts the manifest to the types this consumer actually subscribes to.");
+    await Assert.That(Guid.TryParse(transport.Published[0].Destination.Metadata?["StreamId"].GetString(), out _)).IsTrue()
+      .Because("session-enabled subscriptions dead-letter sessionless deliveries — the manifest " +
+               "request must carry a session key in its destination metadata.");
   }
 
   // ── A1c: hierarchical requests + the full-sweep cadence ─────────────────
