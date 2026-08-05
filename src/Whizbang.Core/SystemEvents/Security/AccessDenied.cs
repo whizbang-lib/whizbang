@@ -11,6 +11,9 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// </summary>
 /// <docs>fundamentals/events/system-events#access-denied</docs>
 /// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Integration.Tests/SecurityIntegrationTests.cs:AccessDenied_CapturesAllSecurityContext_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs:AccessDenied_Constructor_AllPropertiesSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs:AccessDenied_IsSystemEvent_ReturnsTrueAsync</tests>
 [AuditEvent(Exclude = true, Reason = "System event - security events are not self-audited")]
 [PinnedId("cbc33f2c-db1d-4554-8090-db41875e280f")]
 public sealed record AccessDenied : ISystemEvent {

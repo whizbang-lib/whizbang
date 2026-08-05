@@ -5,6 +5,9 @@ namespace Whizbang.Core.Data;
 /// Database implementations must provide this for hash-based change detection.
 /// </summary>
 /// <docs>operations/infrastructure/migrations</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerBranchTests.cs:InitializeSchemaAsync_ProviderWithoutBootstrap_AppliesMigrationAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerBranchTests.cs:InitializeAndPreview_EmptyMigrationProvider_SkipMigrationPhaseAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:MigrationScript_Properties_RoundTripCorrectlyAsync</tests>
 public interface IMigrationProvider {
   /// <summary>
   /// Library version (e.g., "0.9.4-local.61"). Must be AOT-safe (no reflection).

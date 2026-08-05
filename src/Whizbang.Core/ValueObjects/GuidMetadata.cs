@@ -5,6 +5,9 @@ namespace Whizbang.Core.ValueObjects;
 /// Tracks both the version (v4 vs v7) and the source of the UUID.
 /// </summary>
 /// <docs>fundamentals/identity/whizbang-ids#guid-metadata</docs>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/GuidMetadataTests.cs:GuidMetadata_None_HasValueZeroAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/GuidMetadataTests.cs:GuidMetadata_Version7_IsBit1Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/GuidMetadataTests.cs:GuidMetadata_SourceMedo_IsBit2Async</tests>
 [Flags]
 public enum GuidMetadatas : ushort {
   /// <summary>No metadata set.</summary>

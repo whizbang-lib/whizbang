@@ -17,6 +17,9 @@ namespace Whizbang.Data.Schema;
 /// - Tests (schema verification)</para>
 /// </summary>
 /// <docs>data/schema-generation-pattern</docs>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ISchemaBuilderContractTests.cs:DatabaseEngine_ReturnsExpectedNameAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ISchemaBuilderContractTests.cs:BuildCreateTable_SimpleTable_GeneratesValidDDLAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ISchemaBuilderContractTests.cs:BuildInfrastructureSchema_IncludesAllRequiredTablesAsync</tests>
 public interface ISchemaBuilder {
   /// <summary>
   /// Database engine name (e.g., "Postgres", "SQLite", "MySQL").

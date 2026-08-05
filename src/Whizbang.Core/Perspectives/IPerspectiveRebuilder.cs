@@ -5,6 +5,9 @@ namespace Whizbang.Core.Perspectives;
 /// Used internally by the migration system and available to developers for operational needs.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildInPlaceAsync_ReplaysAllStreamsAndUpdatesProjectionAndCursorsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WithSubset_UpdatesOnlyTargetedStreamsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_FoldsCollectiveEvent_OnlyIntoTheTargetRowAsync</tests>
 public interface IPerspectiveRebuilder {
   /// <summary>
   /// Blue-green rebuild: create new table, replay all events, swap when complete.

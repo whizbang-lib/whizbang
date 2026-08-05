@@ -6,6 +6,8 @@ namespace Whizbang.Core.Observability;
 /// (e.g., PostgreSQL pg_stat_user_tables + pg_total_relation_size).
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
+/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsCollectorBranchTests.cs:ProviderRegistered_PopulatesMetricsThenWaitsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsCollectorBranchTests.cs:ProviderThrows_LogsAndContinuesLoopAsync</tests>
 public interface ITableStatisticsProvider {
   /// <summary>
   /// Returns estimated disk size in bytes per table name.

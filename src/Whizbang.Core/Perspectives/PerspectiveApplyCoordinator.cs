@@ -14,6 +14,8 @@ namespace Whizbang.Core.Perspectives;
 /// "dispose-then-discard" contract).
 /// </remarks>
 /// <docs>fundamentals/perspectives/rewind</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/RewindLiveApplyRaceTests.cs:Rewind_ConcurrentWithLiveApply_WithCoordinator_RetainsAllIncrementsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/RewindLiveApplyRaceTests.cs:Rewind_NoConcurrentLiveApply_DoesNotLoseIncrementsAsync</tests>
 public sealed class PerspectiveApplyCoordinator : IPerspectiveApplyCoordinator {
   private readonly ConcurrentDictionary<(Guid streamId, string perspectiveName), SemaphoreSlim> _byKey = new();
 

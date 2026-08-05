@@ -5,6 +5,9 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <docs>messaging/transports/azure-service-bus</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableSessions_DefaultsToTrueAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishMaxConcurrency_DefaultsTo200Async</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_OptionsCallback_ReceivesFreshDefaultsAsync</tests>
 public class AzureServiceBusOptions {
   /// <summary>
   /// If true, automatically create topics and subscriptions when subscribing.
@@ -12,6 +15,9 @@ public class AzureServiceBusOptions {
   /// Default: true (auto-provision infrastructure)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#auto-provisioning</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_AutoProvisionDisabled_DoesNotTouchAdminPlaneAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternsWithAutoProvisionDisabled_SkipsFilterAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_AutoProvisionDisabled_DoesNotRegisterAdminClientAsync</tests>
   public bool AutoProvisionInfrastructure { get; set; } = true;
 
   /// <summary>
@@ -42,6 +48,7 @@ public class AzureServiceBusOptions {
   /// values are safe and improve throughput by filling the batch collector faster.
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#concurrency</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_OptionsCallback_ReceivesFreshDefaultsAsync</tests>
   public int MaxConcurrentCalls { get; set; } = 200;
 
   /// <summary>
@@ -84,6 +91,7 @@ public class AzureServiceBusOptions {
   /// Default: 200 (matches <see cref="MaxConcurrentSessions"/> for producer/consumer parity)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#publish-concurrency</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_OptionsCallback_ReceivesFreshDefaultsAsync</tests>
   public int PublishMaxConcurrency { get; set; } = 200;
 
   /// <summary>
@@ -142,10 +150,11 @@ public class AzureServiceBusOptions {
   /// Default: true (FIFO ordering works out of the box)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SubscribeAsync_WithEnableSessions_CreatesSessionProcessorAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SubscribeAsync_WithoutEnableSessions_CreatesStandardProcessorAsync</tests>
   public bool EnableSessions { get; set; } = true;
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo200Async</tests>
   /// How many sessions (streams) can be processed at the same time by a single consumer instance.
   /// Each session maintains strict FIFO ordering internally — messages within one session are
   /// always processed one at a time, in order. This setting controls how many <em>different</em>
@@ -176,10 +185,10 @@ public class AzureServiceBusOptions {
   /// Default: 200
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo200Async</tests>
   public int MaxConcurrentSessions { get; set; } = 200;
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToOneSecondAsync</tests>
   /// Maximum time a session processor will wait for a new message in the currently-held session
   /// before releasing the session and accepting a different one. Only applies when
   /// <see cref="EnableSessions"/> is true.
@@ -200,6 +209,7 @@ public class AzureServiceBusOptions {
   /// Default: 1 second
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#session-idle-timeout</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToOneSecondAsync</tests>
   public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromSeconds(1);
 
   /// <summary>

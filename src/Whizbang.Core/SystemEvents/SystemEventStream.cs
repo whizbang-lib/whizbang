@@ -15,6 +15,8 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#stream</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/ISystemEventTests.cs:SystemEventStreamName_IsConstant_ForDedicatedStreamAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitAsync_WithEventAudited_WhenAuditEnabled_AppendsToSystemStreamAsync</tests>
 public static class SystemEventStreams {
   /// <summary>
   /// The name of the dedicated system event stream.

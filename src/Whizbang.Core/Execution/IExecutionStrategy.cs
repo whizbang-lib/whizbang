@@ -10,6 +10,9 @@ namespace Whizbang.Core.Execution;
 /// <docs>fundamentals/dispatcher/dispatcher</docs>
 /// <docs>operations/workers/execution-lifecycle</docs>
 /// <tests>tests/Whizbang.Execution.Tests/ExecutionStrategyContractTests.cs</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ExecutionStrategyContractTests.cs:ExecuteAsync_ShouldCallHandlerAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ExecutionStrategyContractTests.cs:StopAsync_ShouldPreventNewExecutionsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ExecutionStrategyContractTests.cs:DrainAsync_ShouldWaitForPendingWorkAsync</tests>
 public interface IExecutionStrategy {
   /// <summary>
   /// Name of the execution strategy (e.g., "Serial", "Parallel")

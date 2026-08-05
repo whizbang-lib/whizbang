@@ -37,6 +37,9 @@ namespace Whizbang.Core.Attributes;
 /// </example>
 /// <docs>fundamentals/persistence/persistence#per-receptor-strategy</docs>
 /// <tests>Whizbang.Core.Tests/Persistence/PersistenceStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Persistence/PersistenceStrategyTests.cs:PersistenceStrategyAttribute_CanBeAppliedToReceptorAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Persistence/PersistenceStrategyTests.cs:PersistenceStrategyAttribute_Mode_CanBeSetViaConstructorAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Persistence/PersistenceStrategyTests.cs:PersistenceStrategyAttribute_AttributeUsage_DoesNotAllowMultipleAsync</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = true)]
 public sealed class PersistenceStrategyAttribute : Attribute {
   /// <summary>

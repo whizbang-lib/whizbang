@@ -16,6 +16,9 @@ namespace Whizbang.Core.Transports;
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
 /// <tests>Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_DefaultImplementation_CompletesWithoutThrowingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithProvisionerAndOwnedDomains_CallsProvisionerBeforeSubscriptionsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithEmptyOwnedDomains_SkipsProvisioningAsync</tests>
 public interface IInfrastructureProvisioner {
   /// <summary>
   /// Provisions infrastructure for domains this service owns.

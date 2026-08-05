@@ -6,6 +6,8 @@ namespace Whizbang.Core.Observability;
 /// </summary>
 /// <docs>fundamentals/messages/message-context#caller-info</docs>
 /// <tests>Whizbang.Core.Tests/Observability/CallerInfoTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Observability/CallerInfoTests.cs:CallerInfo_ImplementsICallerInfoAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopedMessageContextExtraTests.cs:CallerInfo_WithoutMessageContext_ReturnsNullAsync</tests>
 public interface ICallerInfo {
   /// <summary>
   /// The name of the calling method that dispatched the message.

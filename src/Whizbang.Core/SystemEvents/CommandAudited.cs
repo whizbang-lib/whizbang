@@ -33,6 +33,9 @@ namespace Whizbang.Core.SystemEvents;
 /// </code>
 /// </example>
 /// <docs>fundamentals/security/audit-logging#command-auditing</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitCommandAuditedAsync_SetsTimestampAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditTests.cs:CommandAudited_HasRequiredProperties_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditTests.cs:CommandAudited_ImplementsISystemEvent_Async</tests>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
 [PinnedId("9d574533-0ca6-4e83-a2ed-6519eab10257")]
 public sealed record CommandAudited : ISystemEvent {

@@ -28,6 +28,9 @@ namespace Whizbang.Core.Diagnostics;
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
 /// <tests>Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:IActiveStopwatch_ActiveElapsed_AdvancesAfterDelayAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:IActiveStopwatch_Halt_FreezesElapsedTimeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:IActiveStopwatch_FrozenTime_ReturnsDifferenceWhenActiveAndWallDifferAsync</tests>
 public interface IActiveStopwatch {
   /// <summary>
   /// Gets the elapsed time excluding frozen/paused periods.

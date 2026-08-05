@@ -30,6 +30,9 @@ public class WhizbangOptions {
   /// Default: true
   /// </summary>
   /// <docs>fundamentals/events/stream-id#auto-generation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangOptionsTests.cs:WhizbangOptions_DefaultValues_AutoGenerateStreamIdsIsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangOptionsTests.cs:WhizbangOptions_SetAutoGenerateStreamIds_PersistsValueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangOptionsTests.cs:WhizbangOptions_ObjectInitializer_SetsAllPropertiesAsync</tests>
   public bool AutoGenerateStreamIds { get; set; } = true;
 
   /// <summary>

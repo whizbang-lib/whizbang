@@ -15,6 +15,7 @@ namespace Whizbang.Core.Transports;
 /// </remarks>
 /// <docs>fundamentals/security/message-security#transport-metadata</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs:ITransportMetadata_TransportName_ReturnsTransportIdentifierAsync</tests>
 public interface ITransportMetadata {
   /// <summary>
   /// Gets the name of the transport this metadata is from.

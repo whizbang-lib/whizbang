@@ -26,6 +26,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiryResult_WithPendingEventIds_StoresIdsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiryResult_WithExpectedEventIds_StoresIdsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiryResult_NoPendingEvents_IsFullySyncedAsync</tests>
 public sealed record SyncInquiryResult {
   /// <summary>
   /// Gets the correlation ID from the inquiry.
@@ -61,6 +64,9 @@ public sealed record SyncInquiryResult {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/perspectives/perspective-sync#is-fully-synced</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiryResult_NoPendingEvents_IsFullySyncedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiryResult_WithExpectedEventIds_AllProcessed_IsFullySyncedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiryResult_WithExpectedEventIds_PartiallyProcessed_NotFullySyncedAsync</tests>
   public bool IsFullySynced => ExpectedEventIds is { Length: > 0 }
       ? ProcessedEventIds is not null && ExpectedEventIds.All(id => ProcessedEventIds.Contains(id))
       : PendingCount == 0;

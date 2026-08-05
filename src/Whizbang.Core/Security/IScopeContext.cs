@@ -26,6 +26,8 @@ namespace Whizbang.Core.Security;
 ///   // Team-specific functionality
 /// }
 /// </example>
+/// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs:Constructor_WithValidExtraction_CreatesContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs:Scope_DelegatesToExtractionAsync</tests>
 public interface IScopeContext {
   /// <summary>
   /// Current scope values (TenantId, UserId, etc.).

@@ -23,6 +23,9 @@ namespace Whizbang.Data.EFCore.Postgres.Dispatch;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/publish-once</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:TryClaim_TwoConcurrentSameKey_ExactlyOneWinsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:TryClaim_SecondAttemptSameKey_ReturnsFalseAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:TryClaim_DistinctKeys_BothWinAsync</tests>
 public sealed class EFCoreClaimedEmissionStore(DbContext dbContext) : IClaimedEmissionStore {
 
   private readonly DbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));

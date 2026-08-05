@@ -6,6 +6,9 @@ namespace Whizbang.Core;
 /// Enables generic constraints on APIs that require IDs with specific properties.
 /// </summary>
 /// <docs>fundamentals/identity/whizbang-ids</docs>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/IdentityValueObjectTests.cs:AllIdTypes_ImplementIWhizbangIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/MessageIdAdditionalTests.cs:EqualsIWhizbangId_DifferentTypes_FalseForUnrelatedIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdTests.cs:IWhizbangId_ToGuid_ReturnsUnderlyingValueAsync</tests>
 public interface IWhizbangId : IEquatable<IWhizbangId>, IComparable<IWhizbangId> {
   /// <summary>
   /// Converts this ID to its underlying Guid representation.

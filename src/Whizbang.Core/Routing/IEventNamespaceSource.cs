@@ -16,6 +16,8 @@ namespace Whizbang.Core.Routing;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#event-namespace-source</docs>
+/// <tests>tests/Whizbang.Core.Tests/Routing/EventNamespaceRegistryTests.cs:GetAllNamespaces_AfterRegisteringSource_ContainsAllNamespacesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Routing/EventNamespaceRegistryTests.cs:Clear_RemovesAllSourcesAsync</tests>
 public interface IEventNamespaceSource {
   /// <summary>
   /// Gets all event namespaces discovered from perspectives in this assembly.

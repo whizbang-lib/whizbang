@@ -15,6 +15,9 @@ namespace Whizbang.Core.Pipeline;
 /// <typeparam name="TRequest">The request/message type</typeparam>
 /// <typeparam name="TResponse">The response type</typeparam>
 /// <docs>extending/extensibility/hooks-and-middleware</docs>
+/// <tests>tests/Whizbang.Core.Tests/Pipeline/PipelineBehaviorTests.cs:ExecuteNextAsync_ShouldInvokeNextDelegateAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Pipeline/PipelineBehaviorTests.cs:Handle_CanPreProcessRequestAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Pipeline/PipelineBehaviorTests.cs:Handle_CanShortCircuitPipelineAsync</tests>
 public interface IPipelineBehavior<in TRequest, TResponse> {
   /// <summary>
   /// Handle the request by executing behavior logic and optionally invoking the next behavior or handler.

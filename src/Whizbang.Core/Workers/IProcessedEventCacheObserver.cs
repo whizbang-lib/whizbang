@@ -7,6 +7,9 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <docs>operations/workers/perspective-worker#dedup-observer</docs>
 /// <tests>Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnEventsMarkedInFlight_CalledAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnRetentionActivated_CalledAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnEvicted_CalledAsync</tests>
 public interface IProcessedEventCacheObserver {
   /// <summary>
   /// Called when events are filtered out as duplicates before Apply.

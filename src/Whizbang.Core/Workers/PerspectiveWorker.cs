@@ -25,6 +25,9 @@ namespace Whizbang.Core.Workers;
 /// Uses lease-based coordination for reliable perspective processing across instances.
 /// </summary>
 /// <docs>operations/workers/perspective-worker</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs:Worker_WithWork_TransitionsToActiveAndFiresEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync</tests>
 #pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
@@ -293,6 +296,8 @@ public partial class PerspectiveWorker(
   /// to materialize immediately. Safe to call from any thread; redundant calls are harmless.
   /// </remarks>
   /// <docs>operations/workers/perspective-worker#immediate-poll</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:RequestImmediatePoll_CalledRepeatedly_CoalescesWithoutThrowingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_WithNotificationListener_SubscribesCoalescesAndUnsubscribesAsync</tests>
   public void RequestImmediatePoll() {
     if (Interlocked.CompareExchange(ref _wakeSignaled, 1, 0) == 0) {
       _pollWakeSignal.Release();
@@ -736,6 +741,9 @@ public partial class PerspectiveWorker(
   /// In Background mode, logs the summary and lets normal polling handle them.
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanDisabled_NeverQueriesAsync</tests>
   private async Task _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
     if (!_rewindOptions.StartupScanEnabled) {
       return;
@@ -3729,6 +3737,9 @@ public partial class PerspectiveWorker(
   /// </summary>
   /// <docs>operations/workers/perspective-worker#security-context</docs>
   /// <tests>Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync</tests>
   private static async ValueTask _establishSecurityContextAsync(
       IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
@@ -4258,6 +4269,9 @@ public partial class PerspectiveWorker(
 /// Configure via: "Whizbang.Core.Workers.PerspectiveStartupScan": "Information"
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBackgroundMode_DoesNotRepollAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
 internal static partial class PerspectiveStartupScanLog {
   [LoggerMessage(
     EventId = 54,

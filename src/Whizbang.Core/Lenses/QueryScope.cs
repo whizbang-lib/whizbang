@@ -7,6 +7,9 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <docs>fundamentals/lenses/scoped-queries#query-scope</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/QueryScopeMapperTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/QueryScopeMapperTests.cs:ToScopeFilter_Global_ReturnsScopeFilterNoneAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/QueryScopeMapperTests.cs:ToScopeFilter_Tenant_ReturnsScopeFilterTenantAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableLensQueryScopedAccessTests.cs:Scope_Tenant_Query_ReturnsOnlyAmbientTenantRowsAsync</tests>
 public enum QueryScope {
   /// <summary>
   /// No filtering - full access to all data.

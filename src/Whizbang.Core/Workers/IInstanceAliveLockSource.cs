@@ -13,6 +13,9 @@ namespace Whizbang.Core.Workers;
 /// stays on the fast cadence (today's behaviour).
 /// </remarks>
 /// <docs>fundamentals/workers/instance-liveness</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockHeld_AdvisoryLockMode_UsesSlowCadenceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockNotHeld_AdvisoryLockMode_UsesFastCadenceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockTransitionsHeldToNotHeld_NextResolveReturnsFastCadenceAsync</tests>
 public interface IInstanceAliveLockSource {
   /// <summary>True when the session-level alive-lock is currently held by this instance.</summary>
   bool IsAliveLockHeld { get; }

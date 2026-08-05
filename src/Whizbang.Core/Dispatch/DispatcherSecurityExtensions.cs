@@ -48,6 +48,9 @@ namespace Whizbang.Core.Dispatch;
 /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:RunAs_SendAsync_SetsEffectivePrincipalAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:AsSystem_LocalInvokeAsync_SetsContextTypeToSystemAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:WithTenant_WithRunAs_SetsBothTenantAndUserAsync</tests>
 public static class DispatcherSecurityExtensions {
   /// <summary>
   /// Starts a system operation builder that requires explicit tenant strategy.
@@ -82,6 +85,9 @@ public static class DispatcherSecurityExtensions {
   /// </example>
   /// <docs>fundamentals/security/scope-propagation#system-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:AsSystem_LocalInvokeAsync_SetsContextTypeToSystemAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:AsSystem_PropagatesContextToOutgoingHopsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:AsSystem_ForAllTenants_SetsTenantIdToAllTenantsAsync</tests>
   public static SystemDispatcherBuilder AsSystem(this IDispatcher dispatcher) {
     // Capture current context (uses static accessor)
     var currentContext = ScopeContextAccessor.CurrentContext;
@@ -134,6 +140,9 @@ public static class DispatcherSecurityExtensions {
   /// </example>
   /// <docs>fundamentals/security/scope-propagation#impersonation-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:RunAs_SendAsync_SetsEffectivePrincipalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:RunAs_SetsContextTypeToImpersonatedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCascadeSecurityPropagationTests.cs:WithTenantAndRunAs_CascadedEvents_HaveBothTenantAndUserIdAsync</tests>
   public static ImpersonationDispatcherBuilder RunAs(this IDispatcher dispatcher, string effectiveIdentity) {
     ArgumentNullException.ThrowIfNull(effectiveIdentity);
     ArgumentException.ThrowIfNullOrWhiteSpace(effectiveIdentity);

@@ -11,6 +11,9 @@ namespace Whizbang.Core;
 /// using bitwise OR operations. Composite presets are provided for common combinations.
 /// </remarks>
 /// <docs>fundamentals/identity/type-qualification</docs>
+/// <tests>tests/Whizbang.Core.Tests/TypeQualificationTests.cs:TypeQualification_Simple_MapsToTypeNameOnlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/TypeQualificationTests.cs:TypeQualification_ComponentFlags_CanBeCombinedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/TypeQualificationTests.cs:TypeQualification_FullyQualified_MapToCorrectFlagsAsync</tests>
 [Flags]
 #pragma warning disable RCS1154 // Members are intentionally grouped: component flags first, then composite presets.
 public enum TypeQualifications {

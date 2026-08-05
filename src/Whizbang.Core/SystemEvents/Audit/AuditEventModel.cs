@@ -73,6 +73,9 @@ public class AuditEventModel {
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#audit-projection</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditEventModelTests.cs:HumanizeNamespace_CustomHumanizer_ReturnsCustomValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditEventModelTests.cs:HumanizeEventType_MultipleNestedSegments_AllHumanizedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditEventModelTests.cs:HumanizeEventType_Acronyms_KeptTogetherAsync</tests>
 public static class AuditEventProjection {
   private const string PASCAL_CASE_SPACE_REPLACEMENT = "$1 $2";
 

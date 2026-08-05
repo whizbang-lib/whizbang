@@ -8,6 +8,9 @@ namespace Whizbang.Core.Security;
 /// </summary>
 /// <docs>fundamentals/security/message-security#extraction</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs:Constructor_WithValidExtraction_CreatesContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs:Scope_DelegatesToExtractionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_PropagateToOutgoingTrue_SetsContextForPropagationAsync</tests>
 public sealed record SecurityExtraction {
   /// <summary>
   /// The perspective scope containing TenantId, UserId, etc.

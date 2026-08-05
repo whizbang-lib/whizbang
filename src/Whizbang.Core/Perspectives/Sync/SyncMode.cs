@@ -15,6 +15,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// correctness.
 /// </remarks>
 /// <docs>fundamentals/dispatcher/sync-mode</docs>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs:SyncMode_EnumExists_WithStreamOnlyAndAllProjectionsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeBehaviorTests.cs:AllProjections_NoScopedTracker_FastReturnAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeBehaviorTests.cs:AllProjections_WithEventsTracked_InvokesAwaiterWithInfiniteTimeoutAsync</tests>
 public enum SyncMode {
   /// <summary>
   /// Wait until events emitted by the dispatched message are durably

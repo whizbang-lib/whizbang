@@ -21,6 +21,9 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#dispatcher-registry</docs>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithCustomAttribute_CallsDispatcherRegistryAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithCustomAttribute_InvokesHookViaDispatcherAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/TagHookStageFilteringAndScopeTests.cs:ProcessTagsAsync_CustomAttribute_HookFiresViaDispatcherRegistryAsync</tests>
 public interface IMessageTagHookDispatcher {
   /// <summary>
   /// Attempts to create a typed TagContext for the given attribute type.

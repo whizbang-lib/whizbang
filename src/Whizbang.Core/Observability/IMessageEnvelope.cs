@@ -32,6 +32,9 @@ public interface IMessageEnvelope {
   /// </summary>
   /// <docs>fundamentals/dispatcher/routing#dispatch-context</docs>
   /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeVersionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeVersionTests.cs:NewEnvelope_DispatchContext_IsSetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeVersionTests.cs:V1Envelope_DeserializesWithDefaultDispatchContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/CascadeEnvelopeWrapperTests.cs:DispatchContext_FlipsIsDefaultDispatchTrueAsync</tests>
   [JsonPropertyName("dc")]
   MessageDispatchContext DispatchContext { get; }
 

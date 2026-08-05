@@ -26,6 +26,7 @@ public enum DeadLetterRecoveryStatus {
 /// recovery worker's next scan.
 /// </summary>
 /// <docs>operations/dead-letter-queue/operator-api</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DeadLetterRecoveryPolicyTests.cs:DispositionEnum_HasExpectedValuesAsync</tests>
 public enum DeadLetterDisposition {
   /// <summary>Default — let the recovery policy decide.</summary>
   None = 0,

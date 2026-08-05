@@ -23,6 +23,9 @@ namespace Whizbang.Core.Workers;
 /// are appended after auto-generated inbox and event subscriptions.
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#additional-destinations</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultAdditionalDestinations_IsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:AddTransportConsumer_WithConfigureAction_AddsAdditionalDestinationsAsync</tests>
 public sealed class TransportConsumerConfiguration {
   /// <summary>
   /// Gets the list of additional destinations to subscribe to beyond auto-generated ones.

@@ -19,6 +19,9 @@ namespace Whizbang.Core;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/time-provider</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemTimeProviderTests.cs:AddWhizbang_RegistersITimeProvider_AsSingletonAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemTimeProviderTests.cs:Constructor_WithCustomTimeProvider_UsesThatProviderAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemTimeProviderTests.cs:GetUtcNow_AfterAdvancingFakeTime_ReturnsAdvancedTimeAsync</tests>
 public interface ITimeProvider {
   /// <summary>
   /// Gets the current UTC date and time.

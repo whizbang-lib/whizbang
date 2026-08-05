@@ -47,6 +47,9 @@ public static class SignalRServiceCollectionExtensions {
   /// </code>
   /// </example>
   /// <docs>apis/signalr/signalr</docs>
+  /// <tests>tests/Whizbang.SignalR.Tests/DependencyInjection/SignalRServiceCollectionExtensionsTests.cs:AddWhizbangSignalR_ReturnsSignalRServerBuilderAsync</tests>
+  /// <tests>tests/Whizbang.SignalR.Tests/DependencyInjection/SignalRServiceCollectionExtensionsTests.cs:AddWhizbangSignalR_WithConfigure_AppliesOptionsAsync</tests>
+  /// <tests>tests/Whizbang.SignalR.Tests/DependencyInjection/SignalRServiceCollectionExtensionsTests.cs:AddWhizbangSignalR_RegistersRequiredServicesAsync</tests>
   public static ISignalRServerBuilder AddWhizbangSignalR(this IServiceCollection services) {
     return services.AddSignalR()
         .AddJsonProtocol(options => options.PayloadSerializerOptions = JsonContextRegistry.CreateCombinedOptions());

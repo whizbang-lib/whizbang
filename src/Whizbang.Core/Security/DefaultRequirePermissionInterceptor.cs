@@ -22,6 +22,9 @@ namespace Whizbang.Core.Security;
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:PermissionPresent_AllowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:PermissionMissing_DeniesWithDeadLetterDefaultAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:NoAttributes_AlwaysAllowsAsync</tests>
 public sealed class DefaultRequirePermissionInterceptor : IReceptorInterceptor {
   /// <inheritdoc />
   public ValueTask<InterceptorResult> CanInvokeAsync(

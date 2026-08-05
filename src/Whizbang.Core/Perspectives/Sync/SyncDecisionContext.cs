@@ -11,6 +11,8 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#callbacks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncCallbackTests.cs:LocalInvokeAndSyncAsync_WithResult_CallbacksInvokedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncCallbackTests.cs:LocalInvokeAndSyncAsync_WithoutAwaiter_InvokesDecisionCallbackWithoutWaitingAsync</tests>
 public sealed record SyncDecisionContext {
   /// <summary>
   /// The perspective type that was waited for, or null if waiting for all perspectives.

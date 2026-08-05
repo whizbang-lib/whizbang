@@ -5,6 +5,9 @@ namespace Whizbang.Core.Perspectives;
 /// Controls snapshot frequency, retention, and whether snapshots are enabled.
 /// </summary>
 /// <docs>fundamentals/perspectives/snapshots</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveSnapshotOptions_Defaults_HaveExpectedValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveSnapshotOptions_DisabledPreventsSnapshotsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveSnapshotOptions_CustomValues_ArePreservedAsync</tests>
 public class PerspectiveSnapshotOptions {
   /// <summary>
   /// Create a snapshot every N events processed.
