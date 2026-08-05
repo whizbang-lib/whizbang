@@ -182,6 +182,8 @@ public record StreamRewindCompleted(
 /// <param name="OldHash">Hash of the previous migration definition, or null if new.</param>
 /// <param name="NewHash">Hash of the new migration definition.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:MigrationItemStarted_Properties_RoundTripCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:MigrationItemStarted_NullOldHash_AllowedAsync</tests>
 [PinnedId("a8809ecd-7804-43c2-b534-54156fe21b7a")]
 public record MigrationItemStarted(
     [property: StreamId] Guid StreamId,
@@ -200,6 +202,7 @@ public record MigrationItemStarted(
 /// <param name="StatusDescription">Human-readable description of the status.</param>
 /// <param name="Duration">Wall-clock time for this migration item.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:MigrationItemCompleted_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("e93fe788-bc47-482b-b88c-d7cefe7e278d")]
 public record MigrationItemCompleted(
     [property: StreamId] Guid StreamId,
@@ -219,6 +222,7 @@ public record MigrationItemCompleted(
 /// <param name="Error">Error message describing the failure.</param>
 /// <param name="Duration">Wall-clock time before the failure occurred.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:MigrationItemFailed_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("5d40437d-2955-493a-89ba-462bcf11fded")]
 public record MigrationItemFailed(
     [property: StreamId] Guid StreamId,
@@ -239,6 +243,7 @@ public record MigrationItemFailed(
 /// <param name="TotalMigrations">Total number of migration items in the batch.</param>
 /// <param name="TotalPerspectives">Total number of perspectives included in the batch.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:MigrationBatchStarted_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("8a3c0619-a6f9-4e1f-8c73-b9bde323ad01")]
 public record MigrationBatchStarted(
     [property: StreamId] Guid StreamId,
@@ -259,6 +264,7 @@ public record MigrationBatchStarted(
 /// <param name="Failed">Number of migrations that failed.</param>
 /// <param name="TotalDuration">Wall-clock time for the entire batch.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:MigrationBatchCompleted_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("ee969fd8-45c3-48cf-ae1e-44ff5987efce")]
 public record MigrationBatchCompleted(
     [property: StreamId] Guid StreamId,

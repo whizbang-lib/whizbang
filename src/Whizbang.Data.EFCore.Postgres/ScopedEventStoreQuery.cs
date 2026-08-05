@@ -66,7 +66,9 @@ public class ScopedEventStoreQuery : IScopedEventStoreQuery {
 /// Use for batch operations where multiple queries should share one scope (and DbContext).
 /// </summary>
 /// <docs>fundamentals/events/event-store-query</docs>
-/// <tests>Whizbang.Data.EFCore.Postgres.Tests/EventStoreQueryFactoryTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedEventStoreQueryTests.cs:EventStoreQueryFactory_CreateScoped_SharesScopeAcrossQueriesAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedEventStoreQueryTests.cs:EventStoreQueryFactory_CreateScoped_MultipleScopes_ReturnDistinctInstancesAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedEventStoreQueryTests.cs:EventStoreQueryFactory_Constructor_WithNullScopeFactory_ThrowsArgumentNullExceptionAsync</tests>
 public class EventStoreQueryFactory : IEventStoreQueryFactory {
   private readonly IServiceScopeFactory _scopeFactory;
 

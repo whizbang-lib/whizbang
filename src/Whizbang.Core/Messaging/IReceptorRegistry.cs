@@ -24,7 +24,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Register_VoidReceptor_IsReturnedByGetReceptorsForAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Unregister_VoidReceptor_RemovesFromRegistryAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GeneratedRegistry_RuntimeRegister_AnswersHasRuntimeConsumerForAsync</tests>
 public interface IReceptorRegistry {
   /// <summary>
   /// Gets all receptors registered to handle the specified message type at the specified lifecycle stage.

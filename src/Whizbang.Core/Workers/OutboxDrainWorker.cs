@@ -1091,5 +1091,9 @@ public sealed class OutboxDrainWorkerOptions {
   /// </para>
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PublishTimeoutTests.cs:OutboxDrainWorker_PublishBatchHangs_TimesOutAndEnqueuesFailurePerRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PublishTimeoutTests.cs:OutboxDrainWorker_PublishSingularHangs_TimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PublishTimeoutTests.cs:OutboxDrainWorker_PublishStrategyIgnoresCt_StillTimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorker_PublishTimeoutZero_SingularPath_PublishesAndCompletesAsync</tests>
   public int PublishTimeoutSeconds { get; set; } = 60;
 }
