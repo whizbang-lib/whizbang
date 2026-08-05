@@ -35,6 +35,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly IMessageDiscardPolicy? _discardPolicy;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly bool _isEmulator;
+  private readonly ReceiveLivenessWatchdog? _livenessWatchdog;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
@@ -60,7 +61,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     Whizbang.Core.Messaging.IRawReceptorRegistry? rawReceptorRegistry = null,
     Whizbang.Core.Messaging.IMessageTypeBinder? typeBinder = null,
     IMessageDiscardPolicy? discardPolicy = null,
-    IReadOnlySet<string>? absorbedNamespaces = null
+    IReadOnlySet<string>? absorbedNamespaces = null,
+    TimeProvider? timeProvider = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -95,6 +97,23 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _logger.LogInformation("No admin client - auto-provisioning disabled, infrastructure must be pre-provisioned");
     }
 
+    // Receive-liveness watchdog: needs the admin plane to tell healthy-idle from stalled
+    // (silence alone would restart quiet-but-healthy services).
+    if (_options.EnableReceiveLivenessWatchdog) {
+      if (_adminClient is not null) {
+        var adminClientForProbe = _adminClient;
+        _livenessWatchdog = new ReceiveLivenessWatchdog(
+          _options,
+          (topic, sub, ct) => adminClientForProbe.GetSubscriptionActiveMessageCountAsync(topic, sub, ct),
+          _ => _invokeRecoveryHandlerAsync(),
+          timeProvider ?? TimeProvider.System,
+          _logger);
+      } else {
+        _logger.LogInformation(
+          "Receive-liveness watchdog disabled - no admin client available to distinguish idle from stalled subscriptions");
+      }
+    }
+
     // Add OTEL tags for observability
     activity?.SetTag("transport.type", "AzureServiceBus");
     activity?.SetTag("transport.emulator", _isEmulator);
@@ -106,6 +125,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
     _recoveryHandler = onRecovered;
   }
+
+  /// <summary>
+  /// The receive-liveness watchdog, when active (watchdog enabled AND an admin client is
+  /// available). Internal so tests drive sweeps deterministically via
+  /// <see cref="ReceiveLivenessWatchdog.ProbeAsync"/>.
+  /// </summary>
+  internal ReceiveLivenessWatchdog? LivenessWatchdog => _livenessWatchdog;
 
   /// <summary>
   /// Slice 2 receptor-registry filter — returns true if any local receptor handles the given
@@ -692,6 +718,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         : await _startNonSessionBatchSubscriptionAsync(
             topicName, subscriptionName, batchHandler, batchOptions, destination, cancellationToken);
 
+      if (_livenessWatchdog is not null) {
+        _livenessWatchdog.Track(topicName, subscriptionName);
+        _livenessWatchdog.Start();
+      }
+
       if (_logger.IsEnabled(LogLevel.Information)) {
         _logger.LogInformation(
           "Started batch subscription to {TopicName}/{SubscriptionName} (BatchSize={BatchSize}, SlideMs={SlideMs}, MaxWaitMs={MaxWaitMs})",
@@ -733,7 +764,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
     var subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
-    sessionProcessor.ProcessMessageAsync += args => _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
+    sessionProcessor.ProcessMessageAsync += args => {
+      _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
+      return _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
+    };
     sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination);
 
     await sessionProcessor.StartProcessingAsync(cancellationToken);
@@ -796,6 +830,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     // Non-blocking: enqueue to collector, return immediately
     processor.ProcessMessageAsync += args => {
+      _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
       if (!subscription.IsActive) {
         return args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
       }
@@ -908,6 +943,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
         sessionProcessor.ProcessMessageAsync += async args => {
+          _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
           if (!subscription.IsActive) {
             _logger.LogWarning(
               "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
@@ -943,6 +979,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         subscription = new AzureServiceBusSubscription(processor, _logger);
 
         processor.ProcessMessageAsync += async args => {
+          _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
           if (!subscription.IsActive) {
             _logger.LogWarning(
               "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
@@ -960,6 +997,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         processor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination);
 
         await processor.StartProcessingAsync(cancellationToken);
+      }
+
+      if (_livenessWatchdog is not null) {
+        _livenessWatchdog.Track(topicName, subscriptionName);
+        _livenessWatchdog.Start();
       }
 
       if (_logger.IsEnabled(LogLevel.Information)) {
@@ -1807,6 +1849,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     // Clear recovery handler to prevent memory leak
     _recoveryHandler = null;
+
+    // Stop the receive-liveness loop before tearing anything else down
+    if (_livenessWatchdog is not null) {
+      await _livenessWatchdog.DisposeAsync();
+    }
 
     // Dispose all senders
     foreach (var sender in _senders.Values) {

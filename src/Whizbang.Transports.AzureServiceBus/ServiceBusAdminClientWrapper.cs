@@ -103,6 +103,15 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
     await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
   }
 
+  /// <inheritdoc />
+  public async Task<long> GetSubscriptionActiveMessageCountAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken = default) {
+    var response = await _adminClient.GetSubscriptionRuntimePropertiesAsync(topicName, subscriptionName, cancellationToken);
+    return response.Value.ActiveMessageCount;
+  }
+
   #endregion
 
   #region Rule Management

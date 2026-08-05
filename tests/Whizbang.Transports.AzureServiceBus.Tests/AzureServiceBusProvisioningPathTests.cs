@@ -951,6 +951,9 @@ public class AzureServiceBusProvisioningPathTests {
       return Task.CompletedTask;
     }
 
+    public Task<long> GetSubscriptionActiveMessageCountAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) =>
+      Task.FromResult(0L);
+
     public async IAsyncEnumerable<RuleProperties> GetRulesAsync(
       string topicName,
       string subscriptionName,

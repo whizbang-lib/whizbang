@@ -104,6 +104,22 @@ public interface IServiceBusAdminClient {
     string subscriptionName,
     CancellationToken cancellationToken = default);
 
+  /// <summary>
+  /// Gets the number of active (deliverable, not dead-lettered or scheduled) messages
+  /// currently waiting on a subscription. Used by the receive-liveness watchdog to
+  /// distinguish a genuinely idle subscription from one whose receiver has silently stalled.
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The subscription's active message count.</returns>
+  /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusAdminClientWrapperTests.cs:GetSubscriptionActiveMessageCountAsync_ReturnsActiveMessageCountAsync</tests>
+  Task<long> GetSubscriptionActiveMessageCountAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken = default);
+
   #endregion
 
   #region Rule Management
