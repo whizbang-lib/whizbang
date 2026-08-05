@@ -14,6 +14,9 @@ namespace Whizbang.Sagas;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/sagas/completion-orchestration</docs>
+/// <tests>tests/Whizbang.Sagas.Tests/SagaServiceCollectionExtensionsTests.cs:AddWhizbangSagas_RegistersSagaOptionsAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonsAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NextDelay_ClampedAtMaxAsync</tests>
 public sealed class SagaOptions {
 
   /// <summary>

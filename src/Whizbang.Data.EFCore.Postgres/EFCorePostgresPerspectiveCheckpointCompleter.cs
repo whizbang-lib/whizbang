@@ -25,6 +25,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildInPlaceAsync_WritesCursorCheckpointAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WritesCursorsForTargetedStreamsOnlyAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildInPlaceAsync_WithExistingProcessingCursor_UpdatesToCompletedAsync</tests>
 public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
     DbContext dbContext,
     ILogger<EFCorePostgresPerspectiveCheckpointCompleter>? logger = null)

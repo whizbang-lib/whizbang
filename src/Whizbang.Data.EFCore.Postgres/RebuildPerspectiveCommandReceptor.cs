@@ -33,6 +33,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildPerspectiveCommand_WithNamedPerspective_UpdatesCursorAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildPerspectiveCommand_WithIncludeStreamIds_UpdatesOnlyTargetedCursorsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildPerspectiveCommand_WithNullPerspectiveNames_FansOutToAllRegisteredAsync</tests>
 public sealed partial class RebuildPerspectiveCommandReceptor(
     IServiceScopeFactory scopeFactory,
     ILogger<RebuildPerspectiveCommandReceptor> logger) : IReceptor<RebuildPerspectiveCommand> {

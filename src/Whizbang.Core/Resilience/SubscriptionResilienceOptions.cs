@@ -68,6 +68,8 @@ public class SubscriptionResilienceOptions {
   /// </summary>
   /// <value>Default: 1 minute</value>
   /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionResilienceOptionsTests.cs:HealthCheckInterval_Default_IsOneMinuteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionResilienceOptionsTests.cs:HealthCheckInterval_SetValue_ReturnsSetValueAsync</tests>
   public TimeSpan HealthCheckInterval { get; set; } = TimeSpan.FromMinutes(1);
 
   /// <summary>
@@ -78,5 +80,8 @@ public class SubscriptionResilienceOptions {
   /// </summary>
   /// <value>Default: true (continue with partial subscriptions)</value>
   /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionResilienceOptionsTests.cs:AllowPartialSubscriptions_Default_IsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionResilienceOptionsTests.cs:AllowPartialSubscriptions_SetFalse_ReturnsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerResilienceTests.cs:Worker_WithPartialFailures_ContinuesWithSuccessfulSubscriptionsAsync</tests>
   public bool AllowPartialSubscriptions { get; set; } = true;
 }

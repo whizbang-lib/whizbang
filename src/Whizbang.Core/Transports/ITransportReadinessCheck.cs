@@ -16,6 +16,9 @@ namespace Whizbang.Core.Transports;
 /// - HTTP: Check if endpoint is responding</para>
 /// </remarks>
 /// <docs>messaging/transports/transports</docs>
+/// <tests>tests/Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:AlwaysReadyCheck_ReturnsTrue_WhenCalledAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:ConfigurableCheck_ReturnsConfiguredValue_WhenCalledAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:ConfigurableCheck_RespectsCancellationToken_WhenCancelledAsync</tests>
 public interface ITransportReadinessCheck {
   /// <summary>
   /// Checks if the transport is ready to accept messages.
@@ -26,9 +29,9 @@ public interface ITransportReadinessCheck {
   /// This method should be fast and lightweight. If the check requires network I/O,
   /// consider implementing caching or circuit breaker patterns to avoid excessive overhead.
   /// </remarks>
-  /// <tests>Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:AlwaysReadyCheck_ReturnsTrue_WhenCalledAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:NeverReadyCheck_ReturnsFalse_WhenCalledAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:ConfigurableCheck_ReturnsConfiguredValue_WhenCalledAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:ConfigurableCheck_RespectsCancellationToken_WhenCancelledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:AlwaysReadyCheck_ReturnsTrue_WhenCalledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:NeverReadyCheck_ReturnsFalse_WhenCalledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:ConfigurableCheck_ReturnsConfiguredValue_WhenCalledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:ConfigurableCheck_RespectsCancellationToken_WhenCancelledAsync</tests>
   Task<bool> IsReadyAsync(CancellationToken cancellationToken = default);
 }

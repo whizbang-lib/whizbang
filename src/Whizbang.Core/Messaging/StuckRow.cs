@@ -23,6 +23,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>operations/observability/stuck-row-sentinel</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_MultipleStuckRows_OneWarningEachAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFindStuckRowsTests.cs:FindStuckOutboxRows_PostgresBacking_DelegatesToSqlFunctionAsync</tests>
 public sealed record StuckRow {
   /// <summary>The <c>message_id</c> of the stuck row.</summary>
   public required Guid MessageId { get; init; }

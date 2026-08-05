@@ -4,6 +4,9 @@ namespace Whizbang.Hosting.AspNet;
 /// How <see cref="DatabaseAvailabilityMiddleware"/> gates traffic while the schema is not ready.
 /// </summary>
 /// <docs>resilience/database-availability-middleware</docs>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/DatabaseAvailabilityMiddlewareModeTests.cs:MutationsOnly_NotReady_ReadPassesThroughAsync</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/DatabaseAvailabilityMiddlewareModeTests.cs:MutationsOnly_NotReady_WriteIsGatedAsync</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/DatabaseAvailabilityMiddlewareModeTests.cs:AllNonExempt_NotReady_ReadIsGatedAsync</tests>
 public enum AvailabilityGateMode {
   /// <summary>503 every non-exempt request until the schema is ready (the original behavior).</summary>
   AllNonExempt,

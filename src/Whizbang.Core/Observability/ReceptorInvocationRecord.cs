@@ -23,7 +23,9 @@ namespace Whizbang.Core.Observability;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:RoundtripsFaithfullyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:RecordInvocation_AppendsToExistingListAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvocationsRoundtripTests.cs:ReceptorInvocations_SurviveEnvelopeSerializerRoundtripAsync</tests>
 public sealed record ReceptorInvocationRecord {
   /// <summary>The receptor's canonical identifier (typically the fully-qualified class name).</summary>
   [JsonPropertyName("r")]

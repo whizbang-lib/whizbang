@@ -322,6 +322,8 @@ public sealed class MaintenanceWorkerOptions {
   /// noisy and you want to disable it independently of the rest of maintenance.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
   public bool StuckRowSentinelEnabled { get; set; } = true;
 
   /// <summary>
