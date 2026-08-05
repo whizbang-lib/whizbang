@@ -10,7 +10,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>Tuning for the re-delivery pump.</summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed class RedeliveryPumpOptions {
   /// <summary>
   /// Chunk bound: a stream's repair slice larger than this is split into multiple composites.
@@ -43,7 +43,7 @@ public sealed class RedeliveryPumpOptions {
 /// A deserialization miss is a THROW, not a skip — the origin owns its own types, so a miss is a
 /// bug, and silently shrinking a repair bundle would report a repair that never fully happened.
 /// </remarks>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpTests.cs</tests>
 public sealed class RedeliveryPump {
   private readonly ITransport _transport;

@@ -28,7 +28,7 @@ namespace Whizbang.Core.Offloads;
 /// compression) see the original bytes. Encryption / signing (Order 2000+)
 /// should run after offload so the small claim envelope is also covered.
 /// </remarks>
-/// <docs>offloads</docs>
+/// <docs>fundamentals/offloads/message-body-store</docs>
 public sealed class BodyOffloadPostSerializeHook : IPostSerializeHook {
 #pragma warning disable CA1707
   /// <summary>Destination metadata key set to <c>true</c> when the wire bytes are a claim envelope.</summary>

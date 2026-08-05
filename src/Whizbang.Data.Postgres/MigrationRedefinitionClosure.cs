@@ -10,7 +10,7 @@ namespace Whizbang.Data.Postgres;
 /// file silently leaves objects generations old — every statement succeeds while, e.g., store
 /// procedures persist <c>flags = 0</c> for every row with no error anywhere.
 /// </summary>
-/// <docs>operations/migrations</docs>
+/// <docs>operations/infrastructure/migrations</docs>
 public static class MigrationRedefinitionClosure {
   /// <summary>
   /// Returns the fixed-point closure of <paramref name="toRun"/> over

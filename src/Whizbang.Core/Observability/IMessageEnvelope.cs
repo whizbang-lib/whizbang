@@ -198,7 +198,7 @@ public interface IMessageEnvelope {
   /// (history a subscription expansion needs must not re-run business reactions) and inherited by
   /// their fanned-out children. Default false = normal delivery semantics.
   /// </summary>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   [JsonPropertyName("sto")]
   bool StateOnly => false;
 

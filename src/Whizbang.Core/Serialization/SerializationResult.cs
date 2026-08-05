@@ -8,7 +8,7 @@ namespace Whizbang.Core.Serialization;
 /// (inline vs offload) without re-serializing. Forward-extensible — add fields here as more
 /// serialize-time information is needed, rather than re-deriving it downstream.
 /// </summary>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/WireEnvelopeSerializerTests.cs</tests>
 public sealed record SerializationResult {
   /// <summary>The serialized bytes.</summary>

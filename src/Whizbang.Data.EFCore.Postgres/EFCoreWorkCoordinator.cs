@@ -1172,7 +1172,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// at-most-once occurrences by their envelope-metadata delivery guarantee, and returns rows
   /// ordered (stream, version) under a hard LIMIT.
   /// </summary>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs</tests>
   public async Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(
     RedeliveryRequest request,

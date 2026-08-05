@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// never raise the origin's storm cap. Inert (logged) if the host lacks the transport, event
 /// store, coordinator, or event-type provider.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
 public sealed partial class RedeliveryRequestReceptor(
     IServiceScopeFactory scopeFactory,

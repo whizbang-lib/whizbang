@@ -19,7 +19,7 @@ namespace Whizbang.Core.Observability;
 ///   disagreed with the store recompute: an unaccounted write path touched audited rows.</description></item>
 /// </list>
 /// </remarks>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityMetricsTests.cs</tests>
 public sealed class StreamIntegrityMetrics {
 #pragma warning disable CA1707

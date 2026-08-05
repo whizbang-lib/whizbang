@@ -12,7 +12,7 @@ namespace Whizbang.Core;
 /// received event's flags must be derived from the catalog by type name or the bits that drive sink
 /// routing, the reaper, and the replay guards are silently lost at every service boundary.
 /// </summary>
-/// <docs>events/collective-events</docs>
+/// <docs>fundamentals/messaging/collective-events</docs>
 public interface IEventMarkerResolver {
   /// <summary>
   /// The catalog-stamped flags of the type whose CLR name is <paramref name="clrTypeName"/> (the
@@ -34,7 +34,7 @@ public interface IEventMarkerResolver {
 /// at construction (registered as a singleton), so a per-message lookup on the receive path is a single
 /// ordinal dictionary probe.
 /// </summary>
-/// <docs>events/collective-events</docs>
+/// <docs>fundamentals/messaging/collective-events</docs>
 public sealed class EventMarkerResolver : IEventMarkerResolver {
   private readonly Dictionary<string, EventFlags> _byClrTypeName;
   private readonly Dictionary<Type, EventFlags> _byType;

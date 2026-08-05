@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// consumer's liveness alarm, so silence must always be abnormal. ON by default; disable with
 /// <see cref="StreamIntegrityOptions.CheckpointsEnabled"/>.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
 public sealed partial class IntegrityCheckpointWorker(
   IServiceScopeFactory scopeFactory,

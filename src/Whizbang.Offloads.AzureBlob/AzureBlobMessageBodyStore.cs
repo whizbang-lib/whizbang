@@ -29,7 +29,7 @@ namespace Whizbang.Offloads.AzureBlob;
 /// idempotent so fan-out double-delete is safe.
 /// </para>
 /// </remarks>
-/// <docs>offloads</docs>
+/// <docs>fundamentals/offloads/providers/azure-blob</docs>
 public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
   private readonly AzureBlobOffloadOptions _options;
   private readonly ILogger<AzureBlobMessageBodyStore>? _logger;

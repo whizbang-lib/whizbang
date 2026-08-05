@@ -27,7 +27,7 @@ namespace Whizbang.Core.Observability;
 ///   generation-replay sweep on worker startup. Tagged by <c>generation</c>.</description></item>
 /// </list>
 /// </remarks>
-/// <docs>operations/dead-letter-queue/metrics</docs>
+/// <docs>operations/observability/metrics</docs>
 public sealed class DeadLetterMetrics {
 #pragma warning disable CA1707
   /// <summary>OpenTelemetry meter name.</summary>

@@ -17,7 +17,7 @@ namespace Whizbang.Core.Messaging;
 /// id/inner count mismatch fails the whole expansion (routed to the DLQ) rather than desynchronizing
 /// the pairing — these bundles are machine-built, so a mismatch is a producer bug, never data.
 /// </remarks>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 public interface IIdentityPreservingComposite : ICompositeEvent {
   /// <summary>Original message ids, parallel to the inner events (same order and count).</summary>
@@ -51,7 +51,7 @@ public interface IIdentityPreservingComposite : ICompositeEvent {
 /// base default): one poison inner event must not dead-letter a stream's whole repair — the next
 /// integrity cycle re-detects any remainder.
 /// </remarks>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 [PinnedId("b3d9f2a1-6c47-4e0d-9a58-1f2e3c4d5b6a")]
 public sealed class RedeliveryComposite : CompositeEventBase, IIdentityPreservingComposite {

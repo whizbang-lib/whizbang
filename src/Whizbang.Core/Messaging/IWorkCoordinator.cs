@@ -268,7 +268,7 @@ public interface IWorkCoordinator {
   /// in this service — otherwise wh_inbox.partition_number and wh_active_streams.partition_number
   /// disagree for the same stream and claim_orphaned_inbox deadlocks.</param>
   /// <param name="cancellationToken">Cancellation token</param>
-  /// <docs>operations/workers/transport-consumer</docs>
+  /// <docs>messaging/transports/transport-consumer</docs>
   Task StoreInboxMessagesAsync(
     InboxMessage[] messages,
     int partitionCount,
@@ -580,7 +580,7 @@ public interface IWorkCoordinator {
   /// <param name="request">Selection criteria and cap.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Selected events, capped at <see cref="RedeliveryRequest.MaxEvents"/>.</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs</tests>
   Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(
     RedeliveryRequest request,
@@ -598,7 +598,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The advanced window, or null when unsupported / lost the advance race.</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointAdvanceTests.cs</tests>
   Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(
     CancellationToken cancellationToken = default) => Task.FromResult<IntegrityCheckpointWindow?>(null);
@@ -615,7 +615,7 @@ public interface IWorkCoordinator {
   /// <param name="toCommitSequence">Inclusive window watermark.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Per-(tenant, type) receipt counts inside the window.</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointAdvanceTests.cs</tests>
   Task<IReadOnlyList<CheckpointBucket>> CountReceivedFromOriginAsync(
     Guid originServiceId,
@@ -630,7 +630,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Every registered consumed type with its backfill status.</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedTypeRegistryTests.cs</tests>
   Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ConsumedTypeRegistration>>([]);
@@ -645,7 +645,7 @@ public interface IWorkCoordinator {
   /// <param name="eventTypes">Stored event type names to register.</param>
   /// <param name="asBaseline">True = first-boot registration (no backfill); false = expansion (Pending).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedTypeRegistryTests.cs</tests>
   Task RegisterConsumedTypesAsync(
     IReadOnlyList<string> eventTypes,
@@ -659,7 +659,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="eventTypes">The requested types.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedTypeRegistryTests.cs</tests>
   Task MarkConsumedTypeBackfillRequestedAsync(
     IReadOnlyList<string> eventTypes,
@@ -680,7 +680,7 @@ public interface IWorkCoordinator {
   /// <param name="settleWindow">Only events older than this are folded (default 1 hour).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Digest rows ordered by (tenant, type, stream).</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
   Task<IReadOnlyList<StreamDigest>> ComputeStreamDigestsAsync(
     Guid? originServiceId,
@@ -700,7 +700,7 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Distinct (stream, perspective) gaps with their settled event counts, at most
   /// <paramref name="maxGaps"/> rows.</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
   Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
     TimeSpan settleWindow,
@@ -716,7 +716,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Distinct stored event-type names from the own-emissions digest lane.</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
   Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<string>>([]);
@@ -733,7 +733,7 @@ public interface IWorkCoordinator {
   /// <param name="eventTypes">Optional type filter.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Digest rows ordered by (tenant, type, stream), with bucket update times.</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.cs</tests>
   Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
     Guid? originServiceId,
@@ -751,7 +751,7 @@ public interface IWorkCoordinator {
   /// <param name="eventTypes">Optional type filter.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Type-level roll-ups ordered by (tenant, type).</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.cs</tests>
   Task<IReadOnlyList<StreamDigest>> GetTypeDigestsAsync(
     Guid? originServiceId,
@@ -769,7 +769,7 @@ public interface IWorkCoordinator {
   /// <param name="settleWindow">Buckets/events younger than this are ignored.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Checked/healed bucket counts.</returns>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.cs</tests>
   Task<DigestVerificationResult> VerifyDigestTableAsync(
     TimeSpan settleWindow,

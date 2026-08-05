@@ -152,7 +152,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Stream-integrity Phase S: state-only delivery marker — build state, never fire trigger
   /// receptors. Omitted from the wire when false (the overwhelmingly common case).
   /// </summary>
-  /// <docs>proposals/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity</docs>
   [JsonPropertyName("sto")]
   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
   public bool StateOnly { get; set; }

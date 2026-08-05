@@ -59,7 +59,7 @@ public sealed record MessageTypeCatalogEntry(
   /// <c>EventFlags.Collective</c> bit (which routes the event to the collective sink) must be derived
   /// from this compile-time stamp by type name instead.
   /// </summary>
-  /// <docs>events/collective-events</docs>
+  /// <docs>fundamentals/messaging/collective-events</docs>
   public bool IsCollective { get; init; }
 
   /// <summary>
@@ -67,7 +67,7 @@ public sealed record MessageTypeCatalogEntry(
   /// time. Same transport-receive rationale as <see cref="IsCollective"/> for the
   /// <c>EventFlags.Composite</c> bit.
   /// </summary>
-  /// <docs>events/composite-events</docs>
+  /// <docs>fundamentals/messaging/composite-events</docs>
   public bool IsComposite { get; init; }
 
   /// <summary>
