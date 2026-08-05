@@ -11,6 +11,8 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#tracked-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerTests.cs:TrackedSyncEvent_StoresAllPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerTests.cs:TrackEvent_AddsToTrackedListAsync</tests>
 public sealed record TrackedSyncEvent(
     Type EventType,
     Guid EventId,

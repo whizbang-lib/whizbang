@@ -25,6 +25,9 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// </remarks>
 /// <docs>apis/graphql/sorting</docs>
 /// <tests>Whizbang.Transports.HotChocolate.Tests/Integration/QueryExecutionTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/OrderByStrippingMiddlewareTests.cs:Middleware_WithSortArguments_StripsPreExistingOrderByAsync</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/OrderByStrippingMiddlewareTests.cs:Middleware_WithSortAscending_StripsAndAppliesAscendingAsync</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/OrderByStrippingMiddlewareTests.cs:Middleware_WithNoSortArguments_PreservesOriginalOrderAsync</tests>
 [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property, AllowMultiple = false)]
 public sealed class UseOrderByStrippingAttribute : ObjectFieldDescriptorAttribute {
   /// <summary>

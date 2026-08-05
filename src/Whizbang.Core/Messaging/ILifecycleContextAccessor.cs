@@ -13,6 +13,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>operations/testing/lifecycle-synchronization</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextAccessorTests.cs:Current_SetAndGet_ReturnsValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextAccessorTests.cs:Current_DifferentAsyncContexts_AreIsolatedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextAccessorTests.cs:Current_WithPerspectiveType_RoundTripsCorrectlyAsync</tests>
 public interface ILifecycleContextAccessor {
   /// <summary>
   /// Gets or sets the current lifecycle context for the ambient scope.

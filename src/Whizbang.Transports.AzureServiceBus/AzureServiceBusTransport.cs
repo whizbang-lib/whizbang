@@ -1513,6 +1513,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <returns>A valid Azure Service Bus subscription name.</returns>
   /// <docs>messaging/transports/azure-service-bus#subscription-naming</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs:DeriveSubscriptionNameWithSubscriberNameMetadataUsesServiceNameAndTopicAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs:DeriveSubscriptionNameWithHashWildcardDoesNotUseAsSubscriptionNameAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_SubscriberNameMetadata_DerivesSubscriptionNameAsync</tests>
   private string _deriveSubscriptionName(TransportDestination destination, string topicName) {
     // Try to get SubscriberName from metadata (set by TransportSubscriptionBuilder)
     if (destination.Metadata?.TryGetValue("SubscriberName", out var elem) == true &&
@@ -1578,6 +1581,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>messaging/transports/azure-service-bus#auto-provisioning</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_TopicAndSubscriptionMissing_CreatesBothAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_AutoProvisionDisabled_DoesNotTouchAdminPlaneAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_TopicCreate409Race_ContinuesToSubscriptionCreationAsync</tests>
   private async Task _ensureInfrastructureExistsAsync(
     string topicName,
     string subscriptionName,
@@ -1655,6 +1661,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>messaging/transports/azure-service-bus#routing-filters</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatterns_AppliesSqlFilterRuleAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternWithBareWildcard_TranslatesToPercentAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternRuleCreationFails_ProceedsWithoutFilterAsync</tests>
   private async Task _applyRoutingPatternFilterAsync(
     string topicName,
     string subscriptionName,
@@ -1737,6 +1746,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Shared by both subscribe-path and publish-path auto-provisioning.
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_EnsuresTopicExistsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_TopicAlreadyExists_SkipsCreationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_RaceCondition_HandlesGracefullyAsync</tests>
   private async Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
     if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
       return;

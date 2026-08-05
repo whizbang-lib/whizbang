@@ -24,6 +24,9 @@ namespace Whizbang.Core.Dispatch;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/publish-once</docs>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_DistinctKeys_BothReturnTrueAndBothFireAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_EmitsClaimsWonMetricOnWinAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_EmitsClaimsLostMetricOnLossAsync</tests>
 public interface IClaimedEmissionStore {
 
   /// <summary>

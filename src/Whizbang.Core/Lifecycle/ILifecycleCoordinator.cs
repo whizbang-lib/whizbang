@@ -21,6 +21,9 @@ namespace Whizbang.Core.Lifecycle;
 /// <para>Thread-safe. Supports concurrent tracking of multiple events.</para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator</docs>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:BeginTracking_CreatesTracking_AtEntryStageAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:WhenAll_BothComplete_FiresPostLifecycleOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_LifecycleCoordinator_IsSingletonAsync</tests>
 public interface ILifecycleCoordinator {
   /// <summary>
   /// Begins tracking an event at the specified entry stage.
@@ -123,6 +126,9 @@ public interface ILifecycleCoordinator {
 /// Used with the WhenAll pattern for events that traverse multiple paths.
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#whenall</docs>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:WhenAll_ThreeSources_RequiresAllAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:WhenAll_BothComplete_FiresPostLifecycleOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/PostLifecyclePipelineTests.cs:Dispatcher_WhenAll_WaitsForDistributedPathAsync</tests>
 public enum PostLifecycleCompletionSource {
   /// <summary>Local dispatch path completed.</summary>
   Local,

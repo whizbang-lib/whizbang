@@ -18,6 +18,9 @@ namespace Whizbang.Generators;
 /// <param name="BaseTypeName">Fully qualified base type name with global:: prefix (e.g., "global::MyApp.BaseAppEvent" or "global::Whizbang.Core.IEvent")</param>
 /// <param name="IsInterface">True if BaseTypeName is an interface, false if it's a class</param>
 /// <docs>extending/source-generators/polymorphic-serialization</docs>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithUserBaseClass_AutoDiscoversPolymorphicTypesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithAbstractDerivedType_ExcludesItAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithExplicitJsonPolymorphic_UsesUserAttributesAsync</tests>
 internal sealed record InheritanceInfo(
     string DerivedTypeName,
     string BaseTypeName,

@@ -22,6 +22,9 @@ namespace Whizbang.Core.Tags;
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#registry</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithNoHookResolver_ReturnsEarlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMatchingTag_InvokesHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/TagHookStageFilteringAndScopeTests.cs:ProcessTagsAsync_HookRegisteredAtPostAllPerspectives_FiresAtPostAllPerspectivesDetachedAsync</tests>
 public static class MessageTagRegistry {
   /// <summary>
   /// Register a tag registry. Called from [ModuleInitializer] in generated code.

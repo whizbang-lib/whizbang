@@ -18,6 +18,9 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <docs>fundamentals/lenses/lens-query-factory</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/LensQueryFactoryTests.cs:CreateScoped_ReturnsDisposableScopedQueryAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/LensQueryFactoryTests.cs:ScopedQuery_SharesSameDbContext_WithinScopeAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedLensQueryIntegrationTests.cs:ILensQueryFactory_BatchQueries_ShareSameScopeAsync</tests>
 public interface ILensQueryFactory : IAsyncDisposable, IDisposable {
   /// <summary>
   /// Gets an ILensQuery for the specified model type, sharing this factory's DbContext.

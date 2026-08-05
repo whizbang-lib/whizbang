@@ -101,6 +101,9 @@ public record PerspectiveRebuildFailed(
 /// <param name="HasSnapshot">Whether a snapshot was available for the rewind.</param>
 /// <param name="StartedAt">When the rewind operation started.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindStarted_WithAllParams_PreservesValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindStarted_Properties_AreCorrectAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindStarted_NullSnapshot_IndicatesFullReplayAsync</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 [PinnedId("7291e4ab-917e-4955-a78c-e41da5ee1af3")]
 public record PerspectiveRewindStarted(
@@ -123,6 +126,9 @@ public record PerspectiveRewindStarted(
 /// <param name="StartedAt">When the rewind operation started.</param>
 /// <param name="CompletedAt">When the rewind operation completed.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs:FixedRewind_EventsAppendedDuringWindow_AreAppliedTooAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindCompleted_Properties_AreCorrectAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindCompleted_DurationCanBeCalculatedAsync</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 [PinnedId("56514b57-149d-47aa-9a10-afcb4e38539c")]
 public record PerspectiveRewindCompleted(
@@ -145,6 +151,8 @@ public record PerspectiveRewindCompleted(
 /// <param name="StartedAt">When the stream-level rewind operation started.</param>
 /// <docs>fundamentals/perspectives/rewind#stream-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs:StreamRewindStarted_Properties_SetCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs:StreamRewindStarted_ImplementsIEventAsync</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 [PinnedId("e3accb0d-aecb-4b54-9bb5-945d5adf844b")]
 public record StreamRewindStarted(
@@ -165,6 +173,8 @@ public record StreamRewindStarted(
 /// <param name="CompletedAt">When all perspective rewinds completed.</param>
 /// <docs>fundamentals/perspectives/rewind#stream-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs:StreamRewindCompleted_Properties_SetCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs:StreamRewindCompleted_ImplementsIEventAsync</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 [PinnedId("2a4f496c-acee-4dcf-b336-1b0ba1858238")]
 public record StreamRewindCompleted(

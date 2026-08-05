@@ -423,6 +423,9 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// Processing (Process, PostInbox, completion) deferred to WorkCoordinatorPublisherWorker.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:MixedBatch_DroppedTypesFilteredBeforeBulkInsertAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchProcessing_CreatesExactlyOneScopePerBatchAsync</tests>
   private async Task _handleMessageBatchAsync(
       IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {
     if (messages.Count == 0) {

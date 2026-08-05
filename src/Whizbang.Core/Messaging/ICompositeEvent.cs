@@ -39,6 +39,9 @@ namespace Whizbang.Core.Messaging;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeEventContractTests.cs:ICompositeEvent_InnerEvents_LazyEnumerationSupportedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeEventContractTests.cs:ICompositeEvent_ExtendsIMessage_SoExistingPipelinesCanCarryItAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_YieldsOneChildInboxMessagePerInnerAsync</tests>
 public interface ICompositeEvent : IMessage {
   /// <summary>
   /// Yields the inner events this composite expands into. Receivers

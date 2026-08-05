@@ -333,6 +333,9 @@ public sealed class MaintenanceWorkerOptions {
   /// <see cref="OutboxDrainWorkerOptions.MaxOutboxAttempts"/> default.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
   public int StuckRowSentinelMaxAttempts { get; set; } = 10;
 
   /// <summary>
@@ -341,6 +344,9 @@ public sealed class MaintenanceWorkerOptions {
   /// low enough that log volume stays manageable.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_MultipleStuckRows_OneWarningEachAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
   public int StuckRowSentinelLimit { get; set; } = 50;
 
   /// <summary>

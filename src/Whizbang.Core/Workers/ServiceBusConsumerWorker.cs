@@ -25,6 +25,9 @@ namespace Whizbang.Core.Workers;
 /// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:StartAsync_WhenSubscribeFails_LogsAndRethrowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:ExecuteAsync_WhenFatalErrorOccurs_LogsAndRethrowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_ConcurrencyLimitDisabled_ProcessesWithoutSemaphoreAsync</tests>
 #pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class ServiceBusConsumerWorker(
   ITransport transport,

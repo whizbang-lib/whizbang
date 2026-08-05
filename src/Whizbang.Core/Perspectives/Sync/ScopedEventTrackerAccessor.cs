@@ -20,6 +20,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#scoped-tracker-accessor</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerAccessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeBehaviorTests.cs:AllProjections_NoScopedTracker_FastReturnAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeBehaviorTests.cs:AllProjections_WithEventsTracked_InvokesAwaiterWithInfiniteTimeoutAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPerspectiveSyncCoverageTests.cs:LocalInvokeAsync_WithWaitForPerspectives_NoScopedTracker_ReturnsNormallyAsync</tests>
 public static class ScopedEventTrackerAccessor {
   private static readonly AsyncLocal<IScopedEventTracker?> _current = new();
 

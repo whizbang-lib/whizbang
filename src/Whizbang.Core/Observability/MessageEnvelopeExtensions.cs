@@ -46,6 +46,9 @@ public static class MessageEnvelopeExtensions {
   /// </example>
   /// <docs>fundamentals/security/message-security#envelope-reconstruction</docs>
   /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeExtensionsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeExtensionsTests.cs:ReconstructWithPayload_NonGeneric_SetsDeserializedPayloadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeExtensionsTests.cs:ReconstructWithPayload_NonGeneric_PreservesHopsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeExtensionsTests.cs:ReconstructWithPayload_Generic_SharesHopsReferenceAsync</tests>
   public static IMessageEnvelope ReconstructWithPayload(
       this IMessageEnvelope<JsonElement> jsonEnvelope,
       object deserializedPayload) {

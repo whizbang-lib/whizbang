@@ -9,6 +9,7 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Used for schema drift detection and auto-migration when table names change.
 /// </summary>
 /// <docs>fundamentals/perspectives/registry</docs>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ISchemaBuilderContractTests.cs:BuildInfrastructureSchema_IncludesAllRequiredTablesAsync</tests>
 public static class PerspectiveRegistrySchema {
   /// <summary>
   /// Column name constants for type-safe access.

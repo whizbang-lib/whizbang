@@ -153,6 +153,9 @@ public partial class TransportDeadLetterDrainWorker(
 
 /// <summary>Configuration for <see cref="TransportDeadLetterDrainWorker"/>.</summary>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs:NoDrainersRegistered_NoOpAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs:DrainersInvoked_AllReturnNonZero_TotalAccumulatedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs:MultipleDrainOnceCalls_AccumulateTotalAsync</tests>
 public sealed class TransportDeadLetterDrainWorkerOptions {
   /// <summary>
   /// Killswitch. Default <c>true</c>. When <c>false</c>, broker DLQ messages stay in DLQ

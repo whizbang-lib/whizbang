@@ -1146,6 +1146,9 @@ public sealed record MaintenanceResult(string TaskName, long RowsAffected, doubl
 /// <param name="LastEventId">Current cursor position.</param>
 /// <param name="RewindTriggerEventId">The late-arriving event that triggered the rewind.</param>
 /// <docs>fundamentals/perspectives/rewind</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_PositionalCtor_RoundTripsAllValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_NullsAreAllowedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
 public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? LastEventId, Guid? RewindTriggerEventId);
 
 /// <summary>
@@ -1898,6 +1901,9 @@ public record PerspectiveCursorCompletion {
   /// Used by rewind observability to populate PerspectiveRewindCompleted.EventsReplayed.
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDtoSurfaceTests.cs:PerspectiveCursorCompletion_ProcessedEventIds_DefaultsEmptyAndRoundTripsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveApplyIdempotencyTests.cs:RunAsync_RerunWithSameEvents_SkipsAllAndDoesNotReWriteAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveApplyIdempotencyTests.cs:RunAsync_RerunWithMixOfAppliedAndNewEvents_AppliesOnlyNewAsync</tests>
   public int EventsProcessed { get; init; }
 
   /// <summary>

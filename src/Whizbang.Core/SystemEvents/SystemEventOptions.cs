@@ -4,6 +4,9 @@ namespace Whizbang.Core.SystemEvents;
 /// Controls which events are audited when event audit is enabled.
 /// </summary>
 /// <docs>fundamentals/events/system-events#audit-mode</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventOptionsTests.cs:AuditMode_DefaultsToOptOut_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventOptionsTests.cs:AuditMode_CanBeSetToOptIn_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditingEventStoreDecoratorTests.cs:ShouldAudit_OptOut_AuditsRegularEventsAsync</tests>
 public enum AuditMode {
   /// <summary>
   /// All events are audited unless marked with <c>[AuditEvent(Exclude = true)]</c>.

@@ -18,6 +18,9 @@ namespace Whizbang.Core.Tags;
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#processing</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessAsync_InvokesMatchingHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMatchingTag_InvokesHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs:LocalInvokeAsync_WithTagProcessingEnabled_InvokesTagProcessorAsync</tests>
 public interface IMessageTagProcessor {
   /// <summary>
   /// Processes all tags for a message at the specified lifecycle stage.

@@ -8,6 +8,9 @@ namespace Whizbang.Core.Security.Attributes;
 /// </summary>
 /// <docs>fundamentals/security/security#permission-based-rls</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:RequirePermissionAttribute_Operation_DefaultsToAnyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:RequirePermissionAttribute_Operation_AcceptsReadAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:RequirePermissionAttribute_Operation_AcceptsWriteAsync</tests>
 public enum ScopeOperation {
   /// <summary>
   /// Applies to any operation kind. Default — preserves legacy class-only behavior where

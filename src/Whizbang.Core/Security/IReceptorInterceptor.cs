@@ -23,6 +23,9 @@ namespace Whizbang.Core.Security;
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateFirstDenial_FirstDenies_ShortCircuitsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateAll_AllInterceptorsRun_EvenWhenFirstDeniesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs:EmptyPipeline_AlwaysAllowsAsync</tests>
 public interface IReceptorInterceptor {
   /// <summary>
   /// Decide whether the given receptor type may be invoked for the supplied envelope and

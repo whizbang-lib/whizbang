@@ -15,6 +15,9 @@ namespace Whizbang.Core.Tags;
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#registry</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMatchingTag_InvokesHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMultipleTags_ProcessesAllAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/TagHookStageFilteringAndScopeTests.cs:ProcessTagsAsync_TwoHooksAtDifferentStages_EachFiresOnlyAtItsStageAsync</tests>
 public interface IMessageTagRegistry {
   /// <summary>
   /// Gets all tag registrations for a specific message type.

@@ -42,6 +42,9 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   /// <param name="ct">The cancellation token.</param>
   /// <returns>A <see cref="ValueTask"/> that completes when pre-processing is done.</returns>
   /// <docs>apis/mutations/hooks#before</docs>
+  /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:ExecuteAsync_ShouldCallOnBeforeExecuteAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:OnBeforeExecuteAsync_Default_ShouldCompleteImmediatelyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:ExecuteAsync_Order_ShouldBe_Before_Dispatch_AfterAsync</tests>
   protected virtual ValueTask OnBeforeExecuteAsync(
       TCommand command,
       IMutationContext context,
@@ -58,6 +61,9 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   /// <param name="ct">The cancellation token.</param>
   /// <returns>A <see cref="ValueTask"/> that completes when post-processing is done.</returns>
   /// <docs>apis/mutations/hooks#after</docs>
+  /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:ExecuteAsync_ShouldCallOnAfterExecuteAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:OnAfterExecuteAsync_Default_ShouldCompleteImmediatelyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:ExecuteAsync_Order_ShouldBe_Before_Dispatch_AfterAsync</tests>
   protected virtual ValueTask OnAfterExecuteAsync(
       TCommand command,
       TResult result,
@@ -98,6 +104,7 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   protected virtual ValueTask<TCommand> MapRequestToCommandAsync<TRequest>(
       TRequest request,
       CancellationToken ct) where TRequest : notnull {
+    // <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:MapRequestToCommandAsync_Default_ShouldThrowNotImplementedAsync</tests>
     throw new NotImplementedException(
         "When using a custom RequestType, you must override MapRequestToCommandAsync " +
         $"in your partial class to map {typeof(TRequest).Name} to {typeof(TCommand).Name}.");
@@ -160,6 +167,9 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   protected async ValueTask<TResult> ExecuteWithRequestAsync<TRequest>(
       TRequest request,
       CancellationToken ct) where TRequest : notnull {
+    // <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:MapRequestToCommandAsync_Default_ShouldThrowNotImplementedAsync</tests>
+    // <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:MapRequestToCommandAsync_WhenOverridden_ShouldBeCalledAsync</tests>
+    // <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:ExecuteWithRequestAsync_ShouldCallMapRequestToCommandAsync</tests>
     var command = await MapRequestToCommandAsync(request, ct);
     return await ExecuteAsync(command, ct);
   }

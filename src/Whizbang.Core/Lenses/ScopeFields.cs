@@ -7,6 +7,9 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <docs>fundamentals/security/scoping#scope-inheritance</docs>
 /// <tests>tests/Whizbang.Core.Tests/Scoping/InheritScopeAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Scoping/InheritScopeAttributeTests.cs:ScopeFields_All_ContainsEveryNamedFieldAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Scoping/InheritScopeAttributeTests.cs:ScopeFields_FlagsCombineWithBitwiseOrAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Scoping/PerspectiveScopeFilterByFieldsTests.cs:FilterByFields_TenantOnly_KeepsOnlyTenantAsync</tests>
 [Flags]
 public enum ScopeFields {
   /// <summary>No fields. Equivalent to "do not inherit anything".</summary>

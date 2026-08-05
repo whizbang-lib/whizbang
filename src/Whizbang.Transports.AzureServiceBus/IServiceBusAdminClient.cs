@@ -8,6 +8,9 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <docs>messaging/transports/azure-service-bus#admin-client</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusAdminClientWrapperTests.cs:GetNamespacePropertiesAsync_ReturnsUnwrappedValueAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusAdminClientWrapperTests.cs:GetNamespacePropertiesAsync_PassesCancellationTokenAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
 public interface IServiceBusAdminClient {
   #region Namespace Management
 

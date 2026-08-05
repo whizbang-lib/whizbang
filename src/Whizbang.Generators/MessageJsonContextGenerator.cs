@@ -3201,6 +3201,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </remarks>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRenameAliasTests.cs</tests>
   /// <docs>fundamentals/identity/pinned-type-ledger</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRenameAliasTests.cs:Generator_LedgerRecordsFormerName_EmitsAliasRegistrationAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRenameAliasTests.cs:Generator_NoLedger_EmitsNoAliasAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRenameAliasTests.cs:Generator_LedgerFormerName_GeneratedAliasCompilesAsync</tests>
   private static void _generateRenameAliasRegistrations(
       System.Text.StringBuilder sb,
       List<JsonMessageTypeInfo> messageTypes,

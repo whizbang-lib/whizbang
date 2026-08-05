@@ -6,6 +6,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </summary>
 /// <docs>fundamentals/perspectives/perspective-sync#sync-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncContextAccessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncContextAccessorTests.cs:Current_CanSetAndGetValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncContextAccessorTests.cs:Current_DefaultsToNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncContextAccessorTests.cs:CurrentContext_CanSetAndGetValueAsync</tests>
 public interface ISyncContextAccessor {
   /// <summary>
   /// Gets or sets the current sync context.

@@ -14,6 +14,9 @@ namespace Whizbang.Core;
 /// - PublishAsync: Event broadcasting (fire-and-forget)
 /// </summary>
 /// <docs>fundamentals/dispatcher/dispatcher</docs>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithValidMessage_ShouldReturnDeliveryReceiptAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithValidMessage_ShouldReturnBusinessResultAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
 public interface IDispatcher {
   // ========================================
   // SEND PATTERN - Command Dispatch with Acknowledgment
@@ -657,6 +660,9 @@ public interface IDispatcher {
   /// <returns>A task that completes when the chosen sync mode is satisfied.</returns>
   /// <docs>fundamentals/dispatcher/sync-mode</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncTests.cs:LocalInvokeAndSyncAsync_Void_InvokesHandlerAndReturnsSyncResultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncTests.cs:LocalInvokeAndSyncAsync_WithMultipleEvents_WaitsForAllEventsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs:LocalInvokeAndSyncAsync_NewOverload_SyncModeIsRequiredNotDefaultedAsync</tests>
   System.Threading.Tasks.ValueTask LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
       Perspectives.Sync.SyncMode mode,

@@ -12,6 +12,9 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <typeparam name="TModel">The read model type</typeparam>
 /// <docs>fundamentals/perspectives/perspectives</docs>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_CustomInterfaceExtendingIPerspectiveBase_EventsDiscoveredAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:LockIn_AllThreeInterfaceTypes_DiscoveredInSameCompilationAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveAssociationGeneratorTests.cs:Generator_CustomInterfaceExtendingIPerspectiveBase_IncludesAssociationAsync</tests>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IPerspectiveBase<TModel> where TModel : class;
 

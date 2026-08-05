@@ -12,6 +12,9 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#deferred-event-channel</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_AddsMessageToPending_SuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_ReturnsAllQueuedMessages_AndClearsChannelAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_MultipleCalls_OnlyReturnsMessagesOnceAsync</tests>
 public interface IDeferredOutboxChannel {
   /// <summary>
   /// Queues a message for deferred outbox write in the next lifecycle loop.

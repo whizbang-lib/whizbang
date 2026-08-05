@@ -22,6 +22,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#type-registry</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/TrackedEventTypeRegistryTests.cs:Constructor_WithSingleMappings_RegistersTypesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/TrackedEventTypeRegistryTests.cs:ShouldTrack_RegisteredType_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_RegistersTrackedEventTypeRegistry_AsSingletonAsync</tests>
 public interface ITrackedEventTypeRegistry {
   /// <summary>
   /// Check if the given event type should be tracked for perspective sync.

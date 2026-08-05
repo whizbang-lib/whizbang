@@ -621,6 +621,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// </summary>
   /// <docs>data/efcore-complex-types#in-place-updates</docs>
   /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateMetadataInPlace_AllProperties_UpdatesTargetCorrectlyAsync</tests>
   protected static void UpdateMetadataInPlace(PerspectiveMetadata target, PerspectiveMetadata source) {
     target.EventType = source.EventType;
     target.EventId = source.EventId;
@@ -638,6 +639,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// </summary>
   /// <docs>data/efcore-complex-types#in-place-updates</docs>
   /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_ScalarProperties_UpdatesTargetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_AllowedPrincipals_ClearsAndAddsNewItemsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_AllowedPrincipals_EmptySource_ClearsTargetAsync</tests>
   protected static void UpdateScopeInPlace(PerspectiveScope target, PerspectiveScope source) {
     target.TenantId = source.TenantId;
     target.CustomerId = source.CustomerId;

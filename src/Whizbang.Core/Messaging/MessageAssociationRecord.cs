@@ -6,6 +6,7 @@ namespace Whizbang.Core.Messaging;
 /// Populated during startup via reconciliation to enable auto-creation of perspective checkpoints.
 /// </summary>
 /// <docs>fundamentals/messages/message-associations</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/RecordTypesConstructionTests.cs:MessageAssociationRecord_FullInitialization_ExposesAllFieldsAsync</tests>
 public sealed class MessageAssociationRecord {
   /// <summary>
   /// Unique identifier for this association.

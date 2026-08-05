@@ -49,6 +49,9 @@ public interface IScopeContextAccessor {
   /// </remarks>
   /// <docs>fundamentals/messages/cascade-context#initiating-context</docs>
   /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs:CurrentContext_WhenInitiatingContextHasScopeContext_ReadsScopeFromItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs:InitiatingContext_CanBeSetToNull_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs:InitiatingContext_ExposesFullMessageContext_ForDebuggingAsync</tests>
   IMessageContext? InitiatingContext { get; set; }
 
   /// <summary>

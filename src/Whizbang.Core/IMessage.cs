@@ -13,4 +13,7 @@ namespace Whizbang.Core;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/messages/messages</docs>
+/// <tests>tests/Whizbang.Core.Tests/StreamIdExtractorTests.cs:ExtractStreamId_EventWithStreamId_ReturnsStreamIdValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithValidMessage_ShouldReturnDeliveryReceiptAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithValidMessage_ShouldReturnBusinessResultAsync</tests>
 public interface IMessage;

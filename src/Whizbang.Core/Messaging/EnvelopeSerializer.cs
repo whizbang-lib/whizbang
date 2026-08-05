@@ -117,6 +117,9 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
 /// Interface for envelope serialization/deserialization service.
 /// </summary>
 /// <docs>fundamentals/messages/envelope-serialization</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeSerializerTests.cs:SerializeEnvelope_WithValidEnvelope_ReturnsSerializedEnvelopeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeSerializerTests.cs:SerializeEnvelope_CapturesCorrectTypeMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeSerializerTests.cs:SerializeEnvelope_PreservesMessageIdAsync</tests>
 public interface IEnvelopeSerializer {
   /// <summary>
   /// Serializes a typed envelope to JsonElement form for storage.
@@ -143,6 +146,8 @@ public interface IEnvelopeSerializer {
 /// <param name="EnvelopeType">Assembly-qualified name of the original typed envelope (e.g., "MessageEnvelope`1[[MyMessage, MyAssembly]], Whizbang.Core")</param>
 /// <param name="MessageType">Assembly-qualified name of the message payload type</param>
 /// <docs>fundamentals/messages/envelope-serialization</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeSerializerTests.cs:SerializedEnvelope_RecordEquality_WorksCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeSerializerTests.cs:SerializeEnvelope_WithValidEnvelope_ReturnsSerializedEnvelopeAsync</tests>
 public sealed record SerializedEnvelope(
   MessageEnvelope<JsonElement> JsonEnvelope,
   string EnvelopeType,

@@ -15,6 +15,9 @@ namespace Whizbang.Core.Tags;
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#registration</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMatchingTag_InvokesHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMultipleTags_ProcessesAllAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/TagHookStageFilteringAndScopeTests.cs:ProcessTagsAsync_TwoHooksAtDifferentStages_EachFiresOnlyAtItsStageAsync</tests>
 public sealed record MessageTagRegistration {
   /// <summary>
   /// The message type that has the tag attribute.

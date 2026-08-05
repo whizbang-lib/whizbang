@@ -10,6 +10,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <docs>data/turnkey-initialization#multi-instance</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs:ConcurrentInitialization_BothPodsSucceedAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs:Maintenance_WithNpgsqlDataSource_SucceedsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationTests.cs:EnsureWhizbangDatabaseInitialized_CreatesCoreInfrastructureTablesAsync</tests>
 public static partial class SchemaInitializationLog {
   [LoggerMessage(
       Level = LogLevel.Debug,

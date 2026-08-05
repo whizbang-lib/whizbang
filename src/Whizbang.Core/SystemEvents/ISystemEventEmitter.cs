@@ -17,6 +17,9 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#emitter</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitCommandAuditedAsync_SetsTimestampAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitEventAuditedAsync_WithScopeContext_ExtractsTenantAndUserAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitCommandAuditedAsync_WithContext_ExtractsMetadataAsync</tests>
 public interface ISystemEventEmitter {
   /// <summary>
   /// Emits an <see cref="EventAudited"/> system event for a domain event that was appended.

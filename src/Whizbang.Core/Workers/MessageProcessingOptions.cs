@@ -42,6 +42,9 @@ public sealed class MessageProcessingOptions {
   /// publisher worker, perspective worker, and other DB operations).
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#concurrency</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:DefaultValues_MatchDocumentedDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:MaxConcurrentMessages_ZeroDisablesSemaphoreAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_ConcurrencyLimitDisabled_ProcessesWithoutSemaphoreAsync</tests>
   public int MaxConcurrentMessages { get; set; } = 40;
 
   /// <summary>
@@ -51,6 +54,8 @@ public sealed class MessageProcessingOptions {
   /// Default: 100
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#inbox-batching</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:DefaultValues_MatchDocumentedDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:CustomValues_OverrideDefaultsAsync</tests>
   public int InboxBatchSize { get; set; } = 100;
 
   /// <summary>
@@ -65,6 +70,8 @@ public sealed class MessageProcessingOptions {
   /// Default: 50ms
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#inbox-batching</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:DefaultValues_MatchDocumentedDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:CustomValues_OverrideDefaultsAsync</tests>
   public int InboxBatchSlideMs { get; set; } = 50;
 
   /// <summary>
@@ -79,5 +86,7 @@ public sealed class MessageProcessingOptions {
   /// Default: 1000ms (1 second)
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#inbox-batching</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:DefaultValues_MatchDocumentedDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:CustomValues_OverrideDefaultsAsync</tests>
   public int InboxBatchMaxWaitMs { get; set; } = 1000;
 }

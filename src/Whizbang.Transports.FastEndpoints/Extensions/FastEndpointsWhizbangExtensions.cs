@@ -7,6 +7,9 @@ namespace Whizbang.Transports.FastEndpoints;
 /// </summary>
 /// <docs>apis/rest/setup</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/ServiceRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/ServiceRegistrationTests.cs:AddWhizbangLenses_ShouldReturnSameServicesInstanceAsync</tests>
+/// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/ServiceRegistrationTests.cs:AddWhizbangMutations_ShouldReturnSameServicesInstanceAsync</tests>
+/// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/ServiceRegistrationTests.cs:AddWhizbangMutations_ShouldBeCallableMultipleTimesAsync</tests>
 public static class FastEndpointsWhizbangExtensions {
   /// <summary>
   /// Adds Whizbang lens endpoint services for REST API integration.

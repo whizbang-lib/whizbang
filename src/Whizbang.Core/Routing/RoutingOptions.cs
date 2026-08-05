@@ -127,6 +127,9 @@ public sealed class RoutingOptions {
   /// </param>
   /// <returns>This options instance for chaining.</returns>
   /// <docs>fundamentals/events/system-events#subscribe-to-audit</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToAudit_EnablesAuditPerspectiveByDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToAudit_ReturnsSelfForChainingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToAudit_CanChainWithOwnDomainsAsync</tests>
   public RoutingOptions SubscribeToAudit(bool autoGeneratePerspective = true) {
     _subscribedNamespaces.Add(SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
     AuditPerspectiveEnabled = autoGeneratePerspective;

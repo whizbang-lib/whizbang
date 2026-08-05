@@ -28,5 +28,7 @@ namespace Whizbang;
 /// </example>
 /// </remarks>
 /// <docs>extending/source-generators/json-contexts#serializing-additional-types</docs>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_TypeWithWhizbangSerializableAttribute_IsDiscoveredAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs:Analyzer_WhizbangSerializableWithObjectProperty_ReportsWHIZ060Async</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
 public sealed class WhizbangSerializableAttribute : Attribute;

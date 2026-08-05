@@ -4,6 +4,8 @@ namespace Whizbang.Data.Postgres;
 /// Configuration options for PostgreSQL connections.
 /// </summary>
 /// <docs>data/postgres</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresConnectionRetryTests.cs:PostgresOptions_DefaultValues_AreCorrectAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesConvenienceOverload_RegistersCoreServicesWithDefaultOptionsAsync</tests>
 public class PostgresOptions {
   #region Connection Retry Options
 
@@ -58,6 +60,7 @@ public class PostgresOptions {
   /// Default: 5 seconds
   /// </summary>
   /// <docs>data/postgres#command-timeout</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesConvenienceOverload_RegistersCoreServicesWithDefaultOptionsAsync</tests>
   public int CommandTimeoutSeconds { get; set; } = 5;
 
   #endregion

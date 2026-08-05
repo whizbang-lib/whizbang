@@ -27,6 +27,8 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/JsonLifecycleMessageDeserializerTests.cs:DeserializeFromEnvelope_WithNullEnvelope_ThrowsArgumentNullExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/JsonLifecycleMessageDeserializerTests.cs:Constructor_WithOptions_UsesProvidedOptionsAsync</tests>
 public interface ILifecycleMessageDeserializer {
   /// <summary>
   /// Deserializes a message from a MessageEnvelope containing a JsonElement payload.

@@ -10,6 +10,8 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// Extension methods for registering Whizbang's custom PostgreSQL functions with EF Core.
 /// </summary>
 /// <docs>fundamentals/security/security#principal-filtering</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_TenantScoped_AffectsAllRowsInScopeOnlyAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_BumpsStoreManagedUpdatedAtAndVersionAsync</tests>
 public static class WhizbangDbContextOptionsExtensions {
   /// <summary>
   /// Adds Whizbang's custom PostgreSQL function translators to the Npgsql provider.

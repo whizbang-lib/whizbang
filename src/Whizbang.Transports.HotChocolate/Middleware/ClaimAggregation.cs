@@ -6,6 +6,9 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// </summary>
 /// <docs>apis/graphql/scoping#claim-aggregation</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/WhizbangScopeOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/WhizbangScopeOptionsSymmetryTests.cs:Defaults_PermissionsAggregation_IsFirstMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/WhizbangScopeOptionsSymmetryTests.cs:Permissions_FirstMatch_OnlyReadsFirstClaimWithValuesAsync</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/WhizbangScopeOptionsSymmetryTests.cs:Permissions_Aggregate_UnionsAcrossAllClaimsAsync</tests>
 public enum ClaimAggregation {
   /// <summary>
   /// Use the first claim name (in priority order) that yields any value. Subsequent claim

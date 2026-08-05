@@ -18,6 +18,9 @@ namespace Whizbang.Core.Lifecycle;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#tracking</docs>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:BeginTracking_CreatesTracking_AtEntryStageAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:AdvanceTo_ThreadSafe_ConcurrentAccessAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:AdvanceBatchAsync_AdvancesAllTrackingsAsync</tests>
 public interface ILifecycleTracking {
   /// <summary>
   /// Gets the event ID being tracked.

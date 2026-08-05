@@ -40,6 +40,9 @@ public sealed record OutboxMessagePublishedEvent {
 /// Wired by <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/>.
 /// </summary>
 /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathReplayTests.cs:Worker_RewindWithReplayReader_PrependsPendingReplayEventsOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathReplayTests.cs:Worker_RewindWithoutReplayReader_FallsBackToTriggerEnvelopeLookupAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync</tests>
 public delegate void PerspectiveEventProcessedHandler(PerspectiveEventProcessedEvent e);
 
 /// <summary>
@@ -47,6 +50,9 @@ public delegate void PerspectiveEventProcessedHandler(PerspectiveEventProcessedE
 /// Carries all details about a perspective that finished processing events.
 /// </summary>
 /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathReplayTests.cs:Worker_RewindWithReplayReader_PrependsPendingReplayEventsOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathReplayTests.cs:Worker_RewindWithoutReplayReader_FallsBackToTriggerEnvelopeLookupAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync</tests>
 public sealed record PerspectiveEventProcessedEvent {
   /// <summary>The name of the perspective that processed events.</summary>
   public required string PerspectiveName { get; init; }

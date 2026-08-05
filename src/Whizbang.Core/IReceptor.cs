@@ -10,6 +10,9 @@ namespace Whizbang.Core;
 /// <docs>fundamentals/receptors/receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Receptors/ReceptorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Receptors/ReceptorTests.cs:Receive_ValidCommand_ShouldReturnTypeSafeResponseAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Receptors/ReceptorTests.cs:MultipleReceptors_SameMessageType_ShouldAllHandleAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Receptors/ReceptorTests.cs:Receptor_TupleResponse_ShouldReturnMultipleEventsAsync</tests>
 public interface IReceptor<in TMessage, TResponse> {
   /// <summary>
   /// Handles a message, applies business logic, and returns a response.
