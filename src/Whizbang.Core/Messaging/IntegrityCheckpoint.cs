@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// stream is the ORIGIN's service id (one homogeneous ephemeral stream per origin). Checkpoints
 /// publish even when the window is empty — absence is the alarm, so silence must be abnormal.
 /// </remarks>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
 [PinnedId("7d2a9c4e-5b83-4f1a-9e67-0c8d3b2a1f54")]
 [Ephemeral]
@@ -46,7 +46,7 @@ public sealed record IntegrityCheckpoint : IEvent, IControlPlaneMessage {
 }
 
 /// <summary>One (tenant, event type) emission count inside a checkpoint window.</summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed record CheckpointBucket {
   /// <summary>Tenant scope (<c>t</c> key), or null for unscoped events.</summary>
   public string? TenantScope { get; init; }
@@ -63,7 +63,7 @@ public sealed record CheckpointBucket {
 /// <see cref="IWorkCoordinator.AdvanceIntegrityCheckpointAsync"/>: the origin's previous watermark
 /// (exclusive), the new watermark (inclusive), and the per-(tenant, type) counts between them.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed record IntegrityCheckpointWindow {
   /// <summary>Exclusive window floor.</summary>
   public required long FromCommitSequence { get; init; }
@@ -82,7 +82,7 @@ public sealed record IntegrityCheckpointWindow {
 /// at <see cref="IntegrityRepairMode.AutoRepairCapped"/> the consumer also sends a scoped
 /// <see cref="RequestRedeliveryCommand"/> for exactly this window.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointReceptorTests.cs</tests>
 [PinnedId("a1e6d8c2-3f7b-4a95-8d21-6e4c9b0f7a38")]
 public sealed record IntegrityGapDetected : IEvent, IControlPlaneMessage {
@@ -121,7 +121,7 @@ public sealed record IntegrityGapDetected : IEvent, IControlPlaneMessage {
 /// <summary>
 /// The repair ladder position for confirmed gaps (stream-integrity Phase B).
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public enum IntegrityRepairMode {
   /// <summary>Report confirmed gaps only — the explicit opt-DOWN for operators who want
   /// report-and-decide (every report still states exactly what auto-repair would have done).</summary>
@@ -145,7 +145,7 @@ public enum IntegrityRepairMode {
 /// <see cref="StreamId"/> = <see cref="Guid.Empty"/> — valid because stream buckets partition the
 /// type's events, so XOR-ing them equals folding every event of the type.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed record StreamDigest {
   /// <summary>Tenant scope (<c>t</c> key), or null for unscoped events.</summary>
   public string? TenantScope { get; init; }
@@ -177,7 +177,7 @@ public sealed record StreamDigest {
 /// full recompute. Any non-zero drift means an unaccounted write path touched audited rows; the
 /// pass HEALS the table (update/remove/add to match the recompute) and the caller alarms.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed record DigestVerificationResult {
   /// <summary>Settled buckets the pass checked.</summary>
   public required int BucketsChecked { get; init; }
@@ -199,7 +199,7 @@ public sealed record DigestVerificationResult {
 /// Stream-integrity Phase S: one row of the consumed-type registry — when an event type joined
 /// this service's consumed set, and where its backfill stands.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed record ConsumedTypeRegistration {
   /// <summary>Stored event type name (catalog wire name).</summary>
   public required string EventType { get; init; }
@@ -211,7 +211,7 @@ public sealed record ConsumedTypeRegistration {
 /// <summary>
 /// Stream-integrity Phase S: the backfill lifecycle of a consumed-type registration.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public enum ConsumedTypeBackfillStatus {
   /// <summary>Registered on FIRST boot — nothing existed to miss, no backfill.</summary>
   Baseline = 0,
@@ -231,7 +231,7 @@ public enum ConsumedTypeBackfillStatus {
 /// to <see cref="IntegrityRepairMode.ReportOnly"/> (reports still state exactly what auto-repair
 /// would have done).
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 public sealed class StreamIntegrityOptions {
   /// <summary>Publish periodic continuity checkpoints (default true).</summary>
   public bool CheckpointsEnabled { get; set; } = true;

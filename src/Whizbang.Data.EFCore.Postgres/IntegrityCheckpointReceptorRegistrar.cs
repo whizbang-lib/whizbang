@@ -13,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// receptor without <c>[FireAt]</c> fires at, so the checkpoint reaches it whether it fires in-process or
 /// arrives over the inbox. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointReceptorTests.cs</tests>
 internal sealed class IntegrityCheckpointReceptorRegistrar(
     IServiceProvider services,

@@ -21,7 +21,7 @@ namespace Whizbang.Core.Workers;
 /// duplicate sources converge by event-id identity. Disabled = expansions stay Pending (the audit
 /// surface). One-shot: runs once after the schema gate, then completes.
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/SubscriptionExpansionWorkerTests.cs</tests>
 public sealed partial class SubscriptionExpansionWorker(
   IServiceScopeFactory scopeFactory,

@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// consumer subscribes to are verified; a service's own checkpoints are ignored (locally
 /// originated events carry no origin stamp to count against).
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointReceptorTests.cs</tests>
 public sealed partial class IntegrityCheckpointReceptor(
     IServiceScopeFactory scopeFactory,

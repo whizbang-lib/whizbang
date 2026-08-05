@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// simply never confirms. Bounded: pending entries are capped; overflow drops the OLDEST pending
 /// (it re-detects on a later cycle if still real).
 /// </summary>
-/// <docs>proposals/stream-integrity</docs>
+/// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityGapTrackerTests.cs</tests>
 public sealed class IntegrityGapTracker {
   /// <summary>One deficit awaiting confirmation on the next checkpoint.</summary>
