@@ -49,7 +49,7 @@ public sealed partial class IntegrityCheckpointReceptor(
       return;
     }
 
-    tracker.RecordCheckpoint(message.OriginServiceId, message.OriginServiceName, DateTimeOffset.UtcNow);
+    tracker.RecordCheckpoint(message.OriginServiceId, message.OriginServiceName, DateTimeOffset.UtcNow, message.RequestTopic);
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
@@ -155,7 +155,11 @@ public sealed partial class IntegrityCheckpointReceptor(
       Target = pending.OriginServiceName,
     };
     var serialized = serializer.SerializeEnvelope(envelope);
-    await transport.PublishAsync(serialized.JsonEnvelope, new TransportDestination(topic), serialized.EnvelopeType,
+    // Publish the DIRECTED redelivery request to the ORIGIN-carried address (session-stamped);
+    // the requester's own topic is only the reply address inside the payload.
+    var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(pending.OriginServiceId);
+    await transport.PublishAsync(serialized.JsonEnvelope,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 

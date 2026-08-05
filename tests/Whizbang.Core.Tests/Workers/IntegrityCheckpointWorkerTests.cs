@@ -122,6 +122,12 @@ public class IntegrityCheckpointWorkerTests {
         p.Destination.Metadata?["StreamId"].GetString() == coordinator.LocalServiceId.ToString())).IsTrue()
       .Because("session-enabled subscriptions dead-letter sessionless deliveries — every fan-out " +
                "destination must carry the checkpoint stream (the origin id) as its session key.");
+    var payload = System.Text.Json.JsonSerializer.Deserialize<IntegrityCheckpoint>(
+      ((MessageEnvelope<System.Text.Json.JsonElement>)transport.Published[0].Envelope).Payload.GetRawText(),
+      (System.Text.Json.JsonSerializerOptions)JsonContextRegistry.CreateCombinedOptions())!;
+    await Assert.That(payload.RequestTopic).IsEqualTo("origin.requests")
+      .Because("the checkpoint carries the ORIGIN'S OWN request address (a topic it consumes) — " +
+               "the only party that can name an origin-reachable topic is the origin itself.");
     await Assert.That(dispatcher.Published).IsEmpty()
       .Because("the namespace-routed publish went to a topic with no subscribers — it must be " +
                "replaced, not duplicated.");
@@ -193,6 +199,9 @@ public class IntegrityCheckpointWorkerTests {
       if (outboxRouting) {
         services.AddSingleton<IOutboxRoutingStrategy>(new DomainTopicOutboxStrategy());
       }
+      var consumerOptions = new TransportConsumerOptions();
+      consumerOptions.Destinations.Add(new TransportDestination("origin.requests"));
+      services.AddSingleton(consumerOptions);
     }
     if (topicRegistry is not null) {
       services.AddSingleton(topicRegistry);

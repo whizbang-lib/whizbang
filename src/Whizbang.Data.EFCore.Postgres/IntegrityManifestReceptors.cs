@@ -272,8 +272,9 @@ public sealed partial class IntegrityManifestReceptor(
       Target = message.OriginServiceName,
     };
     var serialized = serializer.SerializeEnvelope(envelope);
+    var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(message.OriginServiceId);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(topic, envelope.MessageId.Value), serialized.EnvelopeType,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.DrillDownsRequested.Add(1,
       new KeyValuePair<string, object?>("origin", message.OriginServiceName));
@@ -331,8 +332,9 @@ public sealed partial class IntegrityManifestReceptor(
       Target = manifest.OriginServiceName,
     };
     var serialized = serializer.SerializeEnvelope(envelope);
+    var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(manifest.OriginServiceId);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(topic, bucket.StreamId), serialized.EnvelopeType,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, bucket.StreamId), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 

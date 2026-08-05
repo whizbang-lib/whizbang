@@ -35,6 +35,15 @@ public sealed record IntegrityCheckpoint : IEvent, IControlPlaneMessage {
   /// send a repair request back (<see cref="RequestRedeliveryCommand"/>).</summary>
   public required string OriginServiceName { get; init; }
 
+  /// <summary>
+  /// A topic THIS ORIGIN consumes — the address a consumer publishes directed integrity
+  /// requests (manifest / redelivery / drill-down) to. Carried on the checkpoint because the
+  /// requester cannot guess an origin-reachable topic in a domain-scoped topology; the origin
+  /// is the only party that knows where it listens. Null from older origins — requesters fall
+  /// back to their legacy behavior.
+  /// </summary>
+  public string? RequestTopic { get; init; }
+
   /// <summary>Exclusive window floor (the previous checkpoint's watermark).</summary>
   public required long FromCommitSequence { get; init; }
 

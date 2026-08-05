@@ -76,7 +76,7 @@ public class IntegrityAuditWorkerTests {
     var tracker = new IntegrityGapTracker();
     var originA = TrackedGuid.NewMedo().Value;
     var originB = TrackedGuid.NewMedo().Value;
-    tracker.RecordCheckpoint(originA, "origin-a", DateTimeOffset.UtcNow);
+    tracker.RecordCheckpoint(originA, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     tracker.RecordCheckpoint(originB, "origin-b", DateTimeOffset.UtcNow);
     var transport = new _captureTransport();
     var worker = _buildWorker(coordinator, new _captureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
@@ -84,6 +84,14 @@ public class IntegrityAuditWorkerTests {
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
     await Assert.That(transport.Published.Count).IsEqualTo(2);
+    var toA = transport.Published.Single(p => p.Envelope.Target == "origin-a");
+    var toB = transport.Published.Single(p => p.Envelope.Target == "origin-b");
+    await Assert.That(toA.Destination.Address).IsEqualTo("origin-a.requests")
+      .Because("a DIRECTED request must publish to the ORIGIN-carried address — a topic the " +
+               "origin actually consumes; publishing to the requester's own destination sent " +
+               "requests where no origin listens (observed live: six requests, zero receipts).");
+    await Assert.That(toB.Destination.Address).IsEqualTo("inbox")
+      .Because("an origin that never announced an address falls back to the legacy topic.");
     await Assert.That(transport.Published.Select(p => p.Envelope.Target!).ToList())
       .IsEquivalentTo(["origin-a", "origin-b"])
       .Because("each known origin gets its own DIRECTED manifest request — the tracker's origin set " +
