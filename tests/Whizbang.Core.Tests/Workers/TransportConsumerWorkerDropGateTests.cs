@@ -244,4 +244,67 @@ public class TransportConsumerWorkerDropGateTests {
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(3)
       .Because("All 3 messages must reach StoreInboxMessagesAsync when the registry reports a consumer.");
   }
+
+  // Marker for a catalog entry stamped IsComposite. Payloads arrive as JsonElement on this path,
+  // so the type is never instantiated — it exists only to give the catalog a Type + ClrTypeName.
+  private sealed class DropGateCompositeMarker;
+
+  private sealed class CompositeMarkerCatalog : IMessageTypeCatalog {
+    private static readonly IReadOnlyList<MessageTypeCatalogEntry> _entries = [
+      new(typeof(DropGateCompositeMarker), TypeNameFormatter.FormatClrTypeName(typeof(DropGateCompositeMarker)), "event", null) { IsComposite = true },
+    ];
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => _entries;
+  }
+
+  [Test]
+  public async Task BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync() {
+    // A composite is WIRE-ONLY: it is an IMessage, never an IEvent, and no service registers a
+    // consumer for the composite type itself — consumers exist for its INNER event types, which
+    // only become visible after CompositeInboxFanout.TryExpand runs at the dispatch seam. So
+    // HasAnyConsumer is false for every composite by construction, and an unexempted gate drops
+    // it here, before any inbox row is written. That loses the entire burst with no dead-letter
+    // and no recovery path, and the drop is only visible at Debug — silent in any deployment
+    // that does not run verbose logging.
+    //
+    // Same bug shape as the body-offload claim exemption: a wire-only envelope type that no
+    // service consumes must survive the gate so the real messages can be recovered downstream.
+    var transport = new CapturingBatchTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic"));
+
+    var coordinator = new NoOpWorkCoordinator();
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    await using var sp = services.BuildServiceProvider();
+
+    var compositeEnvelopeType =
+      $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeof(DropGateCompositeMarker).AssemblyQualifiedName}]], Whizbang.Core";
+
+    var worker = new TransportConsumerWorker(
+      transport, options, new SubscriptionResilienceOptions(),
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new JsonSerializerOptions(),
+      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null, metrics: null,
+      NullLogger<TransportConsumerWorker>.Instance,
+      receptorRegistry: new FakeReceptorRegistry(hasAnyConsumer: false),
+      eventMarkerResolver: new EventMarkerResolver(new CompositeMarkerCatalog()));
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await Task.Delay(150);
+
+    await transport.SimulateBatchReceivedAsync([
+      new TransportMessage(_makeEnvelope(), compositeEnvelopeType),
+      new TransportMessage(_makeEnvelope(), compositeEnvelopeType),
+      new TransportMessage(_makeEnvelope(), compositeEnvelopeType),
+    ]);
+
+    cts.Cancel();
+
+    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(3)
+      .Because("The no-consumer gate must exempt composites — nothing consumes the composite type itself, " +
+               "so dropping here destroys the whole burst before the dispatch seam can fan it out into its inner events.");
+  }
 }

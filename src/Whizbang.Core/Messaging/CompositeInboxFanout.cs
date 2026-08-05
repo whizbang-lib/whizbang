@@ -36,6 +36,42 @@ namespace Whizbang.Core.Messaging;
 public static partial class CompositeInboxFanout {
   private const string LOG_CATEGORY = "Whizbang.Core.Messaging.CompositeInboxFanout";
 
+  /// <summary>
+  /// True when <paramref name="wireTypeName"/> names a type the compile-time catalog stamps as a
+  /// composite. The receive-side "no local consumer" gates MUST consult this before dropping:
+  /// a composite is wire-only (an <c>IMessage</c>, never an <c>IEvent</c>), so nothing registers a
+  /// consumer for the composite type <em>itself</em> — its consumers are registered against the
+  /// INNER event types, which only become addressable once <see cref="TryExpand"/> runs at the
+  /// dispatch seam. Without the exemption <c>HasAnyConsumer</c> is false for every composite by
+  /// construction and the gate drops it before any inbox row is written, losing the whole bundle
+  /// with no dead-letter and no recovery path — and the drop logs at <c>Debug</c>, so it is silent
+  /// wherever verbose logging is off. Same shape as the body-offload claim exemption in
+  /// <see cref="EnvelopeTypeNameHelper.IsBodyClaimEnvelope"/>.
+  /// </summary>
+  /// <param name="wireTypeName">
+  /// The inner payload's assembly-qualified wire name, as produced by
+  /// <see cref="EnvelopeTypeNameHelper.ExtractInnerTypeName"/>. Reduced here to the catalog's
+  /// no-assembly <c>Ns.Outer+Nested</c> form.
+  /// </param>
+  /// <param name="markerResolver">
+  /// The catalog-backed marker lookup, or <c>null</c> when the host wired none — a null resolver
+  /// yields <c>false</c> so callers keep their pre-existing behavior rather than guessing.
+  /// </param>
+  /// <remarks>
+  /// Name-based by necessity: the payload is still an undeserialized <c>JsonElement</c> at the
+  /// receive boundary, so a runtime <c>payload is ICompositeEvent</c> check is blind there — the
+  /// same rationale that makes <see cref="IEventMarkerResolver"/> load-bearing for
+  /// <see cref="EventFlags"/> derivation. A catalog miss means "unknown here", not "composite".
+  /// </remarks>
+  /// <docs>fundamentals/messaging/composite-events#dispatch-fanout</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:IsCompositeWireType_CatalogStampsComposite_ReturnsTrueAsync</tests>
+  public static bool IsCompositeWireType(string? wireTypeName, IEventMarkerResolver? markerResolver) {
+    if (markerResolver is null || EventFlagsDeriver.ToClrTypeName(wireTypeName) is not { } clrTypeName) {
+      return false;
+    }
+    return markerResolver.Resolve(clrTypeName) is { } flags && flags.HasFlag(EventFlags.Composite);
+  }
+
   /// <summary>The disposition of a fan-out attempt.</summary>
   public enum FanoutOutcome {
     /// <summary>The envelope payload is not an <see cref="ICompositeEvent"/> — caller proceeds normally.</summary>
