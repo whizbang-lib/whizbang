@@ -5,7 +5,7 @@ namespace Whizbang.Core.Serialization;
 /// methods take this object (rather than loose parameters) so new options (e.g. compression,
 /// indentation, target serialization version) can be added over time without changing signatures.
 /// </summary>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/WireEnvelopeSerializerTests.cs</tests>
 public sealed record SerializationOptions {
   /// <summary>The default options.</summary>

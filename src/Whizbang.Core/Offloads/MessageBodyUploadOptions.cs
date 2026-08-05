@@ -12,7 +12,7 @@ namespace Whizbang.Core.Offloads;
 /// (e.g., <c>whizbang.offload.tier</c>) plus offload config, so producers
 /// don't construct them by hand at every call site.
 /// </remarks>
-/// <docs>offloads</docs>
+/// <docs>fundamentals/offloads/message-body-store</docs>
 public sealed record MessageBodyUploadOptions {
   /// <summary>
   /// Caller-supplied metadata key/value pairs (e.g., <c>correlation_id</c>,

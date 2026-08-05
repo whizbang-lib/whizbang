@@ -10,7 +10,7 @@ namespace Whizbang.Core.Offloads;
 /// <param name="Claim">The body-store claim ticket — provider name, storage key, content hash.</param>
 /// <param name="OriginalContentType">MIME type of the original (offloaded) payload, preserved so the receiver can deserialize correctly.</param>
 /// <param name="OriginalTypeName">Assembly-qualified type name of the original payload, used by the receiver to route deserialization.</param>
-/// <docs>offloads</docs>
+/// <docs>fundamentals/offloads/message-body-store</docs>
 public sealed record BodyClaimEnvelopePayload(
   MessageBodyClaim Claim,
   string OriginalContentType,

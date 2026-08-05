@@ -8,7 +8,7 @@ namespace Whizbang.Core.Messaging;
 /// (via <see cref="IEventMarkerResolver"/>, keyed by type name) is the authority; the typed checks
 /// remain as the fallback for payloads the local catalog does not know.
 /// </summary>
-/// <docs>events/collective-events</docs>
+/// <docs>fundamentals/messaging/collective-events</docs>
 public static class EventFlagsDeriver {
   /// <summary>
   /// The flags to persist for a received message. Name-first: when <paramref name="markerResolver"/>

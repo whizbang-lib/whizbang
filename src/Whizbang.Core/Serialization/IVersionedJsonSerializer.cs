@@ -18,7 +18,7 @@ namespace Whizbang.Core.Serialization;
 /// extends this base so they still register and recall uniformly by <see cref="Version"/>.
 /// A version captures HOW the payload JSON is shaped (options/wrapping), not the model type.
 /// </remarks>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/VersionedJsonSerializerRegistryTests.cs</tests>
 public interface IVersionedJsonSerializer {
   /// <summary>The serialization-logic version this implementation reads and writes.</summary>
@@ -37,7 +37,7 @@ public interface IVersionedJsonSerializer {
 /// <see cref="IVersionedJsonSerializer.Version"/> like any other.
 /// </summary>
 /// <typeparam name="T">The model type this serializer handles.</typeparam>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/VersionedJsonSerializerRegistryTests.cs</tests>
 public interface IVersionedJsonSerializer<T> : IVersionedJsonSerializer {
   /// <summary>Serializes a typed model payload in this version's format.</summary>

@@ -15,7 +15,7 @@ namespace Whizbang.Core.Serialization;
 /// Wire shape: <c>{ "$serializationVersion": &lt;n&gt;, "$payload": &lt;payload json&gt; }</c>.
 /// A blob lacking the marker is treated as legacy/unversioned.
 /// </remarks>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/VersionedJsonEnvelopeTests.cs</tests>
 public static class VersionedJsonEnvelope {
   private const string VERSION_PROPERTY = "$serializationVersion";

@@ -18,7 +18,7 @@ namespace Whizbang.Core.Serialization;
 /// read as legacy (version 0).
 /// </para>
 /// </remarks>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/VersionedJsonEnvelopeTests.cs</tests>
 public static class SerializationVersion {
   /// <summary>The current serialization-logic version. Bump when the serialization implementation

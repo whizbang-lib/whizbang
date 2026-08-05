@@ -14,7 +14,7 @@ namespace Whizbang.Core.Offloads;
 /// individual hooks. Registered as a singleton; consumes
 /// <see cref="IEnumerable{T}"/> of <see cref="IPostSerializeHook"/> from DI.
 /// </remarks>
-/// <docs>offloads</docs>
+/// <docs>fundamentals/offloads/message-body-store</docs>
 public sealed class PostSerializeHookChain {
   private readonly IPostSerializeHook[] _orderedHooks;
 

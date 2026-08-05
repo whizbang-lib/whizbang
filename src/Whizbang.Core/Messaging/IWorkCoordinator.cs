@@ -268,7 +268,7 @@ public interface IWorkCoordinator {
   /// in this service — otherwise wh_inbox.partition_number and wh_active_streams.partition_number
   /// disagree for the same stream and claim_orphaned_inbox deadlocks.</param>
   /// <param name="cancellationToken">Cancellation token</param>
-  /// <docs>operations/workers/transport-consumer</docs>
+  /// <docs>messaging/transports/transport-consumer</docs>
   Task StoreInboxMessagesAsync(
     InboxMessage[] messages,
     int partitionCount,

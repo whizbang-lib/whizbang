@@ -24,7 +24,7 @@ namespace Whizbang.Offloads.InMemory;
 /// callers; only the claim ticket matters.
 /// </para>
 /// </remarks>
-/// <docs>offloads</docs>
+/// <docs>fundamentals/offloads/providers/in-memory</docs>
 public sealed class InMemoryMessageBodyStore : IMessageBodyStore {
   private readonly ConcurrentDictionary<string, byte[]> _bodies = new();
 

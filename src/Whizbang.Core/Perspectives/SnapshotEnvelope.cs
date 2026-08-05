@@ -8,7 +8,7 @@ namespace Whizbang.Core.Perspectives;
 /// Policy for what to do when a stored snapshot's serialization version does not match the
 /// current serialization version on read (i.e. no in-version deserializer can read it directly).
 /// </summary>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/SnapshotEnvelopeTests.cs</tests>
 public enum SnapshotUpgradePolicy {
   /// <summary>Discard the stale snapshot and rebuild the perspective from events. Always correct
@@ -48,7 +48,7 @@ public readonly record struct SnapshotReadResult(SnapshotReadAction Action, Json
 /// whether the stored model can be used directly or the perspective must be rebuilt from events.
 /// This is the snapshot consumer of the framework-wide serialization-version mechanism.
 /// </summary>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/SnapshotEnvelopeTests.cs</tests>
 public static class SnapshotEnvelope {
   /// <summary>Wraps a model JSON element in a snapshot envelope stamped with the serialization version.</summary>
