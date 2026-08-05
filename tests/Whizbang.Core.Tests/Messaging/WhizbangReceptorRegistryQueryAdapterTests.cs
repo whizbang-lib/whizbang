@@ -85,6 +85,10 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
     await Assert.That(registry.HasRuntimeConsumerFor(storedName)).IsTrue();
     await Assert.That(registry.HasRuntimeConsumerFor(typeof(RuntimeConsumerProbeMessage).FullName!)).IsTrue()
       .Because("the bare FullName form must match too.");
+    await Assert.That(registry.HasRuntimeConsumerFor(typeof(RuntimeConsumerProbeMessage).AssemblyQualifiedName!)).IsTrue()
+      .Because("the LIVE inbox gate passes the fully-versioned assembly-qualified name " +
+               "(…, Version=…, Culture=…, PublicKeyToken=…) — observed in production discarding " +
+               "checkpoints AFTER the stripped-form fix shipped; the check must normalize.");
     await Assert.That(new WhizbangReceptorRegistryQueryAdapter(registry).HasAnyConsumer(storedName)).IsTrue()
       .Because("the adapter surfaces the runtime registration to both discard gates.");
   }

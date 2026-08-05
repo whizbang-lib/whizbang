@@ -98,9 +98,15 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
     if (string.IsNullOrEmpty(clrTypeName) || _runtimeRegistrations.IsEmpty) {
       return false;
     }
+    // Normalize FIRST: the live inbox gate passes the fully-versioned assembly-qualified name
+    // ("Ns.Type, Asm, Version=…, Culture=…, PublicKeyToken=…"); normalization reduces it to the
+    // storage form TypeNameFormatter.Format produces, which is what registered types compare as.
+    var normalized = global::Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName(clrTypeName);
     foreach (var key in _runtimeRegistrations.Keys) {
       var messageType = key.MessageType;
-      if (global::Whizbang.Core.TypeNameFormatter.Format(messageType) == clrTypeName
+      var storageForm = global::Whizbang.Core.TypeNameFormatter.Format(messageType);
+      if (storageForm == clrTypeName
+          || storageForm == normalized
           || messageType.FullName == clrTypeName) {
         return true;
       }
