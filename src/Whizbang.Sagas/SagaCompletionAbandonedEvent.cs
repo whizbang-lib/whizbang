@@ -19,6 +19,8 @@ namespace Whizbang.Sagas;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/sagas/completion-orchestration</docs>
+/// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonsAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:Complete_RecoversWithoutReArmAsync</tests>
 public class SagaCompletionAbandonedEvent : SagaEventBase, ISagaCompletionAbandonedEvent {
 
   /// <summary>The name of the saga whose completion was abandoned.</summary>

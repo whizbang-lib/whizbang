@@ -11,9 +11,10 @@ namespace Whizbang.Core.Transports;
 /// and subscriptions can be created from multiple sources.
 /// </summary>
 /// <docs>messaging/transports/transports</docs>
-/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs</tests>
-/// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs</tests>
-/// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldStoreTransportAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:GetTransport_WhenExists_ShouldReturnTransportAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithMultipleTargets_ShouldCreateMultipleSubscriptionsAsync</tests>
 public interface ITransportManager {
   /// <summary>
   /// Registers a transport for a specific transport type.

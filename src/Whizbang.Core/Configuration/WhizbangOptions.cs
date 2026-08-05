@@ -37,6 +37,9 @@ public class WhizbangOptions {
   /// designed to detect and prevent a receptor from firing more than once per message.
   /// </summary>
   /// <docs>fundamentals/receptors/exactly-once-firing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvocationTrackingTests.cs:TrackOnlyModeRecordsButDoesNotEnforceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvocationTrackingTests.cs:OnDoubleFireThrowRaisesDuplicateReceptorFireExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ChaosInjectorInvokerTests.cs:IsActive_FlagOn_WithInjector_TrueAsync</tests>
   public WhizbangGuardrailsOptions Guardrails { get; set; } = new();
 }
 
@@ -47,6 +50,9 @@ public class WhizbangOptions {
 /// contract is tracked and enforced.
 /// </summary>
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvocationTrackingTests.cs:OffModeDoesNotRecordOrEnforceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvocationTrackingTests.cs:OnDoubleFireThrowRaisesDuplicateReceptorFireExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ChaosInjectorInvokerTests.cs:IsActive_FlagOn_WithInjector_TrueAsync</tests>
 public class WhizbangGuardrailsOptions {
   /// <summary>
   /// Controls whether receptor invocations are recorded on the envelope and whether a

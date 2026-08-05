@@ -6,6 +6,9 @@ namespace Whizbang.Core.Resilience;
 /// Represents the possible states of a subscription.
 /// </summary>
 /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+/// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionStateTests.cs:SubscriptionStatus_HasExpectedValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionStateTests.cs:Status_SetToRecovering_UpdatesStatusAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/HealthChecks/SubscriptionHealthCheckTests.cs:CheckHealthAsync_SomeRecovering_ReturnsDegradedAsync</tests>
 public enum SubscriptionStatus {
   /// <summary>
   /// Initial state - subscription has not been attempted yet.

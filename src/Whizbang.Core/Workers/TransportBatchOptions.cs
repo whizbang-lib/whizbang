@@ -16,7 +16,9 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#batch-options</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_FlushesImmediatelyWhenBatchSizeReachedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_FlushesOnSlidingWindowTimeoutAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_FlushesOnHardMaxTimeoutAsync</tests>
 public sealed class TransportBatchOptions {
   /// <summary>
   /// Maximum number of messages to collect before flushing the batch.
@@ -25,6 +27,9 @@ public sealed class TransportBatchOptions {
   /// Default: 200
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-options</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_FlushesImmediatelyWhenBatchSizeReachedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_DoesNotFlushBelowBatchSizeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_MultipleBatchesFlushIndependentlyAsync</tests>
   public int BatchSize { get; set; } = 200;
 
   /// <summary>
@@ -34,6 +39,8 @@ public sealed class TransportBatchOptions {
   /// Default: 20ms
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-options</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_FlushesOnSlidingWindowTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_SlidingWindowResetsOnNewMessageAsync</tests>
   public int SlideMs { get; set; } = 20;
 
   /// <summary>
@@ -43,5 +50,7 @@ public sealed class TransportBatchOptions {
   /// Default: 1000ms (1 second)
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-options</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_FlushesOnHardMaxTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_SlidingWindowResetsOnNewMessageAsync</tests>
   public int MaxWaitMs { get; set; } = 1000;
 }

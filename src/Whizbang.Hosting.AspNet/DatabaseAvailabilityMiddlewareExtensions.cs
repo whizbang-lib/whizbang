@@ -15,6 +15,7 @@ public static class DatabaseAvailabilityMiddlewareExtensions {
   /// pipeline (before routing) to reject requests fast.
   /// </summary>
   /// <docs>resilience/database-availability-middleware</docs>
+  /// <tests>tests/Whizbang.Hosting.AspNet.Tests/DatabaseAvailabilityMiddlewareExtensionsTests.cs:UseDatabaseAvailabilityGate_RegistersMiddleware_AndReturnsBuilderAsync</tests>
   public static IApplicationBuilder UseDatabaseAvailabilityGate(this IApplicationBuilder app)
     => app.UseDatabaseAvailabilityGate(exemptPaths: null);
 
@@ -26,6 +27,7 @@ public static class DatabaseAvailabilityMiddlewareExtensions {
   /// ones (<see cref="AvailabilityGateMode.MutationsOnly"/> lets reads serve during migration).
   /// </summary>
   /// <docs>resilience/database-availability-middleware</docs>
+  /// <tests>tests/Whizbang.Hosting.AspNet.Tests/DatabaseAvailabilityMiddlewareExtensionsTests.cs:UseDatabaseAvailabilityGate_WithExemptPaths_ReturnsBuilderAsync</tests>
   public static IApplicationBuilder UseDatabaseAvailabilityGate(
       this IApplicationBuilder app, IReadOnlyList<string>? exemptPaths,
       AvailabilityGateMode mode = AvailabilityGateMode.AllNonExempt) {

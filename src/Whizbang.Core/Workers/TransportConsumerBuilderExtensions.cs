@@ -41,6 +41,9 @@ public sealed class TransportConsumerConfiguration {
   /// Resilience is always enabled - subscriptions retry with exponential backoff on failure.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_RegistersSubscriptionResilienceOptionsAsSingletonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_PerspectiveBuilder_RegistersResilienceOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
   public SubscriptionResilienceOptions ResilienceOptions { get; } = new();
 }
 

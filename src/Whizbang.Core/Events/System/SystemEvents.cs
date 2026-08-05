@@ -14,6 +14,7 @@ namespace Whizbang.Core.Events.System;
 /// <param name="TotalStreams">Total number of event streams to process.</param>
 /// <param name="StartedAt">When the rebuild operation started.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildStarted_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("47c7c500-b017-47dc-a523-d69e59a6b6d8")]
 public record PerspectiveRebuildStarted(
     [property: StreamId] Guid StreamId,
@@ -34,6 +35,7 @@ public record PerspectiveRebuildStarted(
 /// <param name="EventsReplayed">Total events replayed so far.</param>
 /// <param name="StartedAt">When the rebuild operation started.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildProgress_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("9cc9d8da-dfde-4265-9dc1-add8ac12282a")]
 public record PerspectiveRebuildProgress(
     [property: StreamId] Guid StreamId,
@@ -55,6 +57,7 @@ public record PerspectiveRebuildProgress(
 /// <param name="EventsReplayed">Total number of events replayed.</param>
 /// <param name="Duration">Wall-clock time for the rebuild.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildCompleted_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("5e3fb66f-286a-406f-9cf0-23e77bd96026")]
 public record PerspectiveRebuildCompleted(
     [property: StreamId] Guid StreamId,
@@ -75,6 +78,7 @@ public record PerspectiveRebuildCompleted(
 /// <param name="StreamsProcessedBeforeFailure">Number of streams successfully processed before the failure.</param>
 /// <param name="Duration">Wall-clock time before the failure occurred.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildFailed_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("65600841-5460-4feb-879f-b6b527331184")]
 public record PerspectiveRebuildFailed(
     [property: StreamId] Guid StreamId,

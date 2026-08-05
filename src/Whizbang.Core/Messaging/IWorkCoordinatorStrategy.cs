@@ -106,6 +106,9 @@ public interface IWorkCoordinatorStrategy {
 /// Strategy types for work coordinator configuration.
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithBatchOption_ReturnsBatchStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithIntervalOption_ReturnsIntervalStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Strategy_Default_IsScopedAsync</tests>
 public enum WorkCoordinatorStrategy {
   /// <summary>
   /// Immediate strategy - calls process_work_batch immediately for each operation.
@@ -139,6 +142,9 @@ public enum WorkCoordinatorStrategy {
 /// Configuration options for work coordinator strategies.
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_OptionsConfiguredViaIOptions_AppliedCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Strategy_Default_IsScopedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Interval_DefaultIntervalMilliseconds_Is100Async</tests>
 public class WorkCoordinatorOptions {
   /// <summary>
   /// Total number of partitions (default 10,000).
