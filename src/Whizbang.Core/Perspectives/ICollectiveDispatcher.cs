@@ -13,6 +13,9 @@ namespace Whizbang.Core.Perspectives;
 /// aggregation.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_DispatchesEventOnceAndSkipsRunner_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_LongApply_RenewsWorkLeasePerReportedBatchAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:AddCollectiveEventsEFCore_RegistersDispatcherResolverAccessorAsync</tests>
 public interface ICollectiveDispatcher {
   /// <summary>
   /// Dispatch a collective event to every matching perspective handler.
@@ -56,4 +59,7 @@ public interface ICollectiveDispatcher {
 /// was empty at write time or when every row was already at the target
 /// state).</param>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_OneEntry_InvokesExecutorOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_TwoEntriesSameEventDifferentModels_FansOutAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_NoMatchingEntry_ReturnsZeroAsync</tests>
 public sealed record CollectiveDispatchResult(int HandlerCount, int AffectedRowCount);

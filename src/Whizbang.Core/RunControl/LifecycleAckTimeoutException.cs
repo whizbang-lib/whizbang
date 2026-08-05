@@ -7,6 +7,7 @@ namespace Whizbang.Core.RunControl;
 /// hangs on a transition is a fault, not something to wait on forever.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangLifecycleCoordinatorTests.cs:Transition_Timeout_RaisesAckTimeoutAsync</tests>
 public sealed class LifecycleAckTimeoutException : Exception {
   /// <summary>Creates the exception for the component that timed out on the given phase.</summary>
   public LifecycleAckTimeoutException(string component, LifecyclePhase phase)

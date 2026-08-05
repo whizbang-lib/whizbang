@@ -5,6 +5,9 @@ namespace Whizbang.Core.Perspectives;
 /// collective-event handler.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitScopeHandlingCustomAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_CustomHandlerWhere_StillHonorsTenantScopeAsync</tests>
 public enum CollectiveScopeHandling {
   /// <summary>
   /// Safe default. The framework wraps the perspective's mutation spec
@@ -33,6 +36,8 @@ public enum CollectiveScopeHandling {
 /// right adapter; runtime never reflects on it.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitSpecKindRawSqlAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync</tests>
 public enum CollectiveSpecKind {
   /// <summary>
   /// Default. The spec carries a LINQ expression tree

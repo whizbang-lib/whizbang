@@ -20,6 +20,9 @@ namespace Whizbang.Core.Attributes;
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromServiceAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromServiceAttributeTests.cs:ServiceKind_AllValues_AreDistinctAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromServiceAttributeTests.cs:ServiceKind_HasFourValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromServiceAttributeTests.cs:PopulateFromServiceAttribute_AllServiceKinds_OnSameRecord_AreDiscoverableAsync</tests>
 public enum ServiceKind {
   /// <summary>
   /// Populated with the service name from ServiceInstanceInfo.ServiceName.

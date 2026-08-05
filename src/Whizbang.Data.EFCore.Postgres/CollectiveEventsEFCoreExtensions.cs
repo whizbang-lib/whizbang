@@ -29,6 +29,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// emit these calls for full turnkey registration as a follow-up.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:AddCollectiveEventsEFCore_RegistersDispatcherResolverAccessorAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:AddCollectiveEventsEFCore_NullEntries_ThrowsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_FoldsCollectiveEvent_OnlyIntoTheTargetRowAsync</tests>
 public static class CollectiveEventsEFCoreExtensions {
   /// <summary>
   /// Registers <see cref="ICollectiveDispatcher"/>, the built-in <see cref="TenantCollectiveScopeResolver"/>,

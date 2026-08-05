@@ -35,6 +35,9 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:Registry_Tier2Worker_OptedOutWhenIncludeFlushFalseAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:Registry_ExcludeWorkers_OverridesTierAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_ConnectionStringName_TakesPrecedenceOverInlineAsync</tests>
 public sealed class WhizbangPinnedPoolOptions {
   /// <summary>
   /// Name of a key under standard .NET <c>ConnectionStrings:*</c> configuration

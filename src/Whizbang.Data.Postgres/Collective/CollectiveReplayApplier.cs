@@ -29,6 +29,7 @@ namespace Whizbang.Data.Postgres.Collective;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_FoldsCollectiveEvent_OnlyIntoTheTargetRowAsync</tests>
 public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   private readonly IReadOnlyList<CollectiveApplyEntry> _entries;
   private readonly IServiceProvider _services;

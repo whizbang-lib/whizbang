@@ -13,6 +13,9 @@ namespace Whizbang.Core.Perspectives;
 /// PgBouncer transaction pooling) + a keyset <c>LIMIT</c> chunk.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_TakesExclusiveAdvisoryLockPerBatchAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_WithStatementTimeout_BoundsApplyServerSideAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_CohortLargerThanBatchSize_UpdatesAllInMultipleBatchesAsync</tests>
 public sealed record CollectiveApplyOptions {
   /// <summary>
   /// Rows mutated per batched UPDATE (keyset <c>LIMIT</c>). Each batch is a short transaction so lock hold

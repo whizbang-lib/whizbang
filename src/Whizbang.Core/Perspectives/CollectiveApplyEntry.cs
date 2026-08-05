@@ -53,6 +53,9 @@ namespace Whizbang.Core.Perspectives;
 /// global default. Emitted from <c>[CollectiveApplyFor(StatementTimeoutSeconds = …)]</c>.
 /// </param>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_OneEntry_InvokesExecutorOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_TwoEntriesSameEventDifferentModels_FansOutAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveEventApplierTests.cs:ApplyAsync_EventTypeMismatch_ThrowsArgumentExceptionAsync</tests>
 public sealed record CollectiveApplyEntry(
   Type ModelType,
   Type EventType,

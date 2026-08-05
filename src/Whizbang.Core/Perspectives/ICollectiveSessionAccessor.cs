@@ -14,6 +14,9 @@ namespace Whizbang.Core.Perspectives;
 /// the executor casts to its expected driver type (Q1 of the consume-wiring design).
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:SessionAccessor_ReturnsTheRegisteredDbContextAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:AddCollectiveEventsEFCore_RegistersDispatcherResolverAccessorAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:SessionAccessor_ReturnsConnectionFactoryAsync</tests>
 public interface ICollectiveSessionAccessor {
   /// <summary>
   /// Resolve the driver-specific projection session (EF <c>DbContext</c> / Dapper

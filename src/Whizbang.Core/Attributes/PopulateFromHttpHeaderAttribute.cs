@@ -27,6 +27,8 @@ namespace Whizbang.Core.Attributes;
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateHttpHeaderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateHttpHeaderTests.cs:PopulateSent_HttpHeader_PopulatesFromScopeExtensionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateHttpHeaderTests.cs:PopulateSent_HttpHeader_MatchesHeaderKeyCaseInsensitivelyAsync</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
 public sealed class PopulateFromHttpHeaderAttribute(string headerName) : Attribute {
   /// <summary>

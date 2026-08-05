@@ -9,6 +9,7 @@ namespace Whizbang.Core.Perspectives;
 /// AOT-clean by construction, mirroring the SQL executor's registration.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_FoldsCollectiveEvent_OnlyIntoTheTargetRowAsync</tests>
 public interface ICollectiveInMemoryExecutor {
   /// <summary>The closed <c>TModel</c> this executor handles.</summary>
   Type ModelType { get; }

@@ -15,6 +15,9 @@ namespace Whizbang.Data.Postgres;
 /// <param name="BumpVersion">Whether a hook asked to bump the row version.</param>
 /// <param name="ModelFieldSetters">Model-field setters (<c>SetProperty</c>) to apply to the row's data object.</param>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:DefaultTimestampsHook_YieldsUpdatedAtAndBumpAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:SetProperty_IsCarried_AndApplyModelSettersMutatesTheObjectAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:OverrideTimestamps_SetsUpdatedAt_WithoutBumpAsync</tests>
 public sealed record PerEventApplyHookPlan(
   DateTimeOffset? UpdatedAt,
   bool BumpVersion,

@@ -17,6 +17,9 @@ namespace Whizbang.Core.AutoPopulate;
 /// </para>
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:AutoPopulateRegistration_RequiredProperties_CanBeSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:AutoPopulateRegistration_ContextKind_CanBeSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/JsonAutoPopulateHelperTests.cs:PopulateTimestamp_RegistrationMatches_StampsPropertyOnObjectAsync</tests>
 public sealed record AutoPopulateRegistration {
   /// <summary>
   /// The message type containing the property.

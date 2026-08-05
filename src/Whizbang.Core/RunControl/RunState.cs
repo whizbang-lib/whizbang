@@ -9,6 +9,9 @@ namespace Whizbang.Core.RunControl;
 /// expresses the resulting gate state.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Paused_BlocksUntilResumedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Stopped_CancelsAwaitersAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:ForWorkers_InterpretationAsync</tests>
 public enum RunState {
   /// <summary>Permit open — awaiters proceed.</summary>
   Running,

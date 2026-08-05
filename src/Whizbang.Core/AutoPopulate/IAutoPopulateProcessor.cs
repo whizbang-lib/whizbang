@@ -16,6 +16,9 @@ namespace Whizbang.Core.AutoPopulate;
 /// </para>
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:AutoPopulateProcessor_ProcessAutoPopulate_WithTimestamp_StoresValueInMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:AutoPopulateProcessor_ProcessAutoPopulate_MultipleRegistrations_StoresAllValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:AutoPopulateProcessor_ProcessAutoPopulate_NullEnvelope_ThrowsArgumentNullExceptionAsync</tests>
 public interface IAutoPopulateProcessor {
   /// <summary>
   /// Processes auto-populate registrations for a message and stores values in envelope metadata.

@@ -10,6 +10,9 @@ namespace Whizbang.Core.RunControl;
 /// it to <see cref="LifecyclePhase.Faulted"/> → <see cref="LifecyclePhase.Halted"/>.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangLifecycleStateTests.cs:AdvanceTo_BroadcastsAndUpdatesPhaseAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangLifecycleStateTests.cs:FaultAsync_DrivesFaultedThenHaltsAfterRecordWindowAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControlDiTests.cs:AddWhizbangRunControl_BroadcastsToRegisteredAdaptersAsync</tests>
 public interface IWhizbangLifecycleState {
   /// <summary>The current phase (starts at <see cref="LifecyclePhase.Starting"/>).</summary>
   LifecyclePhase Phase { get; }

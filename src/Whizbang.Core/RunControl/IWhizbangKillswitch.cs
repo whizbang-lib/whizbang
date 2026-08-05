@@ -7,6 +7,9 @@ namespace Whizbang.Core.RunControl;
 /// through the coordinated state machine, so every resource acknowledges each change.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangKillswitchTests.cs:PauseAsync_DrivesPausingThenPausedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangKillswitchTests.cs:StopAsync_DrivesStoppingThenStoppedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangKillswitchTests.cs:OverrideComponent_PinsOneResource_IndependentOfSystemPhaseAsync</tests>
 public interface IWhizbangKillswitch {
   /// <summary>Pause everything: advances <see cref="LifecyclePhase.Pausing"/> → <see cref="LifecyclePhase.Paused"/>.</summary>
   ValueTask PauseAsync(CancellationToken cancellationToken = default);

@@ -14,7 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_CrossPerspectiveCohort_ScopesBySiblingTableAsync</tests>
-[SuppressMessage("AOT", "IL2091:MakeGenericType", Justification = "EF Core's DbSet<T>() resolution is reflection-based by design; matches the established suppressions on the EF collective adapter.")]
+[SuppressMessage("AOT", "IL2091:MakeGenericType", Justification = "EF Core's DbSet resolution is reflection-based by design; matches the established suppressions on the EF collective adapter.")]
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "EF Core data layer inherently uses reflection for query translation.")]
 internal sealed class EFCoreCollectiveQuery(DbContext dbContext) : ICollectiveQuery, ICollectiveSiblingTableSource {
   public IQueryable<PerspectiveRow<TOther>> Of<TOther>() where TOther : class

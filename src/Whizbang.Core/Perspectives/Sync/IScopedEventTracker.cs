@@ -24,6 +24,10 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs:ScopedEventTracker_TrackEmittedEvent_AddsToTrackedEventsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs:ScopedEventTracker_GetEmittedEvents_WithAndFilter_ReturnsIntersectionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs:ScopedEventTracker_AreAllProcessed_WithFilteredSubset_ChecksOnlyMatchingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_RegistersScopedEventTracker_AsScopedAsync</tests>
 public interface IScopedEventTracker {
   /// <summary>
   /// Tracks an event that has been emitted in the current scope.

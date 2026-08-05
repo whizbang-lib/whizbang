@@ -16,6 +16,9 @@ namespace Whizbang.Core.Perspectives.Hooks;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:ApplyTimestamp_ReachesTheHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:PerEventRegistry_DefaultTimestampsHook_StampsAndBumpsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:DefaultTimestampsHook_YieldsUpdatedAtAndBumpAsync</tests>
 public sealed record ApplyHookContext {
   /// <summary>The perspective model type (<c>TModel</c>) whose apply is being hooked.</summary>
   public required Type ModelType { get; init; }

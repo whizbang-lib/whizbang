@@ -15,6 +15,7 @@ namespace Whizbang.Data.Postgres.Collective;
 /// Scope granularity means disjoint scopes (different tenants) get different keys and run concurrently.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_TakesExclusiveAdvisoryLockPerBatchAsync</tests>
 public static class CollectiveApplyLockKey {
   /// <summary>
   /// The advisory-lock key for a collective apply against <paramref name="table"/> under

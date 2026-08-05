@@ -9,7 +9,6 @@ namespace Whizbang.Core.Observability;
 /// Meter name: Whizbang.Workers.PinnedPool
 /// </summary>
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolMetricsTests.cs</tests>
 public sealed class PinnedPoolMetrics {
 #pragma warning disable CA1707
   /// <summary>The OpenTelemetry meter name for this metrics group.</summary>

@@ -42,6 +42,9 @@ public enum LifecyclePhase {
 /// ack-barrier window; a terminal phase is an end state.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/LifecyclePhaseTests.cs:TransitionalPhases_AreTransitional_NotSettledAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/LifecyclePhaseTests.cs:SettledPhases_AreSettled_NotTransitionalAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/LifecyclePhaseTests.cs:TerminalPhases_AreTerminalAsync</tests>
 public static class LifecyclePhaseExtensions {
   /// <summary>
   /// True while the coordinator is broadcasting the phase and awaiting acks

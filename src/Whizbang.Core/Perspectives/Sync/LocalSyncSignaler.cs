@@ -15,6 +15,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs:LocalSyncSignaler_SignalCheckpointUpdated_OnlyNotifiesMatchingSubscribersAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs:LocalSyncSignaler_DisposeSubscription_StopsReceivingSignalsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs:LocalSyncSignaler_HandlerThrows_LogsWarningAndStillNotifiesOthersAsync</tests>
 public sealed partial class LocalSyncSignaler(ILogger<LocalSyncSignaler>? logger = null) : IPerspectiveSyncSignaler {
   private readonly ConcurrentDictionary<Type, ConcurrentBag<Action<PerspectiveCursorSignal>>> _subscribers = new();
   // Null-object default so the drop is ALWAYS logged: DI supplies a real logger in production; the

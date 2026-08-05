@@ -12,6 +12,8 @@ namespace Whizbang.Core.RunControl;
 /// <see cref="AddWhizbangRunControlAdapter{TControl}"/>; both faces read the one lifecycle state.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControlDiTests.cs:AddWhizbangRunControl_RegistersCoordinatorAndStateAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControlDiTests.cs:AddWhizbangRunControl_BroadcastsToRegisteredAdaptersAsync</tests>
 public static class WhizbangRunControlServiceCollectionExtensions {
   /// <summary>Registers the lifecycle coordinator + options + state (idempotent). <paramref name="configure"/> tunes the ack timeout / fault window.</summary>
   public static IServiceCollection AddWhizbangRunControl(

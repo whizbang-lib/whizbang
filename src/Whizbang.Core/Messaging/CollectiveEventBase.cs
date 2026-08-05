@@ -31,6 +31,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveScopeBaseRoutingTests.cs:CollectiveEventBase_IsAnEvent_CarriesGeneratedStreamAndScopeAsync</tests>
 public abstract record CollectiveEventBase : ICollectiveEvent {
   /// <summary>
   /// The collective event's own stream id, auto-generated at dispatch (each collective event is its own
