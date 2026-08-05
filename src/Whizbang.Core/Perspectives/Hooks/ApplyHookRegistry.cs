@@ -83,6 +83,9 @@ public abstract class MarkerHookRegistryBase {
 /// Registry of <see cref="ICollectiveApplyHook{TMarker}"/> hooks for the collective (set-based UPDATE) path.
 /// </summary>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:KeyedOverride_ReplacesInPlace_KeepingOrderPositionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:DifferentMarkers_MatchingModel_FireInRegistrationOrderAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:ResolveAfterFurtherRegistration_SeesNewHooksAsync</tests>
 public sealed class CollectiveApplyHookRegistry : MarkerHookRegistryBase {
   /// <summary>
   /// Register a collective hook against marker <typeparamref name="TMarker"/>. Pass a <paramref name="key"/> to

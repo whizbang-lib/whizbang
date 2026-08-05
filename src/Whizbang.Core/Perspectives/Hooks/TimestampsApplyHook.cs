@@ -14,6 +14,9 @@ namespace Whizbang.Core.Perspectives.Hooks;
 /// <see cref="IApplyHookBuilder{TMarker}.BumpVersion"/>) are on the shared base surface.
 /// </remarks>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:ApplyTimestamp_ReachesTheHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:PerEventRegistry_DefaultTimestampsHook_StampsAndBumpsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:DefaultKey_IsOverriddenByReRegisteringSameKeyAsync</tests>
 public sealed class TimestampsApplyHook : ICollectiveApplyHook<object>, IApplyHook<object> {
   /// <inheritdoc />
   public void Configure(ICollectiveApplyHookBuilder<object> builder, ApplyHookContext context)

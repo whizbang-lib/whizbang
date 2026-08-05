@@ -9,6 +9,9 @@ namespace Whizbang.Core.RunControl;
 /// "run when Running, drain on Stopping, otherwise pause" default.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Adapter_InterpretsPhaseIntoPermitAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Adapter_DrivenByCoordinator_PausesThenRunsThenDrainsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:ForWorkers_InterpretationAsync</tests>
 public sealed class RunPermitControl : IWhizbangRunControl {
   private readonly WhizbangRunPermit _permit;
   private readonly Func<LifecyclePhase, RunState> _interpret;

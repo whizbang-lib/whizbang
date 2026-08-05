@@ -9,6 +9,9 @@ namespace Whizbang.Core.Perspectives.Hooks;
 /// assignments. Arbitrary (developer-defined) column names are supported on the collective path only.
 /// </summary>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:ApplyTimestamp_ReachesTheHookAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:OverrideTimestamps_SetsUpdatedAt_WithoutBumpAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:UnsupportedStoreColumn_ThrowsAsync</tests>
 public static class ApplyHookColumns {
 #pragma warning disable CA1707 // editorconfig requires all_upper constants; CA1707 forbids underscores — codebase convention is to suppress CA1707 (see CollectiveRouting.SINK_PERSPECTIVE_NAME).
   /// <summary>The <c>updated_at</c> store column (per-event: <c>PerspectiveRow.UpdatedAt</c>).</summary>
@@ -29,6 +32,9 @@ public static class ApplyHookColumns {
 /// paths.
 /// </summary>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:SetProperty_RecordsNameValueAndTypeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:RemoveSetter_RecordsPropertyNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:CollectiveBuilder_RecordsAndWhereAndReplaceWhereAsync</tests>
 public abstract record ApplyHookOp;
 
 /// <summary>

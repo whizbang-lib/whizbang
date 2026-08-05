@@ -14,6 +14,9 @@ namespace Whizbang.Core.AutoPopulate;
 /// </para>
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:TestAutoPopulateRegistry_GetRegistrationsFor_ReturnsMatchingRegistrationsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:TestAutoPopulateRegistry_GetRegistrationsFor_MultipleProperties_ReturnsAllAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/JsonAutoPopulateHelperTests.cs:PopulateTimestamp_RegistrationMatches_StampsPropertyOnObjectAsync</tests>
 public interface IAutoPopulateRegistry {
   /// <summary>
   /// Gets registrations for a specific message type.

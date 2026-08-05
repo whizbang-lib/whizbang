@@ -16,6 +16,9 @@ namespace Whizbang.Data.Postgres;
 /// and the impl together.
 /// </summary>
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_PostgresEnabledWithConnString_ResolvesRealPoolAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_PostgresButDisabled_ResolvesNoOpAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_ConnectionStringName_TakesPrecedenceOverInlineAsync</tests>
 public static class PostgresPinnedPoolServiceCollectionExtensions {
 
   /// <summary>

@@ -25,6 +25,9 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:Context_Push_SetsCurrentAndResetScopeRestoresAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:Context_PushNestedScopes_RestoresPreviousLayerAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PinnedConnectionPoolIntegrationTests.cs:RealPool_PinnedConnFlowsThroughCoordinatorScopeAsync</tests>
 public static class PinnedConnectionContext {
   private static readonly AsyncLocal<DbConnection?> _current = new();
 

@@ -12,6 +12,8 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 /// the session and each apply owns its own connection.)
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:SessionAccessor_ReturnsConnectionFactoryAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:AddCollectiveEventsDapper_RegistersDispatcherResolverAccessorAsync</tests>
 public sealed class DapperCollectiveSessionAccessor : ICollectiveSessionAccessor {
   /// <inheritdoc />
   public object GetSession(IServiceProvider scopedServiceProvider) {

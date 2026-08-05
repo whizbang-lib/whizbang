@@ -18,6 +18,9 @@ namespace Whizbang.Core.Attributes;
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromContextAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromContextAttributeTests.cs:ContextKind_UserId_HasExpectedValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromContextAttributeTests.cs:ContextKind_AllValues_AreDistinctAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromContextAttributeTests.cs:ContextKind_HasTwoValuesAsync</tests>
 public enum ContextKind {
   /// <summary>
   /// Populated with the current user's identifier from SecurityContext.UserId.

@@ -13,6 +13,8 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// </summary>
 /// <typeparam name="TDbContext">The perspective-owning EF Core context.</typeparam>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:SessionAccessor_ReturnsTheRegisteredDbContextAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:AddCollectiveEventsEFCore_RegistersDispatcherResolverAccessorAsync</tests>
 public sealed class EFCoreCollectiveSessionAccessor<TDbContext> : ICollectiveSessionAccessor
     where TDbContext : DbContext {
   /// <inheritdoc />

@@ -14,6 +14,9 @@ namespace Whizbang.Core.Perspectives;
 /// resolution stays a driver-internal concern the compiler consumes.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/CollectivePredicateSqlCompilerTests.cs:Compile_OfSourceWithoutSiblingTableSource_ThrowsNotSupportedAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:ReferencedJsonPaths_CrossPerspectiveAny_RecordsSiblingTableColumnAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:ScopeFilter_CrossPerspectiveAny_CompilesToExistsSubqueryAsync</tests>
 public interface ICollectiveSiblingTableSource {
   /// <summary>
   /// The perspective table for a sibling model referenced via <see cref="ICollectiveQuery.Of{TOther}"/>.

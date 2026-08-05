@@ -36,6 +36,9 @@ namespace Whizbang.Data.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PinnedConnectionPoolIntegrationTests.cs:RealPool_BorrowAndDispose_RoundTripsConnectionAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PinnedConnectionPoolIntegrationTests.cs:RealPool_Size1_SecondBorrowBlocksUntilFirstDisposesAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PinnedConnectionPoolIntegrationTests.cs:RealPool_DisposeReusesConnection_NoDiscardAllOnSuccessivePinAsync</tests>
 public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposable {
   private readonly WhizbangPinnedPoolOptions _options;
   private readonly PinnedWorkerRegistry _registry;

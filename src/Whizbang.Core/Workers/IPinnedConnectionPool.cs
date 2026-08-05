@@ -24,6 +24,9 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_CoreOnly_ResolvesNoOpAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_PostgresEnabledWithConnString_ResolvesRealPoolAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:NoOp_TryPin_ReturnsBorrowWithNullConnectionAsync</tests>
 public interface IPinnedConnectionPool {
   /// <summary>
   /// Attempts to acquire a pinned connection for the supplied worker type.

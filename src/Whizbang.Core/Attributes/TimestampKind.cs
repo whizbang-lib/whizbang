@@ -19,6 +19,9 @@ namespace Whizbang.Core.Attributes;
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateTimestampAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateTimestampAttributeTests.cs:TimestampKind_AllValues_AreDistinctAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateTimestampAttributeTests.cs:TimestampKind_HasThreeValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateTimestampAttributeTests.cs:PopulateTimestampAttribute_MultipleTimestamps_OnSameRecord_AreAllDiscoverableAsync</tests>
 public enum TimestampKind {
   /// <summary>
   /// Populated when dispatcher.SendAsync() or PublishAsync() is called.

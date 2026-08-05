@@ -43,6 +43,9 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_CrossPerspectiveCohort_ScopesBySiblingTableAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:ApplyAsync_CrossPerspectiveCohort_ScopesBySiblingTableAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveApplyFor_TEventConstraint_IsICollectiveEventAsync</tests>
 public interface ICollectiveQuery {
   /// <summary>
   /// A queryable over the sibling perspective's rows. Use inside a <c>Where</c> with a correlated

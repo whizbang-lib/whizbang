@@ -34,6 +34,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:TenantCollectiveScope_CarriesTenantIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:TenantCollectiveScope_ScopeKind_IsTenantAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveScopeBaseRoutingTests.cs:CollectiveScope_RoundTripsPolymorphically_ViaScopeKindDiscriminatorAsync</tests>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$scopeKind")]
 [JsonDerivedType(typeof(TenantCollectiveScope), "tenant")]
 public abstract record CollectiveScope : ICollectiveScope {

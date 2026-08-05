@@ -22,6 +22,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_FoldsCollectiveEvent_OnlyIntoTheTargetRowAsync</tests>
 public interface ICollectiveReplayApplier {
   /// <summary>
   /// During a rebuild, returns <paramref name="streamEvents"/> with the in-scope collective events for

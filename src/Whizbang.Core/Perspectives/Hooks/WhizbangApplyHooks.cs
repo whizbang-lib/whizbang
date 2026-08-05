@@ -7,6 +7,9 @@ namespace Whizbang.Core.Perspectives.Hooks;
 /// present everywhere — and a consumer overrides it by re-registering the same key on the returned registry.
 /// </summary>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:DefaultTimestampsHook_YieldsUpdatedAtAndBumpAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:OverrideTimestamps_SetsUpdatedAt_WithoutBumpAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:Hook_NonMatchingMarker_IsNotAppliedAsync</tests>
 public static class WhizbangApplyHooks {
   /// <summary>A fresh collective registry seeded with the default <see cref="TimestampsApplyHook"/>.</summary>
   public static CollectiveApplyHookRegistry CreateCollectiveWithDefaults() =>

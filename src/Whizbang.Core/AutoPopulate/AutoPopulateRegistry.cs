@@ -21,6 +21,9 @@ namespace Whizbang.Core.AutoPopulate;
 /// </para>
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:AutoPopulateRegistry_Register_IncreasesCountAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:AutoPopulateRegistry_GetRegistrationsFor_AggregatesAcrossRegistriesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/JsonAutoPopulateHelperTests.cs:PopulateTimestamp_MultipleRegistrationsForSameKind_StampsAllPropertiesAsync</tests>
 public static class AutoPopulateRegistry {
   /// <summary>
   /// Register an assembly's auto-populate registry.

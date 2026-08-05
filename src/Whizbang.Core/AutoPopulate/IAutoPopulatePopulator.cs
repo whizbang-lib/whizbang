@@ -23,6 +23,9 @@ namespace Whizbang.Core.AutoPopulate;
 /// </para>
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulatePopulatorRegistryTests.cs:PopulateSent_WithMatchingType_ReturnsPopulatedRecordAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulatePopulatorRegistryTests.cs:PopulateQueued_WithMatchingType_SetsQueuedAtTimestampAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulatePopulatorRegistryTests.cs:PopulateDelivered_WithMatchingType_SetsDeliveredAtTimestampAsync</tests>
 public interface IAutoPopulatePopulator {
   /// <summary>
   /// Populates SentAt-phase properties on a message record.
