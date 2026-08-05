@@ -36,11 +36,20 @@ public sealed class IntegrityGapTracker {
   private const int MAX_PENDING = 1_000;
   private readonly Lock _lock = new();
   private readonly List<PendingGap> _pending = [];
-  private readonly ConcurrentDictionary<Guid, (string Name, DateTimeOffset LastSeen)> _origins = new();
+  private readonly ConcurrentDictionary<Guid, (string Name, DateTimeOffset LastSeen, string? RequestTopic)> _origins = new();
 
-  /// <summary>Records a checkpoint arrival for liveness accounting.</summary>
-  public void RecordCheckpoint(Guid originServiceId, string originServiceName, DateTimeOffset now) =>
-    _origins[originServiceId] = (originServiceName, now);
+  /// <summary>Records a checkpoint arrival for liveness accounting. <paramref name="requestTopic"/>
+  /// is the origin-carried address directed integrity requests publish to (newest wins; null keeps
+  /// the last known address so an older-version origin doesn't erase it).</summary>
+  public void RecordCheckpoint(Guid originServiceId, string originServiceName, DateTimeOffset now, string? requestTopic = null) =>
+    _origins.AddOrUpdate(
+      originServiceId,
+      _ => (originServiceName, now, requestTopic),
+      (_, prior) => (originServiceName, now, requestTopic ?? prior.RequestTopic));
+
+  /// <summary>The origin-carried request address, or null when the origin never announced one.</summary>
+  public string? GetRequestTopic(Guid originServiceId) =>
+    _origins.TryGetValue(originServiceId, out var entry) ? entry.RequestTopic : null;
 
   /// <summary>Adds a deficit awaiting confirmation on the origin's NEXT checkpoint.</summary>
   public void AddPending(PendingGap gap) {
@@ -64,8 +73,8 @@ public sealed class IntegrityGapTracker {
 
   /// <summary>Every origin this consumer has seen a checkpoint from — the deep audit's origin set
   /// (an origin that never checkpoints is already a liveness alarm, not an audit target).</summary>
-  public IReadOnlyList<(Guid OriginServiceId, string OriginServiceName)> GetOrigins() =>
-    [.. _origins.Select(kv => (kv.Key, kv.Value.Name))];
+  public IReadOnlyList<(Guid OriginServiceId, string OriginServiceName, string? RequestTopic)> GetOrigins() =>
+    [.. _origins.Select(kv => (kv.Key, kv.Value.Name, kv.Value.RequestTopic))];
 
   /// <summary>
   /// Origins whose last checkpoint is older than <paramref name="staleAfter"/> — the liveness

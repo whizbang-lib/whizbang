@@ -59,4 +59,25 @@ public class IntegrityGapTrackerTests {
     ToCommitSequence = 10,
     ExpectedCount = 3,
   };
+  [Test]
+  public async Task RecordCheckpoint_StoresOriginRequestTopic_LatestWinsAsync() {
+    // Directed integrity requests (manifest / redelivery / drill-down) must publish to a topic
+    // the ORIGIN actually consumes — the origin carries that address on its checkpoint, and the
+    // tracker is where the audit looks it up. Guessing with the REQUESTER's own destination sent
+    // requests to topics the origin never subscribed to (observed live: six requests, zero
+    // origin receipts).
+    var tracker = new IntegrityGapTracker();
+    var origin = Guid.NewGuid();
+
+    tracker.RecordCheckpoint(origin, "origin-svc", DateTimeOffset.UtcNow, "origin.requests.v1");
+    tracker.RecordCheckpoint(origin, "origin-svc", DateTimeOffset.UtcNow, "origin.requests.v2");
+
+    var origins = tracker.GetOrigins();
+    await Assert.That(origins.Count).IsEqualTo(1);
+    await Assert.That(origins[0].RequestTopic).IsEqualTo("origin.requests.v2")
+      .Because("the newest checkpoint's address wins — origins may re-home across deploys.");
+    await Assert.That(tracker.GetRequestTopic(origin)).IsEqualTo("origin.requests.v2");
+    await Assert.That(tracker.GetRequestTopic(Guid.NewGuid())).IsNull()
+      .Because("an unknown origin has no address — callers fall back.");
+  }
 }

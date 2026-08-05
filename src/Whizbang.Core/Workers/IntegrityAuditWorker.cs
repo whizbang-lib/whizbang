@@ -173,7 +173,7 @@ public sealed partial class IntegrityAuditWorker(
       .Select(TypeNameFormatter.FormatClrTypeName)
       .Distinct(StringComparer.Ordinal)
       .ToList();
-    foreach (var (originId, originName) in tracker.GetOrigins()) {
+    foreach (var (originId, originName, originRequestTopic) in tracker.GetOrigins()) {
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
         MessageId = new MessageId(TrackedGuid.NewMedo()),
         Payload = new RequestIntegrityManifest {
@@ -194,8 +194,12 @@ public sealed partial class IntegrityAuditWorker(
         Target = originName,
       };
       var serialized = serializer.SerializeEnvelope(envelope);
+      // Publish the DIRECTED request to the ORIGIN-carried address (a topic the origin actually
+      // consumes); the requester's own destination is only the legacy fallback for origins that
+      // predate the carried address — observed live: requests published to the requester's
+      // topics were never received by any origin.
       await transport.PublishAsync(serialized.JsonEnvelope,
-        ControlPlaneDestination.For(topic, envelope.MessageId.Value), serialized.EnvelopeType,
+        ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value), serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       metrics?.ManifestsRequested.Add(1,
         new KeyValuePair<string, object?>("origin", originName),

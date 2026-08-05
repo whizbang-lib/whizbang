@@ -86,6 +86,11 @@ public sealed partial class IntegrityCheckpointWorker(
       CheckpointStreamId = originServiceId,
       OriginServiceId = originServiceId,
       OriginServiceName = originServiceName,
+      // The address consumers publish directed integrity requests to — a topic THIS service
+      // consumes (its own first destination, or the RepairTopic override). Carried because the
+      // requester cannot guess an origin-reachable topic in a domain-scoped topology.
+      RequestTopic = _options.RepairTopic
+        ?? scope.ServiceProvider.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address,
       FromCommitSequence = window.FromCommitSequence,
       ToCommitSequence = window.ToCommitSequence,
       Buckets = [.. window.Buckets],
