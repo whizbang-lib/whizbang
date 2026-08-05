@@ -35,7 +35,9 @@ namespace Whizbang.Core.Messaging;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorAtPostInboxInline_ShouldInvokeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorReturnsEvent_ShouldCascadeEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerServiceRegistrationTests.cs:ReceptorInvoker_RegisteredAsScoped_HasCorrectLifetimeAsync</tests>
 public interface IReceptorInvoker {
   /// <summary>
   /// Invokes all receptors for the message at the specified lifecycle stage.

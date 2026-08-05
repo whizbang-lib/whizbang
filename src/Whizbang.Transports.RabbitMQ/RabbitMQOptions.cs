@@ -115,6 +115,9 @@ public class RabbitMQOptions {
   /// Default: 5
   /// </summary>
   /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:RabbitMQOptions_DefaultInitialRetryAttempts_IsFiveAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CreateConnectionWithRetryAsync_WithRetryIndefinitelyFalse_TriesInitialAttemptsAndThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CreateConnectionWithRetryAsync_WhenExhaustedWithLogger_LogsFinalFailureAndRethrowsAsync</tests>
   public int InitialRetryAttempts { get; set; } = 5;
 
   /// <summary>
@@ -122,6 +125,9 @@ public class RabbitMQOptions {
   /// Default: 1 second
   /// </summary>
   /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:RabbitMQOptions_DefaultInitialRetryDelay_IsOneSecondAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CalculateNextDelay_WithDefaultMultiplier_DoublesDelayAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CreateConnectionWithRetryAsync_WithinInitialWindow_LogsRetryAttemptAsync</tests>
   public TimeSpan InitialRetryDelay { get; set; } = TimeSpan.FromSeconds(1);
 
   /// <summary>
@@ -130,6 +136,9 @@ public class RabbitMQOptions {
   /// Default: 120 seconds
   /// </summary>
   /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:RabbitMQOptions_DefaultMaxRetryDelay_Is120SecondsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CalculateNextDelay_WhenExceedsMaxDelay_CapsAtMaxDelayAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CalculateNextDelay_ExponentialSequence_CapsAtMaxAsync</tests>
   public TimeSpan MaxRetryDelay { get; set; } = TimeSpan.FromSeconds(120);
 
   /// <summary>
@@ -138,6 +147,9 @@ public class RabbitMQOptions {
   /// Default: 2.0
   /// </summary>
   /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:RabbitMQOptions_DefaultBackoffMultiplier_IsTwoAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CalculateNextDelay_WithCustomMultiplier_AppliesMultiplierAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CalculateNextDelay_WithMultiplierLessThanOne_DecreasesDelayAsync</tests>
   public double BackoffMultiplier { get; set; } = 2.0;
 
   /// <summary>
@@ -146,6 +158,9 @@ public class RabbitMQOptions {
   /// Default: true (critical transport - always retry)
   /// </summary>
   /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:RabbitMQOptions_DefaultRetryIndefinitely_IsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CreateConnectionWithRetryAsync_WithRetryIndefinitelyFalse_TriesInitialAttemptsAndThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CreateConnectionWithRetryAsync_IndefiniteRetry_LogsPeriodicStatusAtTenthAttemptAsync</tests>
   public bool RetryIndefinitely { get; set; } = true;
 
   #endregion

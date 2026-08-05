@@ -7,6 +7,10 @@ namespace Whizbang.Core.Health;
 /// <see cref="PausedByDesign"/>) are "operating correctly for the state it is in", not failures.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:Aggregate_WorstStatusWinsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:Liveness_NeverFailsForIntentionalStates_UnderStrictAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:LenientDefault_IntentionalState_IsReadyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/ConnectivityHealthSourceTests.cs:AssumedHealthy_IsPhaseAware_NeverFaultsFromProbeAsync</tests>
 public enum ComponentState {
   /// <summary>Running normally.</summary>
   Operational,
@@ -40,6 +44,9 @@ public readonly record struct ComponentHealth(ComponentState State, string? Deta
 /// (<see cref="Readiness"/>).
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:Faulted_FailsReadinessAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:Faulted_StillAlive_NeverRestartsOnDependencyFaultAsync</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangManagedHealthCheckTests.cs:Liveness_Faulted_StaysHealthyAsync</tests>
 public enum HealthProbe {
   /// <summary>"Is the process alive?" — should almost never fail on an intentional state or a dependency fault.</summary>
   Liveness,

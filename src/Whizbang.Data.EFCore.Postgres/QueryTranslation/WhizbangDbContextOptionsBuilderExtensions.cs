@@ -35,7 +35,9 @@ public static class WhizbangDbContextOptionsBuilderExtensions {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/perspectives/physical-fields</docs>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnifiedQuerySyntaxTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnifiedQuerySyntaxTests.cs:Query_WhereOnPhysicalField_UsesColumnNotJsonbAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnifiedQuerySyntaxTests.cs:Query_MixedPhysicalAndJsonb_BothTranslateCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnifiedQuerySyntaxTests.cs:Query_NonPhysicalField_StillUsesJsonbAsync</tests>
   public static DbContextOptionsBuilder UseWhizbangPhysicalFields(
       this DbContextOptionsBuilder optionsBuilder) {
 

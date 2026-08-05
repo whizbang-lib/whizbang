@@ -10,6 +10,9 @@ namespace Whizbang.Core.Messaging;
 /// Uses record type for convenient 'with' syntax when updating context properties.
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextTests.cs:LifecycleExecutionContext_Constructor_StoresAllPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextTests.cs:LifecycleExecutionContext_OptionalProperties_CanBeNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextAccessorTests.cs:Current_DifferentAsyncContexts_AreIsolatedAsync</tests>
 public sealed record LifecycleExecutionContext : ILifecycleContext {
   /// <inheritdoc/>
   public required LifecycleStage CurrentStage { get; init; }

@@ -31,7 +31,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:ChangeTrackerTracked_CanHydrateAndDetachAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:ChangeTrackerTracked_BulkResults_AllHydratedAndDetachedAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableLensQueryScopedAccessTests.cs:Query_WithFilterAndSplitModeModel_UsesTrackingQueryAsync</tests>
 public static class SplitModeChangeTrackerHydrator {
   /// <summary>
   /// Hydrators keyed by closed generic type: <c>typeof(PerspectiveRow&lt;MyModel&gt;)</c>.

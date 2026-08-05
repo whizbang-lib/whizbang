@@ -9,6 +9,9 @@ namespace Whizbang.Core.Health;
 /// Whizbang's internal tables.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_AggregatesRegisteredSourcesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/TransportHealthWiringTests.cs:RegisteredTransport_Disconnected_WhileMigrating_PausedByDesignAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/OffloadHealthWiringTests.cs:RegisteredStore_Unreachable_WhileRunning_FaultedAsync</tests>
 public interface IWhizbangHealthSource {
   /// <summary>
   /// Stable component id used to key per-component policy overrides, e.g. <c>"event-store"</c>,

@@ -35,6 +35,10 @@ namespace Whizbang.Core.Generated;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Register_VoidReceptor_InvokeAsyncCallsHandleAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_ZeroReceptors_GeneratesEmptyReceptorRegistryAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_ReceptorRegistry_HasCorrectStructureAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithReceptor_GeneratesReceptorRegistryAsync</tests>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.IReceptorRegistry {

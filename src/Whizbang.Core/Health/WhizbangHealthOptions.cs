@@ -7,6 +7,9 @@ namespace Whizbang.Core.Health;
 /// service stays ready and serving during a long startup migration.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:StrictOverride_HoldsThatComponentOutOfRotationAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:StrictOverride_DoesNotAffectOtherComponentsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:LenientDefault_Migrating_IsReadyAsync</tests>
 public sealed class WhizbangHealthOptions {
   /// <summary>Policy applied to any component without an explicit override. Defaults to <see cref="HealthPolicy.Lenient"/>.</summary>
   public HealthPolicy Default { get; set; } = HealthPolicy.Lenient;

@@ -935,5 +935,8 @@ public sealed class InboxDispatchWorkerOptions {
   /// motivated this safeguard.
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:InboxDispatchWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:OutboxDrainWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorkerOptions_Defaults_MatchDocumentedValuesAsync</tests>
   public int SecurityContextTimeoutSeconds { get; set; } = 10;
 }

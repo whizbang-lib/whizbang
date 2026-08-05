@@ -28,7 +28,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:Read_FullEntity_PhysicalFieldsPopulatedFromColumnsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:Read_FullEntity_NonPhysicalFieldsFromJsonbAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:LensQuery_Query_ToListAsync_PhysicalFieldsHydratedAsync</tests>
 public class PhysicalFieldMaterializationInterceptor : IMaterializationInterceptor {
   /// <inheritdoc/>
   public object InitializedInstance(
