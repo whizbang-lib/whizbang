@@ -284,9 +284,15 @@ public class DebuggerAwareClockTests {
     // Act
     await Task.Delay(100);
 
-    // Assert - ActiveElapsed should equal WallElapsed in Disabled mode
-    var activeDelta = Math.Abs((stopwatch.ActiveElapsed - stopwatch.WallElapsed).TotalMilliseconds);
-    await Assert.That(activeDelta).IsLessThan(10); // Allow small variance
+    // Assert — in Disabled mode ActiveElapsed IS wall time, so an ActiveElapsed read must land
+    // BETWEEN two WallElapsed reads (monotone sandwich). Exact under any load — a tolerance
+    // window on two live reads measures scheduler skew, not the mode semantics (flaked in CI at
+    // 14ms under load) — while a CPU-time-based mutant (~0 during Task.Delay) still fails low.
+    var wallBefore = stopwatch.WallElapsed;
+    var active = stopwatch.ActiveElapsed;
+    var wallAfter = stopwatch.WallElapsed;
+    await Assert.That(active).IsGreaterThanOrEqualTo(wallBefore);
+    await Assert.That(active).IsLessThanOrEqualTo(wallAfter);
   }
 
   [Test]
