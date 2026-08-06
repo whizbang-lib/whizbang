@@ -39,6 +39,17 @@ public sealed record RedeliveryRequest {
 
   /// <summary>Hard cap on selected events per call — the storm-cap building block. Default 10,000.</summary>
   public int MaxEvents { get; init; } = 10_000;
+
+  /// <summary>
+  /// Keyset continuation, with <see cref="AfterVersion"/>: only rows strictly after
+  /// (stream, version) in the selection's (stream_id, version) order. Null = from the start.
+  /// Lets the origin page a large repair in bounded slices instead of materializing the whole
+  /// cap in memory at once.
+  /// </summary>
+  public Guid? AfterStreamId { get; init; }
+
+  /// <summary>Keyset continuation partner of <see cref="AfterStreamId"/>.</summary>
+  public long? AfterVersion { get; init; }
 }
 
 /// <summary>

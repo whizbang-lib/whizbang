@@ -1196,6 +1196,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         AND ((@p_streams::uuid[]) IS NULL OR es.stream_id = ANY(@p_streams::uuid[]))
         AND (@p_from_seq::bigint IS NULL OR es.commit_sequence > @p_from_seq)
         AND (@p_to_seq::bigint IS NULL OR es.commit_sequence <= @p_to_seq)
+        AND ((@p_after_stream::uuid) IS NULL OR (es.stream_id, es.version) > (@p_after_stream::uuid, @p_after_version::bigint))
         AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
       ORDER BY es.stream_id, es.version
       LIMIT @p_max
@@ -1220,6 +1221,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to_seq", NpgsqlTypes.NpgsqlDbType.Bigint) {
       Value = (object?)request.ToCommitSequence ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_after_stream", NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = (object?)request.AfterStreamId ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_after_version", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = (object?)request.AfterVersion ?? 0L
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_max", NpgsqlTypes.NpgsqlDbType.Integer) {
       Value = request.MaxEvents
