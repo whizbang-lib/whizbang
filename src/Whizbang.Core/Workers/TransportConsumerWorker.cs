@@ -42,6 +42,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
 public partial class TransportConsumerWorker : BackgroundService {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
@@ -465,12 +466,19 @@ public partial class TransportConsumerWorker : BackgroundService {
       // this no-consumer gate against the claim would drop EVERY offloaded message here — before
       // rehydration, with no inbox row written, unrecoverable. Skip the gate for claims; the real
       // type is restored by BodyClaimRehydrator in _tryBuildInboxMessageFromTransportAsync below.
+      // EXEMPTION — composites: a composite is wire-only (IMessage, never IEvent), so NO service
+      // registers a consumer for the composite type itself; its consumers are registered for the
+      // INNER events, which only become addressable once the dispatch seam fans it out (see the
+      // fan-out note below). Running the gate against the composite drops the ENTIRE bundle here,
+      // before any inbox row is written — unrecoverable, and only visible at Debug. See
+      // CompositeInboxFanout.IsCompositeWireType.
       if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)
           && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(msg.EnvelopeType)) {
         var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
         if (innerMessageType is not null
             && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-            && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)) {
+            && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)
+            && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
           _metrics?.InboxMessagesDeduplicated.Add(1);
           continue;
         }

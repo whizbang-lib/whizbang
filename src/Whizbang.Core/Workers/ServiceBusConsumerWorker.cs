@@ -28,6 +28,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:StartAsync_WhenSubscribeFails_LogsAndRethrowsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:ExecuteAsync_WhenFatalErrorOccurs_LogsAndRethrowsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_ConcurrencyLimitDisabled_ProcessesWithoutSemaphoreAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerDropGateTests.cs:HandleMessage_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
 #pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class ServiceBusConsumerWorker(
   ITransport transport,
@@ -209,12 +210,17 @@ public partial class ServiceBusConsumerWorker(
     // EXEMPTION — body-offload (claim-check): a claim's wire type is MessageEnvelope<BodyClaimEnvelopePayload>,
     // which no service consumes. Dropping it here would kill every offloaded message before rehydration.
     // Skip the gate for claims; BodyClaimRehydrator restores the original type downstream.
+    // EXEMPTION — composites: a composite is wire-only, so nothing consumes the composite type
+    // itself; its consumers are registered for the INNER events, which only become addressable
+    // after the dispatch seam fans it out. Dropping here loses the whole bundle before any inbox
+    // row is written. See CompositeInboxFanout.IsCompositeWireType.
     if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(envelopeType)
         && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(envelopeType)) {
       var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
       if (innerMessageType is not null
           && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-          && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)) {
+          && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)
+          && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
         LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
         return;
       }

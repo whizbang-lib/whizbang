@@ -429,4 +429,82 @@ public class CompositeInboxFanoutTests {
     public int MaxInnerEventsAllowed => MaxInnerEventsAllowedOverride ?? 10_000;
     public IEnumerable<IMessage> InnerEvents => _inner;
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // IsCompositeWireType — the receive-boundary lookup that keeps composites past the
+  // "no local consumer" gates. A composite is wire-only, so nothing registers a consumer for the
+  // composite type itself; recognition has to come from the compile-time catalog, by type name,
+  // because the payload is still an undeserialized JsonElement at the gate.
+  // ---------------------------------------------------------------------------------------------
+
+  private sealed class _compositeMarker;
+  private sealed class _plainMarker;
+
+  private sealed class _markerCatalog : IMessageTypeCatalog {
+    private static readonly IReadOnlyList<MessageTypeCatalogEntry> _entries = [
+      new(typeof(_compositeMarker), TypeNameFormatter.FormatClrTypeName(typeof(_compositeMarker)), "event", null) { IsComposite = true },
+      new(typeof(_plainMarker), TypeNameFormatter.FormatClrTypeName(typeof(_plainMarker)), "event", null),
+    ];
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => _entries;
+  }
+
+  private static EventMarkerResolver _markerResolver() => new(new _markerCatalog());
+
+  /// <summary>The assembly-qualified wire form the receive gates hand to the lookup.</summary>
+  private static string _wireName(Type type) => type.AssemblyQualifiedName!;
+
+  [Test]
+  public async Task IsCompositeWireType_CatalogStampsComposite_ReturnsTrueAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(_compositeMarker)), _markerResolver());
+
+    await Assert.That(isComposite).IsTrue()
+      .Because("A composite must be recognisable at the receive boundary from its wire type name alone — " +
+               "the payload is an undeserialized JsonElement there, so the compile-time catalog stamp is the only signal.");
+  }
+
+  [Test]
+  public async Task IsCompositeWireType_CatalogStampsPlainEvent_ReturnsFalseAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(_plainMarker)), _markerResolver());
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("Ordinary events must stay subject to the no-consumer gate — exempting them would refill the inbox " +
+               "with cross-service types this service knows nothing about.");
+  }
+
+  [Test]
+  public async Task IsCompositeWireType_TypeNotInCatalog_ReturnsFalseAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType("Some.Unknown.Type, Some.Assembly", _markerResolver());
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("A catalog miss means 'unknown here', not 'composite' — the gate keeps its normal behaviour.");
+  }
+
+  [Test]
+  public async Task IsCompositeWireType_NoMarkerResolver_ReturnsFalseAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(_compositeMarker)), markerResolver: null);
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("Without a catalog there is nothing to consult; the caller keeps its pre-existing behaviour rather than guessing.");
+  }
+
+  [Test]
+  [Arguments(null)]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task IsCompositeWireType_BlankTypeName_ReturnsFalseAsync(string? wireTypeName) {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(wireTypeName, _markerResolver());
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("An unusable type name cannot be catalog-addressed, so it cannot be claimed as a composite.");
+  }
+
+  [Test]
+  public async Task IsCompositeWireType_GenericTypeName_ReturnsFalseAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[Some.Inner, Some.Assembly]], Whizbang.Core",
+      _markerResolver());
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("Generic payload names are not catalog-addressed — the catalog holds concrete message types only.");
+  }
 }
