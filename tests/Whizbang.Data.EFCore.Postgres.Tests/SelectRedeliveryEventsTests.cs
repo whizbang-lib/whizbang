@@ -127,6 +127,54 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
       .Because("FromCommitSequence is the exclusive floor.");
   }
 
+  [Test]
+  public async Task Select_KeysetContinuation_PagesWithoutOverlapOrLossAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+
+    var streamA = TrackedGuid.NewMedo().Value;
+    var streamB = TrackedGuid.NewMedo().Value;
+    var streams = new List<Guid> { streamA, streamB };
+    await _seedAsync(conn, streamA, version: 1, TENANT_A, "Contracts.PageProbe");
+    await _seedAsync(conn, streamA, version: 2, TENANT_A, "Contracts.PageProbe");
+    await _seedAsync(conn, streamA, version: 3, TENANT_A, "Contracts.PageProbe");
+    await _seedAsync(conn, streamB, version: 1, TENANT_A, "Contracts.PageProbe");
+    await _seedAsync(conn, streamB, version: 2, TENANT_A, "Contracts.PageProbe");
+
+    // Page through with MaxEvents=2, continuing strictly after each page's last (stream, version).
+    var seen = new List<(Guid Stream, long Version)>();
+    Guid? afterStream = null;
+    long? afterVersion = null;
+    for (var page = 0; page < 4; page++) {
+      var rows = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
+        TenantScope = TENANT_A,
+        StreamIds = streams,
+        MaxEvents = 2,
+        AfterStreamId = afterStream,
+        AfterVersion = afterVersion
+      });
+      if (rows.Count == 0) {
+        break;
+      }
+      seen.AddRange(rows.Select(r => (r.StreamId, r.Version)));
+      afterStream = rows[^1].StreamId;
+      afterVersion = rows[^1].Version;
+    }
+
+    await Assert.That(seen.Count).IsEqualTo(5)
+      .Because("keyset pages must cover the full selection with no loss and no overlap — the " +
+               "origin's memory bound depends on paging being exact.");
+    await Assert.That(seen.Distinct().Count()).IsEqualTo(5);
+    // Per-stream version order must survive page boundaries (bundle ordering key). Stream-to-
+    // stream order is the database's uuid collation — deliberately not asserted from C#.
+    foreach (var stream in streams) {
+      var versions = seen.Where(s => s.Stream == stream).Select(s => s.Version).ToList();
+      await Assert.That(versions).IsEquivalentTo(versions.OrderBy(v => v).ToList())
+        .Because("a stream's versions arrive ascending across pages — repair bundles replay in order.");
+    }
+  }
+
   // ── seeding ──────────────────────────────────────────────────────────────
 
   /// <summary>Seeds one event: store pointer + (unless <paramref name="reapBody"/>) its body row.</summary>

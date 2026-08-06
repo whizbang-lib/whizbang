@@ -90,6 +90,49 @@ public class RedeliveryPumpTests {
       .Because("a state-only bundle carries the marker on every chunk's envelope (Phase S backfill).");
   }
 
+  [Test]
+  public async Task Publish_ChunksByRawBodyBytes_BelowTheCountBoundAsync() {
+    var stream = TrackedGuid.NewMedo().Value;
+    var ids = Enumerable.Range(0, 3).Select(_ => TrackedGuid.NewMedo().Value).ToArray();
+    var transport = new _captureTransport();
+    var serializer = new _captureSerializer();
+    // Each event carries ~102 raw bytes (100-byte body + "{}" metadata); a 100-byte budget is
+    // crossed by every single event, so each flushes alone — a count-only bound would build one
+    // 3-event composite here.
+    var pump = new RedeliveryPump(transport, new _mapEventStore(), new _typeProvider(), serializer,
+      options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 500, MaxBytesPerComposite = 100 });
+    var bigBody = "{\"pad\":\"" + new string('x', 90) + "\"}";
+
+    var published = await pump.PublishAsync(
+      [.. ids.Select((id, i) => _evt(stream, id, i + 1) with { EventData = bigBody })],
+      topic: "repair-topic", target: "svc");
+
+    await Assert.That(published).IsEqualTo(3)
+      .Because("large-bodied histories must flush by BYTES below the count bound — a count-only " +
+               "chunk exhausts memory during serialization or exceeds the broker message-size " +
+               "limit and the repair never delivers.");
+    foreach (var envelope in serializer.Captured) {
+      await Assert.That(envelope.Payload.InnerEventIds!.Count).IsEqualTo(1);
+    }
+  }
+
+  [Test]
+  public async Task Publish_SingleEventLargerThanByteBudget_StillShipsAloneAsync() {
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var serializer = new _captureSerializer();
+    var pump = new RedeliveryPump(transport, new _mapEventStore(), new _typeProvider(), serializer,
+      options: new RedeliveryPumpOptions { MaxBytesPerComposite = 10 });
+
+    var published = await pump.PublishAsync(
+      [_evt(stream, TrackedGuid.NewMedo().Value, 1) with { EventData = "{\"pad\":\"oversized-body\"}" }],
+      topic: "repair-topic", target: "svc");
+
+    await Assert.That(published).IsEqualTo(1)
+      .Because("an event bigger than the budget still ships, alone — the budget bounds grouping, " +
+               "it never silently drops a repair.");
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static RedeliveryEvent _evt(Guid streamId, Guid eventId, long version) => new() {

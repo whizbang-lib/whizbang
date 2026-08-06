@@ -28,6 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptor.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptorRegistrar.cs</code-under-test>
+[NotInParallel("RedeliveryBuildGate")]   // the receptor's per-process build gate is shared state
 public class RedeliveryRequestReceptorTests {
 
   [Test]
@@ -57,7 +58,7 @@ public class RedeliveryRequestReceptorTests {
       StateOnly = true
     });
 
-    var request = coordinator.LastRequest!;
+    var request = coordinator.Requests[0];
     await Assert.That(request.TenantScope).IsEqualTo("tenant-a");
     await Assert.That(request.EventTypes!).IsEquivalentTo(typeFilter);
     await Assert.That(request.StreamIds!).IsEquivalentTo(streamFilter);
@@ -97,8 +98,9 @@ public class RedeliveryRequestReceptorTests {
       RequesterService = "svc",
       Topic = "t"
     });
-    await Assert.That(coordinator.LastRequest!.MaxEvents).IsEqualTo(100)
-      .Because("the origin owns its storm cap — a requester can never raise it.");
+    await Assert.That(coordinator.Requests[0].MaxEvents).IsEqualTo(100)
+      .Because("the origin owns its storm cap — a requester can never raise it " +
+               "(SelectPageSize defaults above this cap, so the first page IS the cap).");
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
       MaxEvents = null,
@@ -107,6 +109,81 @@ public class RedeliveryRequestReceptorTests {
     });
     await Assert.That(coordinator.LastRequest!.MaxEvents).IsEqualTo(100)
       .Because("an unspecified request cap defaults to the origin's configured cap.");
+  }
+
+  [Test]
+  public async Task Receptor_PagesWideSelections_KeysetAdvancesAndEverythingPublishesAsync() {
+    var coordinator = new _selectingCoordinator();
+    var transport = new _captureTransport();
+    var serializer = new _captureSerializer();
+    var s1 = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    var s2 = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    var ids = new[] {
+      TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value,
+      TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value
+    };
+    coordinator.Selection = [
+      _evt(s1, ids[0], 1), _evt(s1, ids[1], 2), _evt(s1, ids[2], 3),
+      _evt(s2, ids[3], 1), _evt(s2, ids[4], 2)
+    ];
+    await using var sp = _buildProvider(coordinator, transport, serializer,
+      new RedeliveryPumpOptions { SelectPageSize = 2, MaxEventsPerRequest = 100 });
+    var receptor = new RedeliveryRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "svc", Topic = "t" });
+
+    // Memory bound: every select asked for at most one page.
+    foreach (var request in coordinator.Requests) {
+      await Assert.That(request.MaxEvents).IsEqualTo(2)
+        .Because("the origin selects in pages — materializing the whole cap at once has OOM-killed " +
+                 "origins answering their first full audit.");
+    }
+    await Assert.That(coordinator.Requests[0].AfterStreamId).IsNull();
+    await Assert.That(coordinator.Requests[1].AfterStreamId).IsEqualTo(s1);
+    await Assert.That(coordinator.Requests[1].AfterVersion).IsEqualTo(2L)
+      .Because("each page continues strictly after the previous page's last (stream, version).");
+
+    var innerIds = serializer.Captured.SelectMany(c => c.Payload.InnerEventIds!).ToList();
+    await Assert.That(innerIds).IsEquivalentTo(ids)
+      .Because("paging must not lose or duplicate any selected event across page boundaries.");
+  }
+
+  [Test]
+  public async Task Receptor_ConcurrentRequests_BuildOneAtATimeAsync() {
+    var coordinator = new _selectingCoordinator();
+    var transport = new _captureTransport();
+    var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    coordinator.BlockFirstSelect = gate;
+    await using var sp = _buildProvider(coordinator, transport);
+    var receptor = new RedeliveryRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    // A enters its select synchronously and parks on the gate INSIDE the build.
+    var taskA = receptor.HandleAsync(new RequestRedeliveryCommand {
+      EventTypes = ["A"],
+      RequesterService = "svc-a",
+      Topic = "t"
+    });
+    await Assert.That(coordinator.SelectLog).IsEquivalentTo(["A"]);
+
+    // B starts while A holds the build gate: without the gate it would enter its select
+    // synchronously right here and the log would already show "B".
+    var taskB = receptor.HandleAsync(new RequestRedeliveryCommand {
+      EventTypes = ["B"],
+      RequesterService = "svc-b",
+      Topic = "t"
+    });
+    await Assert.That(coordinator.SelectLog).IsEquivalentTo(["A"])
+      .Because("one repair build at a time per process — concurrent request bursts multiplying " +
+               "page+serialization footprints is exactly what OOM-killed origins.");
+
+    gate.SetResult();
+    await taskA;
+    await taskB;
+    await Assert.That(coordinator.SelectLog[0]).IsEqualTo("A");
+    await Assert.That(coordinator.SelectLog).Contains("B")
+      .Because("the queued request still runs to completion once the gate frees.");
   }
 
   [Test]
@@ -199,15 +276,37 @@ public class RedeliveryRequestReceptorTests {
 
   internal sealed record _probeEvent(Guid Id) : IEvent;
 
-  /// <summary>Captures the selection request and returns a canned selection.</summary>
+  /// <summary>
+  /// Captures every selection request and serves the canned selection with the REAL keyset-paging
+  /// contract: rows strictly after (AfterStreamId, AfterVersion), at most MaxEvents. Optionally
+  /// blocks the first select on <see cref="BlockFirstSelect"/> and logs a per-request tag
+  /// (the request's first EventTypes entry) for interleaving assertions.
+  /// </summary>
   private sealed class _selectingCoordinator : IWorkCoordinator {
     public RedeliveryRequest? LastRequest { get; private set; }
+    public List<RedeliveryRequest> Requests { get; } = [];
+    public List<string> SelectLog { get; } = [];
+    public TaskCompletionSource? BlockFirstSelect { get; set; }
     public IReadOnlyList<RedeliveryEvent> Selection { get; set; } = [];
     public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
+    private int _selectCalls;
 
-    public Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(RedeliveryRequest request, CancellationToken cancellationToken = default) {
-      LastRequest = request;
-      return Task.FromResult(Selection);
+    public async Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(RedeliveryRequest request, CancellationToken cancellationToken = default) {
+      lock (Requests) {
+        LastRequest = request;
+        Requests.Add(request);
+        SelectLog.Add(request.EventTypes is { Count: > 0 } t ? t[0] : "-");
+      }
+      if (Interlocked.Increment(ref _selectCalls) == 1 && BlockFirstSelect is { } gate) {
+        await gate.Task;
+      }
+      IEnumerable<RedeliveryEvent> query = Selection;
+      if (request.AfterStreamId is { } afterStream) {
+        var afterVersion = request.AfterVersion ?? 0L;
+        query = query.Where(e => e.StreamId.CompareTo(afterStream) > 0
+          || (e.StreamId == afterStream && e.Version > afterVersion));
+      }
+      return query.Take(request.MaxEvents).ToList();
     }
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>

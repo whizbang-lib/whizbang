@@ -25,6 +25,24 @@ public sealed class RedeliveryPumpOptions {
   /// raised above it. Default 10,000 (matches <see cref="RedeliveryRequest.MaxEvents"/>).
   /// </summary>
   public int MaxEventsPerRequest { get; set; } = 10_000;
+
+  /// <summary>
+  /// Byte budget per composite, measured over the raw stored bodies (event_data + metadata).
+  /// A chunk flushes once it crosses this budget even below
+  /// <see cref="MaxInnerEventsPerComposite"/> — large-bodied histories would otherwise build
+  /// composites that exhaust memory during serialization or exceed the broker's message-size
+  /// limit and never deliver. A single event larger than the budget still ships, alone.
+  /// Default 192 KB (fits the smallest common broker tier with envelope overhead headroom).
+  /// </summary>
+  public int MaxBytesPerComposite { get; set; } = 192_000;
+
+  /// <summary>
+  /// Origin-side selection page size: the redelivery request receptor selects and publishes in
+  /// pages of at most this many events instead of materializing the whole
+  /// <see cref="MaxEventsPerRequest"/> cap at once. Bounds a repair's memory to one page of
+  /// bodies regardless of the request's width. Default 500.
+  /// </summary>
+  public int SelectPageSize { get; set; } = 500;
 }
 
 /// <summary>
@@ -101,19 +119,26 @@ public sealed class RedeliveryPump {
     var eventTypes = _eventTypeProvider.GetEventTypes();
     var published = 0;
 
-    // Input contract: (stream, version)-ordered — group CONSECUTIVE runs per stream, chunked.
+    // Input contract: (stream, version)-ordered — group CONSECUTIVE runs per stream, chunked by
+    // count AND by raw body bytes: a count-only bound lets large-bodied histories build
+    // composites that exhaust memory during serialization or exceed the broker message-size
+    // limit and never deliver.
     var chunk = new List<RedeliveryEvent>(Math.Min(events.Count, _options.MaxInnerEventsPerComposite));
+    var chunkBytes = 0L;
     for (var i = 0; i < events.Count; i++) {
       chunk.Add(events[i]);
+      chunkBytes += events[i].EventData.Length + (events[i].Metadata?.Length ?? 0);
       var boundary = i == events.Count - 1
         || events[i + 1].StreamId != events[i].StreamId
-        || chunk.Count == _options.MaxInnerEventsPerComposite;
+        || chunk.Count == _options.MaxInnerEventsPerComposite
+        || chunkBytes >= _options.MaxBytesPerComposite;
       if (!boundary) {
         continue;
       }
       await _publishChunkAsync(chunk, topic, target, originServiceId, stateOnly, eventTypes, cancellationToken).ConfigureAwait(false);
       published++;
       chunk.Clear();
+      chunkBytes = 0;
     }
     return published;
   }
