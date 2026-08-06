@@ -16,6 +16,19 @@ public static class ControlPlaneDestination {
   public static TransportDestination For(string address, Guid sessionStreamId) =>
     WithSession(new TransportDestination(address), sessionStreamId);
 
+  /// <summary>
+  /// A destination for <paramref name="address"/> carrying the session key AND the conventional
+  /// "{namespace}.{typename}" Subject for <paramref name="payloadType"/>. Shared-inbox
+  /// subscriptions filter on the Subject (sys.Label) by namespace — a publish with no routing
+  /// key gets the literal Subject "message" and is silently dropped by the broker rule (no logs,
+  /// no dead-letter). Every directed control-plane publish to a filtered topic uses this form.
+  /// </summary>
+  public static TransportDestination For(string address, Guid sessionStreamId, Type payloadType) {
+    ArgumentNullException.ThrowIfNull(payloadType);
+    var routingKey = $"{payloadType.Namespace!.ToLowerInvariant()}.{payloadType.Name.ToLowerInvariant()}";
+    return WithSession(new TransportDestination(address, routingKey), sessionStreamId);
+  }
+
   /// <summary>The same destination with the session key added (Address and RoutingKey preserved).</summary>
   public static TransportDestination WithSession(TransportDestination destination, Guid sessionStreamId) {
     ArgumentNullException.ThrowIfNull(destination);

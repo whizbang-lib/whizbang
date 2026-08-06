@@ -159,7 +159,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     // the requester's own topic is only the reply address inside the payload.
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(pending.OriginServiceId);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value), serialized.EnvelopeType,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 

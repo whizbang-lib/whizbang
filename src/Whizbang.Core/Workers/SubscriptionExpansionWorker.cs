@@ -140,7 +140,7 @@ public sealed partial class SubscriptionExpansionWorker(
     };
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      ControlPlaneDestination.For(topic, envelope.MessageId.Value), serialized.EnvelopeType,
+      ControlPlaneDestination.For(topic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     return true;
   }

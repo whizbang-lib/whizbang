@@ -29,6 +29,14 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   private const string SYSTEM_COMMAND_NAMESPACE = "whizbang.core.commands.system";
 
   /// <summary>
+  /// The integrity control-plane namespace (checkpoint-driven manifest / redelivery / drill-down
+  /// requests and responses) every service must admit — the messages are DIRECTED, so non-targets
+  /// still discard locally; without this pattern the shared-inbox broker filter silently drops
+  /// every one (no logs, no dead-letter).
+  /// </summary>
+  private const string CONTROL_PLANE_NAMESPACE = "whizbang.core.messaging";
+
+  /// <summary>
   /// Gets the system command namespace that all services automatically subscribe to.
   /// </summary>
   public static string SystemCommandNamespace => SYSTEM_COMMAND_NAMESPACE;
@@ -76,7 +84,9 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   private static List<string> _buildRoutingPatterns(IReadOnlySet<string> ownedNamespaces) {
     var patterns = new List<string> {
       // All services receive system commands
-      $"{SYSTEM_COMMAND_NAMESPACE}.#"
+      $"{SYSTEM_COMMAND_NAMESPACE}.#",
+      // …and the directed integrity control plane (manifest / redelivery / drill-down traffic).
+      $"{CONTROL_PLANE_NAMESPACE}.#"
     };
 
     // Add service-specific command namespace patterns

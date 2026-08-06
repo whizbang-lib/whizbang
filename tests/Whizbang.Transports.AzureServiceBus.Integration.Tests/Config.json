@@ -207,6 +207,32 @@
                 ]
               }
             ]
+          },
+          {
+            "Name": "topic-filtered-01",
+            "Properties": {
+              "DefaultMessageTimeToLive": "PT1H"
+            },
+            "Subscriptions": [
+              {
+                "Name": "sub-filtered-session",
+                "Properties": {
+                  "RequiresSession": true,
+                  "DefaultMessageTimeToLive": "PT1H"
+                },
+                "Rules": [
+                  {
+                    "Name": "ControlPlaneFilter",
+                    "Properties": {
+                      "FilterType": "Sql",
+                      "SqlFilter": {
+                        "SqlExpression": "sys.Label LIKE 'whizbang.core.messaging.%'"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       }

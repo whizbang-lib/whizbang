@@ -199,7 +199,7 @@ public sealed partial class IntegrityAuditWorker(
       // predate the carried address — observed live: requests published to the requester's
       // topics were never received by any origin.
       await transport.PublishAsync(serialized.JsonEnvelope,
-        ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value), serialized.EnvelopeType,
+        ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       metrics?.ManifestsRequested.Add(1,
         new KeyValuePair<string, object?>("origin", originName),

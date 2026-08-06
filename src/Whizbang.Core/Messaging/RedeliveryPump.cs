@@ -184,7 +184,7 @@ public sealed class RedeliveryPump {
     // the chunk's stream id the natural session key — redelivered bundles keep stream FIFO.
     var serialized = _envelopeSerializer.SerializeEnvelope<RedeliveryComposite>(wireEnvelope);
     await _transport.PublishAsync(serialized.JsonEnvelope,
-      Transports.ControlPlaneDestination.For(topic, chunk[0].StreamId), serialized.EnvelopeType,
+      Transports.ControlPlaneDestination.For(topic, chunk[0].StreamId, typeof(RedeliveryComposite)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 }
