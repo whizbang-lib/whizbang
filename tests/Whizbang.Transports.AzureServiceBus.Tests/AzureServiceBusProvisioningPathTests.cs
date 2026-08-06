@@ -459,6 +459,142 @@ public class AzureServiceBusProvisioningPathTests {
       .IsEqualTo("sys.Label LIKE 'orders.%' OR sys.Label LIKE 'audit.%'");
   }
 
+  /// <summary>
+  /// A subscription whose single rule already matches the desired SqlFilter exactly is left
+  /// untouched. The delete-then-create churn opens a brief no-rule window in which published
+  /// messages match nothing and are silently dropped — resubscribes (deploy, connection
+  /// recovery, liveness watchdog) must not reopen that window when nothing changed.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_RoutingPatterns_RuleAlreadyCorrect_SkipsRuleChurnAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("RoutingPatternFilter",
+          new SqlRuleFilter("sys.Label LIKE 'orders.%' OR sys.Label LIKE 'audit.%'"))
+      }
+    };
+    // Debug-enabled logger: the skip path's IsEnabled-gated diagnostics execute too.
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions(),
+      new RecordingTransportLogger());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["RoutingPatterns"] = _json("""["orders.#","audit.*"]""")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules).IsEmpty()
+      .Because("an already-correct rule must not be deleted — the delete-create gap drops in-flight publishes");
+    await Assert.That(adminClient.CreatedRules).IsEmpty()
+      .Because("nothing changed, so nothing is recreated");
+  }
+
+  /// <summary>A drifted DestinationFilter (same name, different Destination value) is replaced.</summary>
+  [Test]
+  public async Task SubscribeAsync_DestinationFilter_RuleDrifted_ReplacesRuleAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("DestinationFilter",
+          new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "stale-destination" } })
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["DestinationFilter"] = _json("\"my-destination\"")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "DestinationFilter"))).IsTrue()
+      .Because("a correlation rule targeting a different destination must converge");
+    await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
+    var filter = adminClient.CreatedRules[0].Options.Filter as CorrelationRuleFilter;
+    await Assert.That(filter!.ApplicationProperties["Destination"]).IsEqualTo("my-destination");
+  }
+
+  /// <summary>
+  /// A lingering $Default match-all beside an otherwise-correct DestinationFilter forces the full
+  /// re-apply — the match-all admits everything, so "correct rule present" alone is not converged.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_DestinationFilter_DefaultAlongsideCorrectRule_ReappliesAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("$Default", new TrueRuleFilter()),
+        ServiceBusModelFactory.RuleProperties("DestinationFilter",
+          new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "my-destination" } })
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions(),
+      new RecordingTransportLogger());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["DestinationFilter"] = _json("\"my-destination\"")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "$Default"))).IsTrue()
+      .Because("the match-all admits everything — its presence means the subscription is NOT converged");
+    await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
+  }
+
+  /// <summary>A drifted RoutingPatternFilter (same name, different expression) is replaced.</summary>
+  [Test]
+  public async Task SubscribeAsync_RoutingPatterns_RuleDrifted_ReplacesRuleAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("RoutingPatternFilter",
+          new SqlRuleFilter("sys.Label LIKE 'stale.%'"))
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["RoutingPatterns"] = _json("""["orders.#"]""")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "RoutingPatternFilter"))).IsTrue()
+      .Because("a drifted rule must converge to the desired expression");
+    await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
+    var sqlFilter = adminClient.CreatedRules[0].Options.Filter as SqlRuleFilter;
+    await Assert.That(sqlFilter!.SqlExpression).IsEqualTo("sys.Label LIKE 'orders.%'");
+  }
+
+  /// <summary>
+  /// The DestinationFilter correlation rule gets the same idempotency: an existing rule already
+  /// filtering on the same Destination value, with no $Default alongside it, is left untouched.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_DestinationFilter_RuleAlreadyCorrect_SkipsRuleChurnAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("DestinationFilter",
+          new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "my-destination" } })
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions(),
+      new RecordingTransportLogger());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["DestinationFilter"] = _json("\"my-destination\"")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules).IsEmpty()
+      .Because("an already-correct correlation rule must not churn");
+    await Assert.That(adminClient.CreatedRules).IsEmpty();
+  }
+
   /// <summary>Bare '#' and '*' wildcards (no dot prefix) also translate to '%'.</summary>
   [Test]
   public async Task SubscribeAsync_RoutingPatternWithBareWildcard_TranslatesToPercentAsync() {
@@ -770,12 +906,13 @@ public class AzureServiceBusProvisioningPathTests {
   private static AzureServiceBusTransport _createTransport(
     FakeServiceBusClient client,
     RecordingAdminClient? adminClient,
-    AzureServiceBusOptions? options = null) {
+    AzureServiceBusOptions? options = null,
+    Microsoft.Extensions.Logging.ILogger<AzureServiceBusTransport>? logger = null) {
     return new AzureServiceBusTransport(
       client,
       _createJsonOptions(),
       options ?? _nonSessionOptions(),
-      NullLogger<AzureServiceBusTransport>.Instance,
+      logger ?? NullLogger<AzureServiceBusTransport>.Instance,
       adminClient);
   }
 
