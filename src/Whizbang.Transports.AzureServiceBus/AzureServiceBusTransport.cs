@@ -1439,12 +1439,32 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
       activity?.SetTag("servicebus.subscription_exists", true);
 
+      // Idempotency: an existing DestinationFilter already targeting this destination — with no
+      // $Default match-all alongside it — needs no churn. The delete-create gap would briefly
+      // leave the subscription without its filter (see _applyRoutingPatternFilterAsync).
+      var existingRules = new List<RuleProperties>();
+      await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
+        existingRules.Add(rule);
+      }
+      var currentFilter = existingRules.FirstOrDefault(r => r.Name == customRuleName);
+      if (currentFilter is not null
+          && !existingRules.Any(r => r.Name == defaultRuleName)
+          && currentFilter.Filter is CorrelationRuleFilter existingCorrelation
+          && existingCorrelation.ApplicationProperties.TryGetValue("Destination", out var existingDestination)
+          && Equals(existingDestination, destination)) {
+        activity?.SetTag("servicebus.rule_unchanged", true);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          _logger.LogDebug(
+            "DestinationFilter already correct on {TopicName}/{SubscriptionName}; skipping re-application",
+            topicName,
+            subscriptionName);
+        }
+        return;
+      }
+
       // Remove default rule if it exists
-      var rules = _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken);
       var deletedRules = 0;
-      // S3267: Loop contains await — LINQ doesn't support async lambdas
-#pragma warning disable S3267
-      await foreach (var rule in rules) {
+      foreach (var rule in existingRules) {
         if (rule.Name == defaultRuleName || rule.Name == customRuleName) {
           await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
           deletedRules++;
@@ -1461,7 +1481,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           }
         }
       }
-#pragma warning restore S3267
       activity?.SetTag("servicebus.rules_deleted", deletedRules);
 
       // Create new rule with CorrelationFilter on Destination application property
@@ -1688,15 +1707,33 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     const string ruleName = "RoutingPatternFilter";
 
     try {
+      // Idempotency: when the subscription's rules already converge on exactly the desired
+      // SqlFilter, leave them alone. Deleting-then-recreating opens a brief no-rule window in
+      // which published messages match nothing and are silently dropped — resubscribes (deploy,
+      // connection recovery, receive-liveness watchdog) must not reopen that window for a no-op.
+      var existingRules = new List<RuleProperties>();
+      await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
+        existingRules.Add(rule);
+      }
+      if (existingRules.Count == 1
+          && existingRules[0].Name == ruleName
+          && existingRules[0].Filter is SqlRuleFilter existingFilter
+          && existingFilter.SqlExpression == sqlExpression) {
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          _logger.LogDebug(
+            "[SqlFilter] Rule already correct on {TopicName}/{SubscriptionName}; skipping re-application",
+            topicName,
+            subscriptionName);
+        }
+        return;
+      }
+
       // Delete existing rules (including $Default)
       var deletedRules = new List<string>();
-      // S3267: Loop contains await — LINQ doesn't support async lambdas
-#pragma warning disable S3267
-      await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
+      foreach (var rule in existingRules) {
         await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
         deletedRules.Add(rule.Name);
       }
-#pragma warning restore S3267
 
       // Create SqlFilter rule
       var ruleOptions = new CreateRuleOptions(ruleName, new SqlRuleFilter(sqlExpression));

@@ -459,6 +459,86 @@ public class AzureServiceBusProvisioningPathTests {
       .IsEqualTo("sys.Label LIKE 'orders.%' OR sys.Label LIKE 'audit.%'");
   }
 
+  /// <summary>
+  /// A subscription whose single rule already matches the desired SqlFilter exactly is left
+  /// untouched. The delete-then-create churn opens a brief no-rule window in which published
+  /// messages match nothing and are silently dropped — resubscribes (deploy, connection
+  /// recovery, liveness watchdog) must not reopen that window when nothing changed.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_RoutingPatterns_RuleAlreadyCorrect_SkipsRuleChurnAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("RoutingPatternFilter",
+          new SqlRuleFilter("sys.Label LIKE 'orders.%' OR sys.Label LIKE 'audit.%'"))
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["RoutingPatterns"] = _json("""["orders.#","audit.*"]""")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules).IsEmpty()
+      .Because("an already-correct rule must not be deleted — the delete-create gap drops in-flight publishes");
+    await Assert.That(adminClient.CreatedRules).IsEmpty()
+      .Because("nothing changed, so nothing is recreated");
+  }
+
+  /// <summary>A drifted RoutingPatternFilter (same name, different expression) is replaced.</summary>
+  [Test]
+  public async Task SubscribeAsync_RoutingPatterns_RuleDrifted_ReplacesRuleAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("RoutingPatternFilter",
+          new SqlRuleFilter("sys.Label LIKE 'stale.%'"))
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["RoutingPatterns"] = _json("""["orders.#"]""")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "RoutingPatternFilter"))).IsTrue()
+      .Because("a drifted rule must converge to the desired expression");
+    await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
+    var sqlFilter = adminClient.CreatedRules[0].Options.Filter as SqlRuleFilter;
+    await Assert.That(sqlFilter!.SqlExpression).IsEqualTo("sys.Label LIKE 'orders.%'");
+  }
+
+  /// <summary>
+  /// The DestinationFilter correlation rule gets the same idempotency: an existing rule already
+  /// filtering on the same Destination value, with no $Default alongside it, is left untouched.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_DestinationFilter_RuleAlreadyCorrect_SkipsRuleChurnAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("DestinationFilter",
+          new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "my-destination" } })
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["DestinationFilter"] = _json("\"my-destination\"")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules).IsEmpty()
+      .Because("an already-correct correlation rule must not churn");
+    await Assert.That(adminClient.CreatedRules).IsEmpty();
+  }
+
   /// <summary>Bare '#' and '*' wildcards (no dot prefix) also translate to '%'.</summary>
   [Test]
   public async Task SubscribeAsync_RoutingPatternWithBareWildcard_TranslatesToPercentAsync() {
