@@ -475,7 +475,9 @@ public class AzureServiceBusProvisioningPathTests {
           new SqlRuleFilter("sys.Label LIKE 'orders.%' OR sys.Label LIKE 'audit.%'"))
       }
     };
-    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    // Debug-enabled logger: the skip path's IsEnabled-gated diagnostics execute too.
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions(),
+      new RecordingTransportLogger());
     var metadata = new Dictionary<string, JsonElement> {
       ["RoutingPatterns"] = _json("""["orders.#","audit.*"]""")
     };
@@ -486,6 +488,59 @@ public class AzureServiceBusProvisioningPathTests {
       .Because("an already-correct rule must not be deleted — the delete-create gap drops in-flight publishes");
     await Assert.That(adminClient.CreatedRules).IsEmpty()
       .Because("nothing changed, so nothing is recreated");
+  }
+
+  /// <summary>A drifted DestinationFilter (same name, different Destination value) is replaced.</summary>
+  [Test]
+  public async Task SubscribeAsync_DestinationFilter_RuleDrifted_ReplacesRuleAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("DestinationFilter",
+          new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "stale-destination" } })
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["DestinationFilter"] = _json("\"my-destination\"")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "DestinationFilter"))).IsTrue()
+      .Because("a correlation rule targeting a different destination must converge");
+    await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
+    var filter = adminClient.CreatedRules[0].Options.Filter as CorrelationRuleFilter;
+    await Assert.That(filter!.ApplicationProperties["Destination"]).IsEqualTo("my-destination");
+  }
+
+  /// <summary>
+  /// A lingering $Default match-all beside an otherwise-correct DestinationFilter forces the full
+  /// re-apply — the match-all admits everything, so "correct rule present" alone is not converged.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_DestinationFilter_DefaultAlongsideCorrectRule_ReappliesAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("$Default", new TrueRuleFilter()),
+        ServiceBusModelFactory.RuleProperties("DestinationFilter",
+          new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "my-destination" } })
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions(),
+      new RecordingTransportLogger());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["DestinationFilter"] = _json("\"my-destination\"")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "$Default"))).IsTrue()
+      .Because("the match-all admits everything — its presence means the subscription is NOT converged");
+    await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
   }
 
   /// <summary>A drifted RoutingPatternFilter (same name, different expression) is replaced.</summary>
@@ -527,7 +582,8 @@ public class AzureServiceBusProvisioningPathTests {
           new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "my-destination" } })
       }
     };
-    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions(),
+      new RecordingTransportLogger());
     var metadata = new Dictionary<string, JsonElement> {
       ["DestinationFilter"] = _json("\"my-destination\"")
     };
@@ -850,12 +906,13 @@ public class AzureServiceBusProvisioningPathTests {
   private static AzureServiceBusTransport _createTransport(
     FakeServiceBusClient client,
     RecordingAdminClient? adminClient,
-    AzureServiceBusOptions? options = null) {
+    AzureServiceBusOptions? options = null,
+    Microsoft.Extensions.Logging.ILogger<AzureServiceBusTransport>? logger = null) {
     return new AzureServiceBusTransport(
       client,
       _createJsonOptions(),
       options ?? _nonSessionOptions(),
-      NullLogger<AzureServiceBusTransport>.Instance,
+      logger ?? NullLogger<AzureServiceBusTransport>.Instance,
       adminClient);
   }
 
