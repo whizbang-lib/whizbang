@@ -284,6 +284,10 @@ public class ServiceBusInfrastructureProvisionerTests {
       throw new NotImplementedException();
     }
 
+    public Task<long> GetSubscriptionActiveMessageCountAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
     // Rule management - not needed for provisioner tests
     public IAsyncEnumerable<RuleProperties> GetRulesAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();

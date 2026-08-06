@@ -236,6 +236,36 @@ public class AzureServiceBusTransportUnitTests {
   }
 
   [Test]
+  public async Task EnableReceiveLivenessWatchdog_DefaultsToTrueAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.EnableReceiveLivenessWatchdog).IsTrue()
+      .Because("a silently-dropped receiver link strands messages with zero errors logged — detection must work out of the box");
+  }
+
+  [Test]
+  public async Task ReceiveLivenessProbeInterval_DefaultsToSixtySecondsAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.ReceiveLivenessProbeInterval).IsEqualTo(TimeSpan.FromSeconds(60))
+      .Because("one admin-plane sweep per minute is cheap and bounds detection latency to interval + threshold");
+  }
+
+  [Test]
+  public async Task ReceiveLivenessSilenceThreshold_DefaultsToFiveMinutesAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.ReceiveLivenessSilenceThreshold).IsEqualTo(TimeSpan.FromMinutes(5))
+      .Because("long enough that slow-but-alive consumers never false-trigger, short enough that a stalled service recovers within minutes instead of waiting for a human to restart it");
+  }
+
+  [Test]
   public async Task Capabilities_WithoutEnableSessions_ExcludesOrderedAsync() {
     // Arrange
     var options = new AzureServiceBusOptions { EnableSessions = false };
@@ -715,6 +745,9 @@ public class AzureServiceBusTransportUnitTests {
       ExistingSubscriptions.Remove((topicName, subscriptionName));
       return Task.CompletedTask;
     }
+
+    public Task<long> GetSubscriptionActiveMessageCountAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) =>
+      Task.FromResult(0L);
 
     public IAsyncEnumerable<RuleProperties> GetRulesAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
       return AsyncEnumerable.Empty<RuleProperties>();

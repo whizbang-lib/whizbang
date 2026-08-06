@@ -184,6 +184,41 @@ public class ServiceBusAdminClientWrapperTests {
     await Assert.That(fake.LastSubscriptionName).IsEqualTo("stale-sub");
   }
 
+  [Test]
+  public async Task GetSubscriptionActiveMessageCountAsync_ReturnsActiveMessageCountAsync() {
+    var (wrapper, fake) = _createWrapper();
+    fake.SubscriptionRuntimeResult = ServiceBusModelFactory.SubscriptionRuntimeProperties(
+      topicName: "orders-topic",
+      subscriptionName: "billing-sub",
+      activeMessageCount: 42);
+
+    var result = await wrapper.GetSubscriptionActiveMessageCountAsync("orders-topic", "billing-sub");
+
+    await Assert.That(result).IsEqualTo(42L);
+  }
+
+  [Test]
+  public async Task GetSubscriptionActiveMessageCountAsync_PassesArgumentsAndCancellationTokenAsync() {
+    using var cts = new CancellationTokenSource();
+    var (wrapper, fake) = _createWrapper();
+
+    _ = await wrapper.GetSubscriptionActiveMessageCountAsync("orders-topic", "billing-sub", cts.Token);
+
+    await Assert.That(fake.LastTopicName).IsEqualTo("orders-topic");
+    await Assert.That(fake.LastSubscriptionName).IsEqualTo("billing-sub");
+    await Assert.That(fake.LastCancellationToken).IsEqualTo(cts.Token);
+  }
+
+  [Test]
+  public async Task GetSubscriptionActiveMessageCountAsync_AdminClientThrows_PropagatesExceptionAsync() {
+    var (wrapper, fake) = _createWrapper();
+    fake.ThrowOnCall = new ServiceBusException(
+      "unreachable", ServiceBusFailureReason.ServiceCommunicationProblem);
+
+    await Assert.That(async () => await wrapper.GetSubscriptionActiveMessageCountAsync("orders-topic", "billing-sub"))
+      .Throws<ServiceBusException>();
+  }
+
   // ===== Rule management =====
 
   [Test]
@@ -297,6 +332,10 @@ public class ServiceBusAdminClientWrapperTests {
       autoDeleteOnIdle: TimeSpan.FromDays(30),
       maxDeliveryCount: 10,
       userMetadata: string.Empty);
+    public SubscriptionRuntimeProperties SubscriptionRuntimeResult { get; set; } = ServiceBusModelFactory.SubscriptionRuntimeProperties(
+      topicName: "default-topic",
+      subscriptionName: "default-sub",
+      activeMessageCount: 0);
     public List<RuleProperties> Rules { get; } = [];
     public Exception? ThrowOnCall { get; set; }
 
@@ -360,6 +399,15 @@ public class ServiceBusAdminClientWrapperTests {
       LastSubscriptionName = subscriptionName;
       LastCancellationToken = cancellationToken;
       return Task.FromResult(Response.FromValue(SubscriptionResult, _rawResponse));
+    }
+
+    public override Task<Response<SubscriptionRuntimeProperties>> GetSubscriptionRuntimePropertiesAsync(
+      string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      _throwIfConfigured();
+      LastTopicName = topicName;
+      LastSubscriptionName = subscriptionName;
+      LastCancellationToken = cancellationToken;
+      return Task.FromResult(Response.FromValue(SubscriptionRuntimeResult, _rawResponse));
     }
 
     public override Task<Response> DeleteSubscriptionAsync(

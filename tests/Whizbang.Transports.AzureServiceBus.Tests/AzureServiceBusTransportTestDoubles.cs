@@ -455,6 +455,17 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   public Exception? CreateTopicException { get; init; }
   public Exception? CreateSubscriptionException { get; init; }
 
+  /// <summary>Active-message count reported for every subscription (liveness backlog probe).</summary>
+  public long ActiveMessageCountResult { get; set; }
+
+  /// <summary>Failure injection for the liveness backlog probe.</summary>
+  public Exception? ActiveMessageCountException { get; set; }
+
+  public Task<long> GetSubscriptionActiveMessageCountAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) =>
+    ActiveMessageCountException is null
+      ? Task.FromResult(ActiveMessageCountResult)
+      : Task.FromException<long>(ActiveMessageCountException);
+
   public Task<NamespaceProperties> GetNamespacePropertiesAsync(CancellationToken cancellationToken = default) =>
     // NamespaceProperties has no public constructor; the transport ignores the value.
     Task.FromResult<NamespaceProperties>(null!);

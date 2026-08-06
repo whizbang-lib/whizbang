@@ -238,6 +238,61 @@ public class AzureServiceBusOptions {
 
   #endregion
 
+  #region Receive Liveness Watchdog
+
+  /// <summary>
+  /// When true, the transport runs a receive-liveness watchdog that detects a subscription
+  /// whose receiver has silently stopped delivering messages and triggers subscription
+  /// recovery automatically.
+  /// <para>
+  /// <b>Failure mode this guards against:</b> a receiver's underlying AMQP link can drop
+  /// without surfacing any error — no <c>ProcessErrorAsync</c> callback, nothing dead-lettered,
+  /// process-level health checks stay green — while messages accumulate unconsumed on the
+  /// subscription ("alive but deaf"). Session receivers are particularly exposed: a dropped
+  /// session receiver strands every message routed to its subscription until the process is
+  /// restarted.
+  /// </para>
+  /// <para>
+  /// <b>Detection:</b> every <see cref="ReceiveLivenessProbeInterval"/>, subscriptions that
+  /// have not received a message for <see cref="ReceiveLivenessSilenceThreshold"/> are checked
+  /// against the admin plane. Silence with an empty backlog is healthy idle; silence with
+  /// messages waiting is a stall, and the transport re-establishes its subscriptions (the same
+  /// recovery path used for detected connection errors).
+  /// </para>
+  /// <para>
+  /// <b>Requires an admin client</b> (<see cref="IServiceBusAdminClient"/>) to query backlog —
+  /// without one the watchdog is disabled, because silence alone cannot distinguish a stalled
+  /// receiver from a genuinely idle service.
+  /// </para>
+  /// Default: true
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableReceiveLivenessWatchdog_DefaultsToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportLivenessWiringTests.cs</tests>
+  public bool EnableReceiveLivenessWatchdog { get; set; } = true;
+
+  /// <summary>
+  /// How often the receive-liveness watchdog sweeps tracked subscriptions.
+  /// Detection latency is bounded by <c>ReceiveLivenessProbeInterval + ReceiveLivenessSilenceThreshold</c>.
+  /// Default: 60 seconds
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:ReceiveLivenessProbeInterval_DefaultsToSixtySecondsAsync</tests>
+  public TimeSpan ReceiveLivenessProbeInterval { get; set; } = TimeSpan.FromSeconds(60);
+
+  /// <summary>
+  /// How long a subscription may go without receiving a message before the watchdog checks
+  /// its backlog. Set well above normal inter-message gaps: the threshold only gates the
+  /// (cheap) admin-plane backlog query — recovery additionally requires messages to actually
+  /// be waiting, so quiet-but-healthy services are never restarted.
+  /// Default: 5 minutes
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:ReceiveLivenessSilenceThreshold_DefaultsToFiveMinutesAsync</tests>
+  public TimeSpan ReceiveLivenessSilenceThreshold { get; set; } = TimeSpan.FromMinutes(5);
+
+  #endregion
+
   #region Connection Retry Options
 
   /// <summary>
