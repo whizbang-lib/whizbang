@@ -183,6 +183,22 @@ public class IntegrityCheckpointWorkerTests {
     await Assert.That(checkpoint.Buckets).IsEmpty();
   }
 
+  [Test]
+  public async Task ControlPlaneDestination_For_StampsSessionAndRoutingKeyAsync() {
+    // Shared-inbox subscriptions filter on the message Subject (sys.Label) by namespace — a
+    // publish with no routing key gets Subject "message" and is silently dropped by the broker
+    // rule (no logs, no DLQ). The destination must carry the "{namespace}.{typename}" Subject.
+    var streamId = TrackedGuid.NewMedo().Value;
+
+    var destination = Whizbang.Core.Transports.ControlPlaneDestination.For(
+      "inbox", streamId, typeof(IntegrityCheckpoint));
+
+    await Assert.That(destination.Address).IsEqualTo("inbox");
+    await Assert.That(destination.RoutingKey).IsEqualTo("whizbang.core.messaging.integritycheckpoint")
+      .Because("the Subject is the ONLY thing the shared-inbox broker filter can match.");
+    await Assert.That(destination.Metadata?["StreamId"].GetString()).IsEqualTo(streamId.ToString());
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static IntegrityCheckpointWorker _buildWorker(

@@ -83,6 +83,22 @@ public class InboxRoutingStrategyTests {
   }
 
   [Test]
+  public async Task SharedTopicInboxStrategy_GetSubscription_IncludesControlPlaneNamespaceAsync() {
+    // The integrity control plane (checkpoint-driven manifest/redelivery/drill-down requests and
+    // their responses) lives in whizbang.core.messaging — a namespace no service "owns". Without
+    // this pattern the shared-inbox broker filter silently drops every directed integrity
+    // message (observed live: requests fired every cycle, zero receipts, zero dead-letters).
+    var strategy = new SharedTopicInboxStrategy();
+
+    var subscription = strategy.GetSubscription(
+      new HashSet<string> { "orders" }, "svc", MessageKind.Command);
+
+    await Assert.That(subscription.FilterExpression!).Contains("whizbang.core.messaging.#")
+      .Because("directed integrity traffic must be broker-admissible on EVERY service's inbox " +
+               "subscription — it is directed, so non-targets still discard locally.");
+  }
+
+  [Test]
   public async Task SharedTopicInboxStrategy_GetSubscription_IncludesSystemCommandsInFilterAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy();

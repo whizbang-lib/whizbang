@@ -97,6 +97,70 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
   }
 
   [Test]
+  public async Task ControlPlanePublish_FilteredSubscription_SubjectAdmits_NoSubjectFilteredOutAsync() {
+    // Production shared-inbox subscriptions filter on the message Subject (sys.Label) by
+    // namespace. A typed ControlPlaneDestination publish carries
+    // "whizbang.core.messaging.<type>" and passes; the untyped publish (Subject "message") is
+    // silently dropped by the broker rule — no delivery, no dead-letter (the exact live failure:
+    // requests fired every cycle, zero receipts anywhere). Ordering proves the drop: the
+    // admitted message is published SECOND on the SAME session yet arrives; the filtered one
+    // never does.
+    var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+    var options = new AzureServiceBusOptions { EnableSessions = true, AutoProvisionInfrastructure = true };
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, options);
+    _disposables.Add(transport);
+    await transport.InitializeAsync();
+
+    var sessionId = TrackedGuid.NewMedo().Value;
+    var serializer = new EnvelopeSerializer(jsonOptions);
+    MessageEnvelope<IntegrityCheckpoint> _mk() => new() {
+      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      Payload = new IntegrityCheckpoint {
+        CheckpointStreamId = sessionId,
+        OriginServiceId = TrackedGuid.NewMedo().Value,
+        OriginServiceName = "origin-svc",
+        FromCommitSequence = 1,
+        ToCommitSequence = 1,
+        Buckets = [],
+      },
+      Hops = [],
+      DispatchContext = new MessageDispatchContext {
+        Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox,
+        Source = MessageSource.Outbox,
+      },
+    };
+
+    var received = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
+    var subscription = await transport.SubscribeAsync(
+      async (env, _, ct) => { await received.Writer.WriteAsync(env.MessageId.Value, ct); },
+      new TransportDestination("topic-filtered-01", "sub-filtered-session"));
+
+    try {
+      var filteredEnvelope = _mk();
+      var filteredSerialized = serializer.SerializeEnvelope(filteredEnvelope);
+      await transport.PublishAsync(
+        filteredSerialized.JsonEnvelope,
+        ControlPlaneDestination.For("topic-filtered-01", sessionId),   // no Subject → filtered out
+        filteredSerialized.EnvelopeType, cancellationToken: CancellationToken.None);
+
+      var admittedEnvelope = _mk();
+      var admittedSerialized = serializer.SerializeEnvelope(admittedEnvelope);
+      await transport.PublishAsync(
+        admittedSerialized.JsonEnvelope,
+        ControlPlaneDestination.For("topic-filtered-01", sessionId, typeof(IntegrityCheckpoint)),
+        admittedSerialized.EnvelopeType, cancellationToken: CancellationToken.None);
+
+      using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+      var first = await received.Reader.ReadAsync(cts.Token);
+      await Assert.That(first).IsEqualTo(admittedEnvelope.MessageId.Value)
+        .Because("same session, published SECOND, yet arrives FIRST — the broker rule dropped " +
+                 "the untyped publish before it, exactly the live silent-drop failure mode.");
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  [Test]
   public async Task BarePublish_SessionRequiredSubscription_IsDeadLetteredAsync() {
     // The pre-fix shape: a direct publish with NO session metadata. The broker must dead-letter
     // it on a session-required subscription — asserting the DLQ arrival is the deterministic

@@ -72,7 +72,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     // All chunks of one manifest share the manifest stream (the origin id) as their session —
     // session-enabled subscriptions dead-letter sessionless deliveries, and a shared session
     // keeps chunk order.
-    var destination = Whizbang.Core.Transports.ControlPlaneDestination.For(message.Topic, originServiceId);
+    var destination = Whizbang.Core.Transports.ControlPlaneDestination.For(message.Topic, originServiceId, typeof(IntegrityManifest));
     var chunks = 0;
 
     for (var offset = 0; offset < digests.Count; offset += options.MaxDigestsPerManifest) {
@@ -274,7 +274,7 @@ public sealed partial class IntegrityManifestReceptor(
     var serialized = serializer.SerializeEnvelope(envelope);
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(message.OriginServiceId);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value), serialized.EnvelopeType,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.DrillDownsRequested.Add(1,
       new KeyValuePair<string, object?>("origin", message.OriginServiceName));
@@ -334,7 +334,7 @@ public sealed partial class IntegrityManifestReceptor(
     var serialized = serializer.SerializeEnvelope(envelope);
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(manifest.OriginServiceId);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, bucket.StreamId), serialized.EnvelopeType,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, bucket.StreamId, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 
