@@ -75,6 +75,29 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Advance_ExcludesStoredCheckpointEvents_FromTheirOwnBucketsAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _resetWatermarkAsync(conn);
+    var coordinator = _coordinator(ctx);
+
+    await coordinator.AdvanceIntegrityCheckpointAsync();   // baseline
+
+    // A stored checkpoint event lands in wh_event_store under the WIRE form ("Type, Assembly") —
+    // the exclusion must match that form, or checkpoints count themselves and every window
+    // over-declares by its own heartbeat.
+    var stream = TrackedGuid.NewMedo().Value;
+    await _seedAsync(conn, stream, 1, TENANT_A,
+      Whizbang.Core.TypeNameFormatter.Format(typeof(Whizbang.Core.Messaging.IntegrityCheckpoint)));
+    await _seedAsync(conn, stream, 2, TENANT_A, "Contracts.TypeX");
+
+    var window = await coordinator.AdvanceIntegrityCheckpointAsync();
+    await Assert.That(window!.Buckets.Select(b => b.EventType).ToList())
+      .IsEquivalentTo(["Contracts.TypeX"])
+      .Because("checkpoints never count themselves — only the domain event may bucket.");
+  }
+
+  [Test]
   public async Task CountReceivedFromOrigin_CountsWindowedByOriginIdentityAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);

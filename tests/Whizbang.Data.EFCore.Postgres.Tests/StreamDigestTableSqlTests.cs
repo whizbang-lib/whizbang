@@ -439,6 +439,25 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task DigestReads_NormalizeLongFormTypeNames_ToTheStoredWireFormAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    // The table stores the short wire form; a caller holding a long AQN (Version/Culture/PKT)
+    // must still match — normalize on read, or the lookup silently returns nothing.
+    await _seedDigestAsync(connection, ZERO_UUID, "", "Contracts.NormProbe, Contracts.Assembly", Guid.NewGuid(), 5, 6, 1);
+    const string longForm = "Contracts.NormProbe, Contracts.Assembly, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+
+    var streams = await coordinator.GetStreamDigestsAsync(null, [longForm]);
+    await Assert.That(streams.Count).IsEqualTo(1)
+      .Because("stream-level digest reads normalize requested names to the stored wire form.");
+    var types = await coordinator.GetTypeDigestsAsync(null, [longForm]);
+    await Assert.That(types.Count).IsEqualTo(1)
+      .Because("type-level digest reads normalize requested names to the stored wire form.");
+  }
+
+  [Test]
   public async Task GetTypeDigests_RollsUpStreamBuckets_XorAndSumAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

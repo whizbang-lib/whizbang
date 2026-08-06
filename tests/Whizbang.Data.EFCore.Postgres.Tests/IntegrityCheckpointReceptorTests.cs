@@ -39,7 +39,10 @@ public class IntegrityCheckpointReceptorTests {
     public Guid Sid { get; init; }
   }
 
-  private static readonly string _verifiedType = TypeNameFormatter.FormatClrTypeName(typeof(VerifiedEvent));
+  // The wire form ("Type, Assembly") — checkpoint buckets are built from wh_event_store.event_type,
+  // so the subscribed-type filter must match THAT form or fresh-window verification silently skips
+  // every bucket.
+  private static readonly string _verifiedType = TypeNameFormatter.Format(typeof(VerifiedEvent));
 
   [Test]
   public async Task FirstDeficit_IsPendingOnly_NoReportAsync() {
