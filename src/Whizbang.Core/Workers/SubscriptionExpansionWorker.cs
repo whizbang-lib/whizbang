@@ -57,10 +57,14 @@ public sealed partial class SubscriptionExpansionWorker(
       return;   // schema-only / diagnostic hosts: nothing to reconcile with.
     }
 
-    var catalogTypes = typeProvider.GetEventTypes()
-      .Select(TypeNameFormatter.FormatClrTypeName)
-      .Distinct(StringComparer.Ordinal)
-      .ToList();
+    // The registry keys on the no-assembly CLR name (persisted rows predate any form change and
+    // must not re-baseline), but the ORIGIN matches redelivery types against event_type in the
+    // assembly-qualified WIRE form — so the outgoing request maps through this table.
+    var wireByClrName = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var type in typeProvider.GetEventTypes()) {
+      wireByClrName.TryAdd(TypeNameFormatter.FormatClrTypeName(type), TypeNameFormatter.Format(type));
+    }
+    var catalogTypes = wireByClrName.Keys.ToList();
     if (catalogTypes.Count == 0) {
       return;
     }
@@ -96,7 +100,12 @@ public sealed partial class SubscriptionExpansionWorker(
       return;
     }
 
-    if (await _sendBackfillRequestAsync(services, pending, cancellationToken).ConfigureAwait(false)) {
+    // A pending name with no catalog entry (type since removed) passes through unchanged —
+    // an unmatched name at the origin is a no-op, same as today.
+    var pendingWireForms = pending
+      .Select(p => wireByClrName.TryGetValue(p, out var wire) ? wire : p)
+      .ToList();
+    if (await _sendBackfillRequestAsync(services, pendingWireForms, cancellationToken).ConfigureAwait(false)) {
       await coordinator.MarkConsumedTypeBackfillRequestedAsync(pending, cancellationToken).ConfigureAwait(false);
       services.GetService<Observability.StreamIntegrityMetrics>()?.BackfillsRequested.Add(pending.Count);
       LogBackfillRequested(_logger, pending.Count);

@@ -171,7 +171,9 @@ public sealed partial class IntegrityCheckpointReceptor(
     if (provider is null) {
       return [];
     }
-    return [.. provider.GetEventTypes().Select(TypeNameFormatter.FormatClrTypeName)];
+    // Wire form ("Type, Assembly") — checkpoint buckets carry wh_event_store.event_type values,
+    // so this filter must speak the same form or every bucket silently skips verification.
+    return [.. provider.GetEventTypes().Select(TypeNameFormatter.Format)];
   }
 
   [LoggerMessage(EventId = 50, Level = LogLevel.Warning,

@@ -169,8 +169,11 @@ public sealed partial class IntegrityAuditWorker(
       return;   // no cross-service infrastructure — the local half already ran.
     }
 
+    // The assembly-qualified WIRE form ("Type, Assembly") — the origin matches these against its
+    // event_type/digest columns, which store that form; a CLR-FullName-only list silently
+    // matches nothing and every origin answers with silence.
     var subscribed = typeProvider?.GetEventTypes()
-      .Select(TypeNameFormatter.FormatClrTypeName)
+      .Select(TypeNameFormatter.Format)
       .Distinct(StringComparer.Ordinal)
       .ToList();
     foreach (var (originId, originName, originRequestTopic) in tracker.GetOrigins()) {

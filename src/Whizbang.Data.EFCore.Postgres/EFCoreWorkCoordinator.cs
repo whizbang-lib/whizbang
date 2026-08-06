@@ -1192,7 +1192,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       FROM {schema}.wh_event_store es
       JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
       WHERE (@p_tenant IS NULL OR es.scope->>'t' = @p_tenant)
-        AND ((@p_types::text[]) IS NULL OR es.event_type = ANY(@p_types::text[]))
+        AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, "normalize_event_type")}(t) FROM unnest(@p_types::text[]) AS t))
         AND ((@p_streams::uuid[]) IS NULL OR es.stream_id = ANY(@p_streams::uuid[]))
         AND (@p_from_seq::bigint IS NULL OR es.commit_sequence > @p_from_seq)
         AND (@p_to_seq::bigint IS NULL OR es.commit_sequence <= @p_to_seq)
@@ -1328,7 +1328,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", prior.Value));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", current));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_checkpoint_type",
-        TypeNameFormatter.FormatClrTypeName(typeof(IntegrityCheckpoint))));
+        TypeNameFormatter.Format(typeof(IntegrityCheckpoint))));
       await using var reader = await count.ExecuteReaderAsync(cancellationToken);
       while (await reader.ReadAsync(cancellationToken)) {
         var tenant = reader.GetString(0);
@@ -1505,7 +1505,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
         WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
                OR es.origin_service_id = @p_origin)
-          AND ((@p_types::text[]) IS NULL OR es.event_type = ANY(@p_types::text[]))
+          AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, "normalize_event_type")}(t) FROM unnest(@p_types::text[]) AS t))
           AND COALESCE(es.flags, 0) & 8 = 0
           AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
           AND es.created_at < NOW() - @p_settle::interval
@@ -1588,11 +1588,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
       // A1c: the incrementally-maintained buckets — a plain indexed read (PK prefix), no recompute.
+      // Requested names normalize to the stored wire form so a long-AQN caller still matches.
+      var normalizeFn = BuildSchemaQualifiedName(schema, "normalize_event_type");
       cmd.CommandText = $"""
         SELECT scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at
         FROM {schema}.wh_stream_digests
         WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
-          AND ((@p_types::text[]) IS NULL OR event_type = ANY(@p_types::text[]))
+          AND ((@p_types::text[]) IS NULL OR event_type IN (SELECT {normalizeFn}(t) FROM unnest(@p_types::text[]) AS t))
         ORDER BY 1, 2, 3
         """;
       _addDigestFilterParams(cmd, originServiceId, eventTypes);
@@ -1609,12 +1611,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     _withCoordinatorCommandAsync(async (cmd, schema) => {
       // A1c: the per-(tenant, type) roll-up — XOR of the type's stream buckets equals folding every
       // event of the type, because the buckets partition them. MAX(updated_at) drives settle-skip.
+      // Requested names normalize to the stored wire form so a long-AQN caller still matches.
+      var normalizeFn = BuildSchemaQualifiedName(schema, "normalize_event_type");
       cmd.CommandText = $"""
         SELECT scope_tenant, event_type, bit_xor(digest_lo), bit_xor(digest_hi),
                SUM(event_count)::int, MAX(updated_at)
         FROM {schema}.wh_stream_digests
         WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
-          AND ((@p_types::text[]) IS NULL OR event_type = ANY(@p_types::text[]))
+          AND ((@p_types::text[]) IS NULL OR event_type IN (SELECT {normalizeFn}(t) FROM unnest(@p_types::text[]) AS t))
         GROUP BY 1, 2
         ORDER BY 1, 2
         """;

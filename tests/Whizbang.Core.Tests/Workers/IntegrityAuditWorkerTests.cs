@@ -101,8 +101,10 @@ public class IntegrityAuditWorkerTests {
       ((MessageEnvelope<JsonElement>)transport.Published[0].Envelope).Payload.GetRawText(),
       options.GetTypeInfo(typeof(RequestIntegrityManifest)))!;
     await Assert.That(request.RequesterService).IsEqualTo("auditor-svc");
-    await Assert.That(request.EventTypes!).IsEquivalentTo([TypeNameFormatter.FormatClrTypeName(typeof(AuditProbeEvent))])
-      .Because("the request restricts the manifest to the types this consumer actually subscribes to.");
+    await Assert.That(request.EventTypes!).IsEquivalentTo([TypeNameFormatter.Format(typeof(AuditProbeEvent))])
+      .Because("the request restricts the manifest to the types this consumer actually subscribes to — " +
+               "in the assembly-qualified wire form the origin's event_type/digest columns store, " +
+               "or the origin's exact-match lookup silently returns nothing.");
     await Assert.That(Guid.TryParse(transport.Published[0].Destination.Metadata?["StreamId"].GetString(), out _)).IsTrue()
       .Because("session-enabled subscriptions dead-letter sessionless deliveries — the manifest " +
                "request must carry a session key in its destination metadata.");
