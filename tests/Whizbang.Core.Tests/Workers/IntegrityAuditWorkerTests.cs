@@ -83,19 +83,15 @@ public class IntegrityAuditWorkerTests {
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
-    await Assert.That(transport.Published.Count).IsEqualTo(2);
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("directed or not at all — an origin that never announced a request address is " +
+               "SKIPPED, not broadcast to: the legacy own-topic fallback fanned requests out to " +
+               "every service on the shared topic (and back to the requester itself).");
     var toA = transport.Published.Single(p => p.Envelope.Target == "origin-a");
-    var toB = transport.Published.Single(p => p.Envelope.Target == "origin-b");
     await Assert.That(toA.Destination.Address).IsEqualTo("origin-a.requests")
       .Because("a DIRECTED request must publish to the ORIGIN-carried address — a topic the " +
                "origin actually consumes; publishing to the requester's own destination sent " +
                "requests where no origin listens (observed live: six requests, zero receipts).");
-    await Assert.That(toB.Destination.Address).IsEqualTo("inbox")
-      .Because("an origin that never announced an address falls back to the legacy topic.");
-    await Assert.That(transport.Published.Select(p => p.Envelope.Target!).ToList())
-      .IsEquivalentTo(["origin-a", "origin-b"])
-      .Because("each known origin gets its own DIRECTED manifest request — the tracker's origin set " +
-               "IS the audit's origin set.");
     var options = JsonContextRegistry.CreateCombinedOptions();
     var request = (RequestIntegrityManifest)JsonSerializer.Deserialize(
       ((MessageEnvelope<JsonElement>)transport.Published[0].Envelope).Payload.GetRawText(),
@@ -116,7 +112,7 @@ public class IntegrityAuditWorkerTests {
   public async Task DefaultCycle_RequestsTypeLevelTableManifests_NoVerifyAsync() {
     var coordinator = new _auditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow);
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new _captureTransport();
     var worker = _buildWorker(coordinator, new _captureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
 
@@ -135,7 +131,7 @@ public class IntegrityAuditWorkerTests {
   public async Task SweepCycle_ForcesRecomputeAndVerifiesDigestTableAsync() {
     var coordinator = new _auditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow);
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new _captureTransport();
     var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
@@ -155,7 +151,7 @@ public class IntegrityAuditWorkerTests {
   public async Task SweepDisabled_NeverVerifiesAsync() {
     var coordinator = new _auditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow);
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new _captureTransport();
     var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker);
@@ -201,7 +197,7 @@ public class IntegrityAuditWorkerTests {
       Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
     };
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow);
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker, metrics);
 

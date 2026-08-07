@@ -325,4 +325,29 @@ public sealed class StreamIntegrityOptions {
   /// cycle; a healthy system drills down for zero.
   /// </summary>
   public int MaxDrillDownTypesPerAudit { get; set; } = 10;
+
+  /// <summary>
+  /// Minutes an UNCHANGED divergence stays silent after being reported (default 60). The same
+  /// unhealed bucket re-detected on every audit cycle is cadence, not news — without this
+  /// cooldown a persistent divergence floods the outbox with an
+  /// <see cref="IntegrityDivergenceDetected"/> per bucket per cycle (observed live: tens of
+  /// thousands of rows in hours, saturating a shared database server). A changed signature
+  /// (either side's digest moved) always reports immediately.
+  /// </summary>
+  public int DivergenceReportCooldownMinutes { get; set; } = 60;
+
+  /// <summary>
+  /// Base seconds between repair requests for one divergent bucket (default 300); each further
+  /// attempt doubles the wait. An origin that stays silent — down, or unable to help — is asked
+  /// less and less often instead of hammered on every audit cycle.
+  /// </summary>
+  public int RepairRequestBackoffSeconds { get; set; } = 300;
+
+  /// <summary>
+  /// Repair attempts per divergent bucket before the requester stops asking (default 8). The
+  /// divergence still re-reports at the cooldown cadence — past the cap it needs operator eyes,
+  /// not an infinite request loop. A changed signature (progress or fresh damage) resets the
+  /// budget.
+  /// </summary>
+  public int MaxRepairAttemptsPerBucket { get; set; } = 8;
 }

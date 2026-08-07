@@ -96,15 +96,15 @@ public class IntegrityCheckpointReceptorTests {
     var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
     fx.Coordinator.Counts = _ => [];
 
-    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4));
-    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
 
     var report = (IntegrityGapDetected)fx.Dispatcher.Published.Single();
     await Assert.That(report.AutoRepairRequested).IsTrue();
 
     var (envelope, destination, _) = fx.Transport.Published.Single();
-    await Assert.That(destination.Address).IsEqualTo("inbox")
-      .Because("the repair topic defaults to the consumer's first subscribed destination.");
+    await Assert.That(destination.Address).IsEqualTo("origin.requests")
+      .Because("the request publishes to the ORIGIN-carried address — never to the requester's own topic.");
     await Assert.That(envelope.Target).IsEqualTo("origin-svc")
       .Because("the request is DIRECTED at the origin — only it should run the selection.");
     var options = JsonContextRegistry.CreateCombinedOptions();
@@ -119,6 +119,22 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(command.RequesterService).IsEqualTo("consumer-svc")
       .Because("the requester names itself — it becomes the returned bundles' Target.");
     await Assert.That(command.Topic).IsEqualTo("inbox");
+  }
+
+  [Test]
+  public async Task ConfirmedGap_NoOriginRequestTopic_WithholdsRepairRequestAsync() {
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true));
+
+    await Assert.That(fx.Dispatcher.Published.Cast<IntegrityGapDetected>().Single().ExpectedCount).IsEqualTo(4)
+      .Because("the confirmed gap still reports — only the misroutable request is withheld.");
+    await Assert.That(fx.Transport.Published).IsEmpty()
+      .Because("an origin that never announced a request address cannot be asked without " +
+               "broadcasting off the requester's own topic — the observed all-to-all flood. " +
+               "The origin's next checkpoint carries the address; the gap re-confirms then.");
   }
 
   [Test]
@@ -249,16 +265,18 @@ public class IntegrityCheckpointReceptorTests {
       .Because("the DEFAULT posture auto-repairs; the counter proves the healer acted, not just detected.");
   }
 
-  private static IntegrityCheckpoint _checkpoint(_fixtureState fx, long from, long to, int count, bool emptyBuckets = false) => new() {
-    CheckpointStreamId = fx.OriginId,
-    OriginServiceId = fx.OriginId,
-    OriginServiceName = "origin-svc",
-    FromCommitSequence = from,
-    ToCommitSequence = to,
-    Buckets = emptyBuckets
+  private static IntegrityCheckpoint _checkpoint(
+      _fixtureState fx, long from, long to, int count, bool emptyBuckets = false, string? requestTopic = null) => new() {
+        CheckpointStreamId = fx.OriginId,
+        OriginServiceId = fx.OriginId,
+        OriginServiceName = "origin-svc",
+        RequestTopic = requestTopic,
+        FromCommitSequence = from,
+        ToCommitSequence = to,
+        Buckets = emptyBuckets
       ? []
       : [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = count }],
-  };
+      };
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
