@@ -357,6 +357,18 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.InitializationRetry(logger, "__SCHEMA__", retryAttempt, totalDelay, ex.Message);
         }
 
+        // A transient failure can leave a DEAD transaction enlisted on the context — rolling back
+        // over a broken connection is itself best-effort. The next attempt must never inherit it:
+        // EF routes its first operation through the retrying execution strategy, whose
+        // OnFirstExecution refuses to start inside a user-initiated transaction — which would turn
+        // this TRANSIENT outage into a PERMANENT init failure (observed live: a connection-slot
+        // exhaustion became a never-ready pod).
+        try {
+          if (dbContext.Database.CurrentTransaction is not null) {
+            await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
+          }
+        } catch { /* discarding a dead enlistment is best-effort by definition */ }
+
         // Reset state for retry
         phases.Clear();
         migrationsApplied = 0;
