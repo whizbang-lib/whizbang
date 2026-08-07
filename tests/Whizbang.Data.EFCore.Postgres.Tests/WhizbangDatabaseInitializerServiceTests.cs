@@ -78,29 +78,69 @@ public class WhizbangDatabaseInitializerServiceTests {
   }
 
   [Test]
-  public async Task NonBlocking_InitFailure_GateStaysClosedAsync() {
+  public async Task NonBlocking_InitFailure_RetriesUntilSuccessAsync() {
+    // Self-heal: a failed background init must NOT close the gate forever — a transient
+    // environment problem (connection exhaustion, a broken pool) recovers, and a pod that never
+    // re-attempts is a NotReady zombie only a human can fix. Fail-closed WHILE retrying.
     var gate = new SchemaReadyGate();
-    var runner = new _FakeRunner(_ => throw new InvalidOperationException("migration boom"));
-    var service = _create(gate: gate, runner: runner, nonBlocking: true);
+    var attempts = 0;
+    var runner = new _FakeRunner(_ => ++attempts <= 2
+      ? throw new InvalidOperationException("transient boom")
+      : Task.CompletedTask);
+    var service = _create(gate: gate, runner: runner, nonBlocking: true, initRetryDelay: TimeSpan.Zero);
 
     await service.StartAsync(CancellationToken.None);
-    await service.BackgroundInitTask!;           // background catches + logs, then completes
-    await Assert.That(gate.IsReady).IsFalse();   // fail-closed: gate never opened
+    await service.BackgroundInitTask!;           // completes when init finally SUCCEEDS
+
+    await Assert.That(attempts).IsEqualTo(3)
+      .Because("the background loop re-attempts after each failure instead of giving up.");
+    await Assert.That(gate.IsReady).IsTrue()
+      .Because("the gate opens the moment an attempt succeeds — the pod self-heals.");
   }
 
   [Test]
-  public async Task NonBlocking_InitFailure_DrivesLifecycleFaultAsync() {
-    // A failed init must fault the managed-resource lifecycle (Faulted -> record window -> Halted) so
-    // health reports the failure instead of looping "still initializing" forever.
+  public async Task NonBlocking_InitFailure_GateStaysClosedWhileRetrying_ShutdownStopsTheLoopAsync() {
     var gate = new SchemaReadyGate();
-    var runner = new _FakeRunner(_ => throw new InvalidOperationException("migration boom"));
+    var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var attempts = 0;
+    var runner = new _FakeRunner(_ => {
+      attempts++;
+      failed.TrySetResult();
+      throw new InvalidOperationException("still broken");
+    });
+    var service = _create(gate: gate, runner: runner, nonBlocking: true,
+      initRetryDelay: TimeSpan.FromMinutes(5));
+
+    await service.StartAsync(CancellationToken.None);
+    await failed.Task;                            // first attempt failed → loop is in its retry delay
+    await Assert.That(gate.IsReady).IsFalse()
+      .Because("fail-closed while retrying: nothing touches an unmigrated schema.");
+
+    await service.StopAsync(CancellationToken.None);
+    await service.BackgroundInitTask!;            // shutdown cancels the retry delay and ends the loop
+    await Assert.That(gate.IsReady).IsFalse();
+    await Assert.That(attempts).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task NonBlocking_InitFailure_DoesNotFaultLifecycle_WhileRetryingAsync() {
+    // Retrying must NOT fault the lifecycle: FaultAsync drives Faulted -> Halted with no recovery
+    // API, so faulting on a transient failure would permanently halt a pipeline whose next attempt
+    // succeeds. The closed gate (readiness) is the honest health signal while init re-attempts.
+    var gate = new SchemaReadyGate();
+    var attempts = 0;
+    var runner = new _FakeRunner(_ => ++attempts == 1
+      ? throw new InvalidOperationException("transient boom")
+      : Task.CompletedTask);
     var lifecycle = new _FakeLifecycle();
-    var service = _create(gate: gate, runner: runner, nonBlocking: true, lifecycle: lifecycle);
+    var service = _create(gate: gate, runner: runner, nonBlocking: true, lifecycle: lifecycle,
+      initRetryDelay: TimeSpan.Zero);
 
     await service.StartAsync(CancellationToken.None);
     await service.BackgroundInitTask!;
 
-    await Assert.That(lifecycle.FaultCount).IsEqualTo(1);
+    await Assert.That(lifecycle.FaultCount).IsEqualTo(0);
+    await Assert.That(gate.IsReady).IsTrue();
   }
 
   [Test]
@@ -120,20 +160,26 @@ public class WhizbangDatabaseInitializerServiceTests {
   }
 
   [Test]
-  public async Task NonBlocking_MigrationTimeout_GateStaysClosedAsync() {
+  public async Task NonBlocking_MigrationTimeout_RetriesAndRecoversAsync() {
     var gate = new SchemaReadyGate();
     var fakeTime = new FakeTimeProvider();
-    var runner = new _SignalingRunner(ct => Task.Delay(Timeout.Infinite, ct)); // never completes on its own
+    var attempts = 0;
+    var runner = new _SignalingRunner(ct => ++attempts == 1
+      ? Task.Delay(Timeout.Infinite, ct)          // first attempt hangs → trips the timeout
+      : Task.CompletedTask);                      // retry succeeds
     var service = _create(gate: gate, runner: runner, nonBlocking: true,
-      migrationTimeout: TimeSpan.FromMinutes(5), timeProvider: fakeTime);
+      migrationTimeout: TimeSpan.FromMinutes(5), timeProvider: fakeTime,
+      initRetryDelay: TimeSpan.Zero);
 
     await service.StartAsync(CancellationToken.None);
     await runner.Entered.Task;                    // migration started → timeout timer is armed
     await Assert.That(gate.IsReady).IsFalse();
 
     fakeTime.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1)); // trip the timeout deterministically
-    await service.BackgroundInitTask!;            // background observes the timeout, fail-closed
-    await Assert.That(gate.IsReady).IsFalse();    // never opened
+    await service.BackgroundInitTask!;            // timeout → immediate retry → success
+    await Assert.That(attempts).IsEqualTo(2);
+    await Assert.That(gate.IsReady).IsTrue()
+      .Because("a migration that blew its ceiling is retried, not abandoned — the pod self-heals.");
   }
 
   [Test]
@@ -159,7 +205,8 @@ public class WhizbangDatabaseInitializerServiceTests {
       bool nonBlocking = false,
       TimeSpan? migrationTimeout = null,
       TimeProvider? timeProvider = null,
-      IWhizbangLifecycleState? lifecycle = null) {
+      IWhizbangLifecycleState? lifecycle = null,
+      TimeSpan? initRetryDelay = null) {
     var services = new ServiceCollection();
     if (coordinator is not null) {
       services.AddSingleton(coordinator);
@@ -176,6 +223,7 @@ public class WhizbangDatabaseInitializerServiceTests {
       Options.Create(new SchemaInitializationOptions {
         NonBlockingSchemaInit = nonBlocking,
         MigrationTimeout = migrationTimeout,
+        InitRetryDelay = initRetryDelay ?? TimeSpan.FromSeconds(30),
       }),
       timeProvider ?? TimeProvider.System,
       NullLogger<WhizbangDatabaseInitializerService>.Instance);
