@@ -202,27 +202,48 @@ public sealed partial class IntegrityManifestReceptor(
       : await _tableDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, streamLevel: true, cancellationToken).ConfigureAwait(false);
     var localByBucket = local.ToDictionary(d => (d.TenantScope, d.EventType, d.StreamId));
 
+    // Convergence bounding: the ledger suppresses re-reports of unchanged divergence inside the
+    // cooldown and backs off repair re-requests per bucket — a persistent divergence (origin
+    // down, damaged bucket) must trickle, not storm. Unregistered ledger (bare tests) degrades
+    // to per-call state: everything reports once per manifest, still batched and still directed.
+    var ledger = services.GetService<IntegrityRepairLedger>() ?? new IntegrityRepairLedger();
+    var cooldown = TimeSpan.FromMinutes(options.DivergenceReportCooldownMinutes);
+    var backoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
+    var now = DateTimeOffset.UtcNow;
+    var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     var repairBudget = options.MaxAutoRepairRequestsPerAudit;
+    var repairBatches = new Dictionary<(string? TenantScope, string EventType), List<Guid>>();
     foreach (var origin in message.Digests) {
       localByBucket.TryGetValue((origin.TenantScope, origin.EventType, origin.StreamId), out var mine);
+      var key = new IntegrityRepairLedger.DivergenceKey(
+        message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId);
       if (mine is not null && mine.DigestLo == origin.DigestLo && mine.DigestHi == origin.DigestHi) {
-        continue;   // identical fold — the bucket is provably complete.
+        ledger.MarkHealed(key);   // provably complete — a later divergence is a fresh incident.
+        continue;
       }
       if (!message.Recomputed && IntegrityDigestMath.IsInsideSettle(origin.UpdatedAt, mine?.UpdatedAt, settle)) {
         continue;   // the bucket changed inside the settle window — in-flight, not divergence.
       }
 
-      var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0;
-      var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
       metrics?.DivergencesDetected.Add(1,
         new KeyValuePair<string, object?>("origin", message.OriginServiceName),
         new KeyValuePair<string, object?>("event_type", origin.EventType));
+      var shouldReport = ledger.TryBeginReport(
+        key, origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, now, cooldown);
+      var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
+        && ledger.TryBeginRepair(key, now, backoff, options.MaxRepairAttemptsPerBucket);
       if (autoRepair) {
         repairBudget--;
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "audit"),
           new KeyValuePair<string, object?>("origin", message.OriginServiceName));
-        await _sendRepairRequestAsync(services, options, message, origin, cancellationToken).ConfigureAwait(false);
+        if (!repairBatches.TryGetValue((origin.TenantScope, origin.EventType), out var streams)) {
+          repairBatches[(origin.TenantScope, origin.EventType)] = streams = [];
+        }
+        streams.Add(origin.StreamId);
+      }
+      if (!shouldReport) {
+        continue;   // same unhealed divergence inside the cooldown — cadence, not news.
       }
       await dispatcher.PublishAsync(new IntegrityDivergenceDetected {
         ReportStreamId = TrackedGuid.NewMedo().Value,
@@ -237,6 +258,13 @@ public sealed partial class IntegrityManifestReceptor(
       }).ConfigureAwait(false);
       LogDivergence(logger, origin.EventType, origin.TenantScope, origin.StreamId,
         message.OriginServiceName, origin.EventCount, mine?.EventCount ?? 0, autoRepair);
+    }
+
+    // One directed request per divergent (tenant, type) — per-stream commands multiplied every
+    // storm by the stream count for no selection benefit (the origin's WHERE takes a stream set).
+    foreach (var ((tenantScope, eventType), streamIds) in repairBatches) {
+      await _sendRepairRequestAsync(services, options, message, tenantScope, eventType, streamIds, cancellationToken)
+        .ConfigureAwait(false);
     }
   }
 
@@ -305,10 +333,17 @@ public sealed partial class IntegrityManifestReceptor(
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = message.OriginServiceName,
     };
-    var serialized = serializer.SerializeEnvelope(envelope);
+    // Directed or not at all — the same rule as the repair request (see
+    // _sendRepairRequestAsync): without the origin's carried address the drill-down waits for a
+    // checkpoint instead of broadcasting off the requester's own topic.
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(message.OriginServiceId);
+    if (string.IsNullOrEmpty(originRequestTopic)) {
+      LogDrillDownSkippedNoOriginTopic(logger, message.OriginServiceName, drillDown.Count);
+      return;
+    }
+    var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.DrillDownsRequested.Add(1,
       new KeyValuePair<string, object?>("origin", message.OriginServiceName));
@@ -334,9 +369,10 @@ public sealed partial class IntegrityManifestReceptor(
       : await coordinator.ComputeTypeDigestsAsync(originServiceId, types, settle, cancellationToken).ConfigureAwait(false);
   }
 
-  private static async Task _sendRepairRequestAsync(
+  private async Task _sendRepairRequestAsync(
       IServiceProvider services, StreamIntegrityOptions options,
-      IntegrityManifest manifest, StreamDigest bucket, CancellationToken cancellationToken) {
+      IntegrityManifest manifest, string? tenantScope, string eventType, List<Guid> streamIds,
+      CancellationToken cancellationToken) {
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
@@ -346,13 +382,23 @@ public sealed partial class IntegrityManifestReceptor(
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;   // report already published; the repair rides the next cycle when infra exists.
     }
+    // Directed or not at all: without the origin-carried request address the ONLY other topic on
+    // hand is the requester's own — publishing there fanned the request out to every service on
+    // the shared topic (and back to the requester itself), which is how a repair loop became an
+    // all-to-all flood. The origin's next checkpoint teaches the address; the ledger's backoff
+    // re-offers the repair then.
+    var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(manifest.OriginServiceId);
+    if (string.IsNullOrEmpty(originRequestTopic)) {
+      LogRepairSkippedNoOriginTopic(logger, manifest.OriginServiceName, eventType, streamIds.Count);
+      return;
+    }
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestRedeliveryCommand {
-        TenantScope = bucket.TenantScope,
-        EventTypes = [bucket.EventType],
-        StreamIds = [bucket.StreamId],
+        TenantScope = tenantScope,
+        EventTypes = [eventType],
+        StreamIds = streamIds,
         RequesterService = requester,
         Topic = topic,
       },
@@ -367,9 +413,8 @@ public sealed partial class IntegrityManifestReceptor(
       Target = manifest.OriginServiceName,
     };
     var serialized = serializer.SerializeEnvelope(envelope);
-    var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(manifest.OriginServiceId);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, bucket.StreamId, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, streamIds[0], typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 
@@ -383,6 +428,16 @@ public sealed partial class IntegrityManifestReceptor(
     Message = "AUDIT type-level mismatch vs origin '{OriginServiceName}': drilling down to stream level for " +
               "{DrillDownCount} of {MismatchedCount} mismatched type(s)")]
   static partial void LogDrillDown(ILogger logger, int drillDownCount, int mismatchedCount, string originServiceName);
+
+  [LoggerMessage(EventId = 56, Level = LogLevel.Information,
+    Message = "Repair request to '{OriginServiceName}' withheld ({EventType}, {StreamCount} stream(s)) — " +
+              "no origin-carried request address yet; the origin's next checkpoint teaches it")]
+  static partial void LogRepairSkippedNoOriginTopic(ILogger logger, string originServiceName, string eventType, int streamCount);
+
+  [LoggerMessage(EventId = 57, Level = LogLevel.Information,
+    Message = "Drill-down to '{OriginServiceName}' withheld ({TypeCount} type(s)) — " +
+              "no origin-carried request address yet; the origin's next checkpoint teaches it")]
+  static partial void LogDrillDownSkippedNoOriginTopic(ILogger logger, string originServiceName, int typeCount);
 }
 
 /// <summary>

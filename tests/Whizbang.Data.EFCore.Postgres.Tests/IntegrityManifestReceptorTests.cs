@@ -104,9 +104,11 @@ public class IntegrityManifestReceptorTests {
     coordinator.ReceivedDigests = [_digest(mismatched, 99, 21, 1)];   // fold differs; `missing` absent
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRepairRequestsPerAudit = 1 },
-      dispatcher);
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 
@@ -363,8 +365,10 @@ public class IntegrityManifestReceptorTests {
     coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];   // differs; TypeY missing
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 1 }, dispatcher);
+      new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 1 }, dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 
@@ -443,6 +447,121 @@ public class IntegrityManifestReceptorTests {
       .Because("Sweep manifests compare recompute-to-recompute end to end.");
   }
 
+  // ── storm-bounding: batched directed repairs, ledger suppression, no fallback ──
+
+  [Test]
+  public async Task ManifestReceptor_Divergence_BatchesRepairsIntoOneDirectedRequestAsync() {
+    var coordinator = new _auditCoordinator();   // nothing local — every origin bucket diverges
+    var s1 = TrackedGuid.NewMedo().Value;
+    var s2 = TrackedGuid.NewMedo().Value;
+    var s3 = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(s1, 11, 21, 2), _digest(s2, 12, 22, 1), _digest(s3, 13, 23, 3)]));
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("divergent streams of one (tenant, type) batch into ONE repair request — " +
+               "per-stream commands multiplied every storm by the stream count.");
+    var command = _deserializeRedelivery(transport.Published[0].Envelope);
+    await Assert.That(command.StreamIds!).IsEquivalentTo([s1, s2, s3]);
+    await Assert.That(transport.Published[0].Destination.Address).IsEqualTo("origin.requests")
+      .Because("the request publishes to the ORIGIN-carried address — never anywhere else.");
+    await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_RepeatedManifest_SuppressesReportsAndRepairsAsync() {
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var ledger = new IntegrityRepairLedger();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: tracker, ledger: ledger);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+    var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]);
+
+    await receptor.HandleAsync(manifest);
+    await Assert.That(dispatcher.Published.Count).IsEqualTo(1).Because("precondition: first sighting reports.");
+    await Assert.That(transport.Published.Count).IsEqualTo(1).Because("precondition: first sighting repairs.");
+
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(dispatcher.Published.Count).IsEqualTo(1)
+      .Because("the SAME unhealed divergence re-detected on the next cycle is cadence, not news — " +
+               "unbounded re-reporting is what flooded a live outbox with tens of thousands of rows.");
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("the repair was already requested; the retry waits out the ledger's backoff.");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_UnknownOriginRequestTopic_SkipsRepairPublishAsync() {
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no origin-carried request address → NO publish. The old fallback published to the " +
+               "requester's own topic, which fanned the request out to every service (and back to " +
+               "itself); the origin's next checkpoint teaches the address and the repair rides then.");
+    await Assert.That(dispatcher.Published.Count).IsEqualTo(1)
+      .Because("the report still flows — only the misroutable request is withheld.");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_TypeLevelMismatch_UnknownOriginTopic_SkipsDrillDownAsync() {
+    var coordinator = new _auditCoordinator();
+    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("the drill-down is a directed request too — without the origin's address it must " +
+               "wait for a checkpoint, not broadcast off the requester's own topic.");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_HealedBucket_ForgetsLedgerStateAsync() {
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var ledger = new IntegrityRepairLedger();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: tracker, ledger: ledger);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));   // diverges
+    coordinator.ReceivedTableDigests = [_digest(stream, 11, 21, 2)];
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));   // heals
+    coordinator.ReceivedTableDigests = [];
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));   // diverges again
+
+    await Assert.That(dispatcher.Published.Count).IsEqualTo(2)
+      .Because("a bucket that healed and re-diverged is a brand-new incident — it reports " +
+               "immediately instead of waiting out a stale cooldown.");
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static StreamDigest _digest(Guid stream, long lo, long hi, int count) => new() {
@@ -490,7 +609,8 @@ public class IntegrityManifestReceptorTests {
 
   private static ServiceProvider _provider(
       _auditCoordinator coordinator, _captureTransport transport,
-      StreamIntegrityOptions? options = null, _captureDispatcher? dispatcher = null) {
+      StreamIntegrityOptions? options = null, _captureDispatcher? dispatcher = null,
+      IntegrityGapTracker? tracker = null, IntegrityRepairLedger? ledger = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
@@ -498,10 +618,23 @@ public class IntegrityManifestReceptorTests {
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("auditor-svc"));
     services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions()));
+    if (tracker is not null) {
+      services.AddSingleton(tracker);
+    }
+    if (ledger is not null) {
+      services.AddSingleton(ledger);
+    }
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
     return services.BuildServiceProvider();
+  }
+
+  private static RequestRedeliveryCommand _deserializeRedelivery(IMessageEnvelope envelope) {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    return (RequestRedeliveryCommand)JsonSerializer.Deserialize(
+      ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
+      options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
   }
 
   private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {

@@ -177,6 +177,13 @@ public sealed partial class IntegrityAuditWorker(
       .Distinct(StringComparer.Ordinal)
       .ToList();
     foreach (var (originId, originName, originRequestTopic) in tracker.GetOrigins()) {
+      if (string.IsNullOrEmpty(originRequestTopic)) {
+        // Directed or not at all: without the origin-carried address the only other topic on
+        // hand is this consumer's own, and publishing there fans the request out to every
+        // service on the shared topic. The origin's next checkpoint teaches the address.
+        LogManifestRequestSkippedNoTopic(_logger, originName, originId);
+        continue;
+      }
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
         MessageId = new MessageId(TrackedGuid.NewMedo()),
         Payload = new RequestIntegrityManifest {
@@ -198,11 +205,10 @@ public sealed partial class IntegrityAuditWorker(
       };
       var serialized = serializer.SerializeEnvelope(envelope);
       // Publish the DIRECTED request to the ORIGIN-carried address (a topic the origin actually
-      // consumes); the requester's own destination is only the legacy fallback for origins that
-      // predate the carried address — observed live: requests published to the requester's
-      // topics were never received by any origin.
+      // consumes) — never to the requester's own topics (observed live: requests published
+      // there were never received by any origin, only fanned out as noise).
       await transport.PublishAsync(serialized.JsonEnvelope,
-        ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
+        ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       metrics?.ManifestsRequested.Add(1,
         new KeyValuePair<string, object?>("origin", originName),
@@ -244,4 +250,9 @@ public sealed partial class IntegrityAuditWorker(
   [LoggerMessage(EventId = 87, Level = LogLevel.Warning,
     Message = "Coverage-gap reports reached the per-cycle cap ({MaxGapReports}) — more gaps likely remain; they re-audit next cycle as repairs shrink the set")]
   static partial void LogCoverageGapsCapped(ILogger logger, int maxGapReports);
+
+  [LoggerMessage(EventId = 88, Level = LogLevel.Information,
+    Message = "Manifest request to '{OriginServiceName}' ({OriginServiceId}) withheld — no origin-carried " +
+              "request address yet; the origin's next checkpoint teaches it")]
+  static partial void LogManifestRequestSkippedNoTopic(ILogger logger, string originServiceName, Guid originServiceId);
 }

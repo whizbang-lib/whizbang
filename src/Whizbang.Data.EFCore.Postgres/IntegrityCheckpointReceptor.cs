@@ -154,12 +154,18 @@ public sealed partial class IntegrityCheckpointReceptor(
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = pending.OriginServiceName,
     };
-    var serialized = serializer.SerializeEnvelope(envelope);
-    // Publish the DIRECTED redelivery request to the ORIGIN-carried address (session-stamped);
-    // the requester's own topic is only the reply address inside the payload.
+    // Directed or not at all: without the origin-carried request address the ONLY other topic on
+    // hand is the requester's own — publishing there fanned the request out to every service on
+    // the shared topic (and back to the requester itself). The origin's next checkpoint carries
+    // the address, and an unhealed deficit re-confirms then.
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(pending.OriginServiceId);
+    if (string.IsNullOrEmpty(originRequestTopic)) {
+      LogRepairSkippedNoOriginTopic(logger, pending.OriginServiceName, pending.EventType);
+      return;
+    }
+    var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic ?? topic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
+      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 
@@ -188,4 +194,9 @@ public sealed partial class IntegrityCheckpointReceptor(
               "(transport={TransportMissing}, serializer={SerializerMissing}, requester={RequesterMissing}, topic={TopicMissing})")]
   static partial void LogRepairSkipped(ILogger logger, string originServiceName,
     bool transportMissing, bool serializerMissing, bool requesterMissing, bool topicMissing);
+
+  [LoggerMessage(EventId = 58, Level = LogLevel.Information,
+    Message = "Repair request to '{OriginServiceName}' withheld ({EventType}) — no origin-carried " +
+              "request address yet; the origin's next checkpoint teaches it")]
+  static partial void LogRepairSkippedNoOriginTopic(ILogger logger, string originServiceName, string eventType);
 }

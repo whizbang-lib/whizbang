@@ -101,6 +101,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<SubscriptionExpansionWorker>();
     services.TryAddSingleton<IntegrityAuditWorker>();
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityGapTracker>();
+    services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();
     services.TryAddSingleton<OutboxDrainWorker>();
