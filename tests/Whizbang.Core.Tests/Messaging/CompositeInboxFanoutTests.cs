@@ -92,7 +92,8 @@ public class CompositeInboxFanoutTests {
     var idB = Guid.NewGuid();
     var composite = new RedeliveryComposite {
       StreamId = streamId,
-      Inner = [new _innerEvent("A"), new _innerEvent("B")],
+      InnerPayloads = [_raw("{\"v\":\"A\"}"), _raw("{\"v\":\"B\"}")],
+      InnerTypeNames = ["Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts"],
       InnerEventIds = [idA, idB],
     };
     var source = _sourceEnvelope(streamId);
@@ -117,7 +118,8 @@ public class CompositeInboxFanoutTests {
     var origin = Guid.NewGuid();
     var composite = new RedeliveryComposite {
       StreamId = streamId,
-      Inner = [new _innerEvent("A"), new _innerEvent("B"), new _innerEvent("C")],
+      InnerPayloads = [_raw("{\"v\":\"A\"}"), _raw("{\"v\":\"B\"}"), _raw("{\"v\":\"C\"}")],
+      InnerTypeNames = ["Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts"],
       InnerEventIds = [Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()],
       OriginServiceId = origin,
       InnerCommitSequences = [10, 11, null],
@@ -145,7 +147,8 @@ public class CompositeInboxFanoutTests {
     // producer bug — fail the whole expansion rather than misattribute origin windows.
     var composite = new RedeliveryComposite {
       StreamId = Guid.NewGuid(),
-      Inner = [new _innerEvent("A"), new _innerEvent("B")],
+      InnerPayloads = [_raw("{\"v\":\"A\"}"), _raw("{\"v\":\"B\"}")],
+      InnerTypeNames = ["Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts"],
       InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
       InnerCommitSequences = [10],
     };
@@ -164,7 +167,8 @@ public class CompositeInboxFanoutTests {
     // fail the whole expansion (DLQ route) rather than guess at the pairing.
     var composite = new RedeliveryComposite {
       StreamId = Guid.NewGuid(),
-      Inner = [new _innerEvent("A"), new _innerEvent("B")],
+      InnerPayloads = [_raw("{\"v\":\"A\"}"), _raw("{\"v\":\"B\"}")],
+      InnerTypeNames = ["Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts"],
       InnerEventIds = [Guid.NewGuid()],
     };
     var source = _sourceEnvelope(composite.StreamId);
@@ -316,9 +320,74 @@ public class CompositeInboxFanoutTests {
       .Because("The replacement set (2) is fanned out, not the composite's own InnerEvents (1).");
   }
 
+  [Test]
+  public async Task TryExpand_RawComposite_ChildrenBuiltFromRawPayloadsAsync() {
+    // Raw carry: no typed payloads exist on either side — the child inbox row is built DIRECTLY
+    // from the stored wire JSON and wire type name, with no serializer on the path.
+    var streamId = Guid.NewGuid();
+    var idA = Guid.NewGuid();
+    var idB = Guid.NewGuid();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      InnerPayloads = [_raw("{\"tags\":[\"a\",\"b\"]}"), _raw("{\"n\":7}")],
+      InnerTypeNames = ["Contracts.RepairedA, Contracts", "Contracts.RepairedB, Contracts"],
+      InnerEventIds = [idA, idB],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    await Assert.That(result.Children[0].Envelope.Payload.GetRawText()).IsEqualTo("{\"tags\":[\"a\",\"b\"]}")
+      .Because("the payload bytes that were emitted are the payload bytes that repair — verbatim, " +
+               "no rehydration, no polymorphic metadata for arbitrary consumer shapes.");
+    await Assert.That(result.Children[0].MessageType).IsEqualTo("Contracts.RepairedA, Contracts");
+    await Assert.That(result.Children[0].EnvelopeType)
+      .IsEqualTo("Whizbang.Core.Observability.MessageEnvelope`1[[Contracts.RepairedA, Contracts]], Whizbang.Core")
+      .Because("the child envelope type composes from the carried wire name — same shape the " +
+               "serializer would have produced from a typed payload.");
+    await Assert.That(result.Children[1].MessageType).IsEqualTo("Contracts.RepairedB, Contracts");
+    await Assert.That(result.Children[0].Flags.HasFlag(EventFlags.NoRebroadcast)).IsTrue();
+  }
+
+  [Test]
+  public async Task TryExpand_RawComposite_TypeNameCountMismatch_FailsAsync() {
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{}"), _raw("{}")],
+      InnerTypeNames = ["Contracts.OnlyOne, Contracts"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed)
+      .Because("raw bundles are machine-built — a payload/type-name desync is a producer bug and " +
+               "guessing at the pairing would mislabel repaired events.");
+  }
+
+  [Test]
+  public async Task TryExpand_RawComposite_OverCap_ReturnsCapExceededAsync() {
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{}"), _raw("{}"), _raw("{}")],
+      InnerTypeNames = ["T, A", "T, A", "T, A"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()],
+      MaxInnerEventsAllowed = 2,
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.CapExceeded);
+  }
+
   // ============================================================
   // Fakes + helpers
   // ============================================================
+
+  private static JsonElement _raw(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
   private static ServiceProvider _provider() =>
     new ServiceCollection()

@@ -253,8 +253,6 @@ public class RedeliveryRequestReceptorTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton<IEventStore>(new _mapEventStore());
-    services.AddSingleton<IEventTypeProvider>(new _typeProvider());
     services.AddSingleton<IEnvelopeSerializer>(serializer ?? new _captureSerializer());
     if (options is not null) {
       services.AddSingleton(options);
@@ -324,33 +322,6 @@ public class RedeliveryRequestReceptorTests {
     public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
     public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken ct = default) => Task.CompletedTask;
     public Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) => Task.CompletedTask;
-  }
-
-  /// <summary>Maps each raw row to an envelope whose MessageId is the row's EventId — the shape the
-  /// real store's AOT deserialization path produces from stored envelopes.</summary>
-  private sealed class _mapEventStore : IEventStore {
-    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
-      [.. streamEvents.Select(raw => new MessageEnvelope<IEvent> {
-        MessageId = new MessageId(raw.EventId),
-        Payload = new _probeEvent(raw.EventId),
-        Hops = [],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
-      })];
-
-    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
-      Task.FromResult(new List<MessageEnvelope<IEvent>>());
-    public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) { await Task.CompletedTask; yield break; }
-    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
-    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) => Task.FromResult(new List<MessageEnvelope<TMessage>>());
-    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
-    private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) { await Task.CompletedTask; yield break; }
-  }
-
-  private sealed class _typeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(_probeEvent)];
   }
 
   /// <summary>Captures the typed composite envelope at the serializer seam and returns a

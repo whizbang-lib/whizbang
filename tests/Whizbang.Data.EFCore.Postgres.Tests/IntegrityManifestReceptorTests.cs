@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// and (ladder-gated) send stream-scoped repair requests back to the origin.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
+[NotInParallel("IntegrityManifestGates")]   // the receptors' per-process gates are shared state
 public class IntegrityManifestReceptorTests {
 
   [Test]
@@ -202,6 +203,140 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(manifest.Digests[0].DigestLo).IsEqualTo((long)(0b1100 ^ 0b1010))
       .Because("The type digest is the XOR of its stream buckets.");
     await Assert.That(manifest.Digests[0].EventCount).IsEqualTo(5);
+  }
+
+  [Test]
+  public async Task RequestReceptor_TypesLevelRecompute_RollsUpAtTheStoreAsync() {
+    var coordinator = new _auditCoordinator();
+    coordinator.OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)];
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      EventTypes = ["Contracts.TypeX"],
+      Level = ManifestLevel.Types,
+      UseRecompute = true,
+    });
+
+    await Assert.That(coordinator.TypeComputeCalls).IsEqualTo(1);
+    await Assert.That(coordinator.StreamComputeCalls).IsEqualTo(0)
+      .Because("a types-level answer must roll up AT THE STORE — materializing one row per stream " +
+               "to answer a types-level request has memory-killed origins with large stores.");
+  }
+
+  [Test]
+  public async Task RequestReceptor_ConcurrentRequests_AnswerOneAtATimeAsync() {
+    var coordinator = new _auditCoordinator();
+    coordinator.OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)];
+    var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    coordinator.BlockFirstCompute = gate;
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    // A enters its compute synchronously and parks INSIDE the answer.
+    var taskA = receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "svc-a",
+      Topic = "t",
+      EventTypes = ["A"],
+      Level = ManifestLevel.Types,
+      UseRecompute = true,
+    });
+    await Assert.That(coordinator.ComputeLog).IsEquivalentTo(["A"]);
+
+    // B starts while A holds the gate: without the gate it would enter its compute right here.
+    var taskB = receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "svc-b",
+      Topic = "t",
+      EventTypes = ["B"],
+      Level = ManifestLevel.Types,
+      UseRecompute = true,
+    });
+    await Assert.That(coordinator.ComputeLog).IsEquivalentTo(["A"])
+      .Because("one manifest answer at a time per process — concurrent request bursts each " +
+               "recomputing digests is exactly what memory-killed origins.");
+
+    gate.SetResult();
+    await taskA;
+    await taskB;
+    await Assert.That(coordinator.ComputeLog[0]).IsEqualTo("A");
+    await Assert.That(coordinator.ComputeLog).Contains("B");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_TypeLevelRecomputed_UsesStoreRollUpAsync() {
+    var coordinator = new _auditCoordinator();
+    var streamId = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(streamId, 1, 2, 1)];
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(new IntegrityManifest {
+      ManifestStreamId = coordinator.OriginId,
+      OriginServiceId = coordinator.OriginId,
+      OriginServiceName = "origin-svc",
+      Level = ManifestLevel.Types,
+      Recomputed = true,
+      Digests = [new StreamDigest {
+        TenantScope = null,
+        EventType = "Contracts.TypeX",
+        StreamId = Guid.Empty,
+        DigestLo = 1,
+        DigestHi = 2,
+        EventCount = 1,
+      }],
+    });
+
+    await Assert.That(coordinator.TypeComputeCalls).IsEqualTo(1);
+    await Assert.That(coordinator.StreamComputeCalls).IsEqualTo(0)
+      .Because("the consumer's half of a types-level comparison must also roll up at the store — " +
+               "consumers with unpopulated digest lanes recompute on EVERY manifest chunk.");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ConcurrentManifests_CompareOneAtATimeAsync() {
+    var coordinator = new _auditCoordinator();
+    var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    coordinator.BlockFirstCompute = gate;
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+    IntegrityManifest manifest(string tag) => new() {
+      ManifestStreamId = coordinator.OriginId,
+      OriginServiceId = coordinator.OriginId,
+      OriginServiceName = "origin-svc",
+      Level = ManifestLevel.Types,
+      Recomputed = true,
+      Digests = [new StreamDigest {
+        TenantScope = null,
+        EventType = tag,
+        StreamId = Guid.Empty,
+        DigestLo = 9,
+        DigestHi = 9,
+        EventCount = 1,
+      }],
+    };
+
+    var taskA = receptor.HandleAsync(manifest("A"));
+    await Assert.That(coordinator.ComputeLog).IsEquivalentTo(["A"]);
+
+    var taskB = receptor.HandleAsync(manifest("B"));
+    await Assert.That(coordinator.ComputeLog).IsEquivalentTo(["A"])
+      .Because("one manifest comparison at a time per process — a burst of chunks each falling " +
+               "back to a full-store recompute is what memory-cycled consumers.");
+
+    gate.SetResult();
+    await taskA;
+    await taskB;
+    await Assert.That(coordinator.ComputeLog).Contains("B");
   }
 
   [Test]
@@ -395,9 +530,29 @@ public class IntegrityManifestReceptorTests {
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(LocalServiceId);
 
+    public int StreamComputeCalls;
+    public int TypeComputeCalls;
+    public List<string> ComputeLog { get; } = [];
+    public TaskCompletionSource? BlockFirstCompute { get; set; }
+    private int _computeCalls;
+
     public Task<IReadOnlyList<StreamDigest>> ComputeStreamDigestsAsync(
-      Guid? originServiceId, IReadOnlyList<string>? eventTypes, TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
-      Task.FromResult(originServiceId is null ? OwnDigests : ReceivedDigests);
+      Guid? originServiceId, IReadOnlyList<string>? eventTypes, TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref StreamComputeCalls);
+      return Task.FromResult(originServiceId is null ? OwnDigests : ReceivedDigests);
+    }
+
+    public async Task<IReadOnlyList<StreamDigest>> ComputeTypeDigestsAsync(
+      Guid? originServiceId, IReadOnlyList<string>? eventTypes, TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref TypeComputeCalls);
+      lock (ComputeLog) {
+        ComputeLog.Add(eventTypes is { Count: > 0 } t ? t[0] : "-");
+      }
+      if (Interlocked.Increment(ref _computeCalls) == 1 && BlockFirstCompute is { } gate) {
+        await gate.Task;
+      }
+      return IntegrityDigestMath.RollUpToTypes(originServiceId is null ? OwnDigests : ReceivedDigests);
+    }
 
     public Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
       Guid? originServiceId, IReadOnlyList<string>? eventTypes, CancellationToken cancellationToken = default) =>

@@ -29,9 +29,26 @@ public sealed partial class IntegrityManifestRequestReceptor(
     IServiceScopeFactory scopeFactory,
     ILogger<IntegrityManifestRequestReceptor> logger) : IReceptor<RequestIntegrityManifest> {
 
+  /// <summary>
+  /// One manifest answer at a time per process. Requests arrive in bursts (every consumer audits
+  /// on a similar cadence after a deploy), and each answer may recompute digests over the whole
+  /// store; unbounded concurrency multiplies that footprint. Requests queue here — inbox
+  /// redelivery semantics make waiting safe.
+  /// </summary>
+  private static readonly SemaphoreSlim _answerGate = new(1, 1);
+
   /// <inheritdoc />
   public async ValueTask HandleAsync(RequestIntegrityManifest message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
+    await _answerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+    try {
+      await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
+    } finally {
+      _answerGate.Release();
+    }
+  }
+
+  private async Task _handleCoreAsync(RequestIntegrityManifest message, CancellationToken cancellationToken) {
     await using var scope = scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
@@ -57,10 +74,11 @@ public sealed partial class IntegrityManifestRequestReceptor(
       digests = [];
     }
     if (recomputed) {
-      var computed = await coordinator
-        .ComputeStreamDigestsAsync(null, message.EventTypes, settle, cancellationToken)
-        .ConfigureAwait(false);
-      digests = message.Level == ManifestLevel.Types ? IntegrityDigestMath.RollUpToTypes(computed) : computed;
+      // Types-level answers roll up AT THE STORE — materializing one row per stream to answer a
+      // types-level request has memory-killed origins with large stores.
+      digests = message.Level == ManifestLevel.Types
+        ? await coordinator.ComputeTypeDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false)
+        : await coordinator.ComputeStreamDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false);
     }
     if (digests.Count == 0) {
       return;   // nothing this origin emitted for those types — silence, not an empty manifest.
@@ -132,12 +150,29 @@ public sealed partial class IntegrityManifestReceptor(
     IServiceScopeFactory scopeFactory,
     ILogger<IntegrityManifestReceptor> logger) : IReceptor<IntegrityManifest> {
 
+  /// <summary>
+  /// One manifest comparison at a time per process. Manifest chunks arrive in bursts (every
+  /// origin answers a fresh audit at once), and a comparison against an unpopulated digest lane
+  /// falls back to a full-store recompute; unbounded concurrency multiplies that footprint —
+  /// observed live as consumers memory-cycling through their first full audit wave.
+  /// </summary>
+  private static readonly SemaphoreSlim _compareGate = new(1, 1);
+
   /// <inheritdoc />
   public async ValueTask HandleAsync(IntegrityManifest message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
     if (message.Digests.Count == 0) {
       return;
     }
+    await _compareGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+    try {
+      await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
+    } finally {
+      _compareGate.Release();
+    }
+  }
+
+  private async Task _handleCoreAsync(IntegrityManifest message, CancellationToken cancellationToken) {
     await using var scope = scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
@@ -216,8 +251,7 @@ public sealed partial class IntegrityManifestReceptor(
       List<string> types, TimeSpan settle, CancellationToken cancellationToken) {
     var coordinator = services.GetRequiredService<IWorkCoordinator>();
     var local = message.Recomputed
-      ? IntegrityDigestMath.RollUpToTypes(
-          await coordinator.ComputeStreamDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false))
+      ? await coordinator.ComputeTypeDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false)
       : await _tableDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, streamLevel: false, cancellationToken).ConfigureAwait(false);
     var localByBucket = local.ToDictionary(d => (d.TenantScope, d.EventType));
 
@@ -293,10 +327,11 @@ public sealed partial class IntegrityManifestReceptor(
     if (table.Count > 0) {
       return table;
     }
-    var computed = await coordinator
-      .ComputeStreamDigestsAsync(originServiceId, types, settle, cancellationToken)
-      .ConfigureAwait(false);
-    return streamLevel ? computed : IntegrityDigestMath.RollUpToTypes(computed);
+    // The recompute fallback (unpopulated digest lane) matches the requested level at the store:
+    // a types-level fallback materialized per-stream has memory-killed consumers.
+    return streamLevel
+      ? await coordinator.ComputeStreamDigestsAsync(originServiceId, types, settle, cancellationToken).ConfigureAwait(false)
+      : await coordinator.ComputeTypeDigestsAsync(originServiceId, types, settle, cancellationToken).ConfigureAwait(false);
   }
 
   private static async Task _sendRepairRequestAsync(
@@ -348,37 +383,6 @@ public sealed partial class IntegrityManifestReceptor(
     Message = "AUDIT type-level mismatch vs origin '{OriginServiceName}': drilling down to stream level for " +
               "{DrillDownCount} of {MismatchedCount} mismatched type(s)")]
   static partial void LogDrillDown(ILogger logger, int drillDownCount, int mismatchedCount, string originServiceName);
-}
-
-/// <summary>
-/// Stream-integrity A1c: shared digest arithmetic for the hierarchical exchange.
-/// </summary>
-/// <docs>resilience/stream-integrity</docs>
-internal static class IntegrityDigestMath {
-  /// <summary>Rolls stream-level digests up to per-(tenant, type) rows — XOR the lanes, sum the
-  /// counts. Valid because stream buckets partition the type's events. Recomputed inputs carry no
-  /// update times, so the roll-ups don't either.</summary>
-  internal static IReadOnlyList<StreamDigest> RollUpToTypes(IReadOnlyList<StreamDigest> streamDigests) =>
-    streamDigests
-      .GroupBy(d => (d.TenantScope, d.EventType))
-      .Select(g => new StreamDigest {
-        TenantScope = g.Key.TenantScope,
-        EventType = g.Key.EventType,
-        StreamId = Guid.Empty,
-        DigestLo = g.Aggregate(0L, (acc, d) => acc ^ d.DigestLo),
-        DigestHi = g.Aggregate(0L, (acc, d) => acc ^ d.DigestHi),
-        EventCount = g.Sum(d => d.EventCount),
-      })
-      .OrderBy(d => d.TenantScope, StringComparer.Ordinal).ThenBy(d => d.EventType, StringComparer.Ordinal)
-      .ToList();
-
-  /// <summary>True when either side's bucket changed inside the settle window — the table-driven
-  /// equivalent of the recompute's created-at settle filter: an in-flight delivery must never
-  /// read as divergence. Null update times (recomputed rows) never skip.</summary>
-  internal static bool IsInsideSettle(DateTimeOffset? originUpdatedAt, DateTimeOffset? localUpdatedAt, TimeSpan settle) {
-    var floor = DateTimeOffset.UtcNow - settle;
-    return originUpdatedAt > floor || localUpdatedAt > floor;
-  }
 }
 
 /// <summary>

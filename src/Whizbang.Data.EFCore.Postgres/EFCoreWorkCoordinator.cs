@@ -1491,6 +1491,59 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<IReadOnlyList<StreamDigest>> ComputeTypeDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // The type-level roll-up happens AT THE STORE: same gates as the per-stream compute, but
+      // grouped by (tenant, type) — the result is bounded by #types × #tenants instead of one row
+      // per stream. XOR over the type's events equals XOR over its stream buckets (they partition
+      // the events), so this is bit-identical to rolling the per-stream compute up in C# — without
+      // materializing a large store's stream set in memory to get a types-level answer.
+      cmd.CommandText = $"""
+        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type,
+               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
+               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               COUNT(*)::int
+        FROM {schema}.wh_event_store es
+        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+        WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
+               OR es.origin_service_id = @p_origin)
+          AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, "normalize_event_type")}(t) FROM unnest(@p_types::text[]) AS t))
+          AND COALESCE(es.flags, 0) & 8 = 0
+          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+          AND es.created_at < NOW() - @p_settle::interval
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = (object?)originServiceId ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
+
+      var results = new List<StreamDigest>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var tenant = reader.GetString(0);
+        results.Add(new StreamDigest {
+          TenantScope = tenant.Length == 0 ? null : tenant,
+          EventType = reader.GetString(1),
+          StreamId = Guid.Empty,
+          DigestLo = reader.GetInt64(2),
+          DigestHi = reader.GetInt64(3),
+          EventCount = reader.GetInt32(4),
+          UpdatedAt = null,
+        });
+      }
+      return (IReadOnlyList<StreamDigest>)results;
+    }, cancellationToken);
+
+  /// <inheritdoc />
   public Task<IReadOnlyList<StreamDigest>> ComputeStreamDigestsAsync(
     Guid? originServiceId,
     IReadOnlyList<string>? eventTypes,
