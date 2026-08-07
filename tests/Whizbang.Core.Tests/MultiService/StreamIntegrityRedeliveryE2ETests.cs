@@ -106,7 +106,7 @@ public class StreamIntegrityRedeliveryE2ETests {
     // DIRECTED at the damaged service, on the same topic the originals used. The REAL envelope
     // serializer converts the typed bundle exactly as the outbox's composite seam does.
     var pump = new RedeliveryPump(
-      harness.Wire, new _originStore(), new _typeProvider(),
+      harness.Wire,
       new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     var originServiceId = TrackedGuid.NewMedo().Value;
     var published = await pump.PublishAsync(
@@ -129,8 +129,11 @@ public class StreamIntegrityRedeliveryE2ETests {
       bundle.Envelope.Payload.GetRawText(), wireOptions.GetTypeInfo(typeof(RedeliveryComposite)))!;
     await Assert.That(composite.InnerEventIds).IsEquivalentTo(missingIds)
       .Because("the ORIGINAL event ids crossed the real wire inside the bundle.");
-    await Assert.That(composite.Inner.Cast<RepairProbeEvent>().Select(p => p.X).ToList()).IsEquivalentTo([2, 3])
-      .Because("the repaired bodies are the original bodies, round-tripped through real JSON bytes.");
+    await Assert.That(composite.InnerPayloads
+        .Select(pd => pd.TryGetProperty("x", out var lower) ? lower.GetInt32() : pd.GetProperty("X").GetInt32())
+        .ToList()).IsEquivalentTo([2, 3])
+      .Because("the repaired bodies are the original stored bytes, carried RAW through real JSON — " +
+               "the origin never rehydrated them.");
 
     // The dispatch seam's fan-out (the path InboxDispatchWorker runs) expands the wire-delivered
     // bundle against the damaged service's REAL container — children carry the original ids.
@@ -155,34 +158,6 @@ public class StreamIntegrityRedeliveryE2ETests {
     return payload.TryGetProperty("x", out var lower) ? lower.GetInt32() : payload.GetProperty("X").GetInt32();
   }
 
-  private sealed class _typeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(RepairProbeEvent)];
-  }
-
-  /// <summary>The origin's store: rehydrates each selected row's stored JSON body back into the
-  /// typed payload envelope, MessageId = the original EventId — the real store's AOT path shape.</summary>
-  private sealed class _originStore : IEventStore {
-    private static readonly JsonSerializerOptions _options = JsonContextRegistry.CreateCombinedOptions();
-
-    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
-      [.. streamEvents.Select(raw => new MessageEnvelope<IEvent> {
-        MessageId = new MessageId(raw.EventId),
-        Payload = (RepairProbeEvent)JsonSerializer.Deserialize(raw.EventData, _options.GetTypeInfo(typeof(RepairProbeEvent)))!,
-        Hops = [],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
-      })];
-
-    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
-      Task.FromResult(new List<MessageEnvelope<IEvent>>());
-    public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) { await Task.CompletedTask; yield break; }
-    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
-    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) => Task.FromResult(new List<MessageEnvelope<TMessage>>());
-    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
-    private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) { await Task.CompletedTask; yield break; }
-  }
 }
 
 /// <summary>JSON context for the R1c convergence-proof payloads (production-parity registration).</summary>

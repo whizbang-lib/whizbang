@@ -1,8 +1,34 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Whizbang.Core.Attributes;
 
 namespace Whizbang.Core.Messaging;
+
+/// <summary>
+/// A composite whose children ride as <b>raw stored wire JSON</b> plus wire type names instead of
+/// typed <see cref="IMessage"/> instances. The origin already holds each child's exact wire-form
+/// JSON (<c>event_data</c>); rehydrating it into typed payloads only to re-serialize them
+/// polymorphically is redundant work, an upcast/version-skew fidelity risk, and an AOT cliff — a
+/// consumer payload shape whose metadata is not reachable through the polymorphic resolver chain
+/// (observed live: a collection-typed property) makes the re-serialization throw, so the repair
+/// never ships. Raw carry removes the class: the origin needs no type knowledge at all, and the
+/// receive-side fan-out builds children directly from the raw payloads.
+/// </summary>
+/// <remarks>
+/// <see cref="InnerPayloads"/> and <see cref="InnerTypeNames"/> are parallel (same order, same
+/// count). The fan-out is STRICT: any desync fails the whole expansion — these composites are
+/// machine-built, so a mismatch is a producer bug, never data.
+/// </remarks>
+/// <docs>resilience/stream-integrity</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_RawComposite_ChildrenBuiltFromRawPayloadsAsync</tests>
+public interface IRawInnerComposite : ICompositeEvent {
+  /// <summary>Each child's raw stored payload JSON, verbatim from the origin's store.</summary>
+  IReadOnlyList<JsonElement> InnerPayloads { get; }
+
+  /// <summary>Each child's stored wire type name ("Type, Assembly"), parallel to <see cref="InnerPayloads"/>.</summary>
+  IReadOnlyList<string> InnerTypeNames { get; }
+}
 
 /// <summary>
 /// A composite whose children must keep <b>caller-supplied</b> message identities instead of the
@@ -54,8 +80,17 @@ public interface IIdentityPreservingComposite : ICompositeEvent {
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 [PinnedId("b3d9f2a1-6c47-4e0d-9a58-1f2e3c4d5b6a")]
-public sealed class RedeliveryComposite : CompositeEventBase, IIdentityPreservingComposite {
-  /// <summary>Original message ids, parallel to <see cref="CompositeEventBase.Inner"/>.</summary>
+public sealed class RedeliveryComposite : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite {
+  /// <summary>
+  /// Each child's raw stored payload JSON, verbatim from the origin's <c>event_data</c> — the
+  /// origin never rehydrates typed payloads (see <see cref="IRawInnerComposite"/>).
+  /// </summary>
+  public List<JsonElement> InnerPayloads { get; init; } = [];
+
+  /// <summary>Each child's stored wire type name ("Type, Assembly"), parallel to <see cref="InnerPayloads"/>.</summary>
+  public List<string> InnerTypeNames { get; init; } = [];
+
+  /// <summary>Original message ids, parallel to <see cref="InnerPayloads"/>.</summary>
   public List<Guid> InnerEventIds { get; init; } = [];
 
   /// <summary>The origin service the bundled events were emitted by (Guid.Empty = unknown).</summary>
@@ -69,4 +104,8 @@ public sealed class RedeliveryComposite : CompositeEventBase, IIdentityPreservin
   Guid IIdentityPreservingComposite.OriginServiceId => OriginServiceId;
 
   IReadOnlyList<long?>? IIdentityPreservingComposite.InnerCommitSequences => InnerCommitSequences;
+
+  IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
+
+  IReadOnlyList<string> IRawInnerComposite.InnerTypeNames => InnerTypeNames;
 }

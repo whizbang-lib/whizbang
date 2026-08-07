@@ -40,7 +40,7 @@ public class RedeliveryCompositeWireSerializationTests {
   }
 
   [Test]
-  public async Task RedeliveryComposite_RoundTripsPolymorphicInner_ThroughCombinedOptionsAsync() {
+  public async Task RedeliveryComposite_RoundTripsRawInner_ThroughCombinedOptionsAsync() {
     _ensureRegistered();
     var options = JsonContextRegistry.CreateCombinedOptions();
     var streamId = TrackedGuid.NewMedo().Value;
@@ -48,22 +48,43 @@ public class RedeliveryCompositeWireSerializationTests {
     var e2 = TrackedGuid.NewMedo().Value;
     var composite = new Whizbang.Core.Messaging.RedeliveryComposite {
       StreamId = streamId,
-      Inner = [new WireProbeEvent { X = 2 }, new WireProbeEvent { X = 3 }],
+      InnerPayloads = [JsonDocument.Parse("{\"x\":2}").RootElement.Clone(), JsonDocument.Parse("{\"x\":3}").RootElement.Clone()],
+      InnerTypeNames = ["Contracts.WireProbe, Contracts", "Contracts.WireProbe, Contracts"],
       InnerEventIds = [e1, e2],
     };
 
     var json = JsonSerializer.Serialize(composite, options.GetTypeInfo(typeof(Whizbang.Core.Messaging.RedeliveryComposite)));
 
-    await Assert.That(json).Contains("$type")
-      .Because($"inner IMessage items must carry type discriminators or no receiver can rehydrate them — " +
-               $"a composite defined in Core carrying another assembly's events is exactly the cross-assembly " +
-               $"case the serializing-options polymorphic binding exists for. JSON: {json}");
-
     var back = (Whizbang.Core.Messaging.RedeliveryComposite)JsonSerializer.Deserialize(
       json, options.GetTypeInfo(typeof(Whizbang.Core.Messaging.RedeliveryComposite)))!;
     await Assert.That(back.InnerEventIds).IsEquivalentTo([e1, e2]);
-    await Assert.That(back.Inner.Cast<WireProbeEvent>().Select(p => p.X).ToList()).IsEquivalentTo([2, 3])
+    await Assert.That(back.InnerTypeNames).IsEquivalentTo(composite.InnerTypeNames);
+    await Assert.That(back.InnerPayloads.Select(pd => pd.GetProperty("x").GetInt32()).ToList()).IsEquivalentTo([2, 3])
       .Because("the repaired bodies must survive the wire byte-for-byte.");
+  }
+
+  [Test]
+  public async Task RedeliveryComposite_ArbitraryPayloadShapes_NeedNoTypeMetadataAsync() {
+    // The AOT cliff this design removes: a consumer payload whose shape (e.g. a set-typed
+    // property) has no reachable metadata in the polymorphic resolver chain. Raw carry serializes
+    // it verbatim — the composite needs metadata only for ITSELF.
+    _ensureRegistered();
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var exotic = "{\"tags\":[\"a\",\"b\"],\"nested\":{\"set\":[1,2,3]},\"unregistered\":true}";
+    var composite = new Whizbang.Core.Messaging.RedeliveryComposite {
+      StreamId = TrackedGuid.NewMedo().Value,
+      InnerPayloads = [JsonDocument.Parse(exotic).RootElement.Clone()],
+      InnerTypeNames = ["Totally.Unregistered.Type, Nowhere"],
+      InnerEventIds = [TrackedGuid.NewMedo().Value],
+    };
+
+    var json = JsonSerializer.Serialize(composite, options.GetTypeInfo(typeof(Whizbang.Core.Messaging.RedeliveryComposite)));
+    var back = (Whizbang.Core.Messaging.RedeliveryComposite)JsonSerializer.Deserialize(
+      json, options.GetTypeInfo(typeof(Whizbang.Core.Messaging.RedeliveryComposite)))!;
+
+    await Assert.That(back.InnerPayloads[0].GetRawText()).IsEqualTo(composite.InnerPayloads[0].GetRawText())
+      .Because("an origin must be able to repair events whose payload shapes it has NO serializer " +
+               "metadata for — typed rehydration made exactly this throw and the repair never shipped.");
   }
 }
 

@@ -130,6 +130,14 @@ public static partial class CompositeInboxFanout {
     // host has no logging configured).
     var logger = scope.GetService<ILoggerFactory>()?.CreateLogger(LOG_CATEGORY) ?? NullLogger.Instance;
 
+    // Raw-inner composites (re-delivery bundles) carry children as stored wire JSON + type names —
+    // no typed payloads exist on either side, so they expand through the raw path. A replacement
+    // set (pre-fanout directive) is typed and takes the typed path as before.
+    if (replacementInner is null && composite is IRawInnerComposite rawComposite) {
+      return _expandRaw(rawComposite, compositeTypeName, source, eventTypeProvider,
+        eventMarkerResolver, ephemeralModeResolver);
+    }
+
     // A pre-fanout directive may replace the composite's own inner events (filter / transform / re-key).
     var inners = replacementInner ?? composite.InnerEvents;
     var atomic = composite.Atomicity == FanoutAtomicity.Atomic;
@@ -231,6 +239,113 @@ public static partial class CompositeInboxFanout {
         FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
         $"Identity-preserving composite '{compositeTypeName}' carries {identitySequences.Count} InnerCommitSequences for {count} inner events.",
         compositeTypeName);
+    }
+
+    return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName);
+  }
+
+  /// <summary>
+  /// Expands a raw-inner composite: children are built DIRECTLY from the carried stored JSON and
+  /// wire type names — no typed payloads, no serializer, no polymorphic metadata anywhere on the
+  /// path (the child envelope <c>MessageEnvelope&lt;JsonElement&gt;</c> IS the inbox storage form).
+  /// Guards mirror the typed identity-preserving path: raw bundles are machine-built, so any
+  /// count desync between payloads, type names, ids, or sequences fails the whole expansion.
+  /// </summary>
+  private static FanoutResult _expandRaw(
+      IRawInnerComposite composite,
+      string compositeTypeName,
+      IMessageEnvelope source,
+      IEventTypeProvider? eventTypeProvider,
+      IEventMarkerResolver? eventMarkerResolver,
+      IEphemeralModeResolver? ephemeralModeResolver) {
+    var payloads = composite.InnerPayloads;
+    var typeNames = composite.InnerTypeNames;
+    var identityComposite = composite as IIdentityPreservingComposite;
+    var identityIds = identityComposite?.InnerEventIds;
+    var identitySequences = identityComposite?.InnerCommitSequences;
+    var originOverride = identityComposite?.OriginServiceId ?? Guid.Empty;
+
+    if (typeNames.Count != payloads.Count) {
+      return new FanoutResult(
+        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        $"Raw composite '{compositeTypeName}' carries {typeNames.Count} InnerTypeNames for {payloads.Count} InnerPayloads.",
+        compositeTypeName);
+    }
+    if (identityIds is not null && identityIds.Count != payloads.Count) {
+      return new FanoutResult(
+        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        $"Identity-preserving composite '{compositeTypeName}' carries {identityIds.Count} InnerEventIds for {payloads.Count} inner events.",
+        compositeTypeName);
+    }
+    if (identitySequences is not null && identitySequences.Count != payloads.Count) {
+      return new FanoutResult(
+        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        $"Identity-preserving composite '{compositeTypeName}' carries {identitySequences.Count} InnerCommitSequences for {payloads.Count} inner events.",
+        compositeTypeName);
+    }
+    if (payloads.Count > composite.MaxInnerEventsAllowed) {
+      return new FanoutResult(
+        FanoutOutcome.CapExceeded, Array.Empty<InboxMessage>(),
+        $"Composite '{compositeTypeName}' carries {payloads.Count} inner events, exceeding MaxInnerEventsAllowed ({composite.MaxInnerEventsAllowed}).",
+        compositeTypeName);
+    }
+
+    var childHops = _buildLineageHops(composite, source);
+    var streamId = _extractStreamId(source);
+    var children = new List<InboxMessage>(payloads.Count);
+    for (var i = 0; i < payloads.Count; i++) {
+      var wireTypeName = typeNames[i];
+      if (payloads[i].ValueKind == JsonValueKind.Undefined || string.IsNullOrWhiteSpace(wireTypeName)) {
+        return new FanoutResult(
+          FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+          $"Raw composite '{compositeTypeName}' carries an empty payload or type name at position {i} — the pairing cannot be preserved.",
+          compositeTypeName);
+      }
+
+      var sourceServiceId = originOverride != Guid.Empty ? originOverride : source.SourceServiceId;
+      var sourceCommitSequence = identitySequences?[i] ?? source.SourceCommitSequence;
+      var childEnvelope = new MessageEnvelope<JsonElement> {
+        Version = source.Version,
+        DispatchContext = source.DispatchContext,
+        MessageId = identityIds is not null ? new MessageId(identityIds[i]) : MessageId.New(),
+        Payload = payloads[i],
+        Hops = childHops,
+        SourceServiceId = sourceServiceId,
+        SourceCommitSequence = sourceCommitSequence,
+        CausedByServiceId = source.CausedByServiceId,
+        CausedByCommitSequence = source.CausedByCommitSequence,
+        StateOnly = source.StateOnly,
+        Flags = EventFlags.NoRebroadcast,
+      };
+
+      var isEvent = eventTypeProvider is not null
+        ? EventTypeMatchingHelper.IsEventType(wireTypeName, eventTypeProvider.GetEventTypes())
+        : true;   // raw children come from an origin's EVENT store — event is the safe default
+      if (isEvent) {
+        StreamIdGuard.ThrowIfEmpty(streamId, childEnvelope.MessageId.Value, "InboxDispatch.CompositeFanout", wireTypeName);
+      }
+
+      children.Add(new InboxMessage {
+        MessageId = childEnvelope.MessageId.Value,
+        HandlerName = TypeNameFormatter.GetSimpleName(wireTypeName) + "Handler",
+        Envelope = childEnvelope,
+        EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{wireTypeName}]], Whizbang.Core",
+        StreamId = streamId,
+        IsEvent = isEvent,
+        // Name-first flag derivation — there is no typed payload to fall back to, which is exactly
+        // why the catalog stamp (by wire name) is load-bearing here.
+        Flags = EventFlagsDeriver.Derive(payload: null, wireTypeName, eventMarkerResolver, ephemeralModeResolver)
+              | EventFlags.NoRebroadcast,
+        Scope = source.GetCurrentScope()?.Scope,
+        Metadata = new EnvelopeMetadata {
+          MessageId = childEnvelope.MessageId,
+          Hops = childEnvelope.Hops,
+          DispatchContext = childEnvelope.DispatchContext,
+        },
+        MessageType = wireTypeName,
+        SourceServiceId = sourceServiceId,
+        SourceCommitSequence = sourceCommitSequence,
+      });
     }
 
     return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName);

@@ -689,6 +689,31 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<StreamDigest>>([]);
 
   /// <summary>
+  /// Stream-integrity Phase A: the TYPE-level recompute — the same fold as
+  /// <see cref="ComputeStreamDigestsAsync"/> rolled up per (tenant, type), with the roll-up done
+  /// AT THE STORE. A types-level answer materialized per-stream first holds one row per stream in
+  /// memory (a large store's first full audit has memory-killed consumers doing exactly that);
+  /// rolled up at the store, the result is bounded by #types × #tenants. The XOR of a type's
+  /// stream buckets equals folding every event of the type, because the buckets partition them.
+  /// Default: delegates to the per-stream compute + C# roll-up (providers without a set-based
+  /// store keep the old behavior).
+  /// </summary>
+  /// <param name="originServiceId">Null = own emissions; a value = received from that origin.</param>
+  /// <param name="eventTypes">Optional type filter (the consumer restricts to subscribed types).</param>
+  /// <param name="settleWindow">Only events older than this are folded (default 1 hour).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Type-level digest rows (StreamId = <see cref="Guid.Empty"/>), ordered by (tenant, type).</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
+  async Task<IReadOnlyList<StreamDigest>> ComputeTypeDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    IntegrityDigestMath.RollUpToTypes(
+      await ComputeStreamDigestsAsync(originServiceId, eventTypes, settleWindow, cancellationToken).ConfigureAwait(false));
+
+  /// <summary>
   /// Stream-integrity Phase L: finds LOCAL coverage gaps — streams holding settled, non-ephemeral
   /// events that a registered perspective (message association) should fold, where that
   /// perspective has NO cursor on the stream and the events have no pending work items (typically:

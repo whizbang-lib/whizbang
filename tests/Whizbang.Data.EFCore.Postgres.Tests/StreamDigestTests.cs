@@ -83,6 +83,42 @@ public class StreamDigestTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task ComputeTypeDigests_MatchesStreamRollUp_BitIdenticalAsync() {
+    // The store-side type roll-up must be bit-identical to rolling the per-stream compute up in
+    // C# — the two run on opposite sides of a manifest comparison, so any drift reads as false
+    // divergence. XOR over a type's events equals XOR over its stream buckets (they partition).
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+
+    var streamA = TrackedGuid.NewMedo().Value;
+    var streamB = TrackedGuid.NewMedo().Value;
+    await _seedAsync(conn, streamA, 1, TENANT_A, "Contracts.RollX", TrackedGuid.NewMedo().Value, aged: true);
+    await _seedAsync(conn, streamA, 2, TENANT_A, "Contracts.RollX", TrackedGuid.NewMedo().Value, aged: true);
+    await _seedAsync(conn, streamB, 1, TENANT_A, "Contracts.RollX", TrackedGuid.NewMedo().Value, aged: true);
+    await _seedAsync(conn, streamB, 2, TENANT_A, "Contracts.RollY", TrackedGuid.NewMedo().Value, aged: true);
+
+    var settle = TimeSpan.FromMinutes(5);
+    var types = new List<string> { "Contracts.RollX", "Contracts.RollY" };
+    var storeRollUp = await coordinator.ComputeTypeDigestsAsync(null, types, settle);
+    var csharpRollUp = IntegrityDigestMath.RollUpToTypes(
+      await coordinator.ComputeStreamDigestsAsync(null, types, settle));
+
+    await Assert.That(storeRollUp.Count).IsEqualTo(csharpRollUp.Count);
+    for (var i = 0; i < storeRollUp.Count; i++) {
+      await Assert.That(storeRollUp[i].EventType).IsEqualTo(csharpRollUp[i].EventType);
+      await Assert.That(storeRollUp[i].TenantScope).IsEqualTo(csharpRollUp[i].TenantScope);
+      await Assert.That(storeRollUp[i].DigestLo).IsEqualTo(csharpRollUp[i].DigestLo)
+        .Because("the SQL GROUP BY (tenant, type) fold must be bit-identical to the C# roll-up of stream buckets.");
+      await Assert.That(storeRollUp[i].DigestHi).IsEqualTo(csharpRollUp[i].DigestHi);
+      await Assert.That(storeRollUp[i].EventCount).IsEqualTo(csharpRollUp[i].EventCount);
+      await Assert.That(storeRollUp[i].StreamId).IsEqualTo(Guid.Empty)
+        .Because("type-level rows carry the empty stream id — there is no per-stream materialization.");
+    }
+    await Assert.That(storeRollUp.Single(d => d.EventType == "Contracts.RollX").EventCount).IsEqualTo(3);
+  }
+
+  [Test]
   public async Task CoverageGaps_FindUncursoredPerspectiveHistoryAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);

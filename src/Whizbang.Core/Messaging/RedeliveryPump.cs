@@ -53,40 +53,35 @@ public sealed class RedeliveryPumpOptions {
 /// already holds these events, so its own pipeline has nothing to do with them.
 /// </summary>
 /// <remarks>
-/// Identity is preserved end to end: inner payloads are rehydrated from the stored envelopes via
-/// the event store's AOT deserialization path, and <see cref="RedeliveryComposite.InnerEventIds"/>
-/// carries the original event ids that the identity-preserving fan-out stamps onto the children at
-/// consumers. The optional target (see <see cref="IMessageEnvelope.Target"/>)
-/// directs the bundle at one consumer; null broadcasts (operator-initiated origin-wide repair).
-/// A deserialization miss is a THROW, not a skip — the origin owns its own types, so a miss is a
-/// bug, and silently shrinking a repair bundle would report a repair that never fully happened.
+/// Identity is preserved end to end: inner payloads ride as the RAW stored wire JSON
+/// (<see cref="IRawInnerComposite"/>) with their stored wire type names, and
+/// <see cref="RedeliveryComposite.InnerEventIds"/> carries the original event ids that the
+/// identity-preserving fan-out stamps onto the children at consumers. The origin never rehydrates
+/// typed payloads — re-serializing them polymorphically was redundant work, an upcast fidelity
+/// risk, and an AOT metadata cliff (a consumer payload shape unreachable through the polymorphic
+/// resolver chain made the repair throw instead of ship). The optional target (see
+/// <see cref="IMessageEnvelope.Target"/>) directs the bundle at one consumer; null broadcasts
+/// (operator-initiated origin-wide repair).
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpTests.cs</tests>
 public sealed class RedeliveryPump {
   private readonly ITransport _transport;
-  private readonly IEventStore _eventStore;
-  private readonly IEventTypeProvider _eventTypeProvider;
   private readonly IEnvelopeSerializer _envelopeSerializer;
   private readonly IServiceInstanceProvider? _instanceProvider;
   private readonly RedeliveryPumpOptions _options;
 
   /// <summary>
-  /// Creates the pump over the transport + the event store's AOT deserialization path. The envelope
-  /// serializer is the same seam the outbox uses for composites: the typed bundle is converted to a
-  /// <c>MessageEnvelope&lt;JsonElement&gt;</c> with the wire envelope-type derived from the payload's
-  /// runtime type, so the transport never needs generic type info for the composite envelope.
+  /// Creates the pump over the transport. The envelope serializer is the same seam the outbox uses
+  /// for composites — and because the children ride as raw JSON, serializing the bundle needs type
+  /// metadata only for <see cref="RedeliveryComposite"/> itself, never for any consumer payload.
   /// </summary>
   public RedeliveryPump(
       ITransport transport,
-      IEventStore eventStore,
-      IEventTypeProvider eventTypeProvider,
       IEnvelopeSerializer envelopeSerializer,
       IServiceInstanceProvider? instanceProvider = null,
       RedeliveryPumpOptions? options = null) {
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
-    _eventTypeProvider = eventTypeProvider ?? throw new ArgumentNullException(nameof(eventTypeProvider));
     _envelopeSerializer = envelopeSerializer ?? throw new ArgumentNullException(nameof(envelopeSerializer));
     _instanceProvider = instanceProvider;
     _options = options ?? new RedeliveryPumpOptions();
@@ -116,7 +111,6 @@ public sealed class RedeliveryPump {
       return 0;
     }
 
-    var eventTypes = _eventTypeProvider.GetEventTypes();
     var published = 0;
 
     // Input contract: (stream, version)-ordered — group CONSECUTIVE runs per stream, chunked by
@@ -135,7 +129,7 @@ public sealed class RedeliveryPump {
       if (!boundary) {
         continue;
       }
-      await _publishChunkAsync(chunk, topic, target, originServiceId, stateOnly, eventTypes, cancellationToken).ConfigureAwait(false);
+      await _publishChunkAsync(chunk, topic, target, originServiceId, stateOnly, cancellationToken).ConfigureAwait(false);
       published++;
       chunk.Clear();
       chunkBytes = 0;
@@ -149,38 +143,19 @@ public sealed class RedeliveryPump {
       string? target,
       Guid originServiceId,
       bool stateOnly,
-      IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken) {
-    var raws = new List<StreamEventData>(chunk.Count);
+    // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
+    // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
+    // payload bytes that were emitted are the payload bytes that repair.
+    var innerPayloads = new List<System.Text.Json.JsonElement>(chunk.Count);
     foreach (var evt in chunk) {
-      raws.Add(new StreamEventData {
-        StreamId = evt.StreamId,
-        EventId = evt.EventId,
-        EventType = evt.EventType,
-        EventData = evt.EventData,
-        Metadata = evt.Metadata,
-        Scope = evt.Scope,
-        EventWorkId = Guid.Empty,
-        PerspectiveName = null
-      });
-    }
-
-    var envelopes = _eventStore.DeserializeStreamEvents(raws, eventTypes);
-    if (envelopes.Count != chunk.Count) {
-      // The origin owns its own types — a deserialization miss is a bug, and silently shrinking a
-      // repair bundle would report a repair that never fully happened.
-      throw new InvalidOperationException(
-        $"Redelivery deserialization mismatch for stream {chunk[0].StreamId}: {chunk.Count} selected events " +
-        $"yielded {envelopes.Count} envelopes. The repair bundle was NOT published.");
-    }
-
-    var inner = new List<IMessage>(envelopes.Count);
-    foreach (var envelope in envelopes) {
-      inner.Add(envelope.Payload);
+      using var doc = System.Text.Json.JsonDocument.Parse(evt.EventData);
+      innerPayloads.Add(doc.RootElement.Clone());
     }
     var composite = new RedeliveryComposite {
       StreamId = chunk[0].StreamId,
-      Inner = inner,
+      InnerPayloads = innerPayloads,
+      InnerTypeNames = [.. chunk.Select(c => c.EventType)],
       InnerEventIds = [.. chunk.Select(c => c.EventId)],
       // Phase B: the ORIGINAL origin identity rides the bundle — fanned-out children recount
       // inside their original commit-sequence window at the consumer.

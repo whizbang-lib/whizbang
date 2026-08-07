@@ -41,12 +41,9 @@ public sealed partial class RedeliveryRequestReceptor(
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
     var transport = services.GetService<ITransport>();
-    var eventStore = services.GetService<IEventStore>();
-    var eventTypeProvider = services.GetService<IEventTypeProvider>();
     var envelopeSerializer = services.GetService<IEnvelopeSerializer>();
-    if (coordinator is null || transport is null || eventStore is null || eventTypeProvider is null || envelopeSerializer is null) {
-      LogMissingInfrastructure(logger, coordinator is null, transport is null, eventStore is null,
-        eventTypeProvider is null, envelopeSerializer is null);
+    if (coordinator is null || transport is null || envelopeSerializer is null) {
+      LogMissingInfrastructure(logger, coordinator is null, transport is null, envelopeSerializer is null);
       return;
     }
 
@@ -62,7 +59,7 @@ public sealed partial class RedeliveryRequestReceptor(
       // identity and repaired windows recount correctly at the consumer.
       var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
       var pump = new RedeliveryPump(
-        transport, eventStore, eventTypeProvider, envelopeSerializer,
+        transport, envelopeSerializer,
         services.GetService<IServiceInstanceProvider>(), options);
 
       // Select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter
@@ -107,9 +104,8 @@ public sealed partial class RedeliveryRequestReceptor(
 
   [LoggerMessage(EventId = 47, Level = LogLevel.Warning,
     Message = "RequestRedeliveryCommand received but required infrastructure is missing " +
-              "(coordinator={CoordinatorMissing}, transport={TransportMissing}, eventStore={EventStoreMissing}, " +
-              "eventTypeProvider={EventTypeProviderMissing}, envelopeSerializer={EnvelopeSerializerMissing}); ignored")]
-  static partial void LogMissingInfrastructure(ILogger logger, bool coordinatorMissing, bool transportMissing, bool eventStoreMissing, bool eventTypeProviderMissing, bool envelopeSerializerMissing);
+              "(coordinator={CoordinatorMissing}, transport={TransportMissing}, envelopeSerializer={EnvelopeSerializerMissing}); ignored")]
+  static partial void LogMissingInfrastructure(ILogger logger, bool coordinatorMissing, bool transportMissing, bool envelopeSerializerMissing);
 
   [LoggerMessage(EventId = 48, Level = LogLevel.Information,
     Message = "Re-delivery request from {RequesterService} selected no events; nothing published")]

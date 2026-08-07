@@ -31,7 +31,7 @@ public class RedeliveryPumpTests {
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
     var origin = TrackedGuid.NewMedo().Value;
-    var pump = new RedeliveryPump(transport, new _mapEventStore(), new _typeProvider(), serializer);
+    var pump = new RedeliveryPump(transport, serializer);
 
     var published = await pump.PublishAsync(
       [_evt(streamA, a1, 1), _evt(streamA, a2, 2), _evt(streamB, b1, 1)],
@@ -51,7 +51,11 @@ public class RedeliveryPumpTests {
     await Assert.That(compositeA.StreamId).IsEqualTo(streamA);
     await Assert.That(compositeA.InnerEventIds).IsEquivalentTo([a1, a2])
       .Because("original ids, in version order — identity is what makes convergence idempotent.");
-    await Assert.That(compositeA.Inner.Count).IsEqualTo(2);
+    await Assert.That(compositeA.InnerPayloads.Count).IsEqualTo(2);
+    await Assert.That(compositeA.InnerPayloads[0].GetRawText()).IsEqualTo("{\"seeded\":true}")
+      .Because("children ride as the stored wire JSON VERBATIM — the origin never rehydrates typed payloads.");
+    await Assert.That(compositeA.InnerTypeNames).IsEquivalentTo(["Contracts.ProbeHappened", "Contracts.ProbeHappened"])
+      .Because("each child's stored wire type name rides beside its raw payload.");
     await Assert.That(compositeA.OriginServiceId).IsEqualTo(origin)
       .Because("Phase B accounting keys on the origin — the bundle names the service the events came from.");
     await Assert.That(compositeA.InnerCommitSequences!).IsEquivalentTo([(long?)1, 2])
@@ -69,7 +73,7 @@ public class RedeliveryPumpTests {
     var ids = Enumerable.Range(0, 5).Select(_ => TrackedGuid.NewMedo().Value).ToArray();
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, new _mapEventStore(), new _typeProvider(), serializer,
+    var pump = new RedeliveryPump(transport, serializer,
       options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 2 });
 
     var published = await pump.PublishAsync(
@@ -99,7 +103,7 @@ public class RedeliveryPumpTests {
     // Each event carries ~102 raw bytes (100-byte body + "{}" metadata); a 100-byte budget is
     // crossed by every single event, so each flushes alone — a count-only bound would build one
     // 3-event composite here.
-    var pump = new RedeliveryPump(transport, new _mapEventStore(), new _typeProvider(), serializer,
+    var pump = new RedeliveryPump(transport, serializer,
       options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 500, MaxBytesPerComposite = 100 });
     var bigBody = "{\"pad\":\"" + new string('x', 90) + "\"}";
 
@@ -121,7 +125,7 @@ public class RedeliveryPumpTests {
     var stream = TrackedGuid.NewMedo().Value;
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, new _mapEventStore(), new _typeProvider(), serializer,
+    var pump = new RedeliveryPump(transport, serializer,
       options: new RedeliveryPumpOptions { MaxBytesPerComposite = 10 });
 
     var published = await pump.PublishAsync(
@@ -131,6 +135,23 @@ public class RedeliveryPumpTests {
     await Assert.That(published).IsEqualTo(1)
       .Because("an event bigger than the budget still ships, alone — the budget bounds grouping, " +
                "it never silently drops a repair.");
+  }
+
+  [Test]
+  public async Task Publish_UnknownEventType_StillPublishesAsync() {
+    // The origin needs NO type knowledge to repair: a stored event whose type is not registered
+    // anywhere on this host still ships verbatim. The typed design threw here and the repair
+    // never left the origin.
+    var transport = new _captureTransport();
+    var serializer = new _captureSerializer();
+    var pump = new RedeliveryPump(transport, serializer);
+
+    var published = await pump.PublishAsync(
+      [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1) with { EventType = "Totally.Unregistered.Type, Nowhere" }],
+      topic: "repair-topic", target: "svc");
+
+    await Assert.That(published).IsEqualTo(1);
+    await Assert.That(serializer.Captured[0].Payload.InnerTypeNames).IsEquivalentTo(["Totally.Unregistered.Type, Nowhere"]);
   }
 
   // ── helpers / fakes ─────────────────────────────────────────────────────
@@ -148,33 +169,6 @@ public class RedeliveryPumpTests {
   };
 
   internal sealed record _probeEvent(Guid Id) : IEvent;
-
-  /// <summary>Maps each raw row to an envelope whose MessageId is the row's EventId — the shape the
-  /// real store's AOT deserialization path produces from stored envelopes.</summary>
-  private sealed class _mapEventStore : IEventStore {
-    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
-      [.. streamEvents.Select(raw => new MessageEnvelope<IEvent> {
-        MessageId = new MessageId(raw.EventId),
-        Payload = new _probeEvent(raw.EventId),
-        Hops = [],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
-      })];
-
-    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
-      Task.FromResult(new List<MessageEnvelope<IEvent>>());
-    public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) { await Task.CompletedTask; yield break; }
-    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
-    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) => Task.FromResult(new List<MessageEnvelope<TMessage>>());
-    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
-    private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) { await Task.CompletedTask; yield break; }
-  }
-
-  private sealed class _typeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(_probeEvent)];
-  }
 
   /// <summary>Captures the typed composite envelope at the serializer seam (the outbox's composite
   /// path) and returns a field-copied JsonElement envelope, as the real serializer does.</summary>
