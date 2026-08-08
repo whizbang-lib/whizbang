@@ -110,8 +110,19 @@ public class LeaseDispatchExecutorTests {
     var time = _provider();
     using var lease = _newLease(time);
     var dispatchTcs = new TaskCompletionSource();
+    // TaskScheduler.UnobservedTaskException is PROCESS-GLOBAL, and the forced GC below finalizes
+    // abandoned faulted tasks belonging to any concurrently-running test — those fired this
+    // handler and were counted against this assertion (observed: two foreign events under full
+    // suite load, passing in isolation). Tag this test's own fault and count only that; the test
+    // stays self-discriminating because removing the executor's observing continuation makes THIS
+    // marker surface.
+    var marker = $"post-abandon-{Guid.NewGuid():N}";
     var unobserved = new List<UnobservedTaskExceptionEventArgs>();
-    void OnUnobserved(object? s, UnobservedTaskExceptionEventArgs e) => unobserved.Add(e);
+    void OnUnobserved(object? s, UnobservedTaskExceptionEventArgs e) {
+      if (e.Exception?.Flatten().InnerExceptions.Any(x => x.Message == marker) == true) {
+        unobserved.Add(e);
+      }
+    }
     TaskScheduler.UnobservedTaskException += OnUnobserved;
     try {
       var helper = LeaseDispatchExecutor.RunWithLeaseAsync(lease, _ => dispatchTcs.Task);
@@ -119,7 +130,7 @@ public class LeaseDispatchExecutorTests {
       try { await helper; } catch (OperationCanceledException) { /* expected */ }
 
       // Now the abandoned task faults. Without our continuation, this would raise UTE.
-      dispatchTcs.SetException(new InvalidOperationException("post-abandon"));
+      dispatchTcs.SetException(new InvalidOperationException(marker));
 
       // Force the abandoned-task to be GC'd so finalizer runs (where UTE would fire).
       var weak = new WeakReference(dispatchTcs);
