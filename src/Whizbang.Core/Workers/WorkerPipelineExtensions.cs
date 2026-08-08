@@ -29,6 +29,13 @@ public static class WorkerPipelineExtensions {
   public static IServiceCollection AddWhizbangWorkers(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 
+    // Establish the thread-pool reserve BEFORE registering the workers that will compete for it.
+    // These workers run on the host's pool, so their burst of async database completions is what
+    // starves the host's own request pipeline — including a liveness endpoint that does no I/O,
+    // whose probe timeout then kills a pod that is merely busy, discarding the progress that
+    // would have ended the burst. Raises only; never lowers.
+    WorkerThreadPoolFloor.Apply();
+
     // Schema-ready gate — workers await this before issuing any SQL. The driver's
     // initializer (e.g., WhizbangDatabaseInitializerService) calls MarkReady after migrations
     // complete. Singleton because all workers + the initializer must observe the same instance.
