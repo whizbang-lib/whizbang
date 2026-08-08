@@ -733,6 +733,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([]);
 
   /// <summary>
+  /// Claims the current integrity-audit cycle for the calling instance — the same
+  /// first-instance-wins discipline the schema initializer (advisory lock) and the deep-prune
+  /// watermark (settings CAS) already apply to their one-per-service work. True: this instance
+  /// won and runs the cycle. False: a sibling instance ran one within <paramref name="claimWindow"/>
+  /// — skip; the audit is per-SERVICE work, and every replica re-running the full-store digest
+  /// recompute multiplies fleet-wide load for identical results. Default: always true
+  /// (single-instance providers and engines without a settings store keep today's behavior).
+  /// </summary>
+  /// <param name="claimWindow">How recently a sibling's claim suppresses this one.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
+  Task<bool> TryClaimIntegrityAuditCycleAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+  /// <summary>
   /// Stream-integrity Phase B: the DISTINCT event types this service has ever emitted into its own
   /// audited lane (the own-emissions digest rows). The checkpoint publisher fans its heartbeat out
   /// to these types' topics — the topics this origin's consumers already subscribe to — so a quiet

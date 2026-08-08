@@ -1250,6 +1250,39 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return results;
   }
 
+  /// <summary>
+  /// First-instance-wins claim for one integrity-audit cycle: an atomic settings CAS (the deep
+  /// prune's watermark pattern) on <c>integrity_audit_last_run</c>. One statement — INSERT the
+  /// watermark or UPDATE it only when older than the window — so racing replicas resolve at the
+  /// row lock: exactly one sees a row affected and runs the cycle.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAuditClaimTests.cs</tests>
+  public async Task<bool> TryClaimIntegrityAuditCycleAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    // wh_settings is public (created bare, mig 028) — NOT the service schema; see a6ca8dd4.
+    cmd.CommandText = """
+      INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+      VALUES ('integrity_audit_last_run', NOW()::text, 'timestamptz',
+              'Last claimed integrity-audit cycle — first instance to CAS this watermark runs the cycle; siblings skip.')
+      ON CONFLICT (setting_key) DO UPDATE
+        SET setting_value = NOW()::text, updated_at = NOW()
+        WHERE (wh_settings.setting_value)::timestamptz <= NOW() - @p_window
+      """;
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_window", NpgsqlTypes.NpgsqlDbType.Interval) {
+      Value = claimWindow
+    });
+    var affected = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    return affected > 0;
+  }
+
   /// <inheritdoc />
   public async Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(
     CancellationToken cancellationToken = default) {
