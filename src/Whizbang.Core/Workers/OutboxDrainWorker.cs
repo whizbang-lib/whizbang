@@ -294,6 +294,19 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           _options.MaxOutboxAttempts ?? -1,
           _deadLetterStore is not null,
           _generationProvider is not null);
+        // Control-plane traffic is DROPPED, never stored (see DeadLetterDropPolicy): the audit
+        // re-issues these on its own cadence, and a stored copy is re-emitted into the inbox by
+        // the recovery worker on a later boot — turning a burst of failures into a backlog that
+        // every restart replays.
+        if (_options.MaxOutboxAttempts is int dropAttempts
+            && row.Attempts > dropAttempts
+            && DeadLetterDropPolicy.ShouldDropInsteadOfStore(row.MessageType)) {
+          LogOutboxControlPlaneDropped(_logger, row.MessageId, row.MessageType, row.Attempts);
+          _dlqMetrics?.Added.Add(1,
+            new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.OUTBOX),
+            new KeyValuePair<string, object?>("reason", "ControlPlaneDropped"));
+          continue;   // not published, not stored — the next cycle re-emits a fresh one
+        }
         if (_options.MaxOutboxAttempts is int maxAttempts
             && row.Attempts > maxAttempts
             && _deadLetterStore is not null
@@ -899,6 +912,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling through to publish")]
   static partial void LogOutboxDlqMoveFailed(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker DROPPED control-plane message {MessageId} ({MessageType}) after {Attempts} attempt(s) — " +
+              "control-plane traffic is re-emitted on its own cadence and is never durably dead-lettered")]
+  static partial void LogOutboxControlPlaneDropped(ILogger logger, Guid messageId, string messageType, int attempts);
 
   [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker EstablishFullContextAsync timed out for {MessageId} after {TimeoutSeconds}s — IMessageSecurityContextProvider implementation hung; routing to failure channel with Reason=SecurityContextEstablishmentFailure")]

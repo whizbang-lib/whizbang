@@ -141,7 +141,7 @@ public class PrePublishGateForensicPreservationTests {
 
   private static readonly JsonSerializerOptions _jsonOpts = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
-  private static OutboxBatchRow _row(Guid messageId, Guid streamId, int attempts, string? rowError) {
+  private static OutboxBatchRow _row(Guid messageId, Guid streamId, int attempts, string? rowError, string? messageType = null) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -155,7 +155,7 @@ public class PrePublishGateForensicPreservationTests {
       MessageId = messageId,
       StreamId = streamId,
       Destination = "test-topic",
-      MessageType = "TestMessage",
+      MessageType = messageType ?? "TestMessage",
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName ?? "MessageEnvelope",
       EventData = envelopeJson,
       Metadata = "{}",
@@ -169,6 +169,68 @@ public class PrePublishGateForensicPreservationTests {
   }
 
   // --- tests ---
+
+  /// <summary>
+  /// Control-plane traffic is DROPPED at the outbox gate, never stored. The outbox is where the
+  /// bulk of a divergence storm accumulates (one service held over a hundred thousand such rows),
+  /// and a stored copy is not inert — the recovery worker re-emits it into the inbox on a later
+  /// boot, so a burst becomes a backlog every restart replays. The next cycle emits a fresh one.
+  /// </summary>
+  [Test]
+  public async Task PrePublishGate_ControlPlaneRow_IsDroppedNotStoredAsync() {
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    var coord = new _FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11, rowError: "transport unavailable",
+      messageType: TypeNameFormatter.Format(typeof(IntegrityDivergenceDetected)))];
+
+    var drainChannel = new _FakeOutboxDrainChannel();
+    var dlqStore = new _CapturingDeadLetterStore();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new _FakeServiceInstanceProvider(),
+      drainChannel,
+      new _FakeOutboxCompletionChannel(),
+      new _FakeFailureChannel(),
+      gate,
+      Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxOutboxAttempts = 10,
+      }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      new _FakePublishStrategy(),
+      deadLetterStore: dlqStore,
+      generationProvider: new _FakeGenerationProvider());
+
+    // The drop path stores NOTHING, so there is no MoveAsync to await on — and IsIdle starts
+    // true, so polling it would assert before the worker ever ran (a vacuous pass that survived
+    // deleting the fix). Await the worker's own idle-transition hook instead: it fires only after
+    // a batch has actually been processed.
+    var batchProcessed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => batchProcessed.TrySetResult();
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId, cts.Token);
+
+    await batchProcessed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(dlqStore.Moves).IsEmpty()
+      .Because("storing control-plane traffic is what let a purged storm revive itself on the next " +
+               "boot — the row is dropped and the audit re-issues a fresh one on its own cadence");
+  }
 
   /// <summary>
   /// RED for Slice 1: drive the drain worker with a row whose Attempts exceeds
