@@ -74,6 +74,32 @@ BEGIN
     v_receptor_rows INTEGER := 0;
     v_perspective_rows INTEGER := 0;
   BEGIN
+    -- Self-heal this instance's own registration before ranking against it. When a pod's heartbeat
+    -- lapses past the stale cutoff (a GC pause, thread-pool starvation, a database failover), the
+    -- stale-instance cleanup reaps its wh_service_instances row. Before this repair, every claim
+    -- from that point on failed on the missing row, and because the failure aborted the claim, no
+    -- work on the claim path was left to put the row back -- the instance stayed locked out until
+    -- it was restarted. Repairing here closes that loop, using the identity the caller already
+    -- passes in, so the restored row carries the real service name / host / process id rather than
+    -- a placeholder.
+    --
+    -- Guarded by an indexed primary-key pre-check: claim_work is polled continuously, so an
+    -- unconditional UPSERT would write a new row version per poll per instance and bloat the
+    -- table. On the healthy path this performs no write at all. Only last_heartbeat_at is
+    -- refreshed on conflict -- metadata stays owned by record_heartbeat.
+    IF NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_service_instances
+      WHERE instance_id = p_instance_id
+        AND last_heartbeat_at >= v_stale_cutoff
+    ) THEN
+      INSERT INTO __SCHEMA__.wh_service_instances
+        (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at)
+      VALUES
+        (p_instance_id, p_service_name, p_host_name, p_process_id, v_now, v_now)
+      ON CONFLICT (instance_id) DO UPDATE SET
+        last_heartbeat_at = EXCLUDED.last_heartbeat_at;
+    END IF;
+
     SELECT instance_rank, active_instance_count INTO v_rank, v_count
     FROM __SCHEMA__.calculate_instance_rank(p_instance_id, v_stale_cutoff);
 

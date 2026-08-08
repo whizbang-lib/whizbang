@@ -29,12 +29,23 @@ BEGIN
   FROM instance_ranks ir
   WHERE ir.instance_id = p_instance_id;
 
-  -- Raise error if instance not found (indicates stale instance calling)
+  -- A caller absent from the active set is not an error condition, and raising on it was actively
+  -- harmful. The caller is demonstrably alive -- it is executing this function -- and a RAISE
+  -- aborts the entire enclosing statement, including whatever work would have repaired the
+  -- registration. That converts a transient heartbeat lapse into a permanent outage: the instance
+  -- can no longer claim, so it can no longer recover, so it stays absent.
+  --
+  -- Re-registration belongs to callers that carry the full instance identity (service name, host,
+  -- process id) -- claim_work repairs its own row before ranking. This function receives only an
+  -- id, so it degrades instead. Solo rank is the safe degradation: partition rank only widens or
+  -- narrows which streams an instance *attempts*, and every claim is guarded by FOR UPDATE SKIP
+  -- LOCKED plus a lease, so a briefly over-broad rank costs contention for one interval and never
+  -- correctness.
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'Failed to calculate rank for instance %. Instance not found in active instances.', p_instance_id;
+    RETURN QUERY SELECT 0::INTEGER, 1::INTEGER;
   END IF;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.calculate_instance_rank IS
-'Calculates partition rank for an instance based on active instances. Used for partition-based load balancing in orphaned work claiming. Raises exception if instance not found.';
+'Calculates partition rank for an instance based on active instances. Used for partition-based load balancing in orphaned work claiming. An instance missing from the active set degrades to a solo rank (0 of 1) rather than raising, so a lapsed heartbeat can never lock an instance out of claiming.';

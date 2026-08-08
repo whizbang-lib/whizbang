@@ -224,11 +224,11 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
 
     // Register the instance in wh_service_instances before the first claim_work call.
-    // claim_work invokes calculate_instance_rank, which raises P0001 when our instance_id
-    // is missing from wh_service_instances. HeartbeatWorker performs the UPSERT but ticks
-    // on its own cadence — without this initial heartbeat, ClaimWorker can race ahead and
-    // hit the raise on startup. We block here so the very first claim cycle has a row to
-    // rank against. Failures are non-fatal (log and continue — claim_work will retry/back off).
+    // HeartbeatWorker performs the UPSERT but ticks on its own cadence, so without this the
+    // registry would briefly carry no row for this pod — which skews peers' rank denominators
+    // and delays instance-lifecycle signals. This is an optimization, not a correctness
+    // requirement: claim_work repairs its own registration before it ranks, so a missed or
+    // failed registration here self-heals on the first claim. Failures are non-fatal.
     try {
       await _initialHeartbeatAsync(stoppingToken);
     } catch (OperationCanceledException) {
