@@ -106,7 +106,7 @@ public class InboxPrePublishGateForensicPreservationTests {
     }
   }
 
-  private static InboxWork _work(int attempts, string? rowError) {
+  private static InboxWork _work(int attempts, string? rowError, string? messageType = null) {
     var msgId = (Guid)TrackedGuid.NewMedo();
     return new InboxWork {
       MessageId = msgId,
@@ -116,7 +116,7 @@ public class InboxPrePublishGateForensicPreservationTests {
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
       },
-      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+      MessageType = messageType ?? "System.Text.Json.JsonElement, System.Text.Json",
       StreamId = (Guid)TrackedGuid.NewMedo(),
       PartitionNumber = 1,
       Attempts = attempts,
@@ -145,6 +145,45 @@ public class InboxPrePublishGateForensicPreservationTests {
   }
 
   // --- tests ---
+
+  /// <summary>
+  /// Control-plane traffic is DROPPED at this gate, never stored. Checkpoints, manifests and
+  /// re-delivery requests are re-emitted on their own cadence, so a stored copy is worthless — and
+  /// not inert, because the recovery worker re-emits stored rows into the inbox on a later boot.
+  /// Observed live: tens of thousands of such rows per service survived repeated queue purges
+  /// because they were held here, then re-entered the inbox on every restart.
+  /// </summary>
+  [Test]
+  public async Task PrePublishGate_ControlPlaneMessage_IsDroppedNotStoredAsync() {
+    var work = _work(attempts: 11, rowError: "transport unavailable",
+      messageType: TypeNameFormatter.Format(typeof(IntegrityCheckpoint)));
+    var dlqStore = new _CapturingDeadLetterStore();
+    var worker = _worker(dlqStore, new _FakeGenerationProvider());
+
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    await Assert.That(dlqStore.Moves).IsEmpty()
+      .Because("storing control-plane traffic is what let a purged storm revive itself on the " +
+               "next boot — the row is dropped and the next cycle emits a fresh one");
+  }
+
+  /// <summary>
+  /// The anti-test: a DOMAIN message at the same gate is still preserved. This fix must never
+  /// widen into silent business-data loss.
+  /// </summary>
+  [Test]
+  public async Task PrePublishGate_DomainMessage_IsStillStoredAsync() {
+    var work = _work(attempts: 11, rowError: "receptor threw",
+      messageType: "Contracts.Orders.OrderPlacedEvent, Contracts");
+    var dlqStore = new _CapturingDeadLetterStore();
+    var worker = _worker(dlqStore, new _FakeGenerationProvider());
+
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var move = await dlqStore.FirstMove.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await Assert.That(move.SourceId).IsEqualTo(work.MessageId)
+      .Because("a failed domain event is exactly what the dead-letter queue exists to preserve");
+  }
 
   /// <summary>
   /// RED for v0.651's inbox-side forensic preservation: drive ProcessOneInnerAsync

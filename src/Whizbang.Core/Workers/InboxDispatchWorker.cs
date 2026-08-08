@@ -298,6 +298,20 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       //
       // When the store isn't wired, fall back to the legacy mark-Published path so
       // existing callers (in-memory tests, etc.) still terminate the row correctly.
+      // Control-plane traffic is DROPPED, never stored: a stale checkpoint or repair request has
+      // no forensic value (the audit re-issues them on its own cadence), and a stored copy is not
+      // inert — the recovery worker re-emits it into the inbox on a later boot, so a burst of
+      // failures becomes a backlog every restart replays.
+      if (DeadLetterDropPolicy.ShouldDropInsteadOfStore(work.MessageType)) {
+        LogControlPlaneDropped(_logger, work.MessageId, work.MessageType, work.Attempts);
+        _dlqMetrics?.Added.Add(1,
+          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>("reason", "ControlPlaneDropped"));
+        var droppedRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
+        await _handlerCommitChannel.EnqueueAsync(droppedRequest, stoppingToken);
+        return;
+      }
+
       if (_deadLetterStore is not null && _generationProvider is not null) {
         try {
           var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
@@ -800,6 +814,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 10, Level = LogLevel.Warning, Message = "InboxDispatchWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling back to legacy mark-Published path")]
   static partial void LogDeadLetterStoreFailed(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+    Message = "InboxDispatchWorker DROPPED control-plane message {MessageId} ({MessageType}) after {Attempts} attempt(s) — " +
+              "control-plane traffic is re-emitted on its own cadence and is never durably dead-lettered")]
+  static partial void LogControlPlaneDropped(ILogger logger, Guid messageId, string messageType, int attempts);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
