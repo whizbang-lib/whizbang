@@ -103,6 +103,18 @@ public sealed partial class IntegrityAuditWorker(
     var settle = TimeSpan.FromMinutes(_options.AuditSettleWindowMinutes);
     var metrics = services.GetService<Observability.StreamIntegrityMetrics>();
 
+    // ── one audit per SERVICE per cycle ──────────────────────────────────
+    // The same first-instance-wins discipline schema init (advisory lock) and the deep prune
+    // (settings CAS) already apply: replicas race a shared watermark, one wins the cycle, the
+    // rest skip. Without this every replica runs its own full-store digest recompute — identical
+    // results, multiplied load. Half the interval: replicas starting together dedupe, and the
+    // next legitimate cycle is never blocked by its own previous claim.
+    var claimWindow = TimeSpan.FromMinutes(Math.Max(1, _options.AuditIntervalMinutes) / 2.0);
+    if (!await coordinator.TryClaimIntegrityAuditCycleAsync(claimWindow, cancellationToken).ConfigureAwait(false)) {
+      LogAuditCycleAlreadyClaimed(_logger, claimWindow.TotalMinutes);
+      return;
+    }
+
     // ── A1c: the full-sweep cadence ──────────────────────────────────────
     // Steady-state cycles run on the incrementally-maintained digest table (O(buckets), with
     // settle-skip on busy buckets). Every Nth cycle is the trust-but-verify sweep: heal our OWN
@@ -255,4 +267,8 @@ public sealed partial class IntegrityAuditWorker(
     Message = "Manifest request to '{OriginServiceName}' ({OriginServiceId}) withheld — no origin-carried " +
               "request address yet; the origin's next checkpoint teaches it")]
   static partial void LogManifestRequestSkippedNoTopic(ILogger logger, string originServiceName, Guid originServiceId);
+
+  [LoggerMessage(EventId = 89, Level = LogLevel.Debug,
+    Message = "Audit cycle skipped — a sibling instance claimed it within the last {ClaimWindowMinutes} minute(s)")]
+  static partial void LogAuditCycleAlreadyClaimed(ILogger logger, double claimWindowMinutes);
 }

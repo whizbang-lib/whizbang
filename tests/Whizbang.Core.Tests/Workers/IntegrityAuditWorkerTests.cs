@@ -106,6 +106,49 @@ public class IntegrityAuditWorkerTests {
                "request must carry a session key in its destination metadata.");
   }
 
+  [Test]
+  public async Task ClaimDenied_SkipsTheWholeCycleAsync() {
+    var coordinator = new _auditCoordinator {
+      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }],
+      AuditClaimResult = false,
+    };
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var dispatcher = new _captureDispatcher();
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, dispatcher, transport, new StreamIntegrityOptions(), tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.AuditClaimCalls).IsEqualTo(1);
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("a sibling instance already ran this cycle — the audit is per-SERVICE work, and " +
+               "every replica re-running the full-store digest recompute is exactly the fleet-wide " +
+               "load multiplier that saturated a shared database server.");
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no manifests are requested by a losing replica — the winner's cycle covers the service.");
+  }
+
+  [Test]
+  public async Task ClaimGranted_RunsAndPassesHalfTheIntervalAsWindowAsync() {
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+      new StreamIntegrityOptions { AuditIntervalMinutes = 60 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.AuditClaimCalls).IsEqualTo(1);
+    await Assert.That(coordinator.AuditClaimWindow).IsEqualTo(TimeSpan.FromMinutes(30))
+      .Because("the claim window is half the audit interval — long enough that replicas starting " +
+               "together dedupe, short enough that the next legitimate cycle is never blocked by " +
+               "its own previous claim.");
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("the winning replica runs the cycle normally.");
+  }
+
   // ── A1c: hierarchical requests + the full-sweep cadence ─────────────────
 
   [Test]
@@ -322,6 +365,15 @@ public class IntegrityAuditWorkerTests {
     public List<PerspectiveCoverageGap> Gaps { get; init; } = [];
     public int VerifyCalls { get; private set; }
     public int? LastMaxGaps { get; private set; }
+    public bool AuditClaimResult { get; init; } = true;
+    public int AuditClaimCalls { get; private set; }
+    public TimeSpan? AuditClaimWindow { get; private set; }
+
+    public Task<bool> TryClaimIntegrityAuditCycleAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) {
+      AuditClaimCalls++;
+      AuditClaimWindow = claimWindow;
+      return Task.FromResult(AuditClaimResult);
+    }
 
     public Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
       TimeSpan settleWindow, int maxGaps, CancellationToken cancellationToken = default) {
