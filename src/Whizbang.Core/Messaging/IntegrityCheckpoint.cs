@@ -311,6 +311,37 @@ public sealed class StreamIntegrityOptions {
   public int MaxCoverageGapReportsPerAudit { get; set; } = 100;
 
   /// <summary>
+  /// Hard cap on divergence REPORTS published per manifest comparison (default 100). The sibling
+  /// of <see cref="MaxCoverageGapReportsPerAudit"/>, and it exists for the identical reason: each
+  /// report is a durable outbox write, so an unbounded per-stream loop is thousands of sequential
+  /// database round-trips inside one message handler. That starved the host's HTTP pipeline until
+  /// the always-healthy liveness endpoint stopped answering, and the fleet entered a restart loop
+  /// — audit, starve, get killed, restart, audit again.
+  /// <para>
+  /// A manifest carries up to <see cref="MaxDigestsPerManifest"/> buckets, so the cap must sit
+  /// below it to bound the fan-out. Suppressed divergences are not lost: the ledger keeps them
+  /// unhealed, and the next comparison re-offers whatever is still divergent, so a persistent
+  /// problem still converges — it just stops trying to name every stream in one breath.
+  /// </para>
+  /// </summary>
+  public int MaxDivergenceReportsPerManifest { get; set; } = 100;
+
+  /// <summary>
+  /// Hard cap on confirmed-gap REPORTS published per received checkpoint (default 100). The third
+  /// member of the same family as <see cref="MaxCoverageGapReportsPerAudit"/> and
+  /// <see cref="MaxDivergenceReportsPerManifest"/>: <see cref="MaxAutoRepairRequestsPerCheckpoint"/>
+  /// already bounded the repairs in that loop, but the report published alongside them ran free.
+  /// Pending gaps are keyed by (tenant, event type), so their number grows with the deployment, not
+  /// with any batch size — and each report is a durable outbox write on the same thread that owes
+  /// the liveness probe an answer.
+  /// <para>
+  /// Suppressed gaps are not lost: an unhealed deficit is re-detected on the next checkpoint, so
+  /// the condition keeps surfacing until it is actually repaired.
+  /// </para>
+  /// </summary>
+  public int MaxGapReportsPerCheckpoint { get; set; } = 100;
+
+  /// <summary>
   /// A1c: every Nth audit cycle is a FULL SWEEP (default 7 — weekly at the daily default): the
   /// worker verifies + heals its own digest table against a full recompute
   /// (<see cref="IWorkCoordinator.VerifyDigestTableAsync"/>) and the manifest exchange runs on

@@ -57,6 +57,32 @@ public class IntegrityCheckpointReceptorTests {
   }
 
   [Test]
+  public async Task ManyConfirmedGaps_ReportsAreCapped_WithOneSummaryAsync() {
+    // Found by scripts/Lint-UnboundedFanOut.ps1, not by review: MaxAutoRepairRequestsPerCheckpoint
+    // caps the REPAIRS in this loop while the IntegrityGapDetected publish next to it runs free.
+    // That is the same asymmetry that took the fleet down through the manifest comparator -- each
+    // report is a durable outbox write, so one per confirmed gap is unbounded sequential I/O
+    // inside a single handler, and pendings grow with (tenant x event type), not with a batch size.
+    const int cap = 5;
+    var fx = _fixture(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.ReportOnly,
+      MaxGapReportsPerCheckpoint = cap,
+    });
+    // Every bucket stays short on the recount, so every pending confirms as a real gap.
+    fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 0 }];
+
+    var tenants = Enumerable.Range(1, 60).Select(i => $"tenant-{i}").ToList();
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3, tenantScopes: tenants));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    var reports = fx.Dispatcher.Published.OfType<IntegrityGapDetected>().ToList();
+    await Assert.That(reports.Count).IsLessThanOrEqualTo(cap)
+      .Because("each gap report is a durable write; an unbounded fan-out starves the pipeline.");
+    await Assert.That(reports.Count).IsGreaterThan(0)
+      .Because("capping must not silence gaps entirely — the first ones still have to be named.");
+  }
+
+  [Test]
   public async Task DeficitPersistingPastNextCheckpoint_ConfirmsAndReportsAsync() {
     var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly });
     fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
@@ -266,7 +292,8 @@ public class IntegrityCheckpointReceptorTests {
   }
 
   private static IntegrityCheckpoint _checkpoint(
-      _fixtureState fx, long from, long to, int count, bool emptyBuckets = false, string? requestTopic = null) => new() {
+      _fixtureState fx, long from, long to, int count, bool emptyBuckets = false, string? requestTopic = null,
+      IReadOnlyList<string>? tenantScopes = null) => new() {
         CheckpointStreamId = fx.OriginId,
         OriginServiceId = fx.OriginId,
         OriginServiceName = "origin-svc",
@@ -275,7 +302,11 @@ public class IntegrityCheckpointReceptorTests {
         ToCommitSequence = to,
         Buckets = emptyBuckets
       ? []
-      : [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = count }],
+      : tenantScopes is not null
+        // Pendings are keyed by (tenant, event type), so a multi-tenant window is how the confirmed-gap
+        // count grows past anything a batch size bounds — the shape that has to stay capped.
+        ? [.. tenantScopes.Select(t => new CheckpointBucket { TenantScope = t, EventType = _verifiedType, Count = count })]
+        : [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = count }],
       };
 
   // ── fakes ───────────────────────────────────────────────────────────────

@@ -213,6 +213,10 @@ public sealed partial class IntegrityManifestReceptor(
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     var repairBudget = options.MaxAutoRepairRequestsPerAudit;
     var repairBatches = new Dictionary<(string? TenantScope, string EventType), List<Guid>>();
+    var divergenceTallies = new Dictionary<(string? TenantScope, string EventType), _divergenceTally>();
+    var reportCap = Math.Max(1, options.MaxDivergenceReportsPerManifest);
+    var reportsPublished = 0;
+    var divergentSeen = 0;
     foreach (var origin in message.Digests) {
       localByBucket.TryGetValue((origin.TenantScope, origin.EventType, origin.StreamId), out var mine);
       var key = new IntegrityRepairLedger.DivergenceKey(
@@ -245,6 +249,17 @@ public sealed partial class IntegrityManifestReceptor(
       if (!shouldReport) {
         continue;   // same unhealed divergence inside the cooldown — cadence, not news.
       }
+
+      // Each report is a durable outbox write. Past the cap we stop publishing and only count:
+      // a manifest carries up to MaxDigestsPerManifest buckets, and issuing that many sequential
+      // writes inside one handler starved the HTTP pipeline until liveness failed and the pod was
+      // killed. Nothing is lost — the ledger keeps these unhealed, so the next comparison
+      // re-offers whatever is still divergent and a real problem still converges.
+      divergentSeen++;
+      if (reportsPublished >= reportCap) {
+        continue;
+      }
+      reportsPublished++;
       await dispatcher.PublishAsync(new IntegrityDivergenceDetected {
         ReportStreamId = TrackedGuid.NewMedo().Value,
         OriginServiceId = message.OriginServiceId,
@@ -256,8 +271,26 @@ public sealed partial class IntegrityManifestReceptor(
         LocalCount = mine?.EventCount ?? 0,
         AutoRepairRequested = autoRepair,
       }).ConfigureAwait(false);
-      LogDivergence(logger, origin.EventType, origin.TenantScope, origin.StreamId,
-        message.OriginServiceName, origin.EventCount, mine?.EventCount ?? 0, autoRepair);
+
+      // Aggregate rather than log per stream. One line per (tenant, type) carrying a count and a
+      // sample is what an operator can actually act on; hundreds of near-identical lines bury the
+      // signal and cost real work on the same thread that owes the liveness probe an answer.
+      if (!divergenceTallies.TryGetValue((origin.TenantScope, origin.EventType), out var tally)) {
+        tally = new _divergenceTally { SampleStreamId = origin.StreamId };
+        divergenceTallies[(origin.TenantScope, origin.EventType)] = tally;
+      }
+      tally.Count++;
+      tally.OriginTotal += origin.EventCount;
+      tally.LocalTotal += mine?.EventCount ?? 0;
+      tally.AnyAutoRepair |= autoRepair;
+    }
+
+    foreach (var ((tenantScope, eventType), tally) in divergenceTallies) {
+      LogDivergence(logger, eventType, tenantScope, tally.Count, tally.SampleStreamId,
+        message.OriginServiceName, tally.OriginTotal, tally.LocalTotal, tally.AnyAutoRepair);
+    }
+    if (divergentSeen > reportsPublished) {
+      LogDivergenceReportsCapped(logger, message.OriginServiceName, divergentSeen, reportsPublished);
     }
 
     // One directed request per divergent (tenant, type) — per-stream commands multiplied every
@@ -418,11 +451,31 @@ public sealed partial class IntegrityManifestReceptor(
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 
+  /// <summary>
+  /// Running per-(tenant, type) totals so divergence is logged once per bucket instead of once per
+  /// stream. Hundreds of near-identical lines cost real work on the thread that owes the liveness
+  /// probe an answer, and bury the signal an operator is actually looking for.
+  /// </summary>
+  private sealed class _divergenceTally {
+    public int Count;
+    public long OriginTotal;
+    public long LocalTotal;
+    public bool AnyAutoRepair;
+    public Guid SampleStreamId;
+  }
+
   [LoggerMessage(EventId = 54, Level = LogLevel.Warning,
-    Message = "AUDIT divergence: {EventType} (tenant {TenantScope}) stream {AuditedStreamId} vs origin " +
-              "'{OriginServiceName}' — origin {OriginCount}, local {LocalCount} (autoRepair={AutoRepairRequested})")]
-  static partial void LogDivergence(ILogger logger, string eventType, string? tenantScope, Guid auditedStreamId,
-    string originServiceName, int originCount, int localCount, bool autoRepairRequested);
+    Message = "AUDIT divergence: {EventType} (tenant {TenantScope}) — {DivergentStreams} stream(s) vs origin " +
+              "'{OriginServiceName}' (e.g. {SampleStreamId}); origin {OriginTotal}, local {LocalTotal} " +
+              "(autoRepair={AutoRepairRequested})")]
+  static partial void LogDivergence(ILogger logger, string eventType, string? tenantScope, int divergentStreams,
+    Guid sampleStreamId, string originServiceName, long originTotal, long localTotal, bool autoRepairRequested);
+
+  [LoggerMessage(EventId = 57, Level = LogLevel.Warning,
+    Message = "AUDIT divergence reports capped for origin '{OriginServiceName}': {DivergentStreams} divergent, " +
+              "{Reported} reported. The remainder stays unhealed in the ledger and is re-offered next comparison.")]
+  static partial void LogDivergenceReportsCapped(ILogger logger, string originServiceName, int divergentStreams,
+    int reported);
 
   [LoggerMessage(EventId = 55, Level = LogLevel.Warning,
     Message = "AUDIT type-level mismatch vs origin '{OriginServiceName}': drilling down to stream level for " +

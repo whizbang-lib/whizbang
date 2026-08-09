@@ -241,7 +241,12 @@ public partial class PerspectiveWorker(
 
   // Metrics tracking
   private int _consecutiveEmptyPolls;
-  private bool _isIdle = true;  // Start in idle state
+  // int, not bool, so the idle<->active transition can be a single atomic compare-and-swap.
+  // _updateWorkStateTracking runs on EVERY drain consumer concurrently; with a plain read-then-write
+  // two pollers could both observe idle and both fire Started, and an idle transition on one thread
+  // could land between another thread's flip and a handler's read of IsIdle -- so a handler invoked
+  // for "work started" could observe IsIdle == true. 1 = idle, 0 = active. Starts idle.
+  private int _isIdle = 1;
   private int _batchCycleCount;
 
   // Wake signal: allows external callers to interrupt the polling delay
@@ -271,7 +276,7 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Gets whether the worker is currently in idle state (no work being processed).
   /// </summary>
-  public bool IsIdle => _isIdle;
+  public bool IsIdle => Volatile.Read(ref _isIdle) == 1;
 
   /// <summary>
   /// Event fired when work processing starts (idle → active transition).
@@ -1100,7 +1105,7 @@ public partial class PerspectiveWorker(
     _metrics?.BatchesProcessed.Add(1);
     _metrics?.BatchDuration.Record(batchSw.Elapsed.TotalMilliseconds);
     if (_logger.IsEnabled(LogLevel.Debug)) {
-      LogDrainCycleComplete(_logger, !_isIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
+      LogDrainCycleComplete(_logger, !IsIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
     }
     OnBatchCycleComplete?.Invoke();
   }
@@ -3569,9 +3574,10 @@ public partial class PerspectiveWorker(
       // Reset empty poll counter
       Interlocked.Exchange(ref _consecutiveEmptyPolls, 0);
 
-      // Transition to active if was idle
-      if (_isIdle) {
-        _isIdle = false;
+      // Only the consumer that actually WINS the transition fires the event. The CAS makes the
+      // flip and the claim one operation, so the state is already Active for every observer by the
+      // time any handler runs.
+      if (Interlocked.CompareExchange(ref _isIdle, 0, 1) == 1) {
         OnWorkProcessingStarted?.Invoke();
         LogPerspectiveProcessingStarted(_logger);
       }
@@ -3581,8 +3587,8 @@ public partial class PerspectiveWorker(
       _metrics?.EmptyBatches.Add(1);
 
       // Check if should transition to idle
-      if (!_isIdle && _consecutiveEmptyPolls >= _options.IdleThresholdPolls) {
-        _isIdle = true;
+      if (Volatile.Read(ref _consecutiveEmptyPolls) >= _options.IdleThresholdPolls
+          && Interlocked.CompareExchange(ref _isIdle, 1, 0) == 0) {
         OnWorkProcessingIdle?.Invoke();
         LogPerspectiveProcessingIdle(_logger, _consecutiveEmptyPolls);
       }
