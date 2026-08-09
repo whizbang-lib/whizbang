@@ -2906,4 +2906,148 @@ namespace TestNamespace {
   }
 
   #endregion
+
+  #region CreateEmptyModel direct construction (no reflection)
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_CreateEmptyModel_UsesDirectConstructionWithoutReflectionAsync() {
+    // Arrange - the generated CreateEmptyModel must construct the model
+    // directly instead of Activator.CreateInstance + PropertyInfo.SetValue
+    // (reflection is banned and breaks AOT).
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TestNamespace {
+  public record WidgetCreatedEvent : IEvent {
+    public Guid WidgetId { get; init; }
+  }
+
+  public record WidgetReadModel {
+    [StreamId]
+    public Guid WidgetId { get; init; }
+    public string Status { get; init; } = "";
+  }
+
+  public class WidgetPerspective : IPerspectiveFor<WidgetReadModel, WidgetCreatedEvent> {
+    public WidgetReadModel Apply(WidgetReadModel currentData, WidgetCreatedEvent @event) {
+      return new WidgetReadModel { WidgetId = @event.WidgetId, Status = "Created" };
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "WidgetPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).DoesNotContain("Activator.CreateInstance")
+      .Because("CreateEmptyModel must not use runtime activation; reflection breaks AOT.");
+    await Assert.That(runnerSource).DoesNotContain(".GetProperty(")
+      .Because("CreateEmptyModel must not assign the stream key via reflection.");
+    await Assert.That(runnerSource).Contains("new global::TestNamespace.WidgetReadModel { WidgetId = streamId }");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_StronglyTypedStreamId_ConstructsViaFromFactoryAsync() {
+    // Arrange - a model whose [StreamId] property is a strongly-typed id
+    // struct with a static From(Guid) factory. The reflection-based
+    // CreateEmptyModel threw ArgumentException at runtime ('System.Guid'
+    // cannot be converted); direct construction must use the factory.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TestNamespace {
+  public readonly struct WidgetId {
+    public Guid Value { get; }
+    private WidgetId(Guid value) { Value = value; }
+    public static WidgetId From(Guid value) => new WidgetId(value);
+  }
+
+  public record WidgetCreatedEvent : IEvent {
+    public Guid WidgetId { get; init; }
+  }
+
+  public record WidgetReadModel {
+    [StreamId]
+    public WidgetId WidgetId { get; init; }
+    public string Status { get; init; } = "";
+  }
+
+  public class WidgetPerspective : IPerspectiveFor<WidgetReadModel, WidgetCreatedEvent> {
+    public WidgetReadModel Apply(WidgetReadModel currentData, WidgetCreatedEvent @event) {
+      return currentData with { Status = "Created" };
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "WidgetPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("global::TestNamespace.WidgetId.From(streamId)")
+      .Because("strongly-typed stream ids must be constructed through their From(Guid) factory.");
+    await Assert.That(runnerSource).DoesNotContain("Activator.CreateInstance");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_RequiredModelMembers_AreInitializedSoGeneratedCodeCompilesAsync() {
+    // Arrange - required members must appear in the object initializer or the
+    // generated runner will not compile in the consumer's build.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TestNamespace {
+  public record WidgetCreatedEvent : IEvent {
+    public Guid WidgetId { get; init; }
+  }
+
+  public record WidgetReadModel {
+    [StreamId]
+    public required Guid WidgetId { get; init; }
+    public required string Name { get; init; }
+  }
+
+  public class WidgetPerspective : IPerspectiveFor<WidgetReadModel, WidgetCreatedEvent> {
+    public WidgetReadModel Apply(WidgetReadModel currentData, WidgetCreatedEvent @event) {
+      return currentData with { Name = "Created" };
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "WidgetPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("WidgetId = streamId");
+    await Assert.That(runnerSource).Contains("Name = default!")
+      .Because("other required members must be explicitly initialized (to default!, matching the old reflection behavior of leaving them unset).");
+  }
+
+  #endregion
 }
