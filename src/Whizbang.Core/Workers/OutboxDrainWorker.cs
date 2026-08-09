@@ -274,21 +274,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // "look me up by message_id" — the documented singleton-stream sentinel).
       var perStream = rowsRaw
         .GroupBy(_drainKey)
-        .ToDictionary(g => g.Key, g => (IReadOnlyList<OutboxBatchRow>)[.. g]);
+        .ToDictionary(g => g.Key, g => (IReadOnlyList<OutboxBatchRow>?)[.. g]);
 
-      var parallelOpts = new ParallelOptions {
-        MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
-        CancellationToken = ct,
-      };
-      await Parallel.ForEachAsync(perStream, parallelOpts, async (entry, innerCt) => {
-        try {
-          await _drainStreamInnerAsync(entry.Key, innerCt, prefetched: entry.Value);
-        } catch (OperationCanceledException) when (innerCt.IsCancellationRequested) {
-          throw;
-        } catch (Exception ex) {
-          LogDrainError(_logger, entry.Key, ex);
-        }
-      });
+      await _drainEachAsync(perStream, ct);
     } finally {
       // Always release the markers, even if the batched fetch threw before any dispatch —
       // otherwise the channel believes these streams are permanently mid-drain and
@@ -304,18 +292,28 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// failing stream is isolated from its siblings. This is the pre-batching behaviour, kept as
   /// the error path only.
   /// </summary>
-  private async Task _drainStreamsIndividuallyAsync(IReadOnlyList<Guid> streamIds, CancellationToken ct) {
+  private Task _drainStreamsIndividuallyAsync(IReadOnlyList<Guid> streamIds, CancellationToken ct) =>
+    // No prefetched page for any stream — each drains with its own fetch.
+    _drainEachAsync(streamIds.Select(id => KeyValuePair.Create(id, (IReadOnlyList<OutboxBatchRow>?)null)), ct);
+
+  /// <summary>
+  /// Drains each entry concurrently — capped by <c>MaxConcurrentStreams</c>, with per-stream
+  /// error isolation so one stream's failure never stops its siblings. The batched and fallback
+  /// paths differ only in whether an entry carries a prefetched page, so both route through here.
+  /// </summary>
+  private Task _drainEachAsync(
+      IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work, CancellationToken ct) {
     var parallelOpts = new ParallelOptions {
       MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
       CancellationToken = ct,
     };
-    await Parallel.ForEachAsync(streamIds, parallelOpts, async (streamId, innerCt) => {
+    return Parallel.ForEachAsync(work, parallelOpts, async (entry, innerCt) => {
       try {
-        await _drainStreamInnerAsync(streamId, innerCt);
+        await _drainStreamInnerAsync(entry.Key, innerCt, prefetched: entry.Value);
       } catch (OperationCanceledException) when (innerCt.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
-        LogDrainError(_logger, streamId, ex);
+        LogDrainError(_logger, entry.Key, ex);
       }
     });
   }
