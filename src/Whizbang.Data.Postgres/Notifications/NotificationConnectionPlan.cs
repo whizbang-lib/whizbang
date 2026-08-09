@@ -18,6 +18,10 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <see cref="NpgsqlConnection"/> from a possibly credential-stripped string.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/NotificationConnectionPlanTests.cs:Create_WithRegisteredDataSource_PrefersTheDataSourceAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/NotificationConnectionPlanTests.cs:Create_WithNullDataSourceWrapper_FallsBackToTheConnectionStringAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/NotificationConnectionPlanTests.cs:Create_WithNoDataSourceRegistration_UsesTheConnectionStringAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/NotificationConnectionPlanTests.cs:Create_WithNeitherPath_IsUnavailableAsync</tests>
 public sealed class NotificationConnectionPlan {
   private NotificationConnectionPlan(
       NpgsqlDataSource? dataSource,
