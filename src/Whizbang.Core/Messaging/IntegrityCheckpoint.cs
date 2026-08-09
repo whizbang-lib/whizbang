@@ -311,6 +311,22 @@ public sealed class StreamIntegrityOptions {
   public int MaxCoverageGapReportsPerAudit { get; set; } = 100;
 
   /// <summary>
+  /// Hard cap on divergence REPORTS published per manifest comparison (default 100). The sibling
+  /// of <see cref="MaxCoverageGapReportsPerAudit"/>, and it exists for the identical reason: each
+  /// report is a durable outbox write, so an unbounded per-stream loop is thousands of sequential
+  /// database round-trips inside one message handler. That starved the host's HTTP pipeline until
+  /// the always-healthy liveness endpoint stopped answering, and the fleet entered a restart loop
+  /// — audit, starve, get killed, restart, audit again.
+  /// <para>
+  /// A manifest carries up to <see cref="MaxDigestsPerManifest"/> buckets, so the cap must sit
+  /// below it to bound the fan-out. Suppressed divergences are not lost: the ledger keeps them
+  /// unhealed, and the next comparison re-offers whatever is still divergent, so a persistent
+  /// problem still converges — it just stops trying to name every stream in one breath.
+  /// </para>
+  /// </summary>
+  public int MaxDivergenceReportsPerManifest { get; set; } = 100;
+
+  /// <summary>
   /// A1c: every Nth audit cycle is a FULL SWEEP (default 7 — weekly at the daily default): the
   /// worker verifies + heals its own digest table against a full recompute
   /// (<see cref="IWorkCoordinator.VerifyDigestTableAsync"/>) and the manifest exchange runs on

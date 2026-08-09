@@ -97,6 +97,49 @@ public class IntegrityManifestReceptorTests {
   }
 
   [Test]
+  public async Task ManifestReceptor_MassDivergence_ReportsAreCapped_WithOneSummaryAsync() {
+    // The comparator publishes one IntegrityDivergenceDetected per divergent stream, and each
+    // publish is a durable outbox write. At N=2 that is invisible; at N=500 (MaxDigestsPerManifest)
+    // it is 500 sequential database round-trips inside a single message handler, on one thread.
+    // That starves the host's HTTP pipeline hard enough that the always-healthy /alive liveness
+    // endpoint stops answering, so the pod is killed, restarts, re-audits, and starves again —
+    // observed live as a fleet-wide restart loop.
+    //
+    // The audit worker already caps its equivalent fan-out (MaxCoverageGapReportsPerAudit) and
+    // emits a single summary past the cap. The comparator is the other half of the same exchange
+    // and must be bounded the same way. Every existing comparator test runs at N=2-3, which is
+    // exactly why this class of defect reached production: the behavior was correct, the VOLUME
+    // was never asserted.
+    var coordinator = new _auditCoordinator();
+    coordinator.ReceivedDigests = [];                       // every incoming stream is a divergence
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    const int cap = 10;
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions {
+        RepairMode = IntegrityRepairMode.ReportOnly,
+        MaxDivergenceReportsPerManifest = cap,
+      },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var digests = Enumerable.Range(1, 200)
+      .Select(i => _digest(TrackedGuid.NewMedo().Value, i, i + 1, i))
+      .ToList();
+
+    await receptor.HandleAsync(_manifest(coordinator, digests));
+
+    var reports = dispatcher.Published.Cast<IntegrityDivergenceDetected>().ToList();
+    await Assert.That(reports.Count).IsLessThanOrEqualTo(cap)
+      .Because("each report is a durable write; an unbounded fan-out is what starves the pipeline.");
+    await Assert.That(reports.Count).IsGreaterThan(0)
+      .Because("capping must not silence divergence entirely — the first ones still have to be named.");
+  }
+
+  [Test]
   public async Task ManifestReceptor_Divergence_ReportsAndCappedRepairsAsync() {
     var coordinator = new _auditCoordinator();
     var mismatched = TrackedGuid.NewMedo().Value;
