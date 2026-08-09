@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Lifecycle Coordinator: WhenAll Pattern</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    :root { --control-bar-height: 190px; }
+    .animation-viewport { display: flex; flex-direction: column; padding: 12px 20px; gap: 8px; }
+
+    .section-label {
+      font-size: 9px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text-muted); text-align: center;
+    }
+
+    /* Parallel paths layout */
+    .paths-row {
+      display: grid; grid-template-columns: 1fr 80px 1fr; gap: 8px; align-items: start;
+    }
+    .path-col { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+    .path-col .node { position: relative; width: 100%; max-width: 280px; font-size: 11px; padding: 6px 12px; }
+
+    /* Coordinator center */
+    .coord-center {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    }
+    .coord-badge {
+      padding: 4px 10px; border-radius: 12px; font-size: 9px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
+      transition: all var(--transition-normal); text-align: center;
+    }
+    .coord-badge.waiting { background: var(--phase-cascade-bg); border-color: var(--warning); color: var(--phase-cascade); }
+    .coord-badge.ready { background: var(--phase-perspective-bg); border-color: var(--success); color: var(--success); }
+
+    /* Expectation tracker */
+    .tracker {
+      width: 100%; max-width: 320px; margin: 0 auto;
+      background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 12px; font-size: 10px;
+      transition: border-color var(--transition-normal);
+    }
+    .tracker.active { border-color: var(--wb-cyan); }
+    .tracker .t-title { font-weight: 700; font-size: 10px; margin-bottom: 4px; text-align: center; }
+    .tracker .t-row {
+      display: flex; align-items: center; gap: 8px; padding: 2px 0;
+    }
+    .tracker .t-source { min-width: 80px; font-weight: 600; }
+    .tracker .t-status {
+      padding: 1px 6px; border-radius: 8px; font-size: 8px; font-weight: 700;
+      text-transform: uppercase;
+    }
+    .t-status.pending { background: var(--phase-cascade-bg); color: var(--phase-cascade); }
+    .t-status.done { background: var(--phase-perspective-bg); color: var(--success); }
+
+    /* Final stage */
+    .final-row { display: flex; justify-content: center; }
+    .final-row .node { position: relative; width: auto; max-width: 320px; font-size: 11px; padding: 8px 20px; }
+  </style>
+</head>
+<body>
+<div class="animation-viewport" id="viewport">
+  <div class="section-label">Event enters via Dispatcher — DispatchModes.Both splits into two paths</div>
+
+  <div class="paths-row">
+    <!-- Local Path -->
+    <div class="path-col" id="path-local">
+      <div class="node" id="n-local-entry"><span class="label">Local Path</span><span class="sublabel">ImmediateDetached → local receptors</span></div>
+      <div class="node" id="n-local-receptor"><span class="label">Local Receptors</span><span class="sublabel">HandleAsync(event)</span></div>
+      <div class="node" id="n-local-perspectives"><span class="label">Perspective Workers</span><span class="sublabel">Apply → read model update</span></div>
+      <div class="node" id="n-local-signal"><span class="label">SignalSegmentComplete</span><span class="sublabel">source: Local</span></div>
+    </div>
+
+    <!-- Coordinator Center -->
+    <div class="coord-center">
+      <div class="coord-badge" id="cb-tracking">Tracking</div>
+      <div class="coord-badge" id="cb-expect">Expecting</div>
+      <div class="coord-badge" id="cb-status">Status</div>
+    </div>
+
+    <!-- Distributed Path -->
+    <div class="path-col" id="path-dist">
+      <div class="node" id="n-dist-entry"><span class="label">Distributed Path</span><span class="sublabel">Outbox → transport → inbox</span></div>
+      <div class="node" id="n-dist-outbox"><span class="label">Outbox Worker</span><span class="sublabel">publish to transport</span></div>
+      <div class="node" id="n-dist-inbox"><span class="label">Inbox Consumer</span><span class="sublabel">receive + process</span></div>
+      <div class="node" id="n-dist-signal"><span class="label">SignalSegmentComplete</span><span class="sublabel">source: Distributed</span></div>
+    </div>
+  </div>
+
+  <!-- Expectation Tracker -->
+  <div class="tracker" id="trk">
+    <div class="t-title">LifecycleCoordinator — ExpectCompletionsFrom</div>
+    <div class="t-row"><span class="t-source">Local</span><span class="t-status pending" id="ts-local">pending</span></div>
+    <div class="t-row"><span class="t-source">Distributed</span><span class="t-status pending" id="ts-dist">pending</span></div>
+  </div>
+
+  <!-- PostLifecycle -->
+  <div class="final-row">
+    <div class="node" id="n-postlifecycle"><span class="label">PostLifecycleDetached / PostLifecycleInline</span><span class="sublabel">fires once — after ALL paths complete</span></div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function glow(id) { $(id).classList.add('glow'); }
+function unglow(id) { $(id).classList.remove('glow'); }
+function resetAll() {
+  document.querySelectorAll('.node').forEach(n => n.classList.remove('glow','active','highlight-success'));
+  $('cb-tracking').className = 'coord-badge';
+  $('cb-expect').className = 'coord-badge';
+  $('cb-status').className = 'coord-badge';
+  $('cb-tracking').textContent = 'Tracking';
+  $('cb-expect').textContent = 'Expecting';
+  $('cb-status').textContent = 'Status';
+  $('ts-local').className = 't-status pending'; $('ts-local').textContent = 'pending';
+  $('ts-dist').className = 't-status pending'; $('ts-dist').textContent = 'pending';
+  $('trk').classList.remove('active');
+}
+
+const steps = [
+  {
+    id: 'begin', label: 'BeginTracking', duration: 2800,
+    narration: 'Event enters via Dispatcher. <code>LifecycleCoordinator.BeginTracking(eventId, envelope, ImmediateDetached, Local)</code> creates a tracking handle. The coordinator tracks this event through all lifecycle stages.',
+    onEnter() { glow('n-local-entry'); glow('n-dist-entry'); $('cb-tracking').classList.add('waiting'); $('cb-tracking').textContent = 'BeginTracking'; },
+    onExit: resetAll
+  },
+  {
+    id: 'expect', label: 'ExpectCompletionsFrom', duration: 3000,
+    narration: '<code>ExpectCompletionsFrom(eventId, Local, Distributed)</code> — because <code>DispatchModes.Both</code> was used, the coordinator registers TWO required completion sources. PostLifecycle will only fire when both signal complete.',
+    onEnter() { $('cb-expect').classList.add('waiting'); $('cb-expect').textContent = 'Expect: Local + Distributed';
+      $('trk').classList.add('active'); },
+    onExit: resetAll
+  },
+  {
+    id: 'local-receptors', label: 'Local Path: Receptors', duration: 2500,
+    narration: 'Local path begins: <code>ImmediateDetached</code> stage fires local receptors. <code>HandleAsync(event)</code> processes the event in-process. Meanwhile, the distributed path runs in parallel.',
+    onEnter() { glow('n-local-receptor'); $('trk').classList.add('active'); $('cb-expect').classList.add('waiting'); $('cb-expect').textContent = 'Expect: Local + Distributed'; },
+    onExit: resetAll
+  },
+  {
+    id: 'local-perspectives', label: 'Local Path: Perspectives', duration: 2500,
+    narration: 'Local perspective workers process the event: <code>PerspectiveRunner.RunAsync()</code> applies the event to read models. Checkpoint updated.',
+    onEnter() { glow('n-local-perspectives'); $('n-local-receptor').classList.add('highlight-success');
+      $('trk').classList.add('active'); $('cb-expect').classList.add('waiting'); $('cb-expect').textContent = 'Expect: Local + Distributed'; },
+    onExit: resetAll
+  },
+  {
+    id: 'local-signal', label: 'Local Path Signals Complete', duration: 3000,
+    narration: '<code>SignalSegmentCompleteAsync(eventId, PostLifecycleCompletionSource.Local)</code> — the local path is done. Coordinator checks: are all expected sources complete? Distributed is still pending — NOT YET. Wait.',
+    onEnter() { glow('n-local-signal'); $('n-local-receptor').classList.add('highlight-success'); $('n-local-perspectives').classList.add('highlight-success');
+      $('ts-local').className = 't-status done'; $('ts-local').textContent = 'done';
+      $('trk').classList.add('active');
+      $('cb-status').classList.add('waiting'); $('cb-status').textContent = '1/2 — waiting'; },
+    onExit: resetAll
+  },
+  {
+    id: 'dist-outbox', label: 'Distributed Path: Outbox', duration: 2500,
+    narration: 'Meanwhile, the distributed path: <code>OutboxWorker</code> claims the message, publishes to transport (Kafka/RabbitMQ/Service Bus).',
+    onEnter() { glow('n-dist-outbox');
+      $('ts-local').className = 't-status done'; $('ts-local').textContent = 'done';
+      $('trk').classList.add('active'); $('cb-status').classList.add('waiting'); $('cb-status').textContent = '1/2 — waiting'; },
+    onExit: resetAll
+  },
+  {
+    id: 'dist-inbox', label: 'Distributed Path: Inbox', duration: 2500,
+    narration: '<code>TransportConsumer</code> receives the message in another service. <code>InboxRecord</code> deduplication check passes. Receptors invoked.',
+    onEnter() { glow('n-dist-inbox'); $('n-dist-outbox').classList.add('highlight-success');
+      $('ts-local').className = 't-status done'; $('ts-local').textContent = 'done';
+      $('trk').classList.add('active'); $('cb-status').classList.add('waiting'); $('cb-status').textContent = '1/2 — waiting'; },
+    onExit: resetAll
+  },
+  {
+    id: 'dist-signal', label: 'Distributed Path Signals Complete', duration: 3000,
+    narration: '<code>SignalSegmentCompleteAsync(eventId, PostLifecycleCompletionSource.Distributed)</code> — the distributed path is done. Coordinator checks: Local done, Distributed done. ALL COMPLETE. Fire PostLifecycle!',
+    onEnter() { glow('n-dist-signal'); $('n-dist-outbox').classList.add('highlight-success'); $('n-dist-inbox').classList.add('highlight-success');
+      $('ts-local').className = 't-status done'; $('ts-local').textContent = 'done';
+      $('ts-dist').className = 't-status done'; $('ts-dist').textContent = 'done';
+      $('trk').classList.add('active');
+      $('cb-status').classList.add('ready'); $('cb-status').textContent = '2/2 — ALL COMPLETE'; },
+    onExit: resetAll
+  },
+  {
+    id: 'postlifecycle', label: 'PostLifecycle Fires', duration: 3000,
+    narration: '<code>PostLifecycleDetached</code> and <code>PostLifecycleInline</code> stages fire EXACTLY ONCE for this event. Receptors registered at these stages execute (cleanup, audit, notifications). <code>AbandonTracking(eventId)</code> removes the tracking entry.',
+    onEnter() {
+      $('ts-local').className = 't-status done'; $('ts-local').textContent = 'done';
+      $('ts-dist').className = 't-status done'; $('ts-dist').textContent = 'done';
+      $('cb-status').classList.add('ready'); $('cb-status').textContent = 'ALL COMPLETE';
+      glow('n-postlifecycle'); $('n-postlifecycle').classList.add('highlight-success'); },
+    onExit: resetAll
+  },
+  {
+    id: 'perspective-whenall', label: 'Perspective WhenAll Variant', duration: 3500,
+    narration: 'Bonus pattern: <code>ExpectPerspectiveCompletions(eventId, ["OrderSummary", "InventoryView"])</code> — PostAllPerspectives only fires when EVERY perspective signals via <code>SignalPerspectiveComplete(eventId, perspectiveName)</code>. Same WhenAll pattern, applied to read model projections.',
+    onEnter() { $('trk').classList.add('active');
+      $('ts-local').textContent = 'OrderSummary'; $('ts-local').className = 't-status done';
+      $('ts-dist').textContent = 'InventoryView'; $('ts-dist').className = 't-status done';
+      $('cb-status').classList.add('ready'); $('cb-status').textContent = 'PostAllPerspectives ✓'; },
+    onExit: resetAll
+  }
+];
+
+const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

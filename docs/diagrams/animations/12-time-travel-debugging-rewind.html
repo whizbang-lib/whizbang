@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Time-Travel Debugging: Late Event Rewind</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    :root { --control-bar-height: 190px; }
+    .animation-viewport { display: flex; flex-direction: column; padding: 8px 20px; gap: 6px; }
+    .section-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); text-align: center; }
+
+    /* Timeline strip */
+    .timeline-strip {
+      display: flex; gap: 3px; padding: 4px 0; align-items: flex-end;
+    }
+    .ts-event {
+      flex: 1; padding: 4px 2px; border-radius: 4px; text-align: center;
+      font-size: 8px; font-weight: 600; font-family: 'SF Mono','Fira Code',monospace;
+      background: var(--bg-surface); border: 2px solid var(--border);
+      transition: all var(--transition-normal); opacity: 0.5;
+      display: flex; flex-direction: column; gap: 1px;
+    }
+    .ts-event .ts-seq { font-weight: 700; font-size: 9px; }
+    .ts-event .ts-type { font-size: 7px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ts-event .ts-time { font-size: 7px; color: var(--text-muted); }
+    .ts-event.normal { opacity: 1; border-color: var(--success); background: var(--phase-perspective-bg); }
+    .ts-event.late { opacity: 1; border-color: var(--wb-pink); background: #fce4ec; }
+    .ts-event.checkpoint { opacity: 1; border-color: var(--wb-gold); border-width: 3px; }
+    .ts-event.snapshot-pt { opacity: 1; border-color: var(--wb-orange); background: var(--phase-outbox-bg); }
+    .ts-event.replaying { opacity: 1; border-color: var(--wb-cyan); background: var(--phase-dispatch-bg); }
+    .ts-event.gap { opacity: 1; border-color: var(--wb-pink); border-style: dashed; background: rgba(251,50,162,0.05); }
+
+    /* Process cards */
+    .process-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+    .proc-card {
+      padding: 8px 10px; border-radius: 8px; background: var(--bg-surface);
+      border: 1px solid var(--border); font-size: 10px;
+      opacity: 0; transform: translateY(4px); transition: all var(--transition-normal);
+    }
+    .proc-card.visible { opacity: 1; transform: translateY(0); }
+    .proc-card.active { border-color: var(--wb-cyan); }
+    .proc-card.success { border-color: var(--success); }
+    .proc-card.problem { border-color: var(--wb-pink); }
+    .proc-card .pc-title { font-weight: 700; font-size: 10px; margin-bottom: 4px; }
+    .proc-card .pc-detail { font-family: 'SF Mono','Fira Code',monospace; font-size: 9px; color: var(--text-secondary); line-height: 1.4; }
+
+    /* Model comparison */
+    .compare-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: start; }
+    .model-box {
+      padding: 8px 10px; border-radius: 8px; background: var(--bg-surface);
+      border: 1px solid var(--border); font-size: 10px;
+      opacity: 0; transition: all var(--transition-normal);
+    }
+    .model-box.visible { opacity: 1; }
+    .model-box.before { border-color: var(--error); }
+    .model-box.after { border-color: var(--success); }
+    .model-box .mb-title { font-weight: 700; font-size: 10px; margin-bottom: 4px; }
+    .model-box .mb-field { display: flex; justify-content: space-between; font-family: 'SF Mono','Fira Code',monospace; font-size: 9px; padding: 1px 0; }
+    .mb-fn { color: var(--wb-indigo); }
+    .mb-fv { color: var(--text-secondary); }
+    .mb-fv.diff { color: var(--success); font-weight: 700; }
+    .compare-arrow { display: flex; align-items: center; font-size: 24px; color: var(--text-muted); padding-top: 20px; opacity: 0; transition: opacity var(--transition-normal); }
+    .compare-arrow.visible { opacity: 1; }
+  </style>
+</head>
+<body>
+<div class="animation-viewport" id="viewport">
+  <div class="section-label">Event Stream Timeline (UUID7 order — timestamps determine position)</div>
+
+  <div class="timeline-strip" id="tstrip">
+    <div class="ts-event" id="te1"><span class="ts-seq">1</span><span class="ts-type">OrderCreated</span><span class="ts-time">10:00:01</span></div>
+    <div class="ts-event" id="te2"><span class="ts-seq">2</span><span class="ts-type">ItemAdded</span><span class="ts-time">10:00:02</span></div>
+    <div class="ts-event" id="te3"><span class="ts-seq">3</span><span class="ts-type">ItemAdded</span><span class="ts-time">10:00:03</span></div>
+    <div class="ts-event" id="tegap"><span class="ts-seq">?</span><span class="ts-type">gap</span><span class="ts-time">10:00:04</span></div>
+    <div class="ts-event" id="te4"><span class="ts-seq">4</span><span class="ts-type">PaymentRecvd</span><span class="ts-time">10:00:05</span></div>
+    <div class="ts-event" id="te5"><span class="ts-seq">5</span><span class="ts-type">OrderShipped</span><span class="ts-time">10:00:06</span></div>
+    <div class="ts-event" id="te6"><span class="ts-seq">6</span><span class="ts-type">Delivered</span><span class="ts-time">10:00:07</span></div>
+  </div>
+
+  <div class="section-label" id="phase-label">—</div>
+
+  <div class="process-row">
+    <div class="proc-card" id="pc-detect"><div class="pc-title">Detection</div><div class="pc-detail" id="pcd-detect">—</div></div>
+    <div class="proc-card" id="pc-snapshot"><div class="pc-title">Snapshot</div><div class="pc-detail" id="pcd-snap">—</div></div>
+    <div class="proc-card" id="pc-replay"><div class="pc-title">Replay</div><div class="pc-detail" id="pcd-replay">—</div></div>
+  </div>
+
+  <div class="compare-row">
+    <div class="model-box before" id="mb-before">
+      <div class="mb-title">Before (incorrect)</div>
+      <div class="mb-field"><span class="mb-fn">Status</span><span class="mb-fv">Delivered</span></div>
+      <div class="mb-field"><span class="mb-fn">Items</span><span class="mb-fv">2</span></div>
+      <div class="mb-field"><span class="mb-fn">Total</span><span class="mb-fv">$75.00</span></div>
+      <div class="mb-field"><span class="mb-fn">Discount</span><span class="mb-fv">none</span></div>
+    </div>
+    <div class="compare-arrow" id="cmp-arrow">→</div>
+    <div class="model-box after" id="mb-after">
+      <div class="mb-title">After (corrected)</div>
+      <div class="mb-field"><span class="mb-fn">Status</span><span class="mb-fv">Delivered</span></div>
+      <div class="mb-field"><span class="mb-fn">Items</span><span class="mb-fv">2</span></div>
+      <div class="mb-field"><span class="mb-fn">Total</span><span class="mb-fv diff">$67.50</span></div>
+      <div class="mb-field"><span class="mb-fn">Discount</span><span class="mb-fv diff">10%</span></div>
+    </div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function showPC(id) { $(id).classList.add('visible'); }
+function showModel(id) { $(id).classList.add('visible'); }
+function resetAll() {
+  document.querySelectorAll('.ts-event').forEach(e => e.classList.remove('normal','late','checkpoint','snapshot-pt','replaying','gap'));
+  document.querySelectorAll('.proc-card').forEach(c => c.classList.remove('visible','active','success','problem'));
+  document.querySelectorAll('.model-box,.compare-arrow').forEach(m => m.classList.remove('visible'));
+  $('phase-label').textContent = '—';
+  ['pcd-detect','pcd-snap','pcd-replay'].forEach(id => $(id).textContent = '—');
+}
+
+const steps = [
+  {
+    id: 'normal-state', label: 'Normal Processing Complete', duration: 2800,
+    narration: 'Events 1-6 have been processed normally. OrderSummary perspective checkpoint is at event 6 (Delivered). The read model shows $75.00 total, no discount. Everything looks correct... so far.',
+    onEnter() { $('phase-label').textContent = 'Current State: Checkpoint at Event 6';
+      for (let i = 1; i <= 6; i++) $('te' + i).classList.add('normal');
+      $('te6').classList.add('checkpoint'); },
+    onExit: resetAll
+  },
+  {
+    id: 'late-arrives', label: 'Late Event Arrives', duration: 3500,
+    narration: 'A <code>DiscountApplied</code> event arrives 30 seconds late. Its UUID7 timestamp (10:00:04) places it between events 3 and 4. This event was created by another service but delayed in transport. The perspective missed it.',
+    onEnter() { $('phase-label').textContent = 'PROBLEM: Late Event Detected!';
+      for (let i = 1; i <= 6; i++) $('te' + i).classList.add('normal');
+      $('te6').classList.add('checkpoint');
+      $('tegap').classList.add('late');
+      $('tegap').querySelector('.ts-type').textContent = 'DiscountApplied';
+      $('tegap').querySelector('.ts-seq').textContent = '!'; },
+    onExit() { resetAll(); $('tegap').querySelector('.ts-type').textContent = 'gap'; $('tegap').querySelector('.ts-seq').textContent = '?'; }
+  },
+  {
+    id: 'detect-rewind', label: 'RewindAndRunAsync Triggered', duration: 3000,
+    narration: 'The perspective worker detects the late event\'s UUID7 is BEFORE the checkpoint. <code>RewindAndRunAsync(streamId, "OrderSummary", triggeringEventId)</code> is called to correct the model.',
+    onEnter() { $('phase-label').textContent = 'Phase 1: Detection — Triggering Rewind';
+      showPC('pc-detect'); $('pc-detect').classList.add('problem');
+      $('pcd-detect').textContent = 'Late event UUID7 < checkpoint UUID7\nRewindAndRunAsync triggered';
+      $('tegap').classList.add('late'); $('tegap').querySelector('.ts-type').textContent = 'DiscountApplied'; $('tegap').querySelector('.ts-seq').textContent = '!'; },
+    onExit() { resetAll(); $('tegap').querySelector('.ts-type').textContent = 'gap'; $('tegap').querySelector('.ts-seq').textContent = '?'; }
+  },
+  {
+    id: 'find-snapshot', label: 'Find Nearest Snapshot', duration: 3000,
+    narration: '<code>GetLatestSnapshotBeforeAsync(streamId, "OrderSummary", triggeringEventId)</code> — finds snapshot at event 3 (10:00:03). This is the safe restore point: the last known-good state BEFORE the late event\'s timestamp.',
+    onEnter() { $('phase-label').textContent = 'Phase 2: Snapshot Search';
+      showPC('pc-detect'); $('pc-detect').classList.add('problem'); $('pcd-detect').textContent = 'Late: DiscountApplied (10:00:04)';
+      showPC('pc-snapshot'); $('pc-snapshot').classList.add('active'); $('pcd-snap').textContent = 'Found snapshot at event 3\nState: Created, 2 items, $75.00';
+      $('te3').classList.add('snapshot-pt'); $('tegap').classList.add('late');
+      $('tegap').querySelector('.ts-type').textContent = 'DiscountApplied'; $('tegap').querySelector('.ts-seq').textContent = '!'; },
+    onExit() { resetAll(); $('tegap').querySelector('.ts-type').textContent = 'gap'; $('tegap').querySelector('.ts-seq').textContent = '?'; }
+  },
+  {
+    id: 'restore', label: 'Restore Snapshot State', duration: 2500,
+    narration: 'Model state restored from snapshot JSON. Now at event 3: OrderId=order-123, Status=Created, Items=2, Total=$75.00. All subsequent events (including the late one) will be replayed from here.',
+    onEnter() { $('phase-label').textContent = 'Phase 3: Restore from Snapshot (Event 3)';
+      $('te3').classList.add('snapshot-pt');
+      showPC('pc-snapshot'); $('pc-snapshot').classList.add('success'); $('pcd-snap').textContent = 'Restored to event 3 state';
+      showModel('mb-before'); },
+    onExit: resetAll
+  },
+  {
+    id: 'replay-with-late', label: 'Replay in UUID7 Order', duration: 3500,
+    narration: 'Replay ALL events after snapshot in UUID7 timestamp order: Event 3 (snap) then DiscountApplied (10:00:04), PaymentReceived (10:00:05), OrderShipped (10:00:06), Delivered (10:00:07). The late event is now in its correct chronological position.',
+    onEnter() { $('phase-label').textContent = 'Phase 4: Replay in UUID7 Order (late event in correct position)';
+      $('te3').classList.add('snapshot-pt');
+      $('tegap').classList.add('replaying'); $('tegap').querySelector('.ts-type').textContent = 'DiscountApplied'; $('tegap').querySelector('.ts-seq').textContent = '!';
+      for (let i = 4; i <= 6; i++) $('te' + i).classList.add('replaying');
+      showPC('pc-replay'); $('pc-replay').classList.add('active'); $('pcd-replay').textContent = 'Order: snap(3) → Discount → 4 → 5 → 6\nDiscount applied BEFORE payment'; },
+    onExit() { resetAll(); $('tegap').querySelector('.ts-type').textContent = 'gap'; $('tegap').querySelector('.ts-seq').textContent = '?'; }
+  },
+  {
+    id: 'corrected-model', label: 'Corrected Model State', duration: 3500,
+    narration: 'Model now includes the discount. Total recalculated: $75.00 * 0.90 = $67.50. Because the discount was applied in the correct chronological order (before payment), the business logic is correct. No data loss, no manual intervention.',
+    onEnter() { $('phase-label').textContent = 'Phase 5: Corrected Model — Late Event Fully Integrated';
+      for (let i = 1; i <= 6; i++) $('te' + i).classList.add('normal');
+      $('tegap').classList.add('normal'); $('tegap').querySelector('.ts-type').textContent = 'DiscountApplied'; $('tegap').querySelector('.ts-seq').textContent = '3.5';
+      showModel('mb-before'); $('cmp-arrow').classList.add('visible'); showModel('mb-after'); },
+    onExit() { resetAll(); $('tegap').querySelector('.ts-type').textContent = 'gap'; $('tegap').querySelector('.ts-seq').textContent = '?'; }
+  },
+  {
+    id: 'checkpoint-update', label: 'Save & New Checkpoint', duration: 2500,
+    narration: 'Corrected model saved. Checkpoint updated to include all 7 events. A new snapshot may be created for future efficiency. The perspective is now fully consistent — as if the event was never late.',
+    onEnter() { $('phase-label').textContent = 'Complete: Checkpoint Updated, Model Consistent';
+      showPC('pc-detect'); $('pc-detect').classList.add('success'); $('pcd-detect').textContent = 'Resolved';
+      showPC('pc-snapshot'); $('pc-snapshot').classList.add('success'); $('pcd-snap').textContent = 'New snapshot created';
+      showPC('pc-replay'); $('pc-replay').classList.add('success'); $('pcd-replay').textContent = '4 events replayed, 1 late integrated'; },
+    onExit: resetAll
+  }
+];
+
+const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

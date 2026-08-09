@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Tag Hook Processing: Priority Chain</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    :root { --control-bar-height: 190px; }
+    .animation-viewport {
+      display: grid; grid-template-columns: 220px 1fr 220px;
+      grid-template-rows: 1fr; gap: 12px; padding: 10px 16px;
+    }
+
+    .msg-col { display: flex; flex-direction: column; gap: 6px; }
+    .msg-col .col-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+    .msg-col .node { position: relative; width: 100%; max-width: 200px; font-size: 11px; padding: 6px 10px; }
+
+    .tag-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 9px; font-weight: 700; margin: 2px;
+      border: 1px solid var(--border); background: var(--bg);
+      transition: all var(--transition-normal);
+    }
+    .tag-badge.active { border-color: var(--wb-cyan); background: var(--phase-dispatch-bg); }
+    .tag-badge.audit { border-color: #7b1fa2; background: #f3e5f5; color: #7b1fa2; }
+    .tag-badge.signal { border-color: #1565c0; background: #e3f2fd; color: #1565c0; }
+    .tag-badge.encrypt { border-color: #ef6c00; background: #fff3e0; color: #ef6c00; }
+
+    .hook-chain { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+    .hook-chain .col-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+
+    .hook-card {
+      width: 100%; max-width: 320px; padding: 8px 12px; border-radius: 8px;
+      background: var(--bg-surface); border: 2px solid var(--border);
+      font-size: 10px; transition: all var(--transition-normal); opacity: 0.5;
+    }
+    .hook-card.active { opacity: 1; border-color: var(--wb-cyan); box-shadow: 0 0 8px rgba(24,211,237,0.2); }
+    .hook-card.done { opacity: 1; border-color: var(--success); background: var(--phase-perspective-bg); }
+    .hook-card.skipped { opacity: 0.3; }
+    .hook-card .hk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .hook-card .hk-name { font-weight: 700; font-size: 10px; }
+    .hook-card .hk-priority { font-size: 8px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: var(--bg); }
+    .hook-card .hk-tag { font-size: 9px; color: var(--text-muted); }
+    .hook-card .hk-action { font-family: 'SF Mono','Fira Code',monospace; font-size: 9px; color: var(--text-secondary); margin-top: 2px; }
+    .hook-card .hk-payload { font-size: 8px; margin-top: 4px; padding: 3px 6px; border-radius: 4px; background: var(--bg); }
+    .hook-card .hk-payload .pl-label { font-weight: 600; color: var(--text-muted); }
+
+    .payload-col { display: flex; flex-direction: column; gap: 6px; }
+    .payload-col .col-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+    .payload-state {
+      padding: 6px 8px; border-radius: 6px; font-size: 9px;
+      font-family: 'SF Mono','Fira Code',monospace;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      transition: all var(--transition-normal); opacity: 0;
+    }
+    .payload-state.visible { opacity: 1; }
+    .payload-state.mutated { border-color: var(--wb-gold); background: var(--phase-cascade-bg); }
+    .payload-state .ps-title { font-weight: 700; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin-bottom: 2px; }
+  </style>
+</head>
+<body>
+<div class="animation-viewport" id="viewport">
+  <!-- Left: Message + Tags -->
+  <div class="msg-col">
+    <div class="col-title">Message + Tags</div>
+    <div class="node" id="n-message"><span class="label">OrderPlacedEvent</span><span class="sublabel">after successful handling</span></div>
+    <div style="display:flex; flex-wrap:wrap; gap:2px;">
+      <span class="tag-badge audit" id="tag-audit">[Audit]</span>
+      <span class="tag-badge signal" id="tag-signal">[SignalR]</span>
+      <span class="tag-badge encrypt" id="tag-encrypt">[Encrypt]</span>
+    </div>
+    <div class="node" id="n-registry"><span class="label">IMessageTagRegistry</span><span class="sublabel">GetTagsFor(typeof(OrderPlacedEvent))</span></div>
+    <div class="node" id="n-stage"><span class="label">LifecycleStage</span><span class="sublabel">AfterReceptorCompletion (-1)</span></div>
+  </div>
+
+  <!-- Center: Hook Chain -->
+  <div class="hook-chain">
+    <div class="col-title">Hook Execution Chain (priority order, ascending)</div>
+    <div class="hook-card" id="hk-audit">
+      <div class="hk-header"><span class="hk-name">AuditLogHook</span><span class="hk-priority">priority: -10</span></div>
+      <div class="hk-tag">handles: [AuditTagAttribute]</div>
+      <div class="hk-action">Log to audit trail, add audit metadata</div>
+      <div class="hk-payload"><span class="pl-label">payload mutation:</span> adds { auditId: "..." }</div>
+    </div>
+    <div class="hook-card" id="hk-signal">
+      <div class="hk-header"><span class="hk-name">SignalRNotificationHook</span><span class="hk-priority">priority: 0 (default)</span></div>
+      <div class="hk-tag">handles: [SignalTagAttribute]</div>
+      <div class="hk-action">Push to SignalR group via context.Attribute.Group</div>
+      <div class="hk-payload"><span class="pl-label">payload mutation:</span> returns null (pass-through)</div>
+    </div>
+    <div class="hook-card" id="hk-encrypt">
+      <div class="hk-header"><span class="hk-name">FieldEncryptionHook</span><span class="hk-priority">priority: 100</span></div>
+      <div class="hk-tag">handles: [EncryptTagAttribute]</div>
+      <div class="hk-action">Encrypt sensitive fields before persistence</div>
+      <div class="hk-payload"><span class="pl-label">payload mutation:</span> encrypts { cardNumber: "***" }</div>
+    </div>
+  </div>
+
+  <!-- Right: Payload Evolution -->
+  <div class="payload-col">
+    <div class="col-title">Payload Evolution</div>
+    <div class="payload-state" id="pl-original"><div class="ps-title">Original Payload</div>{ orderId: "order-789", total: 75.00, cardNumber: "4111..." }</div>
+    <div class="payload-state" id="pl-after-audit"><div class="ps-title">After AuditLogHook</div>{ orderId: "order-789", total: 75.00, cardNumber: "4111...", auditId: "aud-001" }</div>
+    <div class="payload-state" id="pl-after-signal"><div class="ps-title">After SignalRHook</div>{ ...unchanged, auditId: "aud-001" }</div>
+    <div class="payload-state" id="pl-after-encrypt"><div class="ps-title">After EncryptionHook</div>{ orderId: "order-789", total: 75.00, cardNumber: "enc:****", auditId: "aud-001" }</div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function glow(id) { $(id).classList.add('glow'); }
+function unglow(id) { $(id).classList.remove('glow'); }
+function showPL(id) { $(id).classList.add('visible'); }
+function resetAll() {
+  document.querySelectorAll('.node').forEach(n => n.classList.remove('glow','active','highlight-success'));
+  document.querySelectorAll('.hook-card').forEach(c => c.classList.remove('active','done','skipped'));
+  document.querySelectorAll('.tag-badge').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.payload-state').forEach(p => { p.classList.remove('visible','mutated'); });
+}
+
+const steps = [
+  {
+    id: 'message', label: 'Message Handled Successfully', duration: 2500,
+    narration: '<code>OrderPlacedEvent</code> has been successfully processed by its receptor. Tag hook processing begins at <code>LifecycleStage.AfterReceptorCompletion</code> (-1). Hooks only fire after successful handling.',
+    onEnter() { glow('n-message'); glow('n-stage'); },
+    onExit: resetAll
+  },
+  {
+    id: 'discover', label: 'Discover Tags', duration: 2500,
+    narration: '<code>IMessageTagRegistry.GetTagsFor(typeof(OrderPlacedEvent))</code> returns three tag registrations: <code>[Audit]</code>, <code>[SignalR]</code>, <code>[Encrypt]</code>. These were discovered at compile time by the source generator.',
+    onEnter() { glow('n-registry'); $('tag-audit').classList.add('active'); $('tag-signal').classList.add('active'); $('tag-encrypt').classList.add('active'); },
+    onExit: resetAll
+  },
+  {
+    id: 'resolve', label: 'Resolve & Sort Hooks', duration: 2500,
+    narration: 'Hooks resolved from DI container and sorted by priority (ascending): AuditLogHook (-10) first, SignalRNotificationHook (0) second, FieldEncryptionHook (100) last. Lower priority number = executes first.',
+    onEnter() { $('hk-audit').style.opacity = '1'; $('hk-signal').style.opacity = '1'; $('hk-encrypt').style.opacity = '1';
+      showPL('pl-original'); },
+    onExit: resetAll
+  },
+  {
+    id: 'hook-audit', label: 'Hook 1: AuditLogHook', duration: 3000,
+    narration: '<code>AuditLogHook.OnTaggedMessageAsync(context)</code> — logs to audit trail. Returns modified payload with <code>auditId</code> added. This mutated payload is passed to the next hook.',
+    onEnter() { $('hk-audit').classList.add('active'); $('tag-audit').classList.add('active');
+      showPL('pl-original'); showPL('pl-after-audit'); $('pl-after-audit').classList.add('mutated'); },
+    onExit: resetAll
+  },
+  {
+    id: 'hook-signal', label: 'Hook 2: SignalRNotificationHook', duration: 3000,
+    narration: '<code>SignalRNotificationHook.OnTaggedMessageAsync(context)</code> — pushes real-time notification to SignalR group. Returns <code>null</code> (no payload mutation). The previous payload (with auditId) passes through unchanged.',
+    onEnter() { $('hk-audit').classList.add('done'); $('hk-signal').classList.add('active'); $('tag-signal').classList.add('active');
+      showPL('pl-original'); showPL('pl-after-audit'); showPL('pl-after-signal'); },
+    onExit: resetAll
+  },
+  {
+    id: 'hook-encrypt', label: 'Hook 3: FieldEncryptionHook', duration: 3000,
+    narration: '<code>FieldEncryptionHook.OnTaggedMessageAsync(context)</code> — encrypts sensitive fields (cardNumber). Returns mutated payload with encrypted values. This is why encryption runs LAST (priority: 100) — after audit logging captured the original.',
+    onEnter() { $('hk-audit').classList.add('done'); $('hk-signal').classList.add('done'); $('hk-encrypt').classList.add('active'); $('tag-encrypt').classList.add('active');
+      showPL('pl-original'); showPL('pl-after-audit'); showPL('pl-after-signal'); showPL('pl-after-encrypt'); $('pl-after-encrypt').classList.add('mutated'); },
+    onExit: resetAll
+  },
+  {
+    id: 'complete', label: 'Chain Complete', duration: 2500,
+    narration: 'All 3 hooks executed in priority order. Final payload has: audit metadata (from hook 1), SignalR notification sent (hook 2, no mutation), sensitive fields encrypted (hook 3). Priority ordering ensured audit saw plaintext before encryption.',
+    onEnter() { $('hk-audit').classList.add('done'); $('hk-signal').classList.add('done'); $('hk-encrypt').classList.add('done');
+      showPL('pl-original'); showPL('pl-after-audit'); showPL('pl-after-signal'); showPL('pl-after-encrypt'); $('pl-after-encrypt').classList.add('mutated'); },
+    onExit: resetAll
+  }
+];
+
+const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

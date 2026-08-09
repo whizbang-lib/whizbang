@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — ProcessWorkBatch Lifecycle</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    /* Taller control bar for dense narration text */
+    :root { --control-bar-height: 190px; }
+
+    .animation-viewport {
+      display: grid;
+      grid-template-columns: 240px 1fr 240px;
+      grid-template-rows: 28px 1fr;
+      gap: 0;
+      padding: 4px 8px;
+    }
+
+    /* Column headers */
+    .col-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-radius: 6px 6px 0 0;
+      padding: 2px 6px;
+    }
+    .ch-input  { background: var(--phase-cascade-bg); color: var(--phase-cascade); }
+    .ch-core   { background: var(--phase-dispatch-bg); color: var(--phase-dispatch); }
+    .ch-output { background: var(--phase-perspective-bg); color: var(--phase-perspective); }
+
+    /* Columns */
+    .col {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 4px;
+      border-radius: 0 0 6px 6px;
+      overflow-y: auto;
+    }
+    .col-input  { background: var(--phase-cascade-bg); }
+    .col-core   { background: var(--phase-dispatch-bg); }
+    .col-output { background: var(--phase-perspective-bg); }
+
+    .col .node {
+      position: relative;
+      width: 95%;
+      max-width: 220px;
+      font-size: 10px;
+      padding: 5px 10px;
+    }
+
+    /* Queue cards (show accumulated items) */
+    .queue-card {
+      width: 95%;
+      max-width: 220px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 6px;
+      font-size: 9px;
+      transition: border-color var(--transition-normal), opacity var(--transition-normal);
+    }
+    .queue-card.active {
+      border-color: var(--wb-cyan);
+    }
+    .queue-card.filling {
+      border-color: var(--wb-gold);
+    }
+    .queue-card.draining {
+      border-color: var(--success);
+    }
+    .queue-card .q-title {
+      font-weight: 700;
+      font-size: 9px;
+      margin-bottom: 2px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .queue-card .q-title .q-count {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .queue-card .q-item {
+      padding: 0;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 8px;
+      color: var(--text-secondary);
+      opacity: 0;
+      transition: opacity var(--transition-fast);
+      line-height: 1.4;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .queue-card .q-item.visible { opacity: 1; }
+
+    /* Phase indicator in core column */
+    .phase-indicator {
+      width: 95%;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 700;
+      text-align: left;
+      opacity: 0;
+      transform: scale(0.97);
+      transition: opacity var(--transition-normal), transform var(--transition-normal),
+                  background var(--transition-normal);
+      line-height: 1.3;
+    }
+    .phase-indicator.visible {
+      opacity: 1;
+      transform: scale(1);
+    }
+    .phase-indicator.ph-foundation { background: #e3f2fd; color: #1565c0; }
+    .phase-indicator.ph-completions { background: #e8f5e9; color: #2e7d32; }
+    .phase-indicator.ph-failures { background: #ffebee; color: #c62828; }
+    .phase-indicator.ph-storage { background: #fff3e0; color: #ef6c00; }
+    .phase-indicator.ph-event-storage { background: #fce4ec; color: #c2185b; }
+    .phase-indicator.ph-auto-persp { background: #f3e5f5; color: #7b1fa2; }
+    .phase-indicator.ph-claiming { background: #fff9c4; color: #f9a825; }
+    .phase-indicator.ph-leases { background: #e0f2f1; color: #00695c; }
+    .phase-indicator.ph-results { background: #e8eaf6; color: #283593; }
+
+    /* Channel card (output) */
+    .channel-card {
+      width: 95%;
+      max-width: 220px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 6px;
+      font-size: 9px;
+      opacity: 0.5;
+      transition: opacity var(--transition-normal), border-color var(--transition-normal);
+    }
+    .channel-card.active {
+      opacity: 1;
+      border-color: var(--wb-cyan);
+    }
+    .channel-card .ch-title {
+      font-weight: 700;
+      font-size: 9px;
+      margin-bottom: 2px;
+    }
+    .channel-card .ch-items {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 8px;
+      color: var(--text-secondary);
+    }
+    .channel-card .ch-item {
+      padding: 0;
+      line-height: 1.4;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0;
+      transition: opacity var(--transition-fast);
+    }
+    .channel-card .ch-item.visible { opacity: 1; }
+
+    /* Strategy selector visual */
+    .strategy-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: var(--bg);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .strategy-badge.active {
+      background: var(--wb-cyan);
+      color: #fff;
+      border-color: var(--wb-cyan);
+    }
+
+    /* Feedback arrow */
+    .feedback-arrow {
+      position: absolute;
+      width: 0;
+      height: 0;
+      opacity: 0;
+      transition: opacity var(--transition-slow);
+      z-index: 5;
+    }
+    .feedback-arrow.visible { opacity: 1; }
+
+    /* Packet layer */
+    .packet-layer {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+<div class="animation-viewport" id="viewport">
+  <!-- Headers -->
+  <div class="col-header ch-input">Accumulation (Input)</div>
+  <div class="col-header ch-core">ProcessWorkBatch (PostgreSQL)</div>
+  <div class="col-header ch-output">Distribution (Output)</div>
+
+  <!-- Left: Input Accumulation -->
+  <div class="col col-input" id="col-input">
+    <div class="node" id="n-strategy">
+      <span class="label">Flush Strategy</span>
+      <div style="margin-top:4px; display:flex; gap:4px; flex-wrap:wrap; justify-content:center;">
+        <span class="strategy-badge" id="sb-immediate">Immediate</span>
+        <span class="strategy-badge" id="sb-scoped">Scoped</span>
+        <span class="strategy-badge active" id="sb-interval">Interval</span>
+      </div>
+    </div>
+
+    <div class="queue-card" id="q-completions">
+      <div class="q-title">Completions <span class="q-count" id="qc-comp">0</span></div>
+      <div class="q-item" id="qi-ob-comp">OutboxCompletions: [msg-A01]</div>
+      <div class="q-item" id="qi-ib-comp">InboxCompletions: [msg-B02]</div>
+      <div class="q-item" id="qi-pe-comp">PerspectiveEventCompletions: [evt-C03]</div>
+      <div class="q-item" id="qi-pc-comp">PerspectiveCompletions: [order-stream]</div>
+    </div>
+
+    <div class="queue-card" id="q-failures">
+      <div class="q-title">Failures <span class="q-count" id="qc-fail">0</span></div>
+      <div class="q-item" id="qi-ob-fail">OutboxFailures: [msg-D04, TransportError]</div>
+      <div class="q-item" id="qi-ib-fail">InboxFailures: [msg-E05, HandlerException]</div>
+    </div>
+
+    <div class="queue-card" id="q-new-work">
+      <div class="q-title">New Messages <span class="q-count" id="qc-new">0</span></div>
+      <div class="q-item" id="qi-ob-new">NewOutboxMessages: [OrderPlacedEvent]</div>
+      <div class="q-item" id="qi-ib-new">NewInboxMessages: [PaymentReceived]</div>
+      <div class="q-item" id="qi-pe-new">NewPerspectiveEvents: [evt-F06]</div>
+    </div>
+
+    <div class="queue-card" id="q-leases">
+      <div class="q-title">Lease Renewals <span class="q-count" id="qc-lease">0</span></div>
+      <div class="q-item" id="qi-ob-lease">RenewOutboxLeaseIds: [msg-G07]</div>
+      <div class="q-item" id="qi-ib-lease">RenewInboxLeaseIds: [msg-H08]</div>
+    </div>
+
+    <div class="node" id="n-request">
+      <span class="label">ProcessWorkBatchRequest</span>
+      <span class="sublabel">snapshot + build</span>
+    </div>
+  </div>
+
+  <!-- Center: PostgreSQL Phases -->
+  <div class="col col-core" id="col-core">
+    <div class="node" id="n-postgres">
+      <span class="label">PostgreSQL</span>
+      <span class="sublabel">process_work_batch()</span>
+    </div>
+
+    <div class="phase-indicator ph-foundation" id="pi-1">1 Foundation — Heartbeat, Rank</div>
+    <div class="phase-indicator ph-completions" id="pi-2">2 Completions — Mark Done</div>
+    <div class="phase-indicator ph-failures" id="pi-3">3 Failures — Record Errors</div>
+    <div class="phase-indicator ph-storage" id="pi-4">4 Storage — New Work Items</div>
+    <div class="phase-indicator ph-event-storage" id="pi-45">4.5 Events → EventStore</div>
+    <div class="phase-indicator ph-auto-persp" id="pi-46">4.6-4.7 Auto-Perspective Events</div>
+    <div class="phase-indicator ph-claiming" id="pi-5">5 Claiming — Orphaned Work</div>
+    <div class="phase-indicator ph-leases" id="pi-6">6 Lease Renewals</div>
+    <div class="phase-indicator ph-results" id="pi-7">7 Return — Batch-Limited, Stream-Ranked</div>
+
+    <div class="node" id="n-workbatch">
+      <span class="label">WorkBatch</span>
+      <span class="sublabel">categorized results</span>
+    </div>
+  </div>
+
+  <!-- Right: Output Distribution -->
+  <div class="col col-output" id="col-output">
+    <div class="node" id="n-coordinator">
+      <span class="label">WorkBatchCoordinator</span>
+      <span class="sublabel">distribute to channels</span>
+    </div>
+
+    <div class="channel-card" id="ch-outbox">
+      <div class="ch-title">Outbox Channel</div>
+      <div class="ch-items">
+        <div class="ch-item" id="ci-ob1">msg-I09: OrderPlacedEvent → order-events</div>
+        <div class="ch-item" id="ci-ob2">msg-J10: (orphaned) InventoryReserved</div>
+      </div>
+    </div>
+
+    <div class="channel-card" id="ch-inbox">
+      <div class="ch-title">Inbox Channel</div>
+      <div class="ch-items">
+        <div class="ch-item" id="ci-ib1">msg-K11: PaymentReceived → PaymentHandler</div>
+      </div>
+    </div>
+
+    <div class="channel-card" id="ch-perspective">
+      <div class="ch-title">Perspective Channel</div>
+      <div class="ch-items">
+        <div class="ch-item" id="ci-pe1">evt-L12: OrderSummary perspective</div>
+        <div class="ch-item" id="ci-pe2">evt-M13: InventoryView perspective</div>
+      </div>
+    </div>
+
+    <div class="node" id="n-publisher">
+      <span class="label">Publisher Worker</span>
+      <span class="sublabel">publishes to transport</span>
+    </div>
+
+    <div class="node" id="n-feedback">
+      <span class="label">Feedback Loop</span>
+      <span class="sublabel">results → next cycle's completions/failures</span>
+    </div>
+  </div>
+
+  <!-- Packet layer -->
+  <div class="packet-layer" id="packets">
+    <div class="message-packet command" id="pkt-request">Request</div>
+    <div class="message-packet event" id="pkt-batch">WorkBatch</div>
+    <div class="message-packet receipt" id="pkt-feedback">completions</div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+
+  function glow(id) { $(id).classList.add('glow'); }
+  function unglow(id) { $(id).classList.remove('glow'); }
+  function showPhase(id) { $(id).classList.add('visible'); }
+  function hidePhase(id) { $(id).classList.remove('visible'); }
+  function showItem(id) { $(id).classList.add('visible'); }
+  function activateCard(id) { $(id).classList.add('active'); }
+  function deactivateCard(id) { $(id).classList.remove('active', 'filling', 'draining'); }
+  function fillingCard(id) { $(id).classList.add('filling'); }
+  function drainingCard(id) { $(id).classList.add('draining'); }
+
+  function hideAllPhases() {
+    ['pi-1','pi-2','pi-3','pi-4','pi-45','pi-46','pi-5','pi-6','pi-7'].forEach(hidePhase);
+  }
+
+  function hideAllQueueItems() {
+    document.querySelectorAll('.q-item, .ch-item').forEach(i => i.classList.remove('visible'));
+    ['qc-comp','qc-fail','qc-new','qc-lease'].forEach(id => $(id).textContent = '0');
+  }
+
+  function hideAllChannels() {
+    ['ch-outbox','ch-inbox','ch-perspective'].forEach(id => {
+      $(id).classList.remove('active');
+      $(id).querySelectorAll('.ch-item').forEach(i => i.classList.remove('visible'));
+    });
+  }
+
+  function resetAll() {
+    hideAllPhases();
+    hideAllQueueItems();
+    hideAllChannels();
+    document.querySelectorAll('.node').forEach(n => n.classList.remove('glow', 'active', 'highlight-success'));
+    document.querySelectorAll('.queue-card').forEach(c => c.classList.remove('active', 'filling', 'draining'));
+    document.querySelectorAll('.message-packet').forEach(p => {
+      p.classList.remove('visible');
+      p.getAnimations().forEach(a => a.cancel());
+    });
+    document.querySelectorAll('.strategy-badge').forEach(b => b.classList.remove('active'));
+    $('sb-interval').classList.add('active');
+  }
+
+  const steps = [
+    {
+      id: 'accumulate-comp', label: 'Accumulate Completions',
+      narration: 'Between batch calls, the <code>CompletionTracker</code> accumulates results from the previous cycle. Outbox completions (published), inbox completions (processed), perspective completions (projected).',
+      duration: 3000,
+      onEnter() {
+        fillingCard('q-completions');
+        $('qc-comp').textContent = '4';
+        setTimeout(() => showItem('qi-ob-comp'), 200);
+        setTimeout(() => showItem('qi-ib-comp'), 500);
+        setTimeout(() => showItem('qi-pe-comp'), 800);
+        setTimeout(() => showItem('qi-pc-comp'), 1100);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'accumulate-fail', label: 'Accumulate Failures',
+      narration: 'Failures from the previous cycle: transport errors (outbox), handler exceptions (inbox). Each carries <code>MessageId</code>, <code>Status</code>, <code>Error</code>, and <code>FailureReason</code>.',
+      duration: 2500,
+      onEnter() {
+        fillingCard('q-completions'); $('qc-comp').textContent = '4';
+        showItem('qi-ob-comp'); showItem('qi-ib-comp'); showItem('qi-pe-comp'); showItem('qi-pc-comp');
+        fillingCard('q-failures');
+        $('qc-fail').textContent = '2';
+        setTimeout(() => showItem('qi-ob-fail'), 300);
+        setTimeout(() => showItem('qi-ib-fail'), 600);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'accumulate-new', label: 'Accumulate New Messages',
+      narration: 'New work from the <code>Dispatcher</code>: outbox messages (to publish), inbox messages (received from transport), perspective events (projection work). Queued via <code>IUnitOfWorkStrategy</code>.',
+      duration: 2500,
+      onEnter() {
+        fillingCard('q-completions'); $('qc-comp').textContent = '4';
+        showItem('qi-ob-comp'); showItem('qi-ib-comp'); showItem('qi-pe-comp'); showItem('qi-pc-comp');
+        fillingCard('q-failures'); $('qc-fail').textContent = '2';
+        showItem('qi-ob-fail'); showItem('qi-ib-fail');
+        fillingCard('q-new-work');
+        $('qc-new').textContent = '3';
+        setTimeout(() => showItem('qi-ob-new'), 200);
+        setTimeout(() => showItem('qi-ib-new'), 500);
+        setTimeout(() => showItem('qi-pe-new'), 800);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'accumulate-lease', label: 'Accumulate Lease Renewals',
+      narration: 'Messages still being processed or buffered need lease extensions to prevent orphaning. Only renewed when nearing expiry (>half lease duration) via <code>ShouldRenewLease</code> — not every tick. Tracked as <code>RenewOutboxLeaseIds</code> / <code>RenewInboxLeaseIds</code>.',
+      duration: 2200,
+      onEnter() {
+        fillingCard('q-completions'); $('qc-comp').textContent = '4';
+        showItem('qi-ob-comp'); showItem('qi-ib-comp'); showItem('qi-pe-comp'); showItem('qi-pc-comp');
+        fillingCard('q-failures'); $('qc-fail').textContent = '2';
+        showItem('qi-ob-fail'); showItem('qi-ib-fail');
+        fillingCard('q-new-work'); $('qc-new').textContent = '3';
+        showItem('qi-ob-new'); showItem('qi-ib-new'); showItem('qi-pe-new');
+        fillingCard('q-leases');
+        $('qc-lease').textContent = '2';
+        setTimeout(() => showItem('qi-ob-lease'), 200);
+        setTimeout(() => showItem('qi-ib-lease'), 500);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'strategy-trigger', label: 'Strategy Triggers Flush',
+      narration: '<code>IntervalWorkCoordinatorStrategy</code> timer fires (default 100ms). Snapshots all queues under lock, marks items as "Sent", clears queues. Other strategies: <code>Immediate</code> (every message), <code>Scoped</code> (on Dispose).',
+      duration: 2800,
+      onEnter() {
+        // Show all queues filled
+        ['q-completions','q-failures','q-new-work','q-leases'].forEach(drainingCard);
+        $('qc-comp').textContent = '4'; $('qc-fail').textContent = '2'; $('qc-new').textContent = '3'; $('qc-lease').textContent = '2';
+        showItem('qi-ob-comp'); showItem('qi-ib-comp'); showItem('qi-pe-comp'); showItem('qi-pc-comp');
+        showItem('qi-ob-fail'); showItem('qi-ib-fail');
+        showItem('qi-ob-new'); showItem('qi-ib-new'); showItem('qi-pe-new');
+        showItem('qi-ob-lease'); showItem('qi-ib-lease');
+        glow('n-strategy');
+        // Flash the interval badge
+        $('sb-interval').classList.add('active');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'build-request', label: 'Build Request',
+      narration: '<code>ProcessWorkBatchRequest</code> built from snapshots: instance identity (InstanceId, ServiceName, HostName, ProcessId), all completions/failures/new messages/renewals, config (PartitionCount=10000, LeaseSeconds=300).',
+      duration: 2500,
+      onEnter() {
+        glow('n-request');
+        $('n-request').querySelector('.sublabel').textContent = '25 parameters';
+      },
+      onExit() {
+        resetAll();
+        $('n-request').querySelector('.sublabel').textContent = 'snapshot + build';
+      }
+    },
+    {
+      id: 'sql-call', label: 'Single SQL Call',
+      narration: 'One atomic call to PostgreSQL: <code>SELECT * FROM process_work_batch(...)</code>. All 7 phases execute within a single transaction. Uses Dapper or EF Core depending on configuration.',
+      duration: 2500,
+      onEnter() {
+        glow('n-postgres');
+        $('n-postgres').classList.add('pulse');
+      },
+      onExit() {
+        resetAll();
+        $('n-postgres').classList.remove('pulse');
+      }
+    },
+    {
+      id: 'phase1', label: 'Phase 1: Foundation',
+      narration: '<b>Heartbeat</b>: register_instance_heartbeat() — updates last_seen. <b>Cleanup</b>: cleanup_stale_instances() — removes instances silent > 30s (configurable via <code>wh_settings</code>). <b>Rank</b>: calculate_instance_rank() — deterministic position for partition ownership.',
+      duration: 3000,
+      onEnter() {
+        glow('n-postgres');
+        showPhase('pi-1');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'phase2', label: 'Phase 2: Completions',
+      narration: 'Mark completed work: <code>process_outbox_completions()</code>, <code>process_inbox_completions()</code>, <code>process_perspective_event_completions()</code>. Update checkpoints via <code>update_perspective_cursors()</code>. Delete ephemeral perspective events.',
+      duration: 3000,
+      onEnter() {
+        glow('n-postgres');
+        showPhase('pi-1'); showPhase('pi-2');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'phase3', label: 'Phase 3: Failures',
+      narration: 'Record failures: increment <code>Attempts</code>, set <code>Error</code> and <code>FailureReason</code>, update <code>StatusFlags</code>. Items schedule retry via <code>scheduled_for</code> with exponential backoff.',
+      duration: 2500,
+      onEnter() {
+        glow('n-postgres');
+        showPhase('pi-1'); showPhase('pi-2'); showPhase('pi-3');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'phase4', label: 'Phase 4: Storage',
+      narration: 'Store new work: <code>store_outbox_messages()</code>, <code>store_inbox_messages()</code>, <code>store_perspective_events()</code>. Each returns was_newly_created flag. Idempotent via ON CONFLICT DO NOTHING.',
+      duration: 2500,
+      onEnter() {
+        glow('n-postgres');
+        showPhase('pi-1'); showPhase('pi-2'); showPhase('pi-3'); showPhase('pi-4');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'phase45', label: 'Phase 4.5-4.7: Event Storage + Auto-Perspective',
+      narration: '<b>4.5</b>: Store events from outbox/inbox to <code>wh_event_store</code> with sequential versioning. <b>4.6</b>: Auto-create perspective event work items via <code>wh_message_associations</code>. <b>4.7</b>: Auto-create perspective checkpoint cursors for new streams.',
+      duration: 3500,
+      onEnter() {
+        glow('n-postgres');
+        showPhase('pi-1'); showPhase('pi-2'); showPhase('pi-3'); showPhase('pi-4');
+        showPhase('pi-45'); showPhase('pi-46');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'phase5', label: 'Phase 5: Claiming',
+      narration: 'Claim orphaned work via consistent hashing: <code>abs(hashtext(stream_id)) % partition_count</code>. Each instance claims partitions matching its rank. <code>claim_orphaned_outbox()</code>, <code>claim_orphaned_inbox()</code>, <code>claim_orphaned_receptor_work()</code>, <code>claim_orphaned_perspective_events()</code>.',
+      duration: 3500,
+      onEnter() {
+        glow('n-postgres');
+        showPhase('pi-1'); showPhase('pi-2'); showPhase('pi-3'); showPhase('pi-4');
+        showPhase('pi-45'); showPhase('pi-46'); showPhase('pi-5');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'phase6', label: 'Phase 6: Lease Renewals',
+      narration: 'Extend <code>lease_expiry</code> for outbox/inbox/perspective items still being processed. Prevents premature orphaning of items held in publisher buffer or awaiting transport.',
+      duration: 2200,
+      onEnter() {
+        glow('n-postgres');
+        showPhase('pi-1'); showPhase('pi-2'); showPhase('pi-3'); showPhase('pi-4');
+        showPhase('pi-45'); showPhase('pi-46'); showPhase('pi-5'); showPhase('pi-6');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'phase7', label: 'Phase 7: Return Results',
+      narration: 'Return ALL owned unprocessed work — not just new/orphaned. Per-stream ranking limits each stream to <code>max_work_items_per_stream</code> (default 25), then global <code>LIMIT max_work_items</code> (default 100) prevents hot loops. Stream-ordering enforced via NOT EXISTS. Ack counts on first row metadata.',
+      duration: 3500,
+      onEnter() {
+        glow('n-postgres');
+        showPhase('pi-1'); showPhase('pi-2'); showPhase('pi-3'); showPhase('pi-4');
+        showPhase('pi-45'); showPhase('pi-46'); showPhase('pi-5'); showPhase('pi-6'); showPhase('pi-7');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'workbatch', label: 'WorkBatch Returned',
+      narration: '<code>WorkBatch</code> returned to C#: <code>List&lt;OutboxWork&gt;</code>, <code>List&lt;InboxWork&gt;</code>, <code>List&lt;PerspectiveWork&gt;</code>, <code>List&lt;SyncInquiryResult&gt;</code>. Each item has <code>is_newly_stored</code> and <code>is_orphaned</code> flags.',
+      duration: 2500,
+      onEnter() {
+        glow('n-workbatch');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'distribute', label: 'Distribute to Channels',
+      narration: '<code>WorkBatchCoordinator</code> distributes work to bounded channels: <code>OutboxWork</code> → publisher channel, <code>InboxWork</code> → inbox channel, <code>PerspectiveWork</code> → perspective channel. Ack counts extracted from first row metadata.',
+      duration: 3000,
+      onEnter() {
+        glow('n-coordinator');
+        setTimeout(() => { activateCard('ch-outbox'); showItem('ci-ob1'); showItem('ci-ob2'); }, 300);
+        setTimeout(() => { activateCard('ch-inbox'); showItem('ci-ib1'); }, 700);
+        setTimeout(() => { activateCard('ch-perspective'); showItem('ci-pe1'); showItem('ci-pe2'); }, 1100);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'publish', label: 'Publisher Worker Processes',
+      narration: '<code>WorkCoordinatorPublisherWorker</code> reads from outbox channel. Publishes via <code>IMessagePublishStrategy</code>. Skips PreOutbox/PostOutbox for null-destination (event-store-only) messages. Tracks results: success → completion (stays in-flight until DB confirms), TransportException → lease renewal, other failure → failure report.',
+      duration: 3000,
+      onEnter() {
+        glow('n-publisher');
+        activateCard('ch-outbox'); showItem('ci-ob1'); showItem('ci-ob2');
+        activateCard('ch-perspective'); showItem('ci-pe1'); showItem('ci-pe2');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'feedback', label: 'Feedback Loop',
+      narration: 'Processing results feed back into the next cycle\'s completions, failures, and lease renewals. The <code>CompletionTracker</code> state machine: Pending → Sent → Acknowledged → cleared. This closes the loop — the next <code>ProcessWorkBatch</code> call carries these results.',
+      duration: 3500,
+      onEnter() {
+        glow('n-feedback');
+        // Show feedback flowing back to input queues
+        setTimeout(() => fillingCard('q-completions'), 500);
+        setTimeout(() => fillingCard('q-failures'), 800);
+        setTimeout(() => fillingCard('q-leases'), 1100);
+        $('n-feedback').classList.add('highlight-success');
+      },
+      onExit: resetAll
+    }
+  ];
+
+  const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

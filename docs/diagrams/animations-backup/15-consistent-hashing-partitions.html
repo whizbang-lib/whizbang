@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Consistent Hashing &amp; Partition Assignment</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    :root { --control-bar-height: 190px; }
+    .animation-viewport { display: flex; flex-direction: column; padding: 10px 20px; gap: 8px; }
+
+    .section-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); text-align: center; }
+
+    /* Instance row */
+    .instance-row { display: flex; gap: 8px; justify-content: center; }
+    .instance-box {
+      padding: 6px 14px; border-radius: 8px; background: var(--bg-surface);
+      border: 2px solid var(--border); font-size: 10px; text-align: center;
+      transition: all var(--transition-normal); min-width: 140px;
+    }
+    .instance-box.active { border-color: var(--wb-cyan); }
+    .instance-box.dead { border-color: var(--error); opacity: 0.4; border-style: dashed; }
+    .instance-box.claiming { border-color: var(--wb-gold); background: var(--phase-cascade-bg); }
+    .instance-box .ib-name { font-weight: 700; font-size: 10px; }
+    .instance-box .ib-rank { font-size: 9px; color: var(--text-muted); }
+    .instance-box .ib-parts { font-family: 'SF Mono','Fira Code',monospace; font-size: 8px; color: var(--text-secondary); margin-top: 2px; }
+
+    /* Partition strip */
+    .partition-strip { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
+    .part-cell {
+      width: 28px; height: 28px; border-radius: 4px; display: flex;
+      align-items: center; justify-content: center; font-size: 7px; font-weight: 700;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      transition: all var(--transition-normal); opacity: 0.4;
+    }
+    .part-cell.inst-a { opacity: 1; background: #e3f2fd; border-color: #1565c0; color: #1565c0; }
+    .part-cell.inst-b { opacity: 1; background: #e8f5e9; border-color: #2e7d32; color: #2e7d32; }
+    .part-cell.inst-c { opacity: 1; background: #f3e5f5; border-color: #7b1fa2; color: #7b1fa2; }
+    .part-cell.orphaned { opacity: 1; background: #ffebee; border-color: #c62828; color: #c62828; animation: pulse 1s ease-in-out infinite; }
+    .part-cell.reclaimed { opacity: 1; background: var(--phase-cascade-bg); border-color: var(--wb-gold); }
+
+    /* Formula card */
+    .formula-card {
+      max-width: 500px; margin: 0 auto; padding: 8px 14px; border-radius: 8px;
+      background: var(--bg-surface); border: 1px solid var(--border); font-size: 10px;
+      text-align: center; opacity: 0; transition: all var(--transition-normal);
+    }
+    .formula-card.visible { opacity: 1; }
+    .formula-card .fc-title { font-weight: 700; margin-bottom: 4px; }
+    .formula-card .fc-code { font-family: 'SF Mono','Fira Code',monospace; font-size: 11px; color: var(--wb-indigo); }
+    .formula-card .fc-note { font-size: 9px; color: var(--text-muted); margin-top: 4px; }
+  </style>
+</head>
+<body>
+<div class="animation-viewport" id="viewport">
+  <div class="section-label">Service Instances (3 instances of Order Service)</div>
+
+  <div class="instance-row">
+    <div class="instance-box" id="inst-a"><div class="ib-name">Instance A</div><div class="ib-rank" id="rank-a">rank: 0</div><div class="ib-parts" id="parts-a">—</div></div>
+    <div class="instance-box" id="inst-b"><div class="ib-name">Instance B</div><div class="ib-rank" id="rank-b">rank: 1</div><div class="ib-parts" id="parts-b">—</div></div>
+    <div class="instance-box" id="inst-c"><div class="ib-name">Instance C</div><div class="ib-rank" id="rank-c">rank: 2</div><div class="ib-parts" id="parts-c">—</div></div>
+  </div>
+
+  <div class="section-label">Virtual Partitions (showing 12 of 10,000)</div>
+
+  <div class="partition-strip" id="pstrip">
+    <div class="part-cell" id="p0">0</div>
+    <div class="part-cell" id="p1">1</div>
+    <div class="part-cell" id="p2">2</div>
+    <div class="part-cell" id="p3">3</div>
+    <div class="part-cell" id="p4">4</div>
+    <div class="part-cell" id="p5">5</div>
+    <div class="part-cell" id="p6">6</div>
+    <div class="part-cell" id="p7">7</div>
+    <div class="part-cell" id="p8">8</div>
+    <div class="part-cell" id="p9">9</div>
+    <div class="part-cell" id="p10">10</div>
+    <div class="part-cell" id="p11">11</div>
+  </div>
+
+  <div class="formula-card" id="fc-main">
+    <div class="fc-title" id="fc-title">—</div>
+    <div class="fc-code" id="fc-code">—</div>
+    <div class="fc-note" id="fc-note"></div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function assignPartitions3() {
+  for (let i = 0; i < 12; i++) {
+    const cls = i % 3 === 0 ? 'inst-a' : i % 3 === 1 ? 'inst-b' : 'inst-c';
+    $('p' + i).classList.add(cls);
+  }
+}
+function assignPartitions2() {
+  for (let i = 0; i < 12; i++) {
+    $('p' + i).classList.remove('inst-a','inst-b','inst-c','orphaned','reclaimed');
+    const cls = i % 2 === 0 ? 'inst-a' : 'inst-c';
+    $('p' + i).classList.add(cls);
+  }
+}
+function showFormula() { $('fc-main').classList.add('visible'); }
+function resetAll() {
+  document.querySelectorAll('.instance-box').forEach(b => b.classList.remove('active','dead','claiming'));
+  document.querySelectorAll('.part-cell').forEach(c => c.classList.remove('inst-a','inst-b','inst-c','orphaned','reclaimed'));
+  $('fc-main').classList.remove('visible');
+  $('rank-a').textContent = 'rank: 0'; $('rank-b').textContent = 'rank: 1'; $('rank-c').textContent = 'rank: 2';
+  $('parts-a').textContent = '—'; $('parts-b').textContent = '—'; $('parts-c').textContent = '—';
+}
+
+const steps = [
+  {
+    id: 'formula', label: 'Partition Hash Formula', duration: 3000,
+    narration: '<code>compute_partition(stream_id, 10000)</code> — PostgreSQL function: <code>abs(hashtext(stream_id::TEXT)) % partition_count</code>. Deterministic: same stream always maps to same partition. IMMUTABLE for caching.',
+    onEnter() { showFormula(); $('fc-title').textContent = 'Partition Assignment Formula';
+      $('fc-code').textContent = 'abs(hashtext(stream_id::TEXT)) % 10,000';
+      $('fc-note').textContent = 'IMMUTABLE — same input always produces same output'; },
+    onExit: resetAll
+  },
+  {
+    id: 'heartbeat', label: 'Instance Heartbeat', duration: 2800,
+    narration: 'Each instance registers a heartbeat on every <code>process_work_batch</code> call via <code>register_instance_heartbeat()</code>. Rank calculated from deterministic ordering of active instances. 3 instances → ranks 0, 1, 2.',
+    onEnter() { $('inst-a').classList.add('active'); $('inst-b').classList.add('active'); $('inst-c').classList.add('active');
+      showFormula(); $('fc-title').textContent = 'Heartbeat & Rank'; $('fc-code').textContent = 'register_instance_heartbeat() → calculate_instance_rank()';
+      $('fc-note').textContent = 'Stale threshold: 600s — instances silent longer are removed'; },
+    onExit: resetAll
+  },
+  {
+    id: 'assign-3', label: '3-Instance Distribution', duration: 3000,
+    narration: 'With 3 instances, partition ownership: <code>partition % 3 = rank</code>. Partitions 0,3,6,9 → Instance A (rank 0). Partitions 1,4,7,10 → Instance B (rank 1). Partitions 2,5,8,11 → Instance C (rank 2). Even distribution.',
+    onEnter() { $('inst-a').classList.add('active'); $('inst-b').classList.add('active'); $('inst-c').classList.add('active');
+      $('parts-a').textContent = 'owns: 0, 3, 6, 9'; $('parts-b').textContent = 'owns: 1, 4, 7, 10'; $('parts-c').textContent = 'owns: 2, 5, 8, 11';
+      assignPartitions3(); },
+    onExit: resetAll
+  },
+  {
+    id: 'claim-work', label: 'Claiming Orphaned Work', duration: 3000,
+    narration: '<code>claim_orphaned_outbox(instance_id, rank, count, lease_expiry)</code> — each instance claims work items whose partition matches its rank. Lease-based: sets <code>instance_id</code> and <code>lease_expiry</code> on claimed rows.',
+    onEnter() { $('inst-a').classList.add('claiming'); assignPartitions3();
+      $('parts-a').textContent = 'claiming partitions 0,3,6,9...';
+      showFormula(); $('fc-title').textContent = 'Claiming Logic';
+      $('fc-code').textContent = 'WHERE partition_number % active_count = instance_rank\n  AND (instance_id IS NULL OR lease_expiry < now)';
+      $('fc-note').textContent = 'Lease-based: expired leases can be reclaimed by any instance'; },
+    onExit: resetAll
+  },
+  {
+    id: 'stream-order', label: 'Stream Ordering Guarantee', duration: 3000,
+    narration: 'Critical: within a stream, messages are processed in order. <code>NOT EXISTS (SELECT 1 FROM wh_outbox blocked WHERE blocked.stream_id = o.stream_id AND blocked.created_at &lt; o.created_at AND blocked.scheduled_for > now)</code>. Earlier retries block later messages.',
+    onEnter() { assignPartitions3();
+      showFormula(); $('fc-title').textContent = 'Stream Ordering (Phase 7)';
+      $('fc-code').textContent = 'Messages in same stream processed in created_at order.\nScheduled retries block subsequent messages.';
+      $('fc-note').textContent = 'Prevents out-of-order processing within a single aggregate'; },
+    onExit: resetAll
+  },
+  {
+    id: 'instance-dies', label: 'Instance B Dies', duration: 3000,
+    narration: 'Instance B stops sending heartbeats (crash, network partition, deployment). After stale threshold (600s), <code>cleanup_stale_instances()</code> removes it. Partitions 1, 4, 7, 10 are now orphaned — no owner.',
+    onEnter() { $('inst-a').classList.add('active'); $('inst-b').classList.add('dead'); $('inst-c').classList.add('active');
+      $('rank-b').textContent = 'DEAD — no heartbeat';
+      assignPartitions3();
+      [1,4,7,10].forEach(i => { $('p' + i).classList.remove('inst-b'); $('p' + i).classList.add('orphaned'); });
+      $('parts-b').textContent = 'orphaned!'; },
+    onExit: resetAll
+  },
+  {
+    id: 'rebalance', label: 'Automatic Rebalancing', duration: 3500,
+    narration: 'With 2 instances remaining, ranks recalculated: A=0, C=1. New formula: <code>partition % 2</code>. Instance A claims even partitions (0,2,4,6,8,10). Instance C claims odd partitions (1,3,5,7,9,11). B\'s orphaned work automatically redistributed.',
+    onEnter() { $('inst-a').classList.add('active'); $('inst-b').classList.add('dead'); $('inst-c').classList.add('active');
+      $('rank-a').textContent = 'rank: 0'; $('rank-b').textContent = 'REMOVED'; $('rank-c').textContent = 'rank: 1';
+      $('parts-a').textContent = 'owns: 0,2,4,6,8,10'; $('parts-c').textContent = 'owns: 1,3,5,7,9,11';
+      assignPartitions2();
+      showFormula(); $('fc-title').textContent = 'Automatic Rebalancing';
+      $('fc-code').textContent = 'Old: partition % 3 (A=0, B=1, C=2)\nNew: partition % 2 (A=0, C=1)';
+      $('fc-note').textContent = 'No coordination protocol needed — just heartbeat + modular arithmetic'; },
+    onExit: resetAll
+  },
+  {
+    id: 'rejoin', label: 'Instance B Rejoins', duration: 3000,
+    narration: 'Instance B comes back online, registers heartbeat. 3 active instances again, ranks recalculated. Partitions automatically redistribute back to 3-way split. Zero manual intervention — the system self-heals.',
+    onEnter() { $('inst-a').classList.add('active'); $('inst-b').classList.add('active'); $('inst-c').classList.add('active');
+      $('rank-a').textContent = 'rank: 0'; $('rank-b').textContent = 'rank: 1'; $('rank-c').textContent = 'rank: 2';
+      $('parts-a').textContent = 'owns: 0,3,6,9'; $('parts-b').textContent = 'owns: 1,4,7,10'; $('parts-c').textContent = 'owns: 2,5,8,11';
+      assignPartitions3();
+      showFormula(); $('fc-title').textContent = 'Self-Healing Complete';
+      $('fc-code').textContent = 'Back to partition % 3 — even distribution restored';
+      $('fc-note').textContent = 'No consensus protocol, no ZooKeeper, no etcd — just PostgreSQL + modular arithmetic'; },
+    onExit: resetAll
+  }
+];
+
+const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

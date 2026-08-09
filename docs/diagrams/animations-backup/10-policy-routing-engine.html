@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Policy Engine: Predicate Matching &amp; Route Selection</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    :root { --control-bar-height: 190px; }
+    .animation-viewport {
+      display: grid; grid-template-columns: 280px 1fr 220px;
+      grid-template-rows: 1fr; gap: 12px; padding: 12px 16px;
+    }
+
+    .policy-list { display: flex; flex-direction: column; gap: 6px; }
+    .policy-list .col-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+
+    .policy-card {
+      padding: 8px 10px; border-radius: 8px; background: var(--bg-surface);
+      border: 2px solid var(--border); font-size: 10px;
+      transition: all var(--transition-normal); opacity: 0.6;
+    }
+    .policy-card.evaluating { opacity: 1; border-color: var(--wb-cyan); box-shadow: 0 0 8px rgba(24,211,237,0.2); }
+    .policy-card.matched { opacity: 1; border-color: var(--success); background: var(--phase-perspective-bg); }
+    .policy-card.skipped { opacity: 0.3; border-style: dashed; }
+    .policy-card .p-name { font-weight: 700; font-size: 10px; margin-bottom: 2px; }
+    .policy-card .p-when { font-family: 'SF Mono','Fira Code',monospace; font-size: 9px; color: var(--wb-indigo); }
+    .policy-card .p-then { font-family: 'SF Mono','Fira Code',monospace; font-size: 8px; color: var(--text-secondary); margin-top: 2px; }
+
+    .flow-center { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .flow-center .node { position: relative; width: 100%; max-width: 300px; font-size: 11px; padding: 8px 14px; }
+
+    .result-card {
+      width: 100%; max-width: 300px; padding: 8px 12px; border-radius: 8px;
+      background: var(--bg-surface); border: 1px solid var(--border); font-size: 10px;
+      opacity: 0; transform: translateY(4px); transition: all var(--transition-normal);
+    }
+    .result-card.visible { opacity: 1; transform: translateY(0); }
+    .result-card .r-title { font-weight: 700; margin-bottom: 4px; }
+    .result-card .r-field { display: flex; justify-content: space-between; gap: 4px; padding: 1px 0; font-family: 'SF Mono','Fira Code',monospace; font-size: 9px; }
+    .result-card .rf-name { color: var(--wb-indigo); }
+    .result-card .rf-val { color: var(--text-secondary); }
+
+    .output-col { display: flex; flex-direction: column; gap: 6px; }
+    .output-col .col-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+    .output-slot {
+      padding: 6px 8px; border-radius: 6px; font-size: 10px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      opacity: 0; transition: all var(--transition-normal);
+    }
+    .output-slot.visible { opacity: 1; }
+    .output-slot.active { border-color: var(--wb-cyan); }
+    .output-slot .o-label { font-weight: 700; font-size: 9px; color: var(--text-muted); text-transform: uppercase; }
+    .output-slot .o-value { font-family: 'SF Mono','Fira Code',monospace; font-size: 10px; margin-top: 2px; }
+  </style>
+</head>
+<body>
+<div class="animation-viewport" id="viewport">
+  <!-- Left: Policy List -->
+  <div class="policy-list">
+    <div class="col-title">Policies (evaluated top → bottom, first match wins)</div>
+    <div class="policy-card" id="pol1">
+      <div class="p-name">Policy 1: Order Aggregate</div>
+      <div class="p-when">When: ctx.MatchesAggregate&lt;Order&gt;()</div>
+      <div class="p-then">Then: topic="orders", partitions=16, HashRouter, Serial</div>
+    </div>
+    <div class="policy-card" id="pol2">
+      <div class="p-name">Policy 2: Projections</div>
+      <div class="p-when">When: ctx.Message is IProjection</div>
+      <div class="p-then">Then: topic="projections", partitions=8, RoundRobin, Parallel</div>
+    </div>
+    <div class="policy-card" id="pol3">
+      <div class="p-name">Policy 3: High Priority</div>
+      <div class="p-when">When: ctx.HasTag("priority:high")</div>
+      <div class="p-then">Then: topic="high-priority", partitions=32, Parallel</div>
+    </div>
+    <div class="policy-card" id="pol4">
+      <div class="p-name">Policy 4: Default (catch-all)</div>
+      <div class="p-when">When: ctx => true</div>
+      <div class="p-then">Then: topic="default", partitions=4, Serial</div>
+    </div>
+  </div>
+
+  <!-- Center: Flow -->
+  <div class="flow-center">
+    <div class="node" id="n-message"><span class="label">Incoming Message</span><span class="sublabel">OrderPlacedEvent (Order aggregate)</span></div>
+    <div class="node" id="n-ctx"><span class="label">PolicyContext</span><span class="sublabel">Message, MessageType, Envelope, Environment</span></div>
+    <div class="result-card" id="rc-match"><div class="r-title">Match Result</div>
+      <div class="r-field"><span class="rf-name">Policy</span><span class="rf-val" id="rv-policy">—</span></div>
+      <div class="r-field"><span class="rf-name">Predicate</span><span class="rf-val" id="rv-pred">—</span></div>
+    </div>
+    <div class="result-card" id="rc-config"><div class="r-title">Applied Configuration</div>
+      <div class="r-field"><span class="rf-name">Topic</span><span class="rf-val" id="rv-topic">—</span></div>
+      <div class="r-field"><span class="rf-name">Stream</span><span class="rf-val" id="rv-stream">—</span></div>
+      <div class="r-field"><span class="rf-name">Partitions</span><span class="rf-val" id="rv-parts">—</span></div>
+      <div class="r-field"><span class="rf-name">Router</span><span class="rf-val" id="rv-router">—</span></div>
+      <div class="r-field"><span class="rf-name">Strategy</span><span class="rf-val" id="rv-strat">—</span></div>
+    </div>
+    <div class="result-card" id="rc-partition"><div class="r-title">Partition Assignment</div>
+      <div class="r-field"><span class="rf-name">Formula</span><span class="rf-val" id="rv-formula">—</span></div>
+      <div class="r-field"><span class="rf-name">Partition</span><span class="rf-val" id="rv-part-num">—</span></div>
+    </div>
+    <div class="node" id="n-trail"><span class="label">PolicyDecisionTrail</span><span class="sublabel">recorded on MessageHop for debugging</span></div>
+  </div>
+
+  <!-- Right: Output -->
+  <div class="output-col">
+    <div class="col-title">Routing Result</div>
+    <div class="output-slot" id="out-topic"><div class="o-label">Topic</div><div class="o-value" id="ov-topic">—</div></div>
+    <div class="output-slot" id="out-stream"><div class="o-label">Stream Key</div><div class="o-value" id="ov-stream">—</div></div>
+    <div class="output-slot" id="out-partition"><div class="o-label">Partition</div><div class="o-value" id="ov-partition">—</div></div>
+    <div class="output-slot" id="out-executor"><div class="o-label">Execution</div><div class="o-value" id="ov-executor">—</div></div>
+    <div class="output-slot" id="out-transport"><div class="o-label">Transport Target</div><div class="o-value" id="ov-transport">—</div></div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function glow(id) { $(id).classList.add('glow'); }
+function unglow(id) { $(id).classList.remove('glow'); }
+function showRC(id) { $(id).classList.add('visible'); }
+function showOut(id) { $(id).classList.add('visible'); $(id).classList.add('active'); }
+function resetAll() {
+  document.querySelectorAll('.node').forEach(n => n.classList.remove('glow','active','highlight-success'));
+  document.querySelectorAll('.policy-card').forEach(c => c.classList.remove('evaluating','matched','skipped'));
+  document.querySelectorAll('.result-card').forEach(c => c.classList.remove('visible'));
+  document.querySelectorAll('.output-slot').forEach(o => { o.classList.remove('visible','active'); });
+  ['rv-policy','rv-pred','rv-topic','rv-stream','rv-parts','rv-router','rv-strat','rv-formula','rv-part-num'].forEach(id => $(id).textContent = '—');
+  ['ov-topic','ov-stream','ov-partition','ov-executor','ov-transport'].forEach(id => $(id).textContent = '—');
+}
+
+const steps = [
+  {
+    id: 'msg-arrive', label: 'Message Arrives', duration: 2500,
+    narration: 'An <code>OrderPlacedEvent</code> arrives at the policy engine. It belongs to the Order aggregate with AggregateId = order-789.',
+    onEnter() { glow('n-message'); },
+    onExit: resetAll
+  },
+  {
+    id: 'ctx-build', label: 'Build PolicyContext', duration: 2500,
+    narration: '<code>PolicyContext</code> created with access to: <code>Message</code> (the event), <code>MessageType</code>, <code>Envelope</code> (with metadata/tags), <code>Environment</code>, <code>Services</code> (DI container).',
+    onEnter() { glow('n-ctx'); },
+    onExit: resetAll
+  },
+  {
+    id: 'eval-pol1', label: 'Evaluate Policy 1', duration: 3000,
+    narration: 'Policy 1: <code>ctx.MatchesAggregate&lt;Order&gt;()</code> — checks if the message type is associated with the Order aggregate. OrderPlacedEvent IS an Order aggregate message. MATCH! First-match-wins: remaining policies are skipped.',
+    onEnter() { $('pol1').classList.add('evaluating');
+      setTimeout(() => { $('pol1').classList.remove('evaluating'); $('pol1').classList.add('matched'); }, 1200); },
+    onExit: resetAll
+  },
+  {
+    id: 'skip-rest', label: 'Skip Remaining Policies', duration: 2200,
+    narration: 'First-match-wins: Policies 2, 3, and 4 are never evaluated. This is why policy ordering matters — most specific policies should come first, catch-all last.',
+    onEnter() { $('pol1').classList.add('matched');
+      $('pol2').classList.add('skipped'); $('pol3').classList.add('skipped'); $('pol4').classList.add('skipped'); },
+    onExit: resetAll
+  },
+  {
+    id: 'apply-config', label: 'Apply Configuration', duration: 3000,
+    narration: 'Policy 1 configuration applied: <code>UseTopic("orders")</code>, <code>UseStream(ctx => "order-" + ctx.GetAggregateId())</code>, <code>WithPartitions(16)</code>, <code>UsePartitionRouter&lt;HashPartitionRouter&gt;()</code>, <code>UseExecutionStrategy&lt;SerialExecutor&gt;()</code>.',
+    onEnter() { $('pol1').classList.add('matched'); $('pol2').classList.add('skipped'); $('pol3').classList.add('skipped'); $('pol4').classList.add('skipped');
+      showRC('rc-match'); $('rv-policy').textContent = 'Policy 1: Order Aggregate'; $('rv-pred').textContent = 'MatchesAggregate<Order> = true';
+      showRC('rc-config');
+      $('rv-topic').textContent = 'orders'; $('rv-stream').textContent = 'order-789';
+      $('rv-parts').textContent = '16'; $('rv-router').textContent = 'HashPartitionRouter';
+      $('rv-strat').textContent = 'SerialExecutor'; },
+    onExit: resetAll
+  },
+  {
+    id: 'partition-calc', label: 'Partition Assignment', duration: 3000,
+    narration: '<code>HashPartitionRouter</code> computes: <code>abs(hashtext("order-789")) % 16</code>. The stream key is hashed to a deterministic partition number. All messages for order-789 always go to the same partition, guaranteeing ordering.',
+    onEnter() { $('pol1').classList.add('matched');
+      showRC('rc-match'); $('rv-policy').textContent = 'Policy 1'; $('rv-pred').textContent = 'MATCHED';
+      showRC('rc-config'); $('rv-topic').textContent = 'orders'; $('rv-stream').textContent = 'order-789'; $('rv-parts').textContent = '16'; $('rv-router').textContent = 'HashPartitionRouter'; $('rv-strat').textContent = 'SerialExecutor';
+      showRC('rc-partition'); $('rv-formula').textContent = 'abs(hashtext("order-789")) % 16'; $('rv-part-num').textContent = '11'; },
+    onExit: resetAll
+  },
+  {
+    id: 'output', label: 'Routing Result', duration: 2500,
+    narration: 'Final routing: topic=orders, stream=order-789, partition=11, serial execution. The <code>PolicyDecisionTrail</code> is recorded on the <code>MessageHop</code> for time-travel debugging.',
+    onEnter() { $('pol1').classList.add('matched');
+      showOut('out-topic'); $('ov-topic').textContent = 'orders';
+      showOut('out-stream'); $('ov-stream').textContent = 'order-789';
+      showOut('out-partition'); $('ov-partition').textContent = '11 (of 16)';
+      showOut('out-executor'); $('ov-executor').textContent = 'SerialExecutor';
+      showOut('out-transport'); $('ov-transport').textContent = 'Kafka: orders-topic, partition 11';
+      glow('n-trail'); },
+    onExit: resetAll
+  }
+];
+
+const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

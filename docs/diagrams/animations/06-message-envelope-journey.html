@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Message Envelope Journey</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    .animation-viewport {
+      display: grid;
+      grid-template-rows: 45% 55%;
+      padding: 0;
+    }
+
+    /* ── Top: Hop Pipeline ── */
+    .hop-pipeline {
+      display: grid;
+      grid-template-columns: 1fr 1fr 2px 1fr 1fr;
+      gap: 0;
+      padding: 16px;
+      position: relative;
+    }
+
+    .hop-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 12px 8px;
+      border-radius: 8px;
+      position: relative;
+    }
+
+    .hop-col .node {
+      position: relative;
+      width: 90%;
+      max-width: 180px;
+    }
+
+    .hop-col .hop-number {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .hc-1, .hc-2 { background: var(--phase-outbox-bg); }
+    .hc-3, .hc-4 { background: var(--phase-perspective-bg); }
+
+    /* Service boundary divider */
+    .svc-boundary {
+      background: var(--border);
+      position: relative;
+      transition: background var(--transition-slow), box-shadow var(--transition-slow);
+    }
+    .svc-boundary.glow {
+      background: var(--wb-pink);
+      box-shadow: 0 0 16px rgba(251, 50, 162, 0.4);
+    }
+    .svc-boundary .boundary-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-90deg);
+      font-size: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* Service labels above boundary */
+    .service-label {
+      position: absolute;
+      top: 4px;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+    .svc-label-a { left: 16px; }
+    .svc-label-b { right: 16px; }
+
+    /* Animated packet in pipeline */
+    .pipeline-packet {
+      position: absolute;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--wb-cyan), var(--wb-indigo));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      color: #fff;
+      z-index: 10;
+      opacity: 0;
+      transition: opacity var(--transition-fast);
+      box-shadow: 0 2px 12px rgba(24, 211, 237, 0.4);
+    }
+    .pipeline-packet.visible { opacity: 1; }
+
+    /* ── Bottom: Envelope Inspector ── */
+    .inspector-panel {
+      border-top: 2px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .inspector-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .inspector-header .title {
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .inspector-header .msg-id {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      color: var(--wb-indigo);
+    }
+
+    .inspector-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .inspector-tab {
+      padding: 6px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color var(--transition-fast), border-color var(--transition-fast);
+    }
+    .inspector-tab.active {
+      color: var(--wb-cyan);
+      border-bottom-color: var(--wb-cyan);
+    }
+
+    .tab-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      display: none;
+    }
+    .tab-content.active { display: block; }
+
+    /* Hop entries in inspector */
+    .hop-entry {
+      margin-bottom: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border-left: 3px solid var(--border);
+      background: var(--bg);
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity var(--transition-normal), transform var(--transition-normal);
+    }
+    .hop-entry.visible { opacity: 1; transform: translateY(0); }
+    .hop-entry.current-hop { border-left-color: var(--wb-cyan); }
+    .hop-entry.causation-hop { border-left-color: var(--text-muted); opacity: 0.5; font-style: italic; }
+
+    .hop-entry .hop-title {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-weight: 700;
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .hop-field {
+      display: flex;
+      gap: 8px;
+      padding: 1px 0;
+    }
+    .hop-field .fname { color: var(--wb-indigo); min-width: 120px; }
+    .hop-field .fval { color: var(--text-secondary); }
+    .hop-field .fval.new-val { animation: field-flash 1s ease; }
+
+    /* Causation chain tree */
+    .chain-node {
+      padding: 8px 12px;
+      margin: 4px 0 4px 20px;
+      border-left: 2px solid var(--wb-cyan);
+      border-radius: 0 6px 6px 0;
+      background: var(--bg);
+      opacity: 0;
+      transition: opacity var(--transition-normal);
+    }
+    .chain-node.visible { opacity: 1; }
+    .chain-node .chain-msg-type {
+      font-weight: 700;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .chain-node:first-child { margin-left: 0; border-left-color: var(--wb-gold); }
+
+    /* Scope diff */
+    .scope-section {
+      margin-bottom: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: var(--bg);
+      opacity: 0;
+      transition: opacity var(--transition-normal);
+    }
+    .scope-section.visible { opacity: 1; }
+    .scope-section .scope-title {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-weight: 700;
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+    .scope-entry { padding: 1px 0; }
+    .scope-add { color: var(--success); }
+    .scope-add::before { content: '+ '; font-weight: 700; }
+    .scope-base { color: var(--text-secondary); }
+    .scope-merged { color: var(--text); font-weight: 600; }
+  </style>
+</head>
+<body>
+
+<div class="animation-viewport" id="viewport">
+
+  <!-- Top: Hop Pipeline -->
+  <div class="hop-pipeline" id="pipeline">
+    <span class="service-label svc-label-a">Order Service</span>
+    <span class="service-label svc-label-b">Inventory Service</span>
+
+    <div class="hop-col hc-1" id="hop-col-1">
+      <span class="hop-number">Hop 1</span>
+      <div class="node" id="n-dispatcher">
+        <span class="label">Dispatcher</span>
+        <span class="sublabel">Order Service</span>
+      </div>
+    </div>
+
+    <div class="hop-col hc-2" id="hop-col-2">
+      <span class="hop-number">Hop 2</span>
+      <div class="node" id="n-outbox-worker">
+        <span class="label">Outbox Worker</span>
+        <span class="sublabel">Order Service</span>
+      </div>
+    </div>
+
+    <div class="svc-boundary" id="svc-bound">
+      <span class="boundary-text">Service Boundary</span>
+    </div>
+
+    <div class="hop-col hc-3" id="hop-col-3">
+      <span class="hop-number">Hop 3</span>
+      <div class="node" id="n-consumer">
+        <span class="label">Transport Consumer</span>
+        <span class="sublabel">Inventory Service</span>
+      </div>
+    </div>
+
+    <div class="hop-col hc-4" id="hop-col-4">
+      <span class="hop-number">Hop 4</span>
+      <div class="node" id="n-persp-worker">
+        <span class="label">Perspective Worker</span>
+        <span class="sublabel">Inventory Service</span>
+      </div>
+    </div>
+
+    <div class="pipeline-packet" id="pip-pkt">✉</div>
+  </div>
+
+  <!-- Bottom: Envelope Inspector -->
+  <div class="inspector-panel">
+    <div class="inspector-header">
+      <span class="title">MessageEnvelope Inspector</span>
+      <span class="msg-id" id="env-msgid">MessageId: —</span>
+    </div>
+
+    <div class="inspector-tabs">
+      <div class="inspector-tab active" data-tab="hops" onclick="switchTab('hops')">Hops</div>
+      <div class="inspector-tab" data-tab="causation" onclick="switchTab('causation')">Causation Chain</div>
+      <div class="inspector-tab" data-tab="scope" onclick="switchTab('scope')">Security Scope</div>
+    </div>
+
+    <!-- Hops Tab -->
+    <div class="tab-content active" id="tab-hops">
+      <div class="hop-entry current-hop" id="he-1">
+        <div class="hop-title">Hop 1 — Dispatcher</div>
+        <div class="hop-field"><span class="fname">Type</span><span class="fval">Current</span></div>
+        <div class="hop-field"><span class="fname">ServiceInstance</span><span class="fval">Order Service / order-host-01 / PID 1234</span></div>
+        <div class="hop-field"><span class="fname">Topic</span><span class="fval">order-commands</span></div>
+        <div class="hop-field"><span class="fname">StreamId</span><span class="fval">order-123</span></div>
+        <div class="hop-field"><span class="fname">ExecutionStrategy</span><span class="fval">Async</span></div>
+        <div class="hop-field"><span class="fname">CallerMemberName</span><span class="fval">PlaceOrder</span></div>
+        <div class="hop-field"><span class="fname">CallerFilePath</span><span class="fval">OrderController.cs</span></div>
+        <div class="hop-field"><span class="fname">CallerLineNumber</span><span class="fval">42</span></div>
+        <div class="hop-field"><span class="fname">TraceParent</span><span class="fval">00-abc...-01</span></div>
+      </div>
+
+      <div class="hop-entry current-hop" id="he-2">
+        <div class="hop-title">Hop 2 — Outbox Worker</div>
+        <div class="hop-field"><span class="fname">Type</span><span class="fval">Current</span></div>
+        <div class="hop-field"><span class="fname">ServiceInstance</span><span class="fval">Order Service (worker)</span></div>
+        <div class="hop-field"><span class="fname">Topic</span><span class="fval">order-events</span></div>
+        <div class="hop-field"><span class="fname">PartitionIndex</span><span class="fval">3</span></div>
+        <div class="hop-field"><span class="fname">SequenceNumber</span><span class="fval">1847</span></div>
+        <div class="hop-field"><span class="fname">Duration</span><span class="fval">12ms</span></div>
+      </div>
+
+      <div class="hop-entry current-hop" id="he-3">
+        <div class="hop-title">Hop 3 — Transport Consumer</div>
+        <div class="hop-field"><span class="fname">Type</span><span class="fval">Current</span></div>
+        <div class="hop-field"><span class="fname">ServiceInstance</span><span class="fval">Inventory Service / inv-host-02 / PID 5678</span></div>
+        <div class="hop-field"><span class="fname">Topic</span><span class="fval">order-events</span></div>
+        <div class="hop-field"><span class="fname">PartitionIndex</span><span class="fval">3</span></div>
+        <div class="hop-field"><span class="fname">TraceParent</span><span class="fval">00-abc...-02</span></div>
+      </div>
+
+      <div class="hop-entry current-hop" id="he-4">
+        <div class="hop-title">Hop 4 — Perspective Worker</div>
+        <div class="hop-field"><span class="fname">Type</span><span class="fval">Current</span></div>
+        <div class="hop-field"><span class="fname">ServiceInstance</span><span class="fval">Inventory Service</span></div>
+        <div class="hop-field"><span class="fname">StreamId</span><span class="fval">inventory-456</span></div>
+        <div class="hop-field"><span class="fname">Duration</span><span class="fval">3ms</span></div>
+      </div>
+    </div>
+
+    <!-- Causation Chain Tab -->
+    <div class="tab-content" id="tab-causation">
+      <div class="chain-node" id="cc-1">
+        <div class="chain-msg-type">PlaceOrderCommand</div>
+        <div class="hop-field"><span class="fname">MessageId</span><span class="fval">cmd-001</span></div>
+        <div class="hop-field"><span class="fname">CorrelationId</span><span class="fval">corr-AAA</span></div>
+        <div class="hop-field"><span class="fname">CausationId</span><span class="fval">null (root)</span></div>
+      </div>
+      <div class="chain-node" id="cc-2">
+        <div class="chain-msg-type">OrderPlacedEvent</div>
+        <div class="hop-field"><span class="fname">MessageId</span><span class="fval">evt-002</span></div>
+        <div class="hop-field"><span class="fname">CorrelationId</span><span class="fval">corr-AAA</span></div>
+        <div class="hop-field"><span class="fname">CausationId</span><span class="fval">cmd-001</span></div>
+      </div>
+      <div class="chain-node" id="cc-3">
+        <div class="chain-msg-type">InventoryReservedEvent</div>
+        <div class="hop-field"><span class="fname">MessageId</span><span class="fval">evt-003</span></div>
+        <div class="hop-field"><span class="fname">CorrelationId</span><span class="fval">corr-AAA</span></div>
+        <div class="hop-field"><span class="fname">CausationId</span><span class="fval">evt-002</span></div>
+      </div>
+    </div>
+
+    <!-- Security Scope Tab -->
+    <div class="tab-content" id="tab-scope">
+      <div class="scope-section" id="ss-initial">
+        <div class="scope-title">Initial Scope (Hop 1)</div>
+        <div class="scope-entry scope-base">TenantId: acme</div>
+        <div class="scope-entry scope-base">UserId: jane</div>
+        <div class="scope-entry scope-base">Roles: [admin]</div>
+        <div class="scope-entry scope-base">Permissions: [orders.write]</div>
+      </div>
+      <div class="scope-section" id="ss-hop2">
+        <div class="scope-title">ScopeDelta (Hop 2 — Outbox Worker)</div>
+        <div class="scope-entry scope-add">Role: service-account</div>
+      </div>
+      <div class="scope-section" id="ss-hop3">
+        <div class="scope-title">ScopeDelta (Hop 3 — Transport Consumer)</div>
+        <div class="scope-entry scope-add">Permission: inventory.reserve</div>
+      </div>
+      <div class="scope-section" id="ss-merged">
+        <div class="scope-title">Merged ScopeContext</div>
+        <div class="scope-entry scope-merged">TenantId: acme</div>
+        <div class="scope-entry scope-merged">UserId: jane</div>
+        <div class="scope-entry scope-merged">Roles: [admin, service-account]</div>
+        <div class="scope-entry scope-merged">Permissions: [orders.write, inventory.reserve]</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+
+  function switchTab(name) {
+    document.querySelectorAll('.inspector-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
+  }
+
+  function glow(id) { $(id).classList.add('glow'); }
+  function unglow(id) { $(id).classList.remove('glow'); }
+
+  function showPktAt(nodeId) {
+    const pkt = $('pip-pkt');
+    const node = $(nodeId);
+    const pr = $('pipeline').getBoundingClientRect();
+    const nr = node.getBoundingClientRect();
+    pkt.style.left = (nr.left + nr.width / 2 - pr.left - 16) + 'px';
+    pkt.style.top = (nr.top + nr.height + 8 - pr.top) + 'px';
+    pkt.classList.add('visible');
+  }
+
+  function hidePkt() { $('pip-pkt').classList.remove('visible'); }
+
+  function movePkt(fromId, toId) {
+    const pkt = $('pip-pkt');
+    const from = $(fromId);
+    const to = $(toId);
+    const pr = $('pipeline').getBoundingClientRect();
+    const fr = from.getBoundingClientRect();
+    const tr = to.getBoundingClientRect();
+
+    pkt.style.left = (fr.left + fr.width / 2 - pr.left - 16) + 'px';
+    pkt.style.top = (fr.top + fr.height + 8 - pr.top) + 'px';
+    pkt.classList.add('visible');
+
+    pkt.animate([
+      { left: (fr.left + fr.width / 2 - pr.left - 16) + 'px', top: (fr.top + fr.height + 8 - pr.top) + 'px' },
+      { left: (tr.left + tr.width / 2 - pr.left - 16) + 'px', top: (tr.top + tr.height + 8 - pr.top) + 'px' }
+    ], { duration: 1000, easing: 'ease-in-out', fill: 'forwards' });
+  }
+
+  function hideAllHops() {
+    for (let i = 1; i <= 4; i++) $('he-' + i).classList.remove('visible');
+  }
+  function hideAllChain() {
+    for (let i = 1; i <= 3; i++) $('cc-' + i).classList.remove('visible');
+  }
+  function hideAllScope() {
+    ['ss-initial', 'ss-hop2', 'ss-hop3', 'ss-merged'].forEach(id => $(id).classList.remove('visible'));
+  }
+
+  function resetAll() {
+    hidePkt();
+    hideAllHops();
+    hideAllChain();
+    hideAllScope();
+    document.querySelectorAll('.node').forEach(n => n.classList.remove('glow', 'active', 'pulse'));
+    $('svc-bound').classList.remove('glow');
+    $('env-msgid').textContent = 'MessageId: —';
+    switchTab('hops');
+  }
+
+  const steps = [
+    {
+      id: 'create', label: 'Envelope Created',
+      narration: 'Dispatcher creates <code>MessageEnvelope&lt;PlaceOrderCommand&gt;</code> (v2). <code>MessageId</code> is a UUIDv7 (time-ordered). <code>DispatchContext</code> records Mode (Local/Outbox/Both) and Source. Registered in <code>EnvelopeRegistry</code> for reference-identity lookup.',
+      duration: 2500,
+      onEnter() {
+        glow('n-dispatcher');
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        switchTab('hops');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'hop1', label: 'Hop 1 — Dispatcher',
+      narration: 'First <code>MessageHop</code> recorded: <code>Type: Current</code>, <code>ServiceInstance</code> (Order Service), <code>Topic</code>, <code>StreamId</code>, <code>CallerInfo</code> (PlaceOrder @ OrderController.cs:42), <code>TraceParent</code>.',
+      duration: 3500,
+      onEnter() {
+        glow('n-dispatcher');
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        showPktAt('n-dispatcher');
+        switchTab('hops');
+        $('he-1').classList.add('visible');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'scope1', label: 'Initial Scope',
+      narration: 'Full <code>ScopeContext</code> attached on first hop: <code>TenantId: acme</code>, <code>UserId: jane</code>, <code>Roles: [admin]</code>, <code>Permissions: [orders.write]</code>.',
+      duration: 2500,
+      onEnter() {
+        glow('n-dispatcher');
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        showPktAt('n-dispatcher');
+        $('he-1').classList.add('visible');
+        switchTab('scope');
+        $('ss-initial').classList.add('visible');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'move-h2', label: 'Move to Outbox Worker',
+      narration: 'Envelope moves to <code>OutboxWorker</code> within the same service (Order Service). Still within the service boundary.',
+      duration: 2500,
+      onEnter(isTarget) {
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        $('he-1').classList.add('visible');
+        switchTab('hops');
+        if (isTarget) movePkt('n-dispatcher', 'n-outbox-worker');
+        else showPktAt('n-outbox-worker');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'hop2', label: 'Hop 2 — Outbox Worker',
+      narration: 'Second hop recorded: <code>PartitionIndex: 3</code>, <code>SequenceNumber: 1847</code>, <code>Duration: 12ms</code>. Same service, different processing context.',
+      duration: 3000,
+      onEnter() {
+        glow('n-outbox-worker');
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        showPktAt('n-outbox-worker');
+        switchTab('hops');
+        $('he-1').classList.add('visible');
+        $('he-2').classList.add('visible');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'scope2', label: 'Scope Delta — Hop 2',
+      narration: '<code>ScopeDelta</code> on Hop 2: <code>+ Role: service-account</code>. The outbox worker runs under a service account, adding its role. Stored as minimal delta, not full context.',
+      duration: 2800,
+      onEnter() {
+        glow('n-outbox-worker');
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        showPktAt('n-outbox-worker');
+        $('he-1').classList.add('visible');
+        $('he-2').classList.add('visible');
+        switchTab('scope');
+        $('ss-initial').classList.add('visible');
+        $('ss-hop2').classList.add('visible');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'cross-boundary', label: 'Cross Service Boundary',
+      narration: 'Message crosses the <b>service boundary</b> via transport. The envelope travels with all its accumulated hops and metadata intact.',
+      duration: 3000,
+      onEnter(isTarget) {
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        $('he-1').classList.add('visible');
+        $('he-2').classList.add('visible');
+        switchTab('hops');
+        $('svc-bound').classList.add('glow');
+        if (isTarget) movePkt('n-outbox-worker', 'n-consumer');
+        else showPktAt('n-consumer');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'hop3', label: 'Hop 3 — Transport Consumer',
+      narration: 'Third hop: new <code>ServiceInstance</code> — <b>Inventory Service</b> on different host/PID. New <code>TraceParent</code> span-id: <code>00-abc...-02</code>. Same <code>Topic</code> and <code>PartitionIndex</code>.',
+      duration: 3000,
+      onEnter() {
+        glow('n-consumer');
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        showPktAt('n-consumer');
+        switchTab('hops');
+        $('he-1').classList.add('visible');
+        $('he-2').classList.add('visible');
+        $('he-3').classList.add('visible');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'scope3', label: 'Scope Delta — Hop 3',
+      narration: '<code>ScopeDelta</code> on Hop 3: <code>+ Permission: inventory.reserve</code>. The consuming service adds its own authorization context. Merged view shows accumulated scope.',
+      duration: 2800,
+      onEnter() {
+        glow('n-consumer');
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        showPktAt('n-consumer');
+        $('he-1').classList.add('visible');
+        $('he-2').classList.add('visible');
+        $('he-3').classList.add('visible');
+        switchTab('scope');
+        $('ss-initial').classList.add('visible');
+        $('ss-hop2').classList.add('visible');
+        $('ss-hop3').classList.add('visible');
+        $('ss-merged').classList.add('visible');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'hop4', label: 'Hop 4 — Perspective Worker',
+      narration: 'Fourth hop: <code>StreamId: inventory-456</code>, <code>Duration: 3ms</code>. The envelope now has 4 complete hops — a full distributed trace.',
+      duration: 3000,
+      onEnter() {
+        glow('n-persp-worker');
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        showPktAt('n-persp-worker');
+        switchTab('hops');
+        $('he-1').classList.add('visible');
+        $('he-2').classList.add('visible');
+        $('he-3').classList.add('visible');
+        $('he-4').classList.add('visible');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'causation', label: 'Causation Chain',
+      narration: 'Causation chain: <code>PlaceOrderCommand</code> (root) causes <code>OrderPlacedEvent</code> causes <code>InventoryReservedEvent</code>. All share <code>CorrelationId: corr-AAA</code>. Each <code>CausationId</code> points to its direct parent.',
+      duration: 3500,
+      onEnter() {
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        $('he-1').classList.add('visible');
+        $('he-2').classList.add('visible');
+        $('he-3').classList.add('visible');
+        $('he-4').classList.add('visible');
+        switchTab('causation');
+        setTimeout(() => $('cc-1').classList.add('visible'), 200);
+        setTimeout(() => $('cc-2').classList.add('visible'), 600);
+        setTimeout(() => $('cc-3').classList.add('visible'), 1000);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'hoptype', label: 'HopType: Current vs Causation',
+      narration: 'When a child message is created, its parent\'s hops are carried forward as <code>HopType.Causation</code> (muted). The child\'s own processing adds a <code>HopType.Current</code> hop (bold). This enables full trace reconstruction across service boundaries.',
+      duration: 4000,
+      onEnter() {
+        $('env-msgid').textContent = 'MessageId: 019abc-ef12-7...';
+        switchTab('hops');
+        // Show hops 1-3 as causation style, hop 4 as current
+        $('he-1').classList.add('visible');
+        $('he-1').classList.remove('current-hop');
+        $('he-1').classList.add('causation-hop');
+        $('he-1').querySelector('.hop-title').textContent = 'Hop 1 — Dispatcher (Causation)';
+
+        $('he-2').classList.add('visible');
+        $('he-2').classList.remove('current-hop');
+        $('he-2').classList.add('causation-hop');
+        $('he-2').querySelector('.hop-title').textContent = 'Hop 2 — Outbox Worker (Causation)';
+
+        $('he-3').classList.add('visible');
+        $('he-3').classList.remove('current-hop');
+        $('he-3').classList.add('causation-hop');
+        $('he-3').querySelector('.hop-title').textContent = 'Hop 3 — Transport Consumer (Causation)';
+
+        $('he-4').classList.add('visible');
+        $('he-4').querySelector('.hop-title').textContent = 'Hop 4 — Perspective Worker (Current)';
+
+        glow('n-persp-worker');
+      },
+      onExit() {
+        resetAll();
+        // Restore original titles and classes
+        $('he-1').classList.add('current-hop');
+        $('he-1').classList.remove('causation-hop');
+        $('he-1').querySelector('.hop-title').textContent = 'Hop 1 — Dispatcher';
+        $('he-2').classList.add('current-hop');
+        $('he-2').classList.remove('causation-hop');
+        $('he-2').querySelector('.hop-title').textContent = 'Hop 2 — Outbox Worker';
+        $('he-3').classList.add('current-hop');
+        $('he-3').classList.remove('causation-hop');
+        $('he-3').querySelector('.hop-title').textContent = 'Hop 3 — Transport Consumer';
+        $('he-4').querySelector('.hop-title').textContent = 'Hop 4 — Perspective Worker';
+      }
+    }
+  ];
+
+  const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

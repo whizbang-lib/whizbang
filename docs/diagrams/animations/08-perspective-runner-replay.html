@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Perspective Runner: Snapshot Restore &amp; Replay</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    :root { --control-bar-height: 190px; }
+    .animation-viewport {
+      display: grid;
+      grid-template-columns: 1fr;
+      grid-template-rows: 32px 1fr;
+      padding: 8px 16px;
+    }
+    .mode-tabs {
+      display: flex; gap: 8px; align-items: center; justify-content: center;
+    }
+    .mode-tab {
+      padding: 4px 14px; border-radius: 14px; font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em; cursor: default;
+      background: var(--bg); color: var(--text-muted); border: 1px solid var(--border);
+      transition: all var(--transition-fast);
+    }
+    .mode-tab.active { background: var(--wb-cyan); color: #fff; border-color: var(--wb-cyan); }
+
+    .flow-area {
+      display: grid;
+      grid-template-columns: 200px 1fr 200px;
+      gap: 12px;
+      padding: 12px 0;
+      align-items: start;
+    }
+
+    /* Event stream visualization */
+    .stream-col { display: flex; flex-direction: column; gap: 6px; }
+    .stream-col .col-title {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-muted); text-align: center;
+    }
+    .event-slot {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 8px; border-radius: 6px; font-size: 10px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      transition: all var(--transition-normal); opacity: 0.5;
+    }
+    .event-slot.highlight { opacity: 1; border-color: var(--wb-cyan); background: var(--phase-dispatch-bg); }
+    .event-slot.applied { opacity: 1; border-color: var(--success); background: var(--phase-perspective-bg); }
+    .event-slot.late { opacity: 1; border-color: var(--wb-pink); background: #fce4ec; }
+    .event-slot.snapshot-point { opacity: 1; border-color: var(--wb-gold); background: var(--phase-cascade-bg); }
+    .event-slot .seq { font-weight: 700; min-width: 20px; }
+    .event-slot .etype { color: var(--text-secondary); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Center: process flow */
+    .process-flow {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .process-flow .node {
+      position: relative; width: 90%; max-width: 300px;
+      font-size: 11px; padding: 8px 14px;
+    }
+    .step-card {
+      width: 90%; max-width: 300px; padding: 8px 12px; border-radius: 8px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      font-size: 11px; text-align: center;
+      opacity: 0; transform: translateY(4px);
+      transition: all var(--transition-normal);
+    }
+    .step-card.visible { opacity: 1; transform: translateY(0); }
+    .step-card .card-label { font-weight: 700; font-size: 10px; margin-bottom: 4px; }
+    .step-card .card-detail {
+      font-family: 'SF Mono', 'Fira Code', monospace; font-size: 9px; color: var(--text-secondary);
+    }
+
+    /* Model state card */
+    .model-col { display: flex; flex-direction: column; gap: 6px; }
+    .model-col .col-title {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-muted); text-align: center;
+    }
+    .model-state {
+      padding: 8px 10px; border-radius: 8px; background: var(--bg-surface);
+      border: 1px solid var(--border); font-size: 10px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      transition: all var(--transition-normal);
+    }
+    .model-state.active { border-color: var(--wb-cyan); }
+    .model-state.snapshot { border-color: var(--wb-gold); background: var(--phase-cascade-bg); }
+    .model-state .ms-title { font-weight: 700; margin-bottom: 4px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .model-field { display: flex; justify-content: space-between; gap: 4px; padding: 1px 0; font-size: 9px; }
+    .model-field .fn { color: var(--wb-indigo); }
+    .model-field .fv { color: var(--text-secondary); }
+    .model-field .fv.changed { color: var(--success); font-weight: 700; }
+  </style>
+</head>
+<body>
+<div class="animation-viewport" id="viewport">
+  <div class="mode-tabs">
+    <div class="mode-tab active" id="mt-run">RunAsync</div>
+    <div class="mode-tab" id="mt-rewind">RewindAndRunAsync</div>
+    <div class="mode-tab" id="mt-bootstrap">BootstrapSnapshotAsync</div>
+  </div>
+
+  <div class="flow-area">
+    <!-- Left: Event Stream -->
+    <div class="stream-col">
+      <div class="col-title">Event Stream (order-123)</div>
+      <div class="event-slot" id="ev1"><span class="seq">1</span><span class="etype">OrderCreated</span></div>
+      <div class="event-slot" id="ev2"><span class="seq">2</span><span class="etype">ItemAdded</span></div>
+      <div class="event-slot" id="ev3"><span class="seq">3</span><span class="etype">ItemAdded</span></div>
+      <div class="event-slot" id="ev4"><span class="seq">4</span><span class="etype">PaymentReceived</span></div>
+      <div class="event-slot" id="ev5"><span class="seq">5</span><span class="etype">OrderShipped</span></div>
+      <div class="event-slot" id="ev6"><span class="seq">6</span><span class="etype">DeliveryConfirmed</span></div>
+      <div class="event-slot" id="ev7"><span class="seq">7</span><span class="etype">DiscountApplied (LATE)</span></div>
+    </div>
+
+    <!-- Center: Process Flow -->
+    <div class="process-flow">
+      <div class="node" id="n-runner"><span class="label">PerspectiveRunner</span><span class="sublabel">IPerspectiveRunner</span></div>
+      <div class="step-card" id="sc-checkpoint"><div class="card-label">Checkpoint</div><div class="card-detail" id="sc-cp-val">lastProcessedEventId: null</div></div>
+      <div class="step-card" id="sc-query"><div class="card-label">Query Events</div><div class="card-detail" id="sc-q-val">ReadAsync(streamId, fromEventId)</div></div>
+      <div class="step-card" id="sc-apply"><div class="card-label">Apply Loop</div><div class="card-detail" id="sc-a-val">Perspective.Apply(event)</div></div>
+      <div class="step-card" id="sc-save"><div class="card-label">Save</div><div class="card-detail" id="sc-s-val">UpsertAsync + checkpoint</div></div>
+      <div class="step-card" id="sc-snapshot"><div class="card-label">Snapshot</div><div class="card-detail" id="sc-snap-val">—</div></div>
+      <div class="node" id="n-result"><span class="label">PerspectiveCursorCompletion</span><span class="sublabel">status + lastEventId</span></div>
+    </div>
+
+    <!-- Right: Model State -->
+    <div class="model-col">
+      <div class="col-title">OrderSummary Model</div>
+      <div class="model-state" id="ms-current">
+        <div class="ms-title">Current State</div>
+        <div class="model-field"><span class="fn">OrderId</span><span class="fv" id="mf-id">—</span></div>
+        <div class="model-field"><span class="fn">Status</span><span class="fv" id="mf-status">—</span></div>
+        <div class="model-field"><span class="fn">Items</span><span class="fv" id="mf-items">—</span></div>
+        <div class="model-field"><span class="fn">Total</span><span class="fv" id="mf-total">—</span></div>
+        <div class="model-field"><span class="fn">Discount</span><span class="fv" id="mf-disc">—</span></div>
+      </div>
+      <div class="model-state" id="ms-snapshot" style="display:none">
+        <div class="ms-title">Snapshot (at event 3)</div>
+        <div class="model-field"><span class="fn">OrderId</span><span class="fv">order-123</span></div>
+        <div class="model-field"><span class="fn">Status</span><span class="fv">Created</span></div>
+        <div class="model-field"><span class="fn">Items</span><span class="fv">2</span></div>
+        <div class="model-field"><span class="fn">Total</span><span class="fv">$75.00</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function glow(id) { $(id).classList.add('glow'); }
+function unglow(id) { $(id).classList.remove('glow'); }
+function showCard(id) { $(id).classList.add('visible'); }
+function hideCard(id) { $(id).classList.remove('visible'); }
+function setMode(m) {
+  ['mt-run','mt-rewind','mt-bootstrap'].forEach(t => $(t).classList.remove('active'));
+  $('mt-' + m).classList.add('active');
+}
+function resetEvents() {
+  for (let i = 1; i <= 7; i++) {
+    $('ev' + i).classList.remove('highlight', 'applied', 'late', 'snapshot-point');
+  }
+}
+function resetAll() {
+  resetEvents();
+  ['sc-checkpoint','sc-query','sc-apply','sc-save','sc-snapshot'].forEach(hideCard);
+  ['n-runner','n-result'].forEach(unglow);
+  $('ms-current').classList.remove('active');
+  $('ms-snapshot').style.display = 'none';
+  $('ms-snapshot').classList.remove('snapshot');
+  ['mf-id','mf-status','mf-items','mf-total','mf-disc'].forEach(id => {
+    $(id).textContent = '—'; $(id).classList.remove('changed');
+  });
+}
+
+const steps = [
+  // ── RunAsync (steps 1-7) ──
+  {
+    id: 'run-start', label: 'RunAsync Begins', duration: 2500,
+    narration: '<code>PerspectiveRunner.RunAsync(streamId, "OrderSummary", lastProcessedEventId: null)</code> — starts from the beginning since no checkpoint exists.',
+    onEnter() { setMode('run'); glow('n-runner'); showCard('sc-checkpoint'); $('sc-cp-val').textContent = 'lastProcessedEventId: null (start from beginning)'; },
+    onExit: resetAll
+  },
+  {
+    id: 'run-query', label: 'Query Events', duration: 2500,
+    narration: '<code>ReadAsync(streamId, fromEventId: null)</code> — loads all events for stream order-123 from the event store in UUID7 order.',
+    onEnter() { setMode('run'); glow('n-runner'); showCard('sc-checkpoint'); showCard('sc-query');
+      for (let i = 1; i <= 6; i++) $('ev' + i).classList.add('highlight'); },
+    onExit: resetAll
+  },
+  {
+    id: 'run-apply1', label: 'Apply Events 1-3', duration: 3000,
+    narration: 'Pure function <code>Apply(event)</code> called for each event in order. OrderCreated sets initial state, two ItemAdded events increment items and total.',
+    onEnter() { setMode('run'); showCard('sc-apply'); $('sc-a-val').textContent = 'Applying events 1, 2, 3...';
+      $('ev1').classList.add('applied'); $('ev2').classList.add('applied'); $('ev3').classList.add('applied');
+      $('ms-current').classList.add('active');
+      $('mf-id').textContent = 'order-123'; $('mf-id').classList.add('changed');
+      $('mf-status').textContent = 'Created'; $('mf-status').classList.add('changed');
+      $('mf-items').textContent = '2'; $('mf-items').classList.add('changed');
+      $('mf-total').textContent = '$75.00'; $('mf-total').classList.add('changed'); },
+    onExit: resetAll
+  },
+  {
+    id: 'run-apply2', label: 'Apply Events 4-6', duration: 3000,
+    narration: 'PaymentReceived updates status to Paid. OrderShipped sets Shipped. DeliveryConfirmed sets Delivered. Model state evolves with each event.',
+    onEnter() { setMode('run'); showCard('sc-apply'); $('sc-a-val').textContent = 'Applying events 4, 5, 6...';
+      for (let i = 1; i <= 6; i++) $('ev' + i).classList.add('applied');
+      $('ms-current').classList.add('active');
+      $('mf-id').textContent = 'order-123'; $('mf-status').textContent = 'Delivered'; $('mf-status').classList.add('changed');
+      $('mf-items').textContent = '2'; $('mf-total').textContent = '$75.00'; },
+    onExit: resetAll
+  },
+  {
+    id: 'run-save', label: 'Save & Checkpoint', duration: 2500,
+    narration: '<code>PerspectiveStore.UpsertAsync(streamId, model)</code> saves the read model. Checkpoint updated to event 6. <code>PerspectiveCursorCompletion</code> returned with status and lastEventId.',
+    onEnter() { setMode('run'); showCard('sc-save'); $('sc-s-val').textContent = 'UpsertAsync + checkpoint at event 6';
+      for (let i = 1; i <= 6; i++) $('ev' + i).classList.add('applied');
+      glow('n-result'); $('ms-current').classList.add('active');
+      $('mf-id').textContent = 'order-123'; $('mf-status').textContent = 'Delivered';
+      $('mf-items').textContent = '2'; $('mf-total').textContent = '$75.00'; },
+    onExit: resetAll
+  },
+
+  // ── RewindAndRunAsync (steps 6-11) ──
+  {
+    id: 'rewind-detect', label: 'Late Event Detected', duration: 3000,
+    narration: 'Event 7 (<code>DiscountApplied</code>) arrives late — its UUID7 timestamp places it between events 3 and 4 in the stream. The perspective checkpoint is at event 6, so this event was missed. <code>RewindAndRunAsync</code> triggered.',
+    onEnter() { setMode('rewind'); for (let i = 1; i <= 6; i++) $('ev' + i).classList.add('applied');
+      $('ev7').classList.add('late'); glow('n-runner'); },
+    onExit: resetAll
+  },
+  {
+    id: 'rewind-snapshot', label: 'Find Nearest Snapshot', duration: 3000,
+    narration: '<code>GetLatestSnapshotBeforeAsync(streamId, "OrderSummary", triggeringEventId)</code> — finds snapshot at event 3. This is the safe restore point before the late event\'s position.',
+    onEnter() { setMode('rewind'); $('ev7').classList.add('late');
+      $('ev3').classList.add('snapshot-point');
+      showCard('sc-snapshot'); $('sc-snap-val').textContent = 'Found snapshot at event 3';
+      $('ms-snapshot').style.display = 'block'; $('ms-snapshot').classList.add('snapshot'); },
+    onExit: resetAll
+  },
+  {
+    id: 'rewind-restore', label: 'Restore from Snapshot', duration: 2500,
+    narration: 'Model state restored from snapshot JSON. State is now at event 3: OrderId=order-123, Status=Created, Items=2, Total=$75.00. Replay will continue from here.',
+    onEnter() { setMode('rewind'); $('ev7').classList.add('late'); $('ev3').classList.add('snapshot-point');
+      $('ms-current').classList.add('active');
+      $('mf-id').textContent = 'order-123'; $('mf-status').textContent = 'Created';
+      $('mf-items').textContent = '2'; $('mf-total').textContent = '$75.00';
+      showCard('sc-snapshot'); $('sc-snap-val').textContent = 'Restored to event 3 state'; },
+    onExit: resetAll
+  },
+  {
+    id: 'rewind-replay', label: 'Replay with Late Event', duration: 3500,
+    narration: 'Replay ALL events after snapshot in UUID7 order. The late event (DiscountApplied) now appears in its correct position between events 3 and 4. Apply: DiscountApplied (sets 10% discount), PaymentReceived, OrderShipped, DeliveryConfirmed.',
+    onEnter() { setMode('rewind');
+      for (let i = 1; i <= 3; i++) $('ev' + i).classList.add('applied');
+      $('ev7').classList.add('applied'); // late event now in correct position
+      for (let i = 4; i <= 6; i++) $('ev' + i).classList.add('applied');
+      showCard('sc-apply'); $('sc-a-val').textContent = 'Events: 1,2,3 (snap) → 7,4,5,6 (replay)';
+      $('ms-current').classList.add('active');
+      $('mf-id').textContent = 'order-123'; $('mf-status').textContent = 'Delivered';
+      $('mf-items').textContent = '2'; $('mf-total').textContent = '$67.50'; $('mf-total').classList.add('changed');
+      $('mf-disc').textContent = '10%'; $('mf-disc').classList.add('changed'); },
+    onExit: resetAll
+  },
+  {
+    id: 'rewind-save', label: 'Save Corrected Model', duration: 2500,
+    narration: 'Corrected model saved. Total now reflects 10% discount ($67.50 vs $75.00). Checkpoint updated to event 7. The late event is fully integrated without data loss.',
+    onEnter() { setMode('rewind'); showCard('sc-save'); $('sc-s-val').textContent = 'UpsertAsync + checkpoint at event 7';
+      for (let i = 1; i <= 7; i++) $('ev' + i).classList.add('applied');
+      glow('n-result'); $('ms-current').classList.add('active');
+      $('mf-id').textContent = 'order-123'; $('mf-status').textContent = 'Delivered';
+      $('mf-items').textContent = '2'; $('mf-total').textContent = '$67.50'; $('mf-disc').textContent = '10%'; },
+    onExit: resetAll
+  },
+
+  // ── BootstrapSnapshotAsync (steps 12-13) ──
+  {
+    id: 'bootstrap-detect', label: 'Bootstrap Detection', duration: 2500,
+    narration: '<code>HasAnySnapshotAsync()</code> returns false — this stream has processed events but has no snapshots yet. <code>BootstrapSnapshotAsync</code> creates one for future rewind efficiency.',
+    onEnter() { setMode('bootstrap'); glow('n-runner');
+      showCard('sc-snapshot'); $('sc-snap-val').textContent = 'HasAnySnapshotAsync() = false'; },
+    onExit: resetAll
+  },
+  {
+    id: 'bootstrap-create', label: 'Create Snapshot', duration: 2500,
+    narration: '<code>CreateSnapshotAsync(streamId, "OrderSummary", lastProcessedEventId, modelJson)</code> — serializes current model state as JSON and persists it. Future rewinds can restore from here instead of replaying from event 0.',
+    onEnter() { setMode('bootstrap');
+      showCard('sc-snapshot'); $('sc-snap-val').textContent = 'CreateSnapshotAsync at current checkpoint';
+      glow('n-result');
+      $('ms-snapshot').style.display = 'block'; $('ms-snapshot').classList.add('snapshot'); },
+    onExit: resetAll
+  }
+];
+
+const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

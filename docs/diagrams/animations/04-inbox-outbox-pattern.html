@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Inbox / Outbox Pattern</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    .animation-viewport {
+      display: grid;
+      grid-template-columns: 1fr 120px 1fr;
+      grid-template-rows: 36px 1fr;
+      gap: 0;
+      padding: 12px 16px;
+    }
+
+    /* Service headers */
+    .service-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-radius: 6px 6px 0 0;
+      padding: 4px;
+    }
+    .sh-a { background: var(--phase-outbox-bg); color: var(--phase-outbox); }
+    .sh-transport { background: var(--border-light); color: var(--text-muted); }
+    .sh-b { background: var(--phase-perspective-bg); color: var(--phase-perspective); }
+
+    /* Service columns */
+    .service-col {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 14px;
+      padding: 20px 12px;
+      border-radius: 0 0 6px 6px;
+    }
+    .sc-a { background: var(--phase-outbox-bg); }
+    .sc-transport {
+      background: var(--border-light);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .sc-b { background: var(--phase-perspective-bg); }
+
+    .service-col .node {
+      position: relative;
+      width: 90%;
+      max-width: 200px;
+    }
+
+    /* Transport icon */
+    .transport-icon {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+    }
+    .transport-icon .icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--bg-surface);
+      border: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
+    }
+    .transport-icon.active .icon {
+      border-color: var(--wb-cyan);
+      box-shadow: 0 0 16px rgba(24, 211, 237, 0.3);
+    }
+
+    /* Transaction boundary */
+    .tx-boundary {
+      position: absolute;
+      border: 2px dashed var(--warning);
+      border-radius: 10px;
+      opacity: 0;
+      transition: opacity var(--transition-normal);
+      pointer-events: none;
+      z-index: 3;
+    }
+    .tx-boundary.visible {
+      opacity: 1;
+      animation: dash-march 1.5s linear infinite;
+    }
+    @keyframes dash-march {
+      to { border-color: var(--wb-gold); }
+    }
+    .tx-boundary .tx-label {
+      position: absolute;
+      top: -10px;
+      left: 12px;
+      background: var(--phase-outbox-bg);
+      padding: 0 6px;
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--warning);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* Dedup indicator */
+    .dedup-result {
+      position: absolute;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 700;
+      opacity: 0;
+      transition: opacity var(--transition-normal);
+      z-index: 5;
+    }
+    .dedup-result.new-msg {
+      background: rgba(46, 125, 50, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(46, 125, 50, 0.3);
+    }
+    .dedup-result.visible { opacity: 1; }
+
+    /* Record card */
+    .record-card {
+      position: relative;
+      width: 90%;
+      max-width: 200px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 10px;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      opacity: 0.5;
+      transition: opacity var(--transition-normal), border-color var(--transition-normal);
+    }
+    .record-card.active {
+      opacity: 1;
+      border-color: var(--wb-cyan);
+    }
+    .record-card .card-title {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-weight: 700;
+      font-size: 10px;
+      margin-bottom: 4px;
+    }
+    .record-card .field {
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+      padding: 1px 0;
+      opacity: 0;
+      transition: opacity var(--transition-normal);
+    }
+    .record-card .field.visible { opacity: 1; }
+    .record-card .field-name { color: var(--wb-indigo); font-weight: 600; }
+    .record-card .field-value {
+      color: var(--text-secondary);
+      text-align: right;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .record-card .field-value.updated {
+      animation: field-flash 0.8s ease;
+    }
+
+    /* Packet layer */
+    .packet-layer {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+<div class="animation-viewport" id="viewport">
+  <!-- Headers -->
+  <div class="service-header sh-a">Service A (Sender)</div>
+  <div class="service-header sh-transport">Transport</div>
+  <div class="service-header sh-b">Service B (Receiver)</div>
+
+  <!-- Service A -->
+  <div class="service-col sc-a" id="col-a">
+    <div class="node" id="n-app"><span class="label">Application</span></div>
+    <div class="node" id="n-disp"><span class="label">Dispatcher</span><span class="sublabel">SendAsync</span></div>
+
+    <!-- Outbox Record Card -->
+    <div class="record-card" id="rc-outbox">
+      <div class="card-title">OutboxRecord</div>
+      <div class="field" id="of-msgid"><span class="field-name">MessageId</span><span class="field-value">019abc...</span></div>
+      <div class="field" id="of-type"><span class="field-name">MessageType</span><span class="field-value">OrderPlaced</span></div>
+      <div class="field" id="of-dest"><span class="field-name">Destination</span><span class="field-value">order-events</span></div>
+      <div class="field" id="of-status"><span class="field-name">StatusFlags</span><span class="field-value">Stored</span></div>
+      <div class="field" id="of-instance"><span class="field-name">InstanceId</span><span class="field-value">—</span></div>
+      <div class="field" id="of-lease"><span class="field-name">LeaseExpiry</span><span class="field-value">—</span></div>
+      <div class="field" id="of-pub"><span class="field-name">PublishedAt</span><span class="field-value">—</span></div>
+    </div>
+
+    <div class="node" id="n-worker"><span class="label">Outbox Worker</span><span class="sublabel">polling</span></div>
+
+    <!-- Transaction boundary (positioned over Dispatcher + Record) -->
+    <div class="tx-boundary" id="tx-bound">
+      <span class="tx-label">Transaction</span>
+    </div>
+  </div>
+
+  <!-- Transport -->
+  <div class="service-col sc-transport" id="col-transport">
+    <div class="transport-icon" id="n-xport">
+      <div class="icon">⇄</div>
+      <span>Transport</span>
+    </div>
+  </div>
+
+  <!-- Service B -->
+  <div class="service-col sc-b" id="col-b">
+    <div class="node" id="n-tc"><span class="label">Transport Consumer</span></div>
+
+    <!-- Inbox Record Card -->
+    <div class="record-card" id="rc-inbox">
+      <div class="card-title">InboxRecord</div>
+      <div class="field" id="if-msgid"><span class="field-name">MessageId</span><span class="field-value">019abc...</span></div>
+      <div class="field" id="if-handler"><span class="field-name">HandlerName</span><span class="field-value">InventoryReceptor</span></div>
+      <div class="field" id="if-type"><span class="field-name">MessageType</span><span class="field-value">OrderPlaced</span></div>
+      <div class="field" id="if-recv"><span class="field-name">ReceivedAt</span><span class="field-value">—</span></div>
+      <div class="field" id="if-proc"><span class="field-name">ProcessedAt</span><span class="field-value">—</span></div>
+      <div class="field" id="if-status"><span class="field-name">StatusFlags</span><span class="field-value">—</span></div>
+    </div>
+
+    <div class="dedup-result new-msg" id="dedup-new">New message — processing</div>
+
+    <div class="node" id="n-receptor"><span class="label">Receptor</span><span class="sublabel">InventoryReceptor</span></div>
+  </div>
+
+  <!-- Packet layer -->
+  <div class="packet-layer" id="packets">
+    <div class="message-packet command" id="pkt-cmd">PlaceOrderCommand</div>
+    <div class="message-packet event"   id="pkt-evt">OrderPlacedEvent</div>
+    <div class="message-packet receipt" id="pkt-receipt">IDeliveryReceipt</div>
+    <div class="message-packet event"   id="pkt-xport">OrderPlacedEvent</div>
+    <div class="message-packet event"   id="pkt-inbox">OrderPlacedEvent</div>
+    <div class="message-packet receipt" id="pkt-ack">ACK</div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+  const viewport = $('viewport');
+
+  function glow(id) { $(id).classList.add('glow'); }
+  function unglow(id) { $(id).classList.remove('glow'); }
+
+  function showPacketAt(pktId, nodeId) {
+    const pkt = $(pktId);
+    const node = $(nodeId);
+    const vr = viewport.getBoundingClientRect();
+    const nr = node.getBoundingClientRect();
+    pkt.style.left = (nr.left + nr.width / 2 - vr.left) + 'px';
+    pkt.style.top = (nr.top - 14 - vr.top) + 'px';
+    pkt.classList.add('visible');
+  }
+
+  function hidePacket(pktId) {
+    $(pktId).classList.remove('visible');
+    $(pktId).getAnimations().forEach(a => a.cancel());
+  }
+
+  function hideAllPackets() {
+    document.querySelectorAll('.message-packet').forEach(p => {
+      p.classList.remove('visible');
+      p.getAnimations().forEach(a => a.cancel());
+    });
+  }
+
+  function showField(id) { $(id).classList.add('visible'); }
+  function showFieldValue(id, val) {
+    const f = $(id);
+    f.classList.add('visible');
+    if (val) {
+      const v = f.querySelector('.field-value');
+      v.textContent = val;
+      v.classList.add('updated');
+      setTimeout(() => v.classList.remove('updated'), 900);
+    }
+  }
+
+  function resetCard(cardId) {
+    $(cardId).classList.remove('active');
+    $(cardId).querySelectorAll('.field').forEach(f => f.classList.remove('visible'));
+  }
+
+  function positionTxBoundary() {
+    const disp = $('n-disp');
+    const card = $('rc-outbox');
+    const col = $('col-a');
+    const cr = col.getBoundingClientRect();
+    const dr = disp.getBoundingClientRect();
+    const rr = card.getBoundingClientRect();
+    const tx = $('tx-bound');
+    tx.style.left = (dr.left - cr.left - 8) + 'px';
+    tx.style.top = (dr.top - cr.top - 8) + 'px';
+    tx.style.width = (Math.max(dr.width, rr.width) + 16) + 'px';
+    tx.style.height = (rr.bottom - dr.top + 16) + 'px';
+  }
+
+  function resetAll() {
+    hideAllPackets();
+    document.querySelectorAll('.node, .transport-icon').forEach(n => {
+      n.classList.remove('glow', 'active', 'highlight-success', 'highlight-warning', 'pulse');
+    });
+    resetCard('rc-outbox');
+    resetCard('rc-inbox');
+    $('tx-bound').classList.remove('visible');
+    $('dedup-new').classList.remove('visible');
+    $('n-disp').querySelector('.sublabel').textContent = 'SendAsync';
+    $('n-worker').querySelector('.sublabel').textContent = 'polling';
+    $('n-receptor').querySelector('.sublabel').textContent = 'InventoryReceptor';
+  }
+
+  const steps = [
+    {
+      id: 'app-send', label: 'Send Command',
+      narration: 'Application calls <code>SendAsync(PlaceOrderCommand)</code> on the Dispatcher.',
+      duration: 2200,
+      onEnter(isTarget) {
+        glow('n-app');
+        showPacketAt('pkt-cmd', 'n-app');
+        if (isTarget) animatePacket($('pkt-cmd'), $('n-app'), $('n-disp'), 800);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'envelope', label: 'Create Envelope',
+      narration: 'Dispatcher creates <code>MessageEnvelope</code> with UUIDv7 <code>MessageId</code> and resolves <code>DispatchMode</code>.',
+      duration: 2200,
+      onEnter() {
+        glow('n-disp');
+        $('n-disp').querySelector('.sublabel').textContent = 'creating envelope...';
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'tx-write', label: 'Transactional Write',
+      narration: 'Within a single database transaction: <code>OutboxRecord</code> written alongside <code>EventStore</code> append. Atomicity ensures both succeed or both fail.',
+      duration: 3500,
+      onEnter() {
+        positionTxBoundary();
+        $('tx-bound').classList.add('visible');
+        $('rc-outbox').classList.add('active');
+        setTimeout(() => showField('of-msgid'), 300);
+        setTimeout(() => showField('of-type'), 500);
+        setTimeout(() => showField('of-dest'), 700);
+        setTimeout(() => showField('of-status'), 900);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'receipt', label: 'Delivery Receipt',
+      narration: '<code>IDeliveryReceipt</code> returned to the application. Confirms dispatch, not downstream processing.',
+      duration: 2000,
+      onEnter(isTarget) {
+        showPacketAt('pkt-receipt', 'n-disp');
+        if (isTarget) animatePacket($('pkt-receipt'), $('n-disp'), $('n-app'), 700);
+        glow('n-app');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'worker-poll', label: 'Worker Claims Record',
+      narration: '<code>OutboxWorker</code> polls for unpublished records. Claims via lease: sets <code>InstanceId</code> and <code>LeaseExpiry</code> on the <code>OutboxRecord</code>.',
+      duration: 2800,
+      onEnter() {
+        glow('n-worker');
+        $('rc-outbox').classList.add('active');
+        showField('of-msgid'); showField('of-type'); showField('of-dest'); showField('of-status');
+        setTimeout(() => showFieldValue('of-instance', 'worker-01'), 600);
+        setTimeout(() => showFieldValue('of-lease', '+30s'), 900);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'pre-outbox', label: 'PreOutbox Stages',
+      narration: '<code>PreOutboxDetached</code> and <code>PreOutboxInline</code> lifecycle stages fire. Opportunity for enrichment or validation before publish.',
+      duration: 1800,
+      onEnter() {
+        glow('n-worker');
+        $('n-worker').querySelector('.sublabel').textContent = 'PreOutbox [Detached/Inline]';
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'publish', label: 'Publish to Transport',
+      narration: 'Message published to transport. The transport handles partitioning, ordering guarantees, and durable delivery.',
+      duration: 2500,
+      onEnter(isTarget) {
+        showPacketAt('pkt-xport', 'n-worker');
+        if (isTarget) animatePacket($('pkt-xport'), $('n-worker'), $('n-xport'), 900);
+        $('n-xport').classList.add('active');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'post-outbox', label: 'PostOutbox + Mark Published',
+      narration: '<code>PostOutboxDetached/Inline</code> stages fire. <code>OutboxRecord.PublishedAt</code> set. <code>StatusFlags</code> transitions to Published.',
+      duration: 2200,
+      onEnter() {
+        $('rc-outbox').classList.add('active');
+        showField('of-msgid'); showField('of-type'); showField('of-dest');
+        showFieldValue('of-status', 'Published');
+        showFieldValue('of-pub', 'now');
+        showField('of-instance'); showField('of-lease');
+        $('n-worker').querySelector('.sublabel').textContent = 'PostOutbox [Detached/Inline]';
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'deliver', label: 'Cross-Service Delivery',
+      narration: 'Message delivered from transport to <code>TransportConsumer</code> in Service B. Self-echo check: if the message originated from this service (owned namespace), it is discarded to prevent double-firing.',
+      duration: 2500,
+      onEnter(isTarget) {
+        showPacketAt('pkt-inbox', 'n-xport');
+        if (isTarget) animatePacket($('pkt-inbox'), $('n-xport'), $('n-tc'), 1000);
+        glow('n-tc');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'dedup', label: 'Deduplication Check',
+      narration: '<code>TransportConsumer</code> checks <code>InboxRecord</code> table for existing entry with same <code>MessageId + HandlerName</code>. This is a new message — proceed to processing.',
+      duration: 2500,
+      onEnter() {
+        glow('n-tc');
+        $('dedup-new').classList.add('visible');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'inbox-write', label: 'PreInbox + Write InboxRecord',
+      narration: '<code>PreInboxDetached/Inline</code> stages fire. <code>InboxRecord</code> written with <code>MessageId</code>, <code>HandlerName</code>, <code>ReceivedAt</code>.',
+      duration: 2800,
+      onEnter() {
+        $('rc-inbox').classList.add('active');
+        setTimeout(() => showField('if-msgid'), 200);
+        setTimeout(() => showField('if-handler'), 400);
+        setTimeout(() => showField('if-type'), 600);
+        setTimeout(() => showFieldValue('if-recv', 'now'), 800);
+        setTimeout(() => showFieldValue('if-status', 'Processing'), 1000);
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'invoke', label: 'Receptor Invocation',
+      narration: '<code>InventoryReceptor.HandleAsync(OrderPlacedEvent)</code> invoked. Receptor processes the event and returns result/cascaded events.',
+      duration: 2500,
+      onEnter() {
+        glow('n-receptor');
+        $('n-receptor').querySelector('.sublabel').textContent = 'HandleAsync(event)';
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'post-inbox', label: 'PostInbox + Mark Processed',
+      narration: '<code>PostInboxDetached/Inline</code> stages fire. <code>InboxRecord.ProcessedAt</code> set. <code>StatusFlags</code> transitions to Processed.',
+      duration: 2200,
+      onEnter() {
+        $('rc-inbox').classList.add('active');
+        showField('if-msgid'); showField('if-handler'); showField('if-type'); showField('if-recv');
+        showFieldValue('if-proc', 'now');
+        showFieldValue('if-status', 'Processed');
+        $('n-tc').classList.add('highlight-success');
+      },
+      onExit: resetAll
+    },
+    {
+      id: 'ack', label: 'Acknowledge',
+      narration: 'Acknowledgment sent back to transport. Message delivery cycle complete. At-least-once delivery guaranteed via outbox; exactly-once processing guaranteed via inbox deduplication.',
+      duration: 2500,
+      onEnter(isTarget) {
+        showPacketAt('pkt-ack', 'n-tc');
+        if (isTarget) animatePacket($('pkt-ack'), $('n-tc'), $('n-xport'), 800);
+        $('n-xport').classList.add('active');
+      },
+      onExit: resetAll
+    }
+  ];
+
+  const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

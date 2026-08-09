@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Source Generator Pipeline</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    :root { --control-bar-height: 190px; }
+    .animation-viewport { display: flex; flex-direction: column; padding: 10px 20px; gap: 8px; }
+
+    .funnel { display: flex; gap: 6px; align-items: stretch; }
+    .funnel-stage {
+      flex: 1; padding: 8px 10px; border-radius: 8px;
+      background: var(--bg-surface); border: 2px solid var(--border);
+      font-size: 10px; text-align: center;
+      transition: all var(--transition-normal); opacity: 0.5;
+      display: flex; flex-direction: column; justify-content: center; gap: 4px;
+    }
+    .funnel-stage.active { opacity: 1; border-color: var(--wb-cyan); }
+    .funnel-stage.done { opacity: 1; border-color: var(--success); background: var(--phase-perspective-bg); }
+    .funnel-stage.filtered { opacity: 0.3; border-style: dashed; }
+    .funnel-stage .fs-title { font-weight: 700; font-size: 10px; }
+    .funnel-stage .fs-cost { font-size: 8px; font-weight: 600; padding: 1px 6px; border-radius: 8px; display: inline-block; }
+    .fs-cost.cheap { background: var(--phase-perspective-bg); color: var(--success); }
+    .fs-cost.expensive { background: #ffebee; color: var(--error); }
+    .funnel-stage .fs-detail { font-size: 8px; color: var(--text-secondary); }
+    .funnel-stage .fs-count { font-size: 16px; font-weight: 700; color: var(--wb-indigo); }
+
+    .arrow-between { display: flex; align-items: center; font-size: 18px; color: var(--text-muted); padding: 0 2px; }
+
+    .detail-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .det-card {
+      padding: 8px 10px; border-radius: 8px; background: var(--bg-surface);
+      border: 1px solid var(--border); font-size: 10px;
+      opacity: 0; transition: all var(--transition-normal);
+    }
+    .det-card.visible { opacity: 1; }
+    .det-card .dc-title { font-weight: 700; font-size: 10px; margin-bottom: 4px; }
+    .det-card .dc-code {
+      font-family: 'SF Mono','Fira Code',monospace; font-size: 9px;
+      background: var(--bg); padding: 6px 8px; border-radius: 4px;
+      color: var(--text-secondary); line-height: 1.5; white-space: pre-wrap;
+    }
+    .det-card .dc-note { font-size: 9px; color: var(--text-muted); margin-top: 4px; font-style: italic; }
+  </style>
+</head>
+<body>
+<div class="animation-viewport" id="viewport">
+  <!-- Funnel visualization -->
+  <div class="funnel">
+    <div class="funnel-stage" id="fs-input">
+      <div class="fs-title">All Syntax Nodes</div>
+      <div class="fs-count" id="fc-input">10,000</div>
+      <div class="fs-detail">types in compilation</div>
+    </div>
+    <div class="arrow-between">→</div>
+    <div class="funnel-stage" id="fs-syntactic">
+      <div class="fs-title">Syntactic Predicate</div>
+      <div class="fs-cost cheap">CHEAP (~50ms)</div>
+      <div class="fs-count" id="fc-syntactic">—</div>
+      <div class="fs-detail">ClassDeclarationSyntax?</div>
+    </div>
+    <div class="arrow-between">→</div>
+    <div class="funnel-stage" id="fs-semantic">
+      <div class="fs-title">Semantic Analysis</div>
+      <div class="fs-cost expensive">EXPENSIVE (~200ms)</div>
+      <div class="fs-count" id="fc-semantic">—</div>
+      <div class="fs-detail">GetDeclaredSymbol, attributes</div>
+    </div>
+    <div class="arrow-between">→</div>
+    <div class="funnel-stage" id="fs-record">
+      <div class="fs-title">Value Record</div>
+      <div class="fs-cost cheap">CACHED</div>
+      <div class="fs-count" id="fc-record">—</div>
+      <div class="fs-detail">sealed record (equality)</div>
+    </div>
+    <div class="arrow-between">→</div>
+    <div class="funnel-stage" id="fs-output">
+      <div class="fs-title">Generated Code</div>
+      <div class="fs-cost cheap">TEMPLATE</div>
+      <div class="fs-count" id="fc-output">—</div>
+      <div class="fs-detail">source output</div>
+    </div>
+  </div>
+
+  <!-- Detail cards -->
+  <div class="detail-row">
+    <div class="det-card" id="dc-left">
+      <div class="dc-title" id="dcl-title">—</div>
+      <div class="dc-code" id="dcl-code">—</div>
+      <div class="dc-note" id="dcl-note"></div>
+    </div>
+    <div class="det-card" id="dc-right">
+      <div class="dc-title" id="dcr-title">—</div>
+      <div class="dc-code" id="dcr-code">—</div>
+      <div class="dc-note" id="dcr-note"></div>
+    </div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function showDet(id) { $(id).classList.add('visible'); }
+function resetAll() {
+  document.querySelectorAll('.funnel-stage').forEach(s => s.classList.remove('active','done','filtered'));
+  document.querySelectorAll('.det-card').forEach(c => c.classList.remove('visible'));
+  ['fc-syntactic','fc-semantic','fc-record','fc-output'].forEach(id => $(id).textContent = '—');
+}
+
+const steps = [
+  {
+    id: 'input', label: 'Compilation Input', duration: 2500,
+    narration: 'Roslyn compilation contains ~10,000 type declarations. The source generator must find the handful that are Whizbang receptors, perspectives, or message types. Scanning all semantically would take 5-10 seconds.',
+    onEnter() { $('fs-input').classList.add('active'); $('fc-input').textContent = '10,000'; },
+    onExit: resetAll
+  },
+  {
+    id: 'syntactic', label: 'Syntactic Predicate (Cheap)', duration: 3500,
+    narration: 'First pass: syntactic filtering only. Check if node is a <code>ClassDeclarationSyntax</code> with base types. NO semantic model access — just syntax tree walking. Filters out 95%+ of nodes in ~50ms. This is the critical performance optimization.',
+    onEnter() { $('fs-input').classList.add('done'); $('fs-syntactic').classList.add('active');
+      $('fc-syntactic').textContent = '~500';
+      showDet('dc-left'); $('dcl-title').textContent = 'Syntactic Predicate';
+      $('dcl-code').textContent = 'static bool Predicate(SyntaxNode node, CancellationToken ct)\n{\n  return node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };\n}';
+      $('dcl-note').textContent = 'Microseconds per check — no semantic model needed';
+      showDet('dc-right'); $('dcr-title').textContent = 'Performance Impact';
+      $('dcr-code').textContent = 'Good predicate:  ~50ms  (10,000 types)\nBad predicate:   ~5,000ms (10,000 types)\n\n100x difference!';
+      $('dcr-note').textContent = ''; },
+    onExit: resetAll
+  },
+  {
+    id: 'semantic', label: 'Semantic Analysis (Expensive)', duration: 3500,
+    narration: 'Second pass: semantic analysis on the ~500 surviving candidates. <code>GetDeclaredSymbol()</code>, check attributes (<code>[Receptor]</code>), verify interface implementations (<code>IReceptor&lt;T&gt;</code>). Expensive but only on 5% of nodes.',
+    onEnter() { $('fs-input').classList.add('done'); $('fs-syntactic').classList.add('done'); $('fs-semantic').classList.add('active');
+      $('fc-syntactic').textContent = '~500'; $('fc-semantic').textContent = '~25';
+      showDet('dc-left'); $('dcl-title').textContent = 'Transform Method';
+      $('dcl-code').textContent = 'static ReceptorInfo? Transform(\n  GeneratorAttributeSyntaxContext ctx,\n  CancellationToken ct)\n{\n  var symbol = ctx.SemanticModel\n    .GetDeclaredSymbol(ctx.TargetNode);\n  if (!ImplementsIReceptor(symbol))\n    return null; // early exit\n  return new ReceptorInfo(...);\n}';
+      $('dcl-note').textContent = 'Null return = filtered out. Only non-null values continue.';
+      showDet('dc-right'); $('dcr-title').textContent = 'What Semantic Analysis Checks';
+      $('dcr-code').textContent = '1. GetDeclaredSymbol (resolve type)\n2. Check IReceptor<T> implementation\n3. Extract TMessage, TResponse types\n4. Read [DefaultRouting] attribute\n5. Read [AwaitPerspectiveSync] attrs\n6. Collect CallerInfo metadata';
+      $('dcr-note').textContent = 'Each check requires symbol resolution — milliseconds per type'; },
+    onExit: resetAll
+  },
+  {
+    id: 'record', label: 'Value-Type Record (Caching)', duration: 3000,
+    narration: 'Results stored as <code>sealed record</code> with value equality. On recompilation, if the record equals the previous run\'s record, code generation is SKIPPED entirely (incremental caching). This is why <code>sealed record</code> is mandatory.',
+    onEnter() { $('fs-input').classList.add('done'); $('fs-syntactic').classList.add('done'); $('fs-semantic').classList.add('done'); $('fs-record').classList.add('active');
+      $('fc-syntactic').textContent = '~500'; $('fc-semantic').textContent = '~25'; $('fc-record').textContent = '~25';
+      showDet('dc-left'); $('dcl-title').textContent = 'Value-Type Record';
+      $('dcl-code').textContent = 'sealed record ReceptorInfo(\n  string FullTypeName,\n  string MessageType,\n  string? ResponseType,\n  DispatchModes DefaultRouting,\n  ImmutableArray<SyncAttributeInfo> SyncAttrs\n);';
+      $('dcl-note').textContent = 'sealed record = structural equality = incremental cache works';
+      showDet('dc-right'); $('dcr-title').textContent = 'Why sealed record Matters';
+      $('dcr-code').textContent = 'Recompilation:\n  Old: ReceptorInfo("OrderReceptor", ...)\n  New: ReceptorInfo("OrderReceptor", ...)\n  Equal? YES → skip code gen!\n\nclass or record class:\n  Uses reference equality\n  Always regenerates → slow builds';
+      $('dcr-note').textContent = ''; },
+    onExit: resetAll
+  },
+  {
+    id: 'template', label: 'Template Code Generation', duration: 3000,
+    narration: 'Templates loaded with <code>#region</code> markers. Generator replaces regions with generated content: receptor registration, dispatch delegates, type mappings. Output registered via <code>context.AddSource()</code>.',
+    onEnter() { $('fs-input').classList.add('done'); $('fs-syntactic').classList.add('done'); $('fs-semantic').classList.add('done'); $('fs-record').classList.add('done'); $('fs-output').classList.add('active');
+      $('fc-syntactic').textContent = '~500'; $('fc-semantic').textContent = '~25'; $('fc-record').textContent = '~25'; $('fc-output').textContent = '~25';
+      showDet('dc-left'); $('dcl-title').textContent = 'Template System';
+      $('dcl-code').textContent = '// Template file:\npublic static class ReceptorRegistry\n{\n  #region GeneratedRegistrations\n  // replaced at compile time\n  #endregion\n}';
+      $('dcl-note').textContent = '#region markers are replaced with generated code';
+      showDet('dc-right'); $('dcr-title').textContent = 'Generated Output';
+      $('dcr-code').textContent = 'context.AddSource(\n  "ReceptorRegistry.g.cs",\n  generatedCode\n);\n\n// Also generates:\n// - MessageTypeRegistry.g.cs\n// - DispatcherDelegates.g.cs\n// - PerspectiveRunners.g.cs';
+      $('dcr-note').textContent = 'Zero reflection at runtime — all AOT compatible'; },
+    onExit: resetAll
+  },
+  {
+    id: 'summary', label: 'Pipeline Summary', duration: 3000,
+    narration: '10,000 types → 500 (syntactic) → 25 (semantic) → 25 records → 25 source files. Total: ~250ms. Without syntactic filtering: ~5,000ms. The funnel pattern is the key to fast builds with source generators.',
+    onEnter() {
+      $('fs-input').classList.add('done'); $('fs-syntactic').classList.add('done'); $('fs-semantic').classList.add('done'); $('fs-record').classList.add('done'); $('fs-output').classList.add('done');
+      $('fc-input').textContent = '10,000'; $('fc-syntactic').textContent = '500'; $('fc-semantic').textContent = '25'; $('fc-record').textContent = '25'; $('fc-output').textContent = '25';
+      showDet('dc-left'); $('dcl-title').textContent = 'Final Pipeline Timing';
+      $('dcl-code').textContent = 'Syntactic filter:  ~50ms (10,000 nodes)\nSemantic analysis: ~200ms (500 candidates)\nRecord creation:   ~5ms  (25 matches)\nCode generation:   ~20ms (25 templates)\n─────────────────────────────\nTotal:             ~275ms';
+      $('dcl-note').textContent = '';
+      showDet('dc-right'); $('dcr-title').textContent = 'Generated Artifacts';
+      $('dcr-code').textContent = 'ReceptorRegistry    → AOT receptor lookup\nMessageTypeRegistry → type name mappings\nDispatcherDelegates → pre-compiled invoke\nPerspectiveRunners  → Apply() dispatch\nTagRegistry         → tag discovery\nMessageAssociations → perspective matching';
+      $('dcr-note').textContent = 'All compile-time, zero reflection, NativeAOT compatible'; },
+    onExit: resetAll
+  }
+];
+
+const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

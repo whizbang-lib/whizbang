@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — End-to-End Event Processing Flow</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    /* Layout: 6 phase columns across the viewport */
+    .animation-viewport {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      grid-template-rows: 40px 1fr;
+      gap: 0;
+      padding: 12px 16px;
+    }
+
+    /* Phase headers */
+    .phase-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-radius: 6px 6px 0 0;
+      padding: 4px 8px;
+      opacity: 0.5;
+      transition: opacity var(--transition-slow), background var(--transition-slow);
+    }
+    .phase-header.active { opacity: 1; }
+    .phase-header.completed { opacity: 0.35; }
+
+    .ph-dispatch  { background: var(--phase-dispatch-bg); color: var(--phase-dispatch); }
+    .ph-cascade   { background: var(--phase-cascade-bg);  color: var(--phase-cascade); }
+    .ph-outbox    { background: var(--phase-outbox-bg);   color: var(--phase-outbox); }
+    .ph-inbox     { background: var(--phase-inbox-bg);     color: var(--phase-inbox); }
+    .ph-persp     { background: var(--phase-perspective-bg); color: var(--phase-perspective); }
+    .ph-query     { background: var(--phase-query-bg);     color: var(--phase-query); }
+
+    /* Phase columns (contain nodes) */
+    .phase-col {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 16px 8px;
+      border-radius: 0 0 6px 6px;
+      opacity: 0.5;
+      transition: opacity var(--transition-slow), background var(--transition-slow);
+    }
+    .phase-col.active { opacity: 1; }
+    .phase-col.completed { opacity: 0.35; }
+
+    .pc-dispatch  { background: var(--phase-dispatch-bg); }
+    .pc-cascade   { background: var(--phase-cascade-bg); }
+    .pc-outbox    { background: var(--phase-outbox-bg); }
+    .pc-inbox     { background: var(--phase-inbox-bg); }
+    .pc-persp     { background: var(--phase-perspective-bg); }
+    .pc-query     { background: var(--phase-query-bg); }
+
+    /* Override node positioning — use flow layout within columns */
+    .phase-col .node {
+      position: relative;
+      width: 90%;
+      max-width: 180px;
+    }
+
+    /* SVG overlay for connection lines */
+    .connections-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    /* Packet layer */
+    .packet-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+<div class="animation-viewport" id="viewport">
+  <!-- Phase Headers (row 1) -->
+  <div class="phase-header ph-dispatch" id="ph1">1. Command Dispatch</div>
+  <div class="phase-header ph-cascade"  id="ph2">2. Event Cascading</div>
+  <div class="phase-header ph-outbox"   id="ph3">3. Outbox Processing</div>
+  <div class="phase-header ph-inbox"    id="ph4">4. Cross-Service Delivery</div>
+  <div class="phase-header ph-persp"    id="ph5">5. Perspective Projection</div>
+  <div class="phase-header ph-query"    id="ph6">6. Query</div>
+
+  <!-- Phase Columns (row 2, contain nodes) -->
+  <div class="phase-col pc-dispatch" id="col1">
+    <div class="node" id="n-api"><span class="label">API / Client</span></div>
+    <div class="node" id="n-dispatcher"><span class="label">Dispatcher</span><span class="sublabel">SendAsync</span></div>
+    <div class="node" id="n-registry"><span class="label">Receptor Registry</span><span class="sublabel">source-generated</span></div>
+    <div class="node" id="n-cmd-receptor"><span class="label">Command Receptor</span><span class="sublabel">OrderCommandReceptor</span></div>
+  </div>
+
+  <div class="phase-col pc-cascade" id="col2">
+    <div class="node" id="n-cascader"><span class="label">Event Cascader</span><span class="sublabel">IEventCascader</span></div>
+    <div class="node" id="n-eventstore"><span class="label">Event Store</span><span class="sublabel">append-only</span></div>
+    <div class="node" id="n-outbox-table"><span class="label">Outbox Table</span><span class="sublabel">OutboxRecord</span></div>
+  </div>
+
+  <div class="phase-col pc-outbox" id="col3">
+    <div class="node" id="n-outbox-worker"><span class="label">Outbox Worker</span><span class="sublabel">lease-based claiming</span></div>
+    <div class="node" id="n-transport"><span class="label">Transport</span><span class="sublabel">Kafka / RabbitMQ / Service Bus</span></div>
+  </div>
+
+  <div class="phase-col pc-inbox" id="col4">
+    <div class="node" id="n-consumer"><span class="label">Transport Consumer</span></div>
+    <div class="node" id="n-inbox-table"><span class="label">Inbox Table</span><span class="sublabel">InboxRecord</span></div>
+    <div class="node" id="n-evt-receptors"><span class="label">Event Receptors</span><span class="sublabel">Inventory, Notification</span></div>
+  </div>
+
+  <div class="phase-col pc-persp" id="col5">
+    <div class="node" id="n-persp-runner"><span class="label">Perspective Runner</span><span class="sublabel">IPerspectiveRunner</span></div>
+    <div class="node" id="n-persp-store"><span class="label">Perspective Store</span><span class="sublabel">read model</span></div>
+  </div>
+
+  <div class="phase-col pc-query" id="col6">
+    <div class="node" id="n-query-receptor"><span class="label">Query Receptor</span></div>
+    <div class="node" id="n-api2"><span class="label">API / Client</span><span class="sublabel">response</span></div>
+  </div>
+
+  <!-- Packet layer (for animated message packets) -->
+  <div class="packet-layer" id="packets">
+    <div class="message-packet command" id="pkt-cmd">PlaceOrderCommand</div>
+    <div class="message-packet event"   id="pkt-evt">OrderPlacedEvent</div>
+    <div class="message-packet event"   id="pkt-evt2">OrderPlacedEvent</div>
+    <div class="message-packet receipt" id="pkt-receipt">IDeliveryReceipt</div>
+    <div class="message-packet event"   id="pkt-transport">OrderPlacedEvent</div>
+    <div class="message-packet event"   id="pkt-inbox">OrderPlacedEvent</div>
+    <div class="message-packet query"   id="pkt-query">GetOrderQuery</div>
+    <div class="message-packet receipt" id="pkt-result">OrderSummaryResult</div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+  const viewport = $('viewport');
+
+  // Helper: set active phase (header + column)
+  function setPhase(num) {
+    for (let i = 1; i <= 6; i++) {
+      const isActive = i === num;
+      const isCompleted = i < num;
+      $('ph' + i).classList.toggle('active', isActive);
+      $('ph' + i).classList.toggle('completed', isCompleted);
+      $('col' + i).classList.toggle('active', isActive);
+      $('col' + i).classList.toggle('completed', isCompleted);
+    }
+  }
+
+  function clearPhases() {
+    for (let i = 1; i <= 6; i++) {
+      $('ph' + i).classList.remove('active', 'completed');
+      $('col' + i).classList.remove('active', 'completed');
+    }
+  }
+
+  // Shorthand for node glow
+  function glow(id) { $(id).classList.add('glow'); }
+  function unglow(id) { $(id).classList.remove('glow'); }
+  function activate(id) { $(id).classList.add('active'); }
+
+  // Show a packet near a node
+  function showPacketAt(pktId, nodeId) {
+    const pkt = $(pktId);
+    const node = $(nodeId);
+    const vr = viewport.getBoundingClientRect();
+    const nr = node.getBoundingClientRect();
+    pkt.style.left = (nr.left + nr.width / 2 - vr.left) + 'px';
+    pkt.style.top = (nr.top - 14 - vr.top) + 'px';
+    pkt.classList.add('visible');
+  }
+
+  function hidePacket(pktId) {
+    $(pktId).classList.remove('visible');
+    $(pktId).getAnimations().forEach(a => a.cancel());
+  }
+
+  function hideAllPackets() {
+    document.querySelectorAll('.message-packet').forEach(p => {
+      p.classList.remove('visible');
+      p.getAnimations().forEach(a => a.cancel());
+    });
+  }
+
+  // Animate packet between two nodes
+  function movePacket(pktId, fromId, toId) {
+    animatePacket($(pktId), $(fromId), $(toId), 800);
+  }
+
+  // ── Steps ──
+
+  const steps = [
+    {
+      id: 'cmd-send', label: 'Send Command',
+      narration: 'API calls <code>SendAsync(PlaceOrderCommand)</code>. The command enters the Dispatcher.',
+      duration: 2500,
+      onEnter(isTarget) {
+        setPhase(1);
+        glow('n-api');
+        showPacketAt('pkt-cmd', 'n-api');
+        if (isTarget) movePacket('pkt-cmd', 'n-api', 'n-dispatcher');
+      },
+      onExit() { unglow('n-api'); hidePacket('pkt-cmd'); }
+    },
+    {
+      id: 'envelope', label: 'Create Envelope',
+      narration: 'Dispatcher creates <code>MessageEnvelope&lt;PlaceOrderCommand&gt;</code> (v2) with a UUIDv7 <code>MessageId</code>, <code>DispatchContext</code> (Mode=Local, Source=Local), <code>CallerInfo</code>, and <code>ScopeContext</code>.',
+      duration: 2500,
+      onEnter() {
+        setPhase(1);
+        glow('n-dispatcher');
+        $('n-dispatcher').querySelector('.sublabel').textContent = 'creating envelope...';
+      },
+      onExit() {
+        unglow('n-dispatcher');
+        $('n-dispatcher').querySelector('.sublabel').textContent = 'SendAsync';
+      }
+    },
+    {
+      id: 'registry-lookup', label: 'Registry Lookup',
+      narration: 'Dispatcher calls <code>GetReceptorsFor(PlaceOrderCommand, ImmediateDetached)</code> on the source-generated <code>ReceptorRegistry</code>.',
+      duration: 2000,
+      onEnter(isTarget) {
+        setPhase(1);
+        glow('n-registry');
+        activate('n-dispatcher');
+      },
+      onExit() { unglow('n-registry'); $('n-dispatcher').classList.remove('active'); }
+    },
+    {
+      id: 'cmd-handle', label: 'Handle Command',
+      narration: '<code>OrderCommandReceptor.HandleAsync(command)</code> — validates business rules and applies domain logic.',
+      duration: 2500,
+      onEnter(isTarget) {
+        setPhase(1);
+        glow('n-cmd-receptor');
+        showPacketAt('pkt-cmd', 'n-cmd-receptor');
+      },
+      onExit() { unglow('n-cmd-receptor'); hidePacket('pkt-cmd'); }
+    },
+    {
+      id: 'event-emit', label: 'Emit Event',
+      narration: 'Receptor returns <code>OrderPlacedEvent</code>. The event cascades to the <code>IEventCascader</code>.',
+      duration: 2500,
+      onEnter(isTarget) {
+        setPhase(2);
+        showPacketAt('pkt-evt', 'n-cmd-receptor');
+        if (isTarget) movePacket('pkt-evt', 'n-cmd-receptor', 'n-cascader');
+      },
+      onExit() { hidePacket('pkt-evt'); }
+    },
+    {
+      id: 'resolve-mode', label: 'Resolve DispatchMode',
+      narration: '<code>EventCascader</code> resolves routing: checks <code>Routed&lt;T&gt;</code> wrapper, then <code>[DefaultRouting]</code> attribute, then defaults to <code>DispatchModes.Outbox</code>.',
+      duration: 2500,
+      onEnter() {
+        setPhase(2);
+        glow('n-cascader');
+      },
+      onExit() { unglow('n-cascader'); }
+    },
+    {
+      id: 'es-append', label: 'Event Store Append',
+      narration: '<code>AppendAsync(streamId, envelope)</code> — append-only write to event stream <em>order-123</em>, sequence N+1.',
+      duration: 2500,
+      onEnter(isTarget) {
+        setPhase(2);
+        glow('n-eventstore');
+        showPacketAt('pkt-evt', 'n-eventstore');
+        $('n-eventstore').querySelector('.sublabel').textContent = 'stream: order-123, seq: N+1';
+      },
+      onExit() {
+        unglow('n-eventstore');
+        hidePacket('pkt-evt');
+        $('n-eventstore').querySelector('.sublabel').textContent = 'append-only';
+      }
+    },
+    {
+      id: 'outbox-write', label: 'Outbox Write',
+      narration: '<code>OutboxRecord</code> written transactionally alongside event store append. Fields: <code>MessageId</code>, <code>MessageType</code>, <code>Destination</code>, <code>StatusFlags</code>.',
+      duration: 2500,
+      onEnter() {
+        setPhase(2);
+        glow('n-outbox-table');
+        $('n-outbox-table').querySelector('.sublabel').textContent = 'StatusFlags: Stored';
+      },
+      onExit() {
+        unglow('n-outbox-table');
+        $('n-outbox-table').querySelector('.sublabel').textContent = 'OutboxRecord';
+      }
+    },
+    {
+      id: 'receipt', label: 'Delivery Receipt',
+      narration: '<code>IDeliveryReceipt</code> returned to the API caller. Confirms dispatch, not processing.',
+      duration: 2000,
+      onEnter(isTarget) {
+        setPhase(1);
+        showPacketAt('pkt-receipt', 'n-dispatcher');
+        if (isTarget) movePacket('pkt-receipt', 'n-dispatcher', 'n-api');
+        glow('n-api');
+      },
+      onExit() { hidePacket('pkt-receipt'); unglow('n-api'); }
+    },
+    {
+      id: 'worker-claim', label: 'Worker Claims',
+      narration: '<code>OutboxWorker</code> claims unpublished records with lease-based, partition-aware polling. Sets <code>InstanceId</code> and <code>LeaseExpiry</code>.',
+      duration: 2500,
+      onEnter() {
+        setPhase(3);
+        glow('n-outbox-worker');
+        activate('n-outbox-table');
+      },
+      onExit() { unglow('n-outbox-worker'); $('n-outbox-table').classList.remove('active'); }
+    },
+    {
+      id: 'pre-outbox', label: 'PreOutbox Stages',
+      narration: '<code>PreOutboxDetached</code> and <code>PreOutboxInline</code> lifecycle stages fire before transport publish.',
+      duration: 1800,
+      onEnter() {
+        setPhase(3);
+        glow('n-outbox-worker');
+        $('n-outbox-worker').querySelector('.sublabel').textContent = 'PreOutbox [Async/Inline]';
+      },
+      onExit() {
+        unglow('n-outbox-worker');
+        $('n-outbox-worker').querySelector('.sublabel').textContent = 'lease-based claiming';
+      }
+    },
+    {
+      id: 'transport-pub', label: 'Publish to Transport',
+      narration: 'Message published to transport (Kafka / RabbitMQ / Service Bus / EventStore).',
+      duration: 2500,
+      onEnter(isTarget) {
+        setPhase(3);
+        glow('n-transport');
+        showPacketAt('pkt-transport', 'n-outbox-worker');
+        if (isTarget) movePacket('pkt-transport', 'n-outbox-worker', 'n-transport');
+      },
+      onExit() { unglow('n-transport'); hidePacket('pkt-transport'); }
+    },
+    {
+      id: 'post-outbox', label: 'PostOutbox + Mark',
+      narration: '<code>PostOutboxDetached/Inline</code> stages fire. <code>OutboxRecord.PublishedAt</code> set, <code>StatusFlags</code> updated.',
+      duration: 2000,
+      onEnter() {
+        setPhase(3);
+        $('n-outbox-table').querySelector('.sublabel').textContent = 'Published ✓';
+        $('n-outbox-table').classList.add('highlight-success');
+      },
+      onExit() {
+        $('n-outbox-table').querySelector('.sublabel').textContent = 'OutboxRecord';
+        $('n-outbox-table').classList.remove('highlight-success');
+      }
+    },
+    {
+      id: 'consumer-recv', label: 'Consumer Receives',
+      narration: '<code>TransportConsumer</code> receives message. Checks <code>InboxRecord</code> deduplication by <code>MessageId + HandlerName</code>.',
+      duration: 2500,
+      onEnter(isTarget) {
+        setPhase(4);
+        glow('n-consumer');
+        showPacketAt('pkt-inbox', 'n-transport');
+        if (isTarget) movePacket('pkt-inbox', 'n-transport', 'n-consumer');
+        activate('n-inbox-table');
+      },
+      onExit() { unglow('n-consumer'); hidePacket('pkt-inbox'); $('n-inbox-table').classList.remove('active'); }
+    },
+    {
+      id: 'inbox-invoke', label: 'Inbox Write + Invoke',
+      narration: '<code>InboxRecord</code> written. Receptors invoked: <code>InventoryReceptor</code>, <code>NotificationReceptor</code>.',
+      duration: 2500,
+      onEnter() {
+        setPhase(4);
+        glow('n-inbox-table');
+        glow('n-evt-receptors');
+        $('n-inbox-table').querySelector('.sublabel').textContent = 'ReceivedAt: now';
+      },
+      onExit() {
+        unglow('n-inbox-table');
+        unglow('n-evt-receptors');
+        $('n-inbox-table').querySelector('.sublabel').textContent = 'InboxRecord';
+      }
+    },
+    {
+      id: 'perspective', label: 'Perspective Projection',
+      narration: '<code>PerspectiveRunner.RunAsync()</code> reads event stream via <code>ReadAsync(streamId, lastCheckpoint)</code>. Applies each event via pure <code>Apply(event)</code> function. Upserts read model to <code>PerspectiveStore</code>.',
+      duration: 3000,
+      onEnter() {
+        setPhase(5);
+        glow('n-persp-runner');
+        activate('n-eventstore');
+        setTimeout(() => {
+          glow('n-persp-store');
+          $('n-persp-store').querySelector('.sublabel').textContent = 'OrderSummary updated';
+        }, 1200);
+      },
+      onExit() {
+        unglow('n-persp-runner');
+        unglow('n-persp-store');
+        $('n-eventstore').classList.remove('active');
+        $('n-persp-store').querySelector('.sublabel').textContent = 'read model';
+      }
+    },
+    {
+      id: 'lifecycle-final', label: 'Final Lifecycle',
+      narration: '<code>PostPerspectiveDetached</code>, <code>PostAllPerspectivesDetached</code> (WhenAll), and <code>PostLifecycleDetached</code> stages fire. Event processing complete.',
+      duration: 2000,
+      onEnter() {
+        setPhase(5);
+        $('n-persp-runner').querySelector('.sublabel').textContent = 'PostLifecycle ✓';
+        $('n-persp-runner').classList.add('highlight-success');
+      },
+      onExit() {
+        $('n-persp-runner').querySelector('.sublabel').textContent = 'IPerspectiveRunner';
+        $('n-persp-runner').classList.remove('highlight-success');
+      }
+    },
+    {
+      id: 'query', label: 'Query Path',
+      narration: 'API sends <code>GetOrderQuery</code> via <code>LocalInvokeAsync</code>. <code>QueryReceptor</code> reads from <code>PerspectiveStore</code> and returns <code>OrderSummaryResult</code>.',
+      duration: 3000,
+      onEnter(isTarget) {
+        setPhase(6);
+        glow('n-query-receptor');
+        activate('n-persp-store');
+        showPacketAt('pkt-query', 'n-query-receptor');
+        setTimeout(() => {
+          showPacketAt('pkt-result', 'n-query-receptor');
+          if (isTarget) movePacket('pkt-result', 'n-query-receptor', 'n-api2');
+          glow('n-api2');
+        }, 1000);
+      },
+      onExit() {
+        unglow('n-query-receptor');
+        unglow('n-api2');
+        $('n-persp-store').classList.remove('active');
+        hidePacket('pkt-query');
+        hidePacket('pkt-result');
+      }
+    }
+  ];
+
+  // Add onExit to reset all when going backwards
+  const origExits = steps.map(s => s.onExit);
+  steps.forEach((s, i) => {
+    const origExit = s.onExit;
+    s.onExit = () => {
+      if (origExit) origExit();
+      hideAllPackets();
+      clearPhases();
+      document.querySelectorAll('.node').forEach(n => {
+        n.classList.remove('glow', 'active', 'dimmed', 'highlight-success', 'highlight-warning', 'pulse');
+        // Reset sublabels
+      });
+    };
+  });
+
+  const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>

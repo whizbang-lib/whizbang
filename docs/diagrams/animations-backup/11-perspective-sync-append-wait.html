@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whizbang — Perspective Sync: Request-Response Over Event Sourcing</title>
+  <link rel="stylesheet" href="shared-styles.css">
+  <style>
+    :root { --control-bar-height: 190px; }
+    .animation-viewport {
+      display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 32px 1fr;
+      gap: 0 16px; padding: 8px 16px;
+    }
+    .lane-header {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; text-align: center; padding: 4px;
+      border-radius: 6px 6px 0 0;
+    }
+    .lh-cmd { background: var(--phase-dispatch-bg); color: var(--phase-dispatch); }
+    .lh-persp { background: var(--phase-perspective-bg); color: var(--phase-perspective); }
+
+    .lane {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      padding: 10px 8px; border-radius: 0 0 6px 6px;
+    }
+    .lane-cmd { background: var(--phase-dispatch-bg); }
+    .lane-persp { background: var(--phase-perspective-bg); }
+    .lane .node { position: relative; width: 95%; max-width: 300px; font-size: 11px; padding: 6px 12px; }
+
+    .wait-indicator {
+      width: 95%; max-width: 300px; padding: 8px 12px; border-radius: 8px;
+      background: var(--bg-surface); border: 2px dashed var(--border);
+      text-align: center; font-size: 11px;
+      opacity: 0; transition: all var(--transition-normal);
+    }
+    .wait-indicator.visible { opacity: 1; }
+    .wait-indicator.waiting { border-color: var(--warning); animation: pulse 1.5s ease-in-out infinite; }
+    .wait-indicator.synced { border-color: var(--success); border-style: solid; animation: none; }
+    .wait-indicator .wi-title { font-weight: 700; font-size: 10px; margin-bottom: 2px; }
+    .wait-indicator .wi-detail { font-size: 9px; color: var(--text-secondary); font-family: 'SF Mono','Fira Code',monospace; }
+
+    .sync-card {
+      width: 95%; max-width: 300px; padding: 6px 10px; border-radius: 8px;
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      font-size: 10px; opacity: 0; transition: all var(--transition-normal);
+    }
+    .sync-card.visible { opacity: 1; }
+    .sync-card .sc-title { font-weight: 700; font-size: 9px; margin-bottom: 2px; }
+    .sync-card .sc-field { display: flex; justify-content: space-between; font-family: 'SF Mono','Fira Code',monospace; font-size: 9px; padding: 1px 0; }
+    .sc-fn { color: var(--wb-indigo); }
+    .sc-fv { color: var(--text-secondary); }
+
+    .checkpoint-bar {
+      width: 95%; max-width: 300px; height: 24px; border-radius: 12px;
+      background: var(--bg); border: 1px solid var(--border); position: relative; overflow: hidden;
+      opacity: 0; transition: opacity var(--transition-normal);
+    }
+    .checkpoint-bar.visible { opacity: 1; }
+    .checkpoint-bar .cp-fill {
+      height: 100%; border-radius: 12px; transition: width 0.8s ease-in-out;
+      background: linear-gradient(90deg, var(--wb-cyan), var(--wb-indigo));
+    }
+    .checkpoint-bar .cp-label {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: 700; color: var(--text);
+    }
+  </style>
+</head>
+<body>
+<div class="animation-viewport" id="viewport">
+  <div class="lane-header lh-cmd">Command Handler (Waiting Side)</div>
+  <div class="lane-header lh-persp">Perspective Worker (Processing Side)</div>
+
+  <!-- Command Lane -->
+  <div class="lane lane-cmd" id="lane-cmd">
+    <div class="node" id="n-handler"><span class="label">Command Receptor</span><span class="sublabel">[AwaitPerspectiveSync(typeof(OrderSummary))]</span></div>
+    <div class="node" id="n-emit"><span class="label">Emit Event</span><span class="sublabel">OrderPlacedEvent → EventStore + Outbox</span></div>
+
+    <div class="sync-card" id="sc-attr">
+      <div class="sc-title">AwaitPerspectiveSyncAttribute</div>
+      <div class="sc-field"><span class="sc-fn">PerspectiveType</span><span class="sc-fv">OrderSummary</span></div>
+      <div class="sc-field"><span class="sc-fn">TimeoutMs</span><span class="sc-fv">5000 (default)</span></div>
+      <div class="sc-field"><span class="sc-fn">FireBehavior</span><span class="sc-fv">FireOnSuccess</span></div>
+    </div>
+
+    <div class="wait-indicator" id="wi-await">
+      <div class="wi-title" id="wi-title">PerspectiveSyncAwaiter.WaitAsync()</div>
+      <div class="wi-detail" id="wi-detail">Polling perspective checkpoint...</div>
+    </div>
+
+    <div class="node" id="n-result"><span class="label">SyncResult</span><span class="sublabel" id="n-result-sub">—</span></div>
+    <div class="node" id="n-continue"><span class="label">Handler Continues</span><span class="sublabel">return response to caller</span></div>
+  </div>
+
+  <!-- Perspective Lane -->
+  <div class="lane lane-persp" id="lane-persp">
+    <div class="node" id="n-pe-event"><span class="label">Perspective Event Created</span><span class="sublabel">wh_perspective_events (auto Phase 4.6)</span></div>
+    <div class="node" id="n-pe-runner"><span class="label">PerspectiveRunner.RunAsync()</span><span class="sublabel">loads events, applies to model</span></div>
+
+    <div class="checkpoint-bar" id="cp-bar">
+      <div class="cp-fill" id="cp-fill" style="width: 0%"></div>
+      <div class="cp-label" id="cp-label">Checkpoint: 0%</div>
+    </div>
+
+    <div class="node" id="n-pe-apply"><span class="label">Apply(OrderPlacedEvent)</span><span class="sublabel">pure function → model state</span></div>
+    <div class="node" id="n-pe-save"><span class="label">Save Checkpoint</span><span class="sublabel">UpsertAsync + update cursor</span></div>
+    <div class="node" id="n-pe-signal"><span class="label">SignalPerspectiveComplete</span><span class="sublabel">notifies awaiter</span></div>
+  </div>
+</div>
+
+<script src="animation-controller.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function glow(id) { $(id).classList.add('glow'); }
+function unglow(id) { $(id).classList.remove('glow'); }
+function showCard(id) { $(id).classList.add('visible'); }
+function resetAll() {
+  document.querySelectorAll('.node').forEach(n => n.classList.remove('glow','active','highlight-success'));
+  ['sc-attr','wi-await'].forEach(id => { $(id).classList.remove('visible'); });
+  $('wi-await').classList.remove('waiting','synced');
+  $('wi-title').textContent = 'PerspectiveSyncAwaiter.WaitAsync()';
+  $('wi-detail').textContent = 'Polling perspective checkpoint...';
+  $('n-result-sub').textContent = '—';
+  $('cp-bar').classList.remove('visible'); $('cp-fill').style.width = '0%'; $('cp-label').textContent = 'Checkpoint: 0%';
+}
+
+const steps = [
+  {
+    id: 'handler', label: 'Command Handler Entry', duration: 2500,
+    narration: 'A command receptor is decorated with <code>[AwaitPerspectiveSync(typeof(OrderSummary))]</code>. This tells the framework to wait for the OrderSummary perspective to process the emitted event before the handler returns.',
+    onEnter() { glow('n-handler'); showCard('sc-attr'); },
+    onExit: resetAll
+  },
+  {
+    id: 'emit', label: 'Emit Event', duration: 2500,
+    narration: 'Handler emits <code>OrderPlacedEvent</code>. The event is written to the EventStore and OutboxRecord. The event\'s <code>MessageId</code> (UUIDv7) is tracked for sync.',
+    onEnter() { glow('n-emit'); },
+    onExit: resetAll
+  },
+  {
+    id: 'awaiter-start', label: 'Awaiter Begins Polling', duration: 3000,
+    narration: '<code>PerspectiveSyncAwaiter.WaitAsync(typeof(OrderSummary), options)</code> starts. It queries: "Has the OrderSummary perspective processed the event with this MessageId?" Answer: not yet. Polling begins with 5-second timeout.',
+    onEnter() { showCard('wi-await'); $('wi-await').classList.add('waiting'); },
+    onExit: resetAll
+  },
+  {
+    id: 'pe-create', label: 'Perspective Event Auto-Created', duration: 2500,
+    narration: 'Phase 4.6 of <code>process_work_batch</code> auto-creates a <code>wh_perspective_events</code> row. The event is matched to the OrderSummary perspective via <code>wh_message_associations</code>.',
+    onEnter() { glow('n-pe-event'); showCard('wi-await'); $('wi-await').classList.add('waiting'); },
+    onExit: resetAll
+  },
+  {
+    id: 'pe-run', label: 'Perspective Runner Processes', duration: 2500,
+    narration: '<code>PerspectiveRunner.RunAsync(streamId, "OrderSummary", lastProcessedEventId)</code> loads the event from the event store and begins applying it to the read model.',
+    onEnter() { glow('n-pe-runner');
+      showCard('wi-await'); $('wi-await').classList.add('waiting'); $('wi-detail').textContent = 'Still waiting... (2.1s elapsed)';
+      $('cp-bar').classList.add('visible'); $('cp-fill').style.width = '30%'; $('cp-label').textContent = 'Processing...'; },
+    onExit: resetAll
+  },
+  {
+    id: 'pe-apply', label: 'Apply Event to Model', duration: 2500,
+    narration: 'Pure function <code>OrderSummary.Apply(OrderPlacedEvent)</code> updates the read model. The model state is deterministic — same events always produce the same result.',
+    onEnter() { glow('n-pe-apply');
+      showCard('wi-await'); $('wi-await').classList.add('waiting'); $('wi-detail').textContent = 'Still waiting... (3.4s elapsed)';
+      $('cp-bar').classList.add('visible'); $('cp-fill').style.width = '60%'; $('cp-label').textContent = 'Applying...'; },
+    onExit: resetAll
+  },
+  {
+    id: 'pe-save', label: 'Save & Update Checkpoint', duration: 2500,
+    narration: '<code>PerspectiveStore.UpsertAsync()</code> saves the updated model. Perspective cursor checkpoint updated to include this event. <code>wh_perspective_events</code> row marked processed.',
+    onEnter() { glow('n-pe-save');
+      showCard('wi-await'); $('wi-await').classList.add('waiting'); $('wi-detail').textContent = 'Almost there... (4.1s elapsed)';
+      $('cp-bar').classList.add('visible'); $('cp-fill').style.width = '90%'; $('cp-label').textContent = 'Saving...'; },
+    onExit: resetAll
+  },
+  {
+    id: 'pe-signal', label: 'Signal Perspective Complete', duration: 3000,
+    narration: '<code>SignalPerspectiveComplete(eventId, "OrderSummary")</code> notifies the sync awaiter. The awaiter\'s next poll sees the checkpoint has advanced past the tracked event. Sync achieved!',
+    onEnter() { glow('n-pe-signal');
+      $('cp-bar').classList.add('visible'); $('cp-fill').style.width = '100%'; $('cp-label').textContent = 'Complete!';
+      showCard('wi-await'); $('wi-await').classList.remove('waiting'); $('wi-await').classList.add('synced');
+      $('wi-title').textContent = 'Synced!'; $('wi-detail').textContent = 'Perspective caught up in 4.2s'; },
+    onExit: resetAll
+  },
+  {
+    id: 'result', label: 'SyncResult Returned', duration: 2500,
+    narration: '<code>SyncResult.Synced</code> returned to the handler. The OrderSummary read model now reflects the OrderPlacedEvent. Handler can safely query the read model for a consistent response.',
+    onEnter() { glow('n-result'); $('n-result-sub').textContent = 'SyncResult.Synced (4.2s)';
+      showCard('wi-await'); $('wi-await').classList.add('synced'); $('wi-title').textContent = 'Synced!'; $('wi-detail').textContent = '4.2s'; },
+    onExit: resetAll
+  },
+  {
+    id: 'continue', label: 'Handler Continues', duration: 2500,
+    narration: 'The command handler continues execution. It can now read from the OrderSummary perspective and return a consistent response to the API caller. Read-your-writes consistency achieved over event sourcing.',
+    onEnter() { glow('n-continue'); $('n-continue').classList.add('highlight-success'); },
+    onExit: resetAll
+  }
+];
+
+const controller = new AnimationController(steps, { container: document.body });
+</script>
+</body>
+</html>
