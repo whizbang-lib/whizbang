@@ -85,9 +85,19 @@ public class OutboxDrainWorkerTests {
     public Dictionary<Guid, List<OutboxBatchRow>> RowsByStream { get; } = [];
     public TaskCompletionSource<int> FirstFetchCalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public int FetchCalls;
+
+    /// <summary>
+    /// How many stream_ids each fetch carried. <c>fetch_outbox_batch</c> takes
+    /// <c>p_stream_ids UUID[]</c> and partitions by stream, so a drain batch should arrive as
+    /// ONE call carrying many ids. A bag of all-1s means the caller fanned the batch out into
+    /// one round-trip per stream — each of which re-scans the whole unpublished outbox.
+    /// </summary>
+    public ConcurrentBag<int> StreamsPerFetch { get; } = [];
+
     public Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
       IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
       var n = Interlocked.Increment(ref FetchCalls);
+      StreamsPerFetch.Add(streamIds.Count);
       FirstFetchCalled.TrySetResult(n);
       var result = new List<OutboxBatchRow>();
       foreach (var sid in streamIds) {
@@ -231,6 +241,99 @@ public class OutboxDrainWorkerTests {
     await Assert.That(publish.AllInFlight.Task.IsCompletedSuccessfully)
       .IsTrue()
       .Because("OutboxDrainWorker must drain different streams within one batch in parallel; serial cross-stream foreach blocks all but one publish");
+
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+  }
+
+  /// <summary>Publish strategy that completes a signal once N rows have been published.</summary>
+  private sealed class _CountingPublishStrategy(int expected) : IMessagePublishStrategy {
+    public TaskCompletionSource<int> Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _count;
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+      if (Interlocked.Increment(ref _count) >= expected) {
+        Reached.TrySetResult(_count);
+      }
+      return Task.FromResult(new MessagePublishResult {
+        MessageId = work.MessageId,
+        Success = true,
+        CompletedStatus = MessageProcessingStatus.Published,
+      });
+    }
+  }
+
+  /// <summary>
+  /// The drainer must fetch a whole drain batch with ONE multi-stream call, not one call per
+  /// stream. <c>fetch_outbox_batch</c> is built for this — it takes <c>p_stream_ids UUID[]</c>,
+  /// ranks with <c>PARTITION BY o.stream_id</c>, and caps <c>p_max_per_stream</c> per stream.
+  /// <c>InboxDrainWorker</c> already batches its mirror call for exactly this reason.
+  ///
+  /// Fanning out costs more than N round-trips: there is no index on <c>wh_outbox(stream_id)</c>,
+  /// so every per-stream call scans all unpublished rows and discards the ~99% belonging to
+  /// other streams. Draining N streams then costs N full scans of the same working set to
+  /// return N rows, plus N query plans.
+  ///
+  /// Deterministic by construction: all stream_ids are written BEFORE the worker starts, so the
+  /// batcher's first read sees the whole set — no reliance on a sliding-window race. The
+  /// assertion is on batch SHAPE (some call carried more than one id) rather than an exact call
+  /// count, so it stays honest if the batcher legitimately splits a window.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_MultipleStreamsInOneBatch_IssuesOneMultiStreamFetchAsync() {
+    const int streamCount = 4;
+    var streamIds = new Guid[streamCount];
+    var coord = new FakeWorkCoordinator();
+    for (var i = 0; i < streamCount; i++) {
+      streamIds[i] = (Guid)TrackedGuid.NewMedo();
+      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.NewMedo(), streamIds[i])];
+    }
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var publish = new _CountingPublishStrategy(expected: streamCount);
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel,
+      new FakeOutboxCompletionChannel(), new FakeFailureChannel(), gate,
+      Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+      }),
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    // Queue the whole batch before the worker reads — the first batcher window sees all four.
+    foreach (var sid in streamIds) {
+      await drainChannel.WriteAsync(sid);
+    }
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    _ = await Task.WhenAny(publish.Reached.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+
+    await Assert.That(publish.Reached.Task.IsCompletedSuccessfully).IsTrue()
+      .Because("every queued row must still be published — batching the fetch must not lose rows");
+
+    var perFetch = coord.StreamsPerFetch.ToArray();
+    await Assert.That(perFetch.Length).IsGreaterThan(0)
+      .Because("the drainer must have fetched at least once");
+    await Assert.That(perFetch.Max()).IsGreaterThanOrEqualTo(2)
+      .Because(
+        "a drain batch of 4 streams must reach the coordinator as a multi-stream fetch; " +
+        "all-1s means the batch was fanned out into one round-trip per stream, each re-scanning "
+        + "the entire unpublished outbox");
+    await Assert.That(coord.FetchCalls).IsLessThan(streamCount)
+      .Because("batching must reduce the round-trip count below one-per-stream");
 
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }

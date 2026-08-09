@@ -173,28 +173,15 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         _setIdleState(active: true);
         try {
           // Dedupe within the batch — ClaimWorker may emit the same stream_id multiple times in
-          // one window (rapid heartbeats during burst load). Each unique stream is drained once;
-          // FetchOutboxBatchAsync returns all pending rows for it in stream-FIFO order.
+          // one window (rapid heartbeats during burst load). Each unique stream is drained once.
           //
-          // A production throughput fix: cross-stream draining is parallelized via Parallel.ForEachAsync
-          // capped by MaxConcurrentStreams. Per-stream FIFO is preserved inside _drainStreamAsync
-          // (one task per stream); different streams have no ordering relationship and benefit
-          // from N-wide concurrent draining. The pre-fix serial foreach + await collapsed
-          // throughput to a few msg/sec on a production bulk-job import (thousands of streams pending).
+          // The whole deduped batch is fetched with a SINGLE multi-stream FetchOutboxBatchAsync
+          // call, then published per-stream in C#. Cross-stream publishing stays parallel
+          // (see _drainStreamBatchAsync) — that concurrency is a separate, still-required fix.
           var distinctStreams = new HashSet<Guid>(batch);
-          var parallelOpts = new ParallelOptions {
-            MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
-            CancellationToken = stoppingToken,
-          };
-          await Parallel.ForEachAsync(distinctStreams, parallelOpts, async (streamId, ct) => {
-            try {
-              await _drainStreamAsync(streamId, ct);
-            } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-              throw;
-            } catch (Exception ex) {
-              LogDrainError(_logger, streamId, ex);
-            }
-          });
+          if (distinctStreams.Count > 0) {
+            await _drainStreamBatchAsync([.. distinctStreams], stoppingToken);
+          }
         } finally {
           // Active → idle: batch done. If more stream_ids arrived during processing the
           // next batcher iteration will rapidly flip us back to active — the fixture's
@@ -229,16 +216,130 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
   }
 
-  private async Task _drainStreamAsync(Guid streamId, CancellationToken ct) {
-    _drainChannel.MarkDraining(streamId);
+  /// <summary>
+  /// Drains a whole batch of stream_ids with ONE multi-stream fetch, then publishes each
+  /// stream's rows concurrently.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>fetch_outbox_batch</c> is built for this: it takes <c>p_stream_ids UUID[]</c>, ranks with
+  /// <c>ROW_NUMBER() OVER (PARTITION BY o.stream_id ...)</c>, and caps <c>p_max_per_stream</c>
+  /// per stream. Issuing it once per stream wastes far more than N round-trips — there is no
+  /// index on <c>wh_outbox(stream_id)</c>, so each call scans every unpublished row and discards
+  /// the ones belonging to other streams. Draining N streams that way costs N full scans of the
+  /// same working set to return N rows, plus N query plans. A deployment measurement showed this
+  /// dominating database time during startup while the queue was effectively empty.
+  /// <see cref="InboxDrainWorker"/> already batches its mirror call for the same reason.
+  /// </para>
+  /// <para>
+  /// Cross-stream publishing stays parallel (capped by
+  /// <c>MaxConcurrentStreams</c>): a serial foreach previously collapsed throughput on an import
+  /// with many pending streams. Per-stream FIFO is preserved inside each task; different streams
+  /// have no ordering relationship. Batching the FETCH and parallelizing the PUBLISH are
+  /// independent — this keeps both.
+  /// </para>
+  /// <para>
+  /// Streams that filled their per-stream cap continue into the normal loop-until-empty path to
+  /// drain the tail, so a large stream is never short-changed by the shared batch page.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  private async Task _drainStreamBatchAsync(IReadOnlyList<Guid> streamIds, CancellationToken ct) {
+    foreach (var sid in streamIds) {
+      _drainChannel.MarkDraining(sid);
+    }
     try {
-      await _drainStreamInnerAsync(streamId, ct);
+      IReadOnlyList<OutboxBatchRow> rowsRaw;
+      try {
+        using var scope = _scopeFactory.CreateScope();
+        var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+        rowsRaw = await coordinator.FetchOutboxBatchAsync(
+          streamIds, _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+      } catch (Exception ex) when (!ct.IsCancellationRequested) {
+        // One batched fetch means one shared failure: a single poisoned stream would take its
+        // siblings down with it, losing the per-stream fault isolation the old fan-out gave for
+        // free. Degrade to per-stream fetches for this batch so the bad stream is contained and
+        // every healthy sibling still drains. Rare path — the fast path stays batched.
+        LogBatchFetchFellBackToPerStream(_logger, streamIds.Count, ex);
+        await _drainStreamsIndividuallyAsync(streamIds, ct);
+        return;
+      }
+
+      if (rowsRaw.Count == 0) {
+        return;
+      }
+
+      // Group by the same drain key the SQL matches on: stream_id when routable, else
+      // message_id (fetch_outbox_batch treats both NULL and Guid.Empty stream_ids as
+      // "look me up by message_id" — the documented singleton-stream sentinel).
+      var perStream = rowsRaw
+        .GroupBy(_drainKey)
+        .ToDictionary(g => g.Key, g => (IReadOnlyList<OutboxBatchRow>)[.. g]);
+
+      var parallelOpts = new ParallelOptions {
+        MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
+        CancellationToken = ct,
+      };
+      await Parallel.ForEachAsync(perStream, parallelOpts, async (entry, innerCt) => {
+        try {
+          await _drainStreamInnerAsync(entry.Key, innerCt, prefetched: entry.Value);
+        } catch (OperationCanceledException) when (innerCt.IsCancellationRequested) {
+          throw;
+        } catch (Exception ex) {
+          LogDrainError(_logger, entry.Key, ex);
+        }
+      });
     } finally {
-      _drainChannel.MarkDrained(streamId);
+      // Always release the markers, even if the batched fetch threw before any dispatch —
+      // otherwise the channel believes these streams are permanently mid-drain and
+      // ClaimWorker's IsInFlight check stops re-offering them.
+      foreach (var sid in streamIds) {
+        _drainChannel.MarkDrained(sid);
+      }
     }
   }
 
-  private async Task _drainStreamInnerAsync(Guid streamId, CancellationToken ct) {
+  /// <summary>
+  /// Fallback for a failed batched fetch: drain each stream with its own fetch so a single
+  /// failing stream is isolated from its siblings. This is the pre-batching behaviour, kept as
+  /// the error path only.
+  /// </summary>
+  private async Task _drainStreamsIndividuallyAsync(IReadOnlyList<Guid> streamIds, CancellationToken ct) {
+    var parallelOpts = new ParallelOptions {
+      MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
+      CancellationToken = ct,
+    };
+    await Parallel.ForEachAsync(streamIds, parallelOpts, async (streamId, innerCt) => {
+      try {
+        await _drainStreamInnerAsync(streamId, innerCt);
+      } catch (OperationCanceledException) when (innerCt.IsCancellationRequested) {
+        throw;
+      } catch (Exception ex) {
+        LogDrainError(_logger, streamId, ex);
+      }
+    });
+  }
+
+  /// <summary>
+  /// The key a row is drained under — mirrors <c>fetch_outbox_batch</c>'s WHERE clause, which
+  /// matches non-routable rows (NULL or <see cref="Guid.Empty"/> stream_id) by message_id.
+  /// </summary>
+  private static Guid _drainKey(OutboxBatchRow row) =>
+    row.StreamId is { } s && s != Guid.Empty ? s : row.MessageId;
+
+  /// <summary>
+  /// Drains one stream to empty: publish the rows in hand, then keep fetching that stream until
+  /// a fetch comes back short of the per-stream cap (Slice 32) or yields nothing new.
+  /// </summary>
+  /// <param name="streamId">The stream (or singleton-row sentinel) being drained.</param>
+  /// <param name="ct">Cancellation for the drain.</param>
+  /// <param name="prefetched">
+  /// Rows already fetched for this stream by the batched multi-stream fetch. When supplied they
+  /// satisfy the FIRST loop iteration without a round-trip; every later iteration fetches
+  /// normally, so a cap-filling stream still drains its tail. Null on the standalone path.
+  /// </param>
+  private async Task _drainStreamInnerAsync(
+      Guid streamId, CancellationToken ct, IReadOnlyList<OutboxBatchRow>? prefetched = null) {
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
@@ -260,10 +361,19 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     LogDrainStreamEntered(_logger, streamId);
     while (!ct.IsCancellationRequested) {
       fetchCount++;
-      LogFetchBatchStart(_logger, streamId, fetchCount);
-      var rowsRaw = await coordinator.FetchOutboxBatchAsync(
-        [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
-      LogFetchBatchReturned(_logger, streamId, fetchCount, rowsRaw.Count);
+      IReadOnlyList<OutboxBatchRow> rowsRaw;
+      if (prefetched is not null) {
+        // First iteration of a batched drain: the rows are already in hand from the single
+        // multi-stream fetch. Consume them once, then fall through to normal fetching so a
+        // cap-filling stream still drains its tail.
+        rowsRaw = prefetched;
+        prefetched = null;
+      } else {
+        LogFetchBatchStart(_logger, streamId, fetchCount);
+        rowsRaw = await coordinator.FetchOutboxBatchAsync(
+          [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+        LogFetchBatchReturned(_logger, streamId, fetchCount, rowsRaw.Count);
+      }
 
       if (rowsRaw.Count == 0) {
         _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
@@ -888,6 +998,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 5, Level = LogLevel.Error,
     Message = "OutboxDrainWorker: drain failed for stream {StreamId}")]
   static partial void LogDrainError(ILogger logger, Guid streamId, Exception ex);
+
+  [LoggerMessage(EventId = 48, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker: batched fetch failed for {StreamCount} streams; " +
+              "falling back to per-stream fetches to isolate the failure")]
+  static partial void LogBatchFetchFellBackToPerStream(ILogger logger, int streamCount, Exception ex);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Error,
     Message = "OutboxDrainWorker: failed to deserialize envelope for {MessageId}")]
