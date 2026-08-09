@@ -103,6 +103,34 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Reconcile_SecondInstanceInTheWindow_SkipsTheWholeWalkAsync() {
+    // Every instance of a service used to run this on every startup: the full catalog walk, a
+    // register_type_definition round-trip per type, plus the grace sync. With 1,448 message types
+    // and N replicas across 14 services, all booting at once, that is a synchronized burst against
+    // one shared database -- measured taking a server from 29% CPU / 62 connections to 99% / 272,
+    // which killed pods on their liveness probes.
+    //
+    // The work is idempotent, so N instances doing it was never INCORRECT -- just N times the cost
+    // for one instance's worth of result. One claim per service per window, exactly like the
+    // integrity audit cycle.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var catalog = new FakeCatalog(_ephemeralEntry(settingsHash: _hex('b'), schemaHash: _hex('c')));
+
+    var first = await _reconciler(coordinator, catalog, act: true).ReconcileAsync();
+    var second = await _reconciler(coordinator, catalog, act: true).ReconcileAsync();
+
+    await Assert.That(first.Skipped).IsFalse()
+      .Because("the first instance into the window wins the claim and does the work.");
+    await Assert.That(second.Skipped).IsTrue()
+      .Because("a second instance inside the same window must skip -- the walk is the expensive part.");
+    await Assert.That(second.TypesRegistered).IsEqualTo(0)
+      .Because("skipping means NO catalog walk and no per-type round-trips, not just no writes.");
+  }
+
+  [Test]
   public async Task Reconcile_SettingsDriftToEphemeral_ActEnabled_ReclassifiesAndRecordsLineageAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

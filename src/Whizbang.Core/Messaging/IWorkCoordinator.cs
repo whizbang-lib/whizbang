@@ -750,6 +750,28 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(true);
 
   /// <summary>
+  /// Claims the startup type-definition reconciliation for the calling instance — the same
+  /// first-instance-wins discipline as <see cref="TryClaimIntegrityAuditCycleAsync"/>. True: this
+  /// instance won and performs the walk. False: a sibling already reconciled within
+  /// <paramref name="claimWindow"/> — skip entirely.
+  /// <para>
+  /// The walk is idempotent, so every instance running it was never incorrect — merely N times the
+  /// cost for one instance's worth of result. At fleet scale that is the expensive part: a catalog
+  /// walk plus a register round-trip per message type, from every replica of every service, all at
+  /// once during a deploy. Measured taking a shared server from 29% CPU / 62 connections to 99% /
+  /// 272, which killed pods on their liveness probes and restarted the same work.
+  /// </para>
+  /// Default: always true (single-instance providers and engines without a settings store keep
+  /// today's behavior).
+  /// </summary>
+  /// <param name="claimWindow">How recently a sibling's claim suppresses this one.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TypeDefinitionReconcilerTests.cs:Reconcile_SecondInstanceInTheWindow_SkipsTheWholeWalkAsync</tests>
+  Task<bool> TryClaimTypeDefinitionReconcileAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+  /// <summary>
   /// Stream-integrity Phase B: the DISTINCT event types this service has ever emitted into its own
   /// audited lane (the own-emissions digest rows). The checkpoint publisher fans its heartbeat out
   /// to these types' topics — the topics this origin's consumers already subscribe to — so a quiet

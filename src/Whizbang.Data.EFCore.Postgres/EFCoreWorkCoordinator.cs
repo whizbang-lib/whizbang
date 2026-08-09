@@ -1282,6 +1282,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var affected = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     return affected > 0;
   }
+  public async Task<bool> TryClaimTypeDefinitionReconcileAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    // wh_settings is public (created bare, mig 028) — NOT the service schema; see a6ca8dd4.
+    cmd.CommandText = """
+      INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+      VALUES ('type_definition_reconcile_last_run', NOW()::text, 'timestamptz',
+              'Last claimed type-definition reconcile — first instance to CAS this watermark walks the catalog; siblings skip.')
+      ON CONFLICT (setting_key) DO UPDATE
+        SET setting_value = NOW()::text, updated_at = NOW()
+        WHERE (wh_settings.setting_value)::timestamptz <= NOW() - @p_window
+      """;
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_window", NpgsqlTypes.NpgsqlDbType.Interval) {
+      Value = claimWindow
+    });
+    var affected = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    return affected > 0;
+  }
 
   /// <inheritdoc />
   public async Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(
