@@ -191,4 +191,53 @@ public class SlidingWindowApplyBatchStrategyTests {
     // Release the stuck flush so the worker can drain.
     keepFlushBusy.TrySetResult();
   }
+
+  /// <summary>
+  /// The idle sweep evicts a stream buffer in two steps — remove from the active map, then
+  /// complete its writer. <c>AppendAsync</c> reads the map and then writes, so a caller can be
+  /// holding a buffer the sweep completes in between, and the write throws
+  /// <c>ChannelClosedException</c> straight at the caller. That is a real production race on the
+  /// perspective apply path, not a test artifact: it surfaced as an intermittent CI failure in
+  /// this class's own idle-sweep test, where a 20ms sweep interval made the window easy to hit
+  /// under load.
+  ///
+  /// Append must survive it — a stream being evicted for idleness is a normal, expected event
+  /// and must never fail the append that raced it. Deterministic: the seam completes a still-
+  /// mapped writer, exactly the state the sweep produces, with no sleeps or scheduling luck.
+  /// </summary>
+  [Test]
+  public async Task Append_WhenIdleSweepCompletedTheBufferItGrabbed_StillSucceedsAsync() {
+    var flushed = new ConcurrentBag<Guid>();
+    var streamId = _idProvider.NewGuid();
+    var flushedSignal = new TaskCompletionSource();
+
+    await using var sut = new SlidingWindowApplyBatchStrategy(
+      flush: (sid, _, _) => {
+        flushed.Add(sid);
+        flushedSignal.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowApplyOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        MaxWait = TimeSpan.FromMilliseconds(50),
+        MaxSize = 100,
+        // Long enough that the real sweep never fires during this test — the seam drives the
+        // eviction state instead, so the assertion is about recovery, not about timing.
+        IdleSweepInterval = TimeSpan.FromMinutes(5),
+        IdleEvictionWindow = TimeSpan.FromMinutes(5),
+      });
+
+    await sut.AppendAsync(streamId);
+
+    // Reproduce the losing interleave: the buffer this stream maps to is completed while still
+    // mapped, so the next append grabs a dead channel.
+    await Assert.That(sut.CompleteMappedWriterForTest(streamId)).IsTrue()
+      .Because("test setup must have found and completed a live buffer");
+
+    await sut.AppendAsync(streamId);
+
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(flushed).Contains(streamId)
+      .Because("an append that raced an idle eviction must still reach a flush, not throw");
+  }
 }
