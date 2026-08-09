@@ -29,13 +29,15 @@ public sealed partial class PgInstanceLifecycleMonitor(
   IConfiguration configuration,
   ISignalBus signalBus,
   ILogger<PgInstanceLifecycleMonitor> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotificationDataSource? notificationDataSource = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly ISignalBus _signalBus = signalBus ?? throw new ArgumentNullException(nameof(signalBus));
   private readonly ILogger<PgInstanceLifecycleMonitor> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
 
   /// <summary>Monitor tick interval — relaxed since failover latency is bounded by lease expiry.</summary>
   private static readonly TimeSpan _tickInterval = TimeSpan.FromSeconds(5);
@@ -69,13 +71,16 @@ public sealed partial class PgInstanceLifecycleMonitor(
 
   private async Task _tickOnceAsync(CancellationToken ct) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    if (resolution.ConnectionString is null) {
+    // Prefer the registered notification data source - the only path that
+    // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
+    // string has had its credentials stripped by Npgsql.
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
       return;
     }
 
     var dead = new List<Guid>();
-    await using (var conn = new NpgsqlConnection(resolution.ConnectionString)) {
-      await conn.OpenAsync(ct);
+    await using (var conn = await plan.OpenAsync(ct)) {
       await using var cmd = new NpgsqlCommand(@"
         SELECT instance_id
         FROM wh_service_instances
