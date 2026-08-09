@@ -788,18 +788,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>
   /// Creates an empty model for a new stream.
   /// Initializes the model with the stream ID set to the stream key property.
+  /// Direct construction (no Activator, no reflection): the initializer is
+  /// computed at generation time from the model's shape, so strongly-typed
+  /// stream ids construct through their From(Guid) factory and required
+  /// members are explicitly initialized. AOT-safe.
   /// </summary>
   private __MODEL_TYPE_NAME__ CreateEmptyModel(Guid streamId) {
-    // Create instance using default constructor or Activator
-    var model = System.Activator.CreateInstance<__MODEL_TYPE_NAME__>();
-
-    // Set the stream key property
-    var streamKeyProperty = typeof(__MODEL_TYPE_NAME__).GetProperty("__STREAM_KEY_PROPERTY__");
-    if (streamKeyProperty != null && streamKeyProperty.CanWrite) {
-      streamKeyProperty.SetValue(model, streamId);
-    }
-
-    return model;
+    return new __MODEL_TYPE_NAME__ __EMPTY_MODEL_INITIALIZER__;
   }
 
   /// <summary>
