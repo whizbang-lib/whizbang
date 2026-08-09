@@ -33,7 +33,8 @@ public sealed partial class PostgresSignalTransport(
   ISharedNotifyConnection sharedConnection,
   IServiceInstanceProvider instanceProvider,
   ILogger<PostgresSignalTransport> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotificationDataSource? notificationDataSource = null
 ) : ISignalTransport {
   /// <summary>Broadcast channel every instance listens on.</summary>
   internal const string BROADCAST_CHANNEL = "wh_signal_broadcast";
@@ -44,6 +45,7 @@ public sealed partial class PostgresSignalTransport(
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ILogger<PostgresSignalTransport> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
 
   private ISignalSink? _sink;
   private IDisposable? _broadcastSubscription;
@@ -86,13 +88,16 @@ public sealed partial class PostgresSignalTransport(
     }
 
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    if (resolution.ConnectionString is null) {
+    // Prefer the registered notification data source - the only path that
+    // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
+    // string has had its credentials stripped by Npgsql.
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
       LogPublishSkippedNoConnection(_logger, wireName);
       return;
     }
 
-    await using var conn = new NpgsqlConnection(resolution.ConnectionString);
-    await conn.OpenAsync(cancellationToken);
+    await using var conn = await plan.OpenAsync(cancellationToken);
 
     // Durable signals persist to wh_signals BEFORE the NOTIFY so a tail on any instance
     // can replay them if the NOTIFY was dropped. Best-effort signals go NOTIFY-only.

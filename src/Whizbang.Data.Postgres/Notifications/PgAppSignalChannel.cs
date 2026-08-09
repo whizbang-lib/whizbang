@@ -22,26 +22,31 @@ public sealed partial class PgAppSignalChannel(
   IConfiguration configuration,
   ISharedNotifyConnection sharedConnection,
   ILogger<PgAppSignalChannel> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotificationDataSource? notificationDataSource = null
 ) : IAppSignalChannel {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly ISharedNotifyConnection _sharedConnection = sharedConnection ?? throw new ArgumentNullException(nameof(sharedConnection));
   private readonly ILogger<PgAppSignalChannel> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
   private readonly ConcurrentDictionary<string, TopicSubscription> _byTopic = new(StringComparer.Ordinal);
 
   /// <inheritdoc />
   public async Task PublishAsync(string topic, string payload, CancellationToken cancellationToken = default) {
     var channel = AppSignalTopicValidator.ToChannelName(topic);
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    if (resolution.ConnectionString is null) {
+    // Prefer the registered notification data source - the only path that
+    // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
+    // string has had its credentials stripped by Npgsql.
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
       LogPublishSkippedNoConnection(_logger, channel);
       return;
     }
 
-    await using var conn = new NpgsqlConnection(resolution.ConnectionString);
-    await conn.OpenAsync(cancellationToken);
+    await using var conn = await plan.OpenAsync(cancellationToken);
     await using var cmd = new NpgsqlCommand("SELECT pg_notify(@channel, @payload)", conn);
     cmd.Parameters.AddWithValue("channel", channel);
     cmd.Parameters.AddWithValue("payload", payload ?? string.Empty);

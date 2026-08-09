@@ -38,26 +38,50 @@ public sealed class NotificationConnectionPlan {
   public NotificationConnectionStringResolver.ResolutionSource StringSource { get; }
 
   /// <summary>True when connections will open through <see cref="DataSource"/>.</summary>
-  public bool UsesDataSource => throw new NotImplementedException();
+  public bool UsesDataSource => DataSource is not null;
 
   /// <summary>True when either path can open a connection.</summary>
-  public bool IsAvailable => throw new NotImplementedException();
+  public bool IsAvailable => DataSource is not null || !string.IsNullOrEmpty(ConnectionString);
 
   /// <summary>
   /// Builds a plan from the optionally registered notification data source and
-  /// the connection-string resolution the component already performs.
+  /// the connection-string resolution the component already performs. A wrapper
+  /// whose <see cref="INotificationDataSource.DataSource"/> is null (auto-
+  /// discovery found nothing usable) is treated like no registration at all.
   /// </summary>
   public static NotificationConnectionPlan Create(
       INotificationDataSource? notificationDataSource,
       NotificationConnectionStringResolver.Resolution resolution) {
-    throw new NotImplementedException();
+    ArgumentNullException.ThrowIfNull(resolution);
+    return new NotificationConnectionPlan(
+        notificationDataSource?.DataSource,
+        resolution.ConnectionString,
+        resolution.Source);
   }
 
   /// <summary>
   /// Opens a connection via the preferred path. Throws
   /// <see cref="InvalidOperationException"/> when <see cref="IsAvailable"/> is false.
   /// </summary>
-  public ValueTask<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
+  public async ValueTask<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken = default) {
+    if (DataSource is not null) {
+      return await DataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    if (string.IsNullOrEmpty(ConnectionString)) {
+      throw new InvalidOperationException(
+          "No notification connection is available: no INotificationDataSource is registered " +
+          "and no connection string resolved. Configure WhizbangNotificationOptions " +
+          "(DirectConnectionString or ConnectionStringKey) or register a notification data source.");
+    }
+
+    var connection = new NpgsqlConnection(ConnectionString);
+    try {
+      await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+      return connection;
+    } catch {
+      await connection.DisposeAsync().ConfigureAwait(false);
+      throw;
+    }
   }
 }
