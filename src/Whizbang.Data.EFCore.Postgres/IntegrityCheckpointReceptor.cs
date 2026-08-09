@@ -53,6 +53,9 @@ public sealed partial class IntegrityCheckpointReceptor(
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
+    var gapReportCap = Math.Max(1, options.MaxGapReportsPerCheckpoint);
+    var gapReportsPublished = 0;
+    var confirmedGaps = 0;
 
     // 1) Two-cycle confirmation: deficits recorded on the PREVIOUS checkpoint, recounted now.
     foreach (var pending in tracker.TakePending(message.OriginServiceId)) {
@@ -75,6 +78,15 @@ public sealed partial class IntegrityCheckpointReceptor(
           new KeyValuePair<string, object?>("origin", pending.OriginServiceName));
         await _sendRepairRequestAsync(services, options, pending, cancellationToken).ConfigureAwait(false);
       }
+      // Each report is a durable outbox write and pendings are keyed by (tenant, event type), so
+      // their number grows with the deployment rather than with any batch size. Past the cap we
+      // count instead of publishing: an unhealed deficit is re-detected on the next checkpoint, so
+      // the condition keeps surfacing until it is genuinely repaired.
+      confirmedGaps++;
+      if (gapReportsPublished >= gapReportCap) {
+        continue;
+      }
+      gapReportsPublished++;
       await dispatcher.PublishAsync(new IntegrityGapDetected {
         ReportStreamId = TrackedGuid.NewMedo().Value,
         OriginServiceId = pending.OriginServiceId,
@@ -89,6 +101,10 @@ public sealed partial class IntegrityCheckpointReceptor(
       }).ConfigureAwait(false);
       LogGapConfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
         pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual, autoRepair);
+    }
+
+    if (confirmedGaps > gapReportsPublished) {
+      LogGapReportsCapped(logger, message.OriginServiceName, confirmedGaps, gapReportsPublished);
     }
 
     // 2) Evaluate THIS window: deficits become pendings the NEXT checkpoint confirms or clears.
@@ -181,6 +197,11 @@ public sealed partial class IntegrityCheckpointReceptor(
     // so this filter must speak the same form or every bucket silently skips verification.
     return [.. provider.GetEventTypes().Select(TypeNameFormatter.Format)];
   }
+
+  [LoggerMessage(EventId = 58, Level = LogLevel.Warning,
+    Message = "CONFIRMED integrity gap reports capped for origin '{OriginServiceName}': {ConfirmedGaps} confirmed, " +
+              "{Reported} reported. The remainder is re-detected on the next checkpoint.")]
+  static partial void LogGapReportsCapped(ILogger logger, string originServiceName, int confirmedGaps, int reported);
 
   [LoggerMessage(EventId = 50, Level = LogLevel.Warning,
     Message = "CONFIRMED integrity gap: {EventType} (tenant {TenantScope}) from origin '{OriginServiceName}' " +

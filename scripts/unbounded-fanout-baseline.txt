@@ -1,0 +1,27 @@
+# Whizbang unbounded fan-out lint baseline.
+# Each entry is an awaited publish/send/write inside a loop that has been REVIEWED and is
+# either bounded by construction or explicitly capped. Adding a line here is a decision:
+# it asserts the loop cannot grow with caller-supplied input. Removing one is always safe.
+# Regenerate: pwsh scripts/Lint-UnboundedFanOut.ps1 -UpdateBaseline
+src/Whizbang.Core/Dispatcher.cs : foreach loop awaits SendAsync
+src/Whizbang.Core/Execution/SerialExecutor.cs : foreach loop awaits ExecuteAsync
+src/Whizbang.Core/Signals/SignalBus.cs : foreach loop awaits PublishAsync
+src/Whizbang.Core/Tags/MessageTagHookDispatcherRegistry.cs : foreach loop awaits DispatchAsync
+src/Whizbang.Core/Transports/DispatcherTransportBridge.cs : foreach loop awaits SendAsync
+src/Whizbang.Core/Workers/IntegrityAuditWorker.cs : foreach loop awaits PublishAsync
+src/Whizbang.Core/Workers/IntegrityAuditWorker.cs : foreach loop awaits SendAsync
+src/Whizbang.Core/Workers/IntegrityCheckpointWorker.cs : foreach loop awaits PublishAsync
+src/Whizbang.Core/Workers/OutboxPublishWorker.cs : foreach loop awaits PublishAsync
+src/Whizbang.Core/Workers/PerspectiveWorker.cs : foreach loop awaits DispatchAsync
+src/Whizbang.Core/Workers/TransportPublishStrategy.cs : while loop awaits PublishAsync
+src/Whizbang.Data.Dapper.Postgres/Collective/DapperCollectiveEventApplier.cs : while loop awaits ExecuteAsync
+src/Whizbang.Data.Dapper.Postgres/DapperEventTypeRenameTool.cs : foreach loop awaits ExecuteAsync
+src/Whizbang.Data.Dapper.Sqlite/DapperSqliteEventStore.cs : for loop awaits ExecuteAsync
+src/Whizbang.Data.EFCore.Postgres/Collective/EFCoreCollectiveAdapter.cs : while loop awaits ExecuteAsync
+src/Whizbang.Data.EFCore.Postgres/IntegrityCheckpointReceptor.cs : foreach loop awaits PublishAsync
+src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs : for loop awaits PublishAsync
+src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs : foreach loop awaits PublishAsync
+src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptor.cs : while loop awaits PublishAsync
+src/Whizbang.Data.Postgres/Notifications/PgInstanceLifecycleMonitor.cs : foreach loop awaits PublishAsync
+src/Whizbang.Testing/Transport/SubscriptionWarmup.cs : while loop awaits PublishAsync
+src/Whizbang.Transports.RabbitMQ/RabbitMqDeadLetterDrainer.cs : while loop awaits PublishAsync

@@ -327,6 +327,21 @@ public sealed class StreamIntegrityOptions {
   public int MaxDivergenceReportsPerManifest { get; set; } = 100;
 
   /// <summary>
+  /// Hard cap on confirmed-gap REPORTS published per received checkpoint (default 100). The third
+  /// member of the same family as <see cref="MaxCoverageGapReportsPerAudit"/> and
+  /// <see cref="MaxDivergenceReportsPerManifest"/>: <see cref="MaxAutoRepairRequestsPerCheckpoint"/>
+  /// already bounded the repairs in that loop, but the report published alongside them ran free.
+  /// Pending gaps are keyed by (tenant, event type), so their number grows with the deployment, not
+  /// with any batch size — and each report is a durable outbox write on the same thread that owes
+  /// the liveness probe an answer.
+  /// <para>
+  /// Suppressed gaps are not lost: an unhealed deficit is re-detected on the next checkpoint, so
+  /// the condition keeps surfacing until it is actually repaired.
+  /// </para>
+  /// </summary>
+  public int MaxGapReportsPerCheckpoint { get; set; } = 100;
+
+  /// <summary>
   /// A1c: every Nth audit cycle is a FULL SWEEP (default 7 — weekly at the daily default): the
   /// worker verifies + heals its own digest table against a full recompute
   /// (<see cref="IWorkCoordinator.VerifyDigestTableAsync"/>) and the manifest exchange runs on
