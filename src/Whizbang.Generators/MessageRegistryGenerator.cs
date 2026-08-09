@@ -247,19 +247,33 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Find the containing method/class
     var containingMethod = invocation.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
 
-    // Defensive guard: invocations must be in a class (valid C# requirement)
-    var containingClass = RoslynGuards.GetContainingClassOrThrow(invocation);
-
-    // Defensive guard: throws if Roslyn returns null (indicates compiler bug)
-    // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
-    var classSymbol = RoslynGuards.GetClassSymbolOrThrow(containingClass, semanticModel, cancellationToken);
+    // Resolve the containing type tolerantly. Dispatch call sites are valid C#
+    // inside classes, records, structs, AND top-level statements (where the
+    // compiler synthesizes a Program type with no type declaration syntax).
+    // A guard that only accepts ClassDeclarationSyntax crashes the whole
+    // generator for those consumers, so never throw here.
+    string className;
+    var containingTypeDeclaration = invocation.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault();
+    if (containingTypeDeclaration is not null) {
+      className = semanticModel.GetDeclaredSymbol(containingTypeDeclaration, cancellationToken)
+          is INamedTypeSymbol declaredTypeSymbol
+          ? TypeNameHelper.GetFullyQualifiedName(declaredTypeSymbol)
+          : "<unknown>";
+    } else {
+      // Top-level statements: ask the semantic model for the enclosing symbol,
+      // which lives in the compiler-synthesized Program type.
+      var enclosingSymbol = semanticModel.GetEnclosingSymbol(invocation.SpanStart, cancellationToken);
+      className = enclosingSymbol?.ContainingType is { } synthesizedType
+          ? TypeNameHelper.GetFullyQualifiedName(synthesizedType)
+          : "<top-level>";
+    }
 
     var location = invocation.GetLocation();
     var lineSpan = location.GetLineSpan();
 
     return new DispatcherLocationInfo(
         MessageType: TypeNameHelper.GetFullyQualifiedName(messageType),
-        ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
+        ClassName: className,
         MethodName: containingMethod?.Identifier.Text ?? "<unknown>",
         FilePath: lineSpan.Path,
         LineNumber: lineSpan.StartLinePosition.Line + 1,
