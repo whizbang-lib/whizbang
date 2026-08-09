@@ -1258,9 +1258,34 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </summary>
   /// <docs>resilience/stream-integrity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAuditClaimTests.cs</tests>
-  public async Task<bool> TryClaimIntegrityAuditCycleAsync(
+  public Task<bool> TryClaimIntegrityAuditCycleAsync(
     TimeSpan claimWindow,
-    CancellationToken cancellationToken = default) {
+    CancellationToken cancellationToken = default) =>
+    _tryClaimWatermarkAsync(
+      "integrity_audit_last_run",
+      "Last claimed integrity-audit cycle — first instance to CAS this watermark runs the cycle; siblings skip.",
+      claimWindow, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<bool> TryClaimTypeDefinitionReconcileAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) =>
+    _tryClaimWatermarkAsync(
+      "type_definition_reconcile_last_run",
+      "Last claimed type-definition reconcile — first instance to CAS this watermark walks the catalog; siblings skip.",
+      claimWindow, cancellationToken);
+
+  /// <summary>
+  /// The one-per-service claim: compare-and-swap a timestamp watermark in wh_settings. The UPDATE
+  /// only fires when the stored instant is older than the window, so exactly one instance wins and
+  /// the losers see zero rows affected. Shared by every piece of work that must happen once per
+  /// service per window rather than once per replica.
+  /// </summary>
+  private async Task<bool> _tryClaimWatermarkAsync(
+      string settingKey,
+      string description,
+      TimeSpan claimWindow,
+      CancellationToken cancellationToken) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -1270,18 +1295,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // wh_settings is public (created bare, mig 028) — NOT the service schema; see a6ca8dd4.
     cmd.CommandText = """
       INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
-      VALUES ('integrity_audit_last_run', NOW()::text, 'timestamptz',
-              'Last claimed integrity-audit cycle — first instance to CAS this watermark runs the cycle; siblings skip.')
+      VALUES (@p_key, NOW()::text, 'timestamptz', @p_description)
       ON CONFLICT (setting_key) DO UPDATE
         SET setting_value = NOW()::text, updated_at = NOW()
         WHERE (wh_settings.setting_value)::timestamptz <= NOW() - @p_window
       """;
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_key", settingKey));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_description", description));
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_window", NpgsqlTypes.NpgsqlDbType.Interval) {
       Value = claimWindow
     });
     var affected = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     return affected > 0;
   }
+
 
   /// <inheritdoc />
   public async Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(

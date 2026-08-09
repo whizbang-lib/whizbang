@@ -19,6 +19,13 @@ public sealed partial class TypeDefinitionReconciler {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly EphemeralOptions _options;
   private readonly ILogger<TypeDefinitionReconciler> _logger;
+
+  /// <summary>
+  /// How recently a sibling's reconcile suppresses this one. Deliberately short: this is startup
+  /// work, and a genuine redeploy minutes later SHOULD reconcile again (its hashes may differ).
+  /// The window only needs to cover one fleet's simultaneous boot, not a whole deployment cycle.
+  /// </summary>
+  private static readonly TimeSpan _claimWindow = TimeSpan.FromMinutes(2);
   private readonly IMessageTypeCatalog? _catalog;
 
   /// <summary>Creates the reconciler. <paramref name="catalog"/> is optional — absent means no-op.</summary>
@@ -50,6 +57,16 @@ public sealed partial class TypeDefinitionReconciler {
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
+    // One instance per service per window does this, not every replica. The walk is idempotent, so
+    // N instances running it was never incorrect — just N times the cost for one instance's worth
+    // of result, and at deploy time every replica of every service does it simultaneously against
+    // one shared database. The claim goes FIRST: skipping has to skip the catalog walk and its
+    // per-type round-trips, not merely the writes at the end.
+    if (!await coordinator.TryClaimTypeDefinitionReconcileAsync(_claimWindow, cancellationToken).ConfigureAwait(false)) {
+      LogSkippedByClaim(_logger);
+      return TypeDefinitionReconcileSummary.SkippedByClaim;
+    }
+
     // Sync per-type rewind-grace overrides ([Ephemeral(RewindGraceSeconds >= 0)]) so the reaper resolves
     // COALESCE(type grace, global default) per event. Full replace — declaring set upserted, rest pruned.
     var graceOverrides = new List<EphemeralTypeGrace>();
@@ -69,6 +86,7 @@ public sealed partial class TypeDefinitionReconciler {
     }
 
     var driftDetected = 0;
+    var typesRegistered = 0;
     var typesReclassified = 0;
 
     foreach (var entry in _catalog.GetAll()) {
@@ -80,6 +98,7 @@ public sealed partial class TypeDefinitionReconciler {
       }
 
       // schema_version stays 0 until [SchemaVersion] exists (event-versioning phase).
+      typesRegistered++;
       var reg = await coordinator.RegisterTypeDefinitionAsync(
         entry.ClrTypeName, entry.SettingsHash, entry.SchemaHash, schemaVersion: 0, cancellationToken).ConfigureAwait(false);
 
@@ -121,8 +140,12 @@ public sealed partial class TypeDefinitionReconciler {
       }
     }
 
-    return new TypeDefinitionReconcileSummary(driftDetected, typesReclassified);
+    return new TypeDefinitionReconcileSummary(driftDetected, typesReclassified, typesRegistered);
   }
+
+  [LoggerMessage(EventId = 61, Level = LogLevel.Debug,
+    Message = "Type-definition reconcile skipped — a sibling instance claimed this window.")]
+  private static partial void LogSkippedByClaim(ILogger logger);
 
   [LoggerMessage(EventId = 9210, Level = LogLevel.Warning,
     Message = "Type-definition drift for '{TypeName}' (settingsChanged={SettingsChanged}, schemaChanged={SchemaChanged}) — recorded lineage {Relationship}.")]
@@ -143,7 +166,14 @@ public sealed partial class TypeDefinitionReconciler {
 
 /// <summary>Outcome of a <see cref="TypeDefinitionReconciler"/> pass.</summary>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
-public sealed record TypeDefinitionReconcileSummary(int DriftDetected, int TypesReclassified) {
+public sealed record TypeDefinitionReconcileSummary(
+    int DriftDetected,
+    int TypesReclassified,
+    int TypesRegistered = 0,
+    bool Skipped = false) {
   /// <summary>Nothing found — the default/no-op result.</summary>
   public static TypeDefinitionReconcileSummary Empty { get; } = new(0, 0);
+
+  /// <summary>A sibling instance already reconciled inside the claim window; no walk was performed.</summary>
+  public static TypeDefinitionReconcileSummary SkippedByClaim { get; } = new(0, 0, 0, Skipped: true);
 }
