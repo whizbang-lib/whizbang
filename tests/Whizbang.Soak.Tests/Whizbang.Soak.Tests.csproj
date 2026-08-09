@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.Postgres\Whizbang.Data.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Testing\Whizbang.Testing.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\Whizbang.Generators\Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="TUnit.Assertions" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!--
+      Soak: DELIBERATELY not Unit and not Integration.
+
+      Run-Tests.ps1 classifies projects by this property and every mode it offers filters for
+      "Unit" or "Integration" specifically, so declaring "Soak" excludes this project from the CI
+      gate BY CONSTRUCTION. There is no opt-out list anyone has to remember to maintain, and no
+      way for a slow, wall-clock-sensitive test in here to start blocking a pull request.
+
+      That exclusion is the whole point. These tests measure emergent behaviour under sustained
+      load (latency, growth, responsiveness), which is exactly the kind of assertion that turns
+      flaky when a CI runner is busy. Elsewhere in this repo wall-clock assertions are banned for
+      that reason. Here they are the subject, so they get a room of their own.
+
+      Run them on demand: pwsh scripts/Run-Soak.ps1
+    -->
+    <WhizbangTestType>Soak</WhizbangTestType>
+    <WhizbangTestTags>Soak;Postgres;Docker</WhizbangTestTags>
+
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)/generated</CompilerGeneratedFilesOutputPath>
+    <NoWarn>$(NoWarn);CA1707;IDE1006;CA1816;CA1822;CA1859;CA1860;IL2026;IL3050</NoWarn>
+  </PropertyGroup>
+
+</Project>
