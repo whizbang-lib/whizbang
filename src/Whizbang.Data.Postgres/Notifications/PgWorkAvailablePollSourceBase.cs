@@ -36,6 +36,7 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly ILogger _logger;
   private readonly INotificationConnectionStringFallback? _connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource;
   private readonly INotifySignalingGate? _signalingGate;
   private readonly TimeSpan _relaxedInterval;
 
@@ -51,13 +52,15 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
     IServiceInstanceProvider instanceProvider,
     ILogger logger,
     INotificationConnectionStringFallback? connectionStringFallback = null,
-    INotifySignalingGate? signalingGate = null
+    INotifySignalingGate? signalingGate = null,
+    INotificationDataSource? notificationDataSource = null
   ) : base(clock, interval) {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _connectionStringFallback = connectionStringFallback;
+    _notificationDataSource = notificationDataSource;
     _signalingGate = signalingGate;
     _relaxedInterval = interval;
 
@@ -83,11 +86,14 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
   /// <inheritdoc />
   protected sealed override async ValueTask<bool> DetectAsync(CancellationToken cancellationToken) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    if (resolution.ConnectionString is null) {
+    // Prefer the registered notification data source - the only path that
+    // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
+    // string has had its credentials stripped by Npgsql.
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
       return false;   // no connection available — nothing to detect; NOTIFY path will drive us when the DB comes back
     }
-    await using var conn = new NpgsqlConnection(resolution.ConnectionString);
-    await conn.OpenAsync(cancellationToken);
+    await using var conn = await plan.OpenAsync(cancellationToken);
     await using var cmd = new NpgsqlCommand(DetectSql, conn);
     cmd.Parameters.AddWithValue("instance_id", _instanceProvider.InstanceId);
     var result = await cmd.ExecuteScalarAsync(cancellationToken);

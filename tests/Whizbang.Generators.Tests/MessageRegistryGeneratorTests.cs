@@ -1824,6 +1824,68 @@ namespace TestNamespace {
       .Because("GoAsync holds the look-alike call sites and must not be registered as a dispatch method.");
   }
 
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_DispatchInTopLevelStatements_DoesNotCrashAsync() {
+    // Arrange - a dispatcher call site in top-level statements (Program.cs style).
+    // Top-level statements have no containing class declaration; the generator
+    // must tolerate that instead of throwing from a containment guard.
+    const string source = """
+using System;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+var dispatcher = (IDispatcher)null!;
+await dispatcher.SendAsync(new TestApp.Commands.RegisterWidgetCommand());
+
+namespace TestApp.Commands {
+  public record RegisterWidgetCommand : ICommand { }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
+
+    // Assert - the generator ran to completion (no wrapped exception)
+    await Assert.That(result.Results[0].Exception).IsNull()
+      .Because("message usage in top-level statements is valid C# and must not crash the generator.");
+
+    var generatedJson = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+    await Assert.That(generatedJson).IsNotNull();
+    await Assert.That(generatedJson).Contains("RegisterWidgetCommand");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_DispatchInsideRecord_DoesNotCrashAsync() {
+    // Arrange - a dispatcher call site inside a record declaration. Records are
+    // not ClassDeclarationSyntax, so class-only containment lookups miss them.
+    const string source = """
+using System;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace TestApp {
+  public record RegisterWidgetCommand : ICommand { }
+
+  public record WidgetDispatchCoordinator(IDispatcher Dispatcher) {
+    public Task DispatchAsync() => Dispatcher.SendAsync(new RegisterWidgetCommand());
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Results[0].Exception).IsNull()
+      .Because("message usage inside a record declaration is valid C# and must not crash the generator.");
+
+    var generatedJson = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+    await Assert.That(generatedJson).IsNotNull();
+    await Assert.That(generatedJson).Contains("WidgetDispatchCoordinator");
+  }
+
   [System.Text.RegularExpressions.GeneratedRegex("\"\"receptors\"\":")]
   private static partial System.Text.RegularExpressions.Regex MyRegex();
 }

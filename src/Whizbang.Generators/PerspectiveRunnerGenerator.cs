@@ -156,6 +156,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       );
     }
 
+    // Build the CreateEmptyModel object initializer at generation time so the
+    // runner constructs the model directly (no Activator, no reflection).
+    var emptyModelInitializer = _buildEmptyModelInitializer(modelType, streamKeyPropertyName);
+
     // Extract StreamId properties from event types
     var eventStreamIds = _extractEventStreamIdsFromTypes(eventTypes, eventTypeSymbols);
 
@@ -201,6 +205,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             EventTypes: [.. eventTypes],
             MessageTypeNames: messageTypeNames,
             StreamIdPropertyName: streamKeyPropertyName,
+            EmptyModelInitializer: emptyModelInitializer,
             EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
@@ -457,7 +462,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
-    result = result.Replace("__STREAM_KEY_PROPERTY__", perspective.StreamIdPropertyName!);
+    result = result.Replace("__EMPTY_MODEL_INITIALIZER__", perspective.EmptyModelInitializer);
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 
     return result;
@@ -720,6 +725,75 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <summary>
   /// Finds the property with [StreamId] attribute on a model type.
   /// </summary>
+  /// <summary>
+  /// Builds the object-initializer text for the generated CreateEmptyModel.
+  /// Assigns the stream key directly (Guid, Guid?, string, or a strongly-typed
+  /// id with a static From(Guid) factory) and initializes any other required
+  /// members to default! so the generated code compiles. No reflection.
+  /// </summary>
+  private static string _buildEmptyModelInitializer(ITypeSymbol modelType, string streamKeyPropertyName) {
+    var assignments = new List<string>();
+
+    var properties = modelType.GetMembers().OfType<IPropertySymbol>().ToArray();
+    var streamKeyProperty = properties.FirstOrDefault(p => p.Name == streamKeyPropertyName);
+
+    var streamKeyAssigned = false;
+    if (streamKeyProperty is { SetMethod: not null }) {
+      var expression = _buildStreamKeyInitExpression(streamKeyProperty.Type);
+      if (expression is not null) {
+        assignments.Add($"{streamKeyPropertyName} = {expression}");
+        streamKeyAssigned = true;
+      }
+    }
+
+    // Required members must appear in the object initializer or the generated
+    // runner will not compile. default! matches the previous behavior of
+    // leaving them unset on the empty model.
+    foreach (var property in properties) {
+      var isUnassignedStreamKey = property.Name == streamKeyPropertyName && !streamKeyAssigned;
+      if (property.IsRequired
+          && property.SetMethod is not null
+          && (property.Name != streamKeyPropertyName || isUnassignedStreamKey)) {
+        assignments.Add($"{property.Name} = default!");
+      }
+    }
+
+    return assignments.Count == 0 ? "{ }" : "{ " + string.Join(", ", assignments) + " }";
+  }
+
+  /// <summary>
+  /// Returns the C# expression that converts the runner's Guid streamId into
+  /// the stream key property's type, or null when no safe conversion exists
+  /// (in which case the property is left unset, as the reflection-based
+  /// implementation did for unwritable properties).
+  /// </summary>
+  private static string? _buildStreamKeyInitExpression(ITypeSymbol propertyType) {
+    var displayName = propertyType.ToDisplayString();
+    if (displayName is "System.Guid") {
+      return "streamId";
+    }
+    if (displayName is "System.Guid?") {
+      return "streamId";
+    }
+    if (propertyType.SpecialType == SpecialType.System_String) {
+      return "streamId.ToString()";
+    }
+
+    // Strongly-typed ids: a static From(System.Guid) factory returning the
+    // property type (the convention used by generated value-object ids).
+    var hasFromFactory = propertyType.GetMembers("From").OfType<IMethodSymbol>().Any(m =>
+        m.IsStatic
+        && m.DeclaredAccessibility == Accessibility.Public
+        && m.Parameters.Length == 1
+        && m.Parameters[0].Type.ToDisplayString() == "System.Guid"
+        && SymbolEqualityComparer.Default.Equals(m.ReturnType, propertyType));
+    if (hasFromFactory) {
+      return $"{propertyType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.From(streamId)";
+    }
+
+    return null;
+  }
+
   private static string? _findModelStreamIdProperty(ITypeSymbol modelType) {
     foreach (var member in modelType.GetMembers()) {
       if (member is IPropertySymbol property) {

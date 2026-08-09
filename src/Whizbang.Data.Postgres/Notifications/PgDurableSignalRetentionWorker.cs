@@ -32,12 +32,14 @@ public sealed partial class PgDurableSignalRetentionWorker(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
   ILogger<PgDurableSignalRetentionWorker> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotificationDataSource? notificationDataSource = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly ILogger<PgDurableSignalRetentionWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
 
   /// <summary>Sweep interval — daily is plenty; wh_signals rows are small doorbell records.</summary>
   private static readonly TimeSpan _sweepInterval = TimeSpan.FromHours(1);
@@ -71,11 +73,14 @@ public sealed partial class PgDurableSignalRetentionWorker(
   /// <summary>Test hook: run one sweep synchronously. Returns the number of rows deleted.</summary>
   public async Task<int> SweepOnceAsync(CancellationToken cancellationToken) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    if (resolution.ConnectionString is null) {
+    // Prefer the registered notification data source - the only path that
+    // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
+    // string has had its credentials stripped by Npgsql.
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
       return 0;
     }
-    await using var conn = new NpgsqlConnection(resolution.ConnectionString);
-    await conn.OpenAsync(cancellationToken);
+    await using var conn = await plan.OpenAsync(cancellationToken);
     await using var cmd = new NpgsqlCommand(@"
       DELETE FROM wh_signals
       WHERE created_at < NOW() - @retention
