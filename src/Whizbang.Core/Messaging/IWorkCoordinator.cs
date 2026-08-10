@@ -1108,6 +1108,36 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<InboxBatchRow>>([]);
 
   /// <summary>
+  /// Byte-budgeted fetch: bounds the slice by payload bytes as well as row count.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A separate overload rather than a parameter on the one above, deliberately. Changing the
+  /// signature of a method that carries a default implementation SILENTLY un-implements it for
+  /// every existing implementer — their method stops matching the interface, the class still
+  /// compiles, and every call quietly falls through to the default. Doing exactly that here broke
+  /// nineteen drain tests with empty results and no diagnostic, and would have done the same to
+  /// any consumer's own coordinator.
+  /// </para>
+  /// <para>
+  /// The default delegates to the count-only overload, so an engine that has not implemented this
+  /// keeps its previous behavior (unbounded by bytes) instead of silently returning nothing.
+  /// </para>
+  /// </remarks>
+  /// <param name="streamIds">Streams to drain.</param>
+  /// <param name="instanceId">The claiming instance.</param>
+  /// <param name="maxPerStream">Row cap per stream.</param>
+  /// <param name="maxBytes">Payload-byte cap per stream; null disables it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
+    CancellationToken cancellationToken = default)
+    => FetchInboxBatchAsync(streamIds, instanceId, maxPerStream, cancellationToken);
+
+  /// <summary>
   /// Cheap ID-only prefetch for the perspective drainer (Phase H step 7 slice 2). Returns
   /// (event_work_id, event_id) tuples for unprocessed <c>wh_perspective_events</c> rows leased
   /// to the caller, scoped to a single (stream_id, perspective_name), ordered by event_id ASC.

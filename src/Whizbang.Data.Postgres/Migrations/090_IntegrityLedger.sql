@@ -79,7 +79,7 @@ DECLARE
   v_changed BOOLEAN;
   v_report  BOOLEAN;
 BEGIN
-  -- Lock the row for the duration so concurrent replicas serialise on this bucket and exactly one
+  -- Lock the row for the duration so concurrent replicas serialize on this bucket and exactly one
   -- of them is told to report. This is the part in-memory state could never provide.
   SELECT * INTO v_row FROM __SCHEMA__.wh_integrity_ledger
   WHERE origin_service_id = p_origin_service_id AND tenant_scope = v_scope

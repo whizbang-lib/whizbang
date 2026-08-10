@@ -146,6 +146,13 @@ public class LeaseDispatchExecutorTests {
       .Because("the executor's abandonment continuation must observe the abandoned task's exception");
   }
 
+  // Counts TaskCanceledException PROCESS-WIDE, so it only means what it claims while nothing else
+  // is cancelling anything. That held by luck, not by construction: any concurrently-running test
+  // that stops a worker throws TaskCanceledException from Task.Delay and lands in this bag. The
+  // sibling FirstChanceException test was narrowed to its own frames for exactly this reason; this
+  // one cannot be (the throw originates in BCL code, as the comment below explains), so isolation
+  // has to be enforced instead of assumed.
+  [NotInParallel]
   [Test]
   public async Task SuccessfulDispatch_DoesNotThrowFirstChanceOceOnLeaseDisposeAsync() {
     // Phase H step 9 regression lock: the original implementation used
