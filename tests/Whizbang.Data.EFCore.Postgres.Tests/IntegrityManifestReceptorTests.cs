@@ -650,6 +650,96 @@ public class IntegrityManifestReceptorTests {
                "immediately instead of waiting out a stale cooldown.");
   }
 
+  // ── #80-C: deficit drives repair; equal-count mismatch drives alarm ─────
+
+  [Test]
+  public async Task ManifestReceptor_EqualCountDifferentFold_AlarmsButNeverRequestsRepairAsync() {
+    // The non-convergence at the heart of the observed storm: counts agree but folds differ, so
+    // the consumer holds the same NUMBER of events with different IDENTITY. Redelivery re-ships
+    // what the origin has, dedup drops what the consumer already holds, the fold never moves —
+    // and the repair loop retries forever. Identity damage needs a human, not a redelivery.
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(stream, 99, 98, 2)];   // count 2, folds differ
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("redelivery cannot change identity the consumer already holds — a repair request here loops forever");
+    var reports = dispatcher.Published.OfType<IntegrityDivergenceDetected>().ToList();
+    await Assert.That(reports.Count).IsEqualTo(1)
+      .Because("the ALARM half must survive the repair suppression — this bucket needs eyes, not silence");
+    await Assert.That(reports[0].LocalCount).IsEqualTo(2);
+    await Assert.That(reports[0].AutoRepairRequested).IsFalse();
+  }
+
+  [Test]
+  public async Task ManifestReceptor_LocalExtra_AlarmsButNeverRequestsRepairAsync() {
+    // The consumer holds MORE than the origin claims. Redelivery only ever adds — it cannot
+    // converge a surplus — and auto-deleting local history on a remote's say-so is not a thing
+    // the framework will ever do. Investigation item.
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(stream, 99, 98, 5)];   // 5 held, origin claims 2
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("more-than-the-origin cannot be fixed by asking the origin for more");
+    await Assert.That(dispatcher.Published.OfType<IntegrityDivergenceDetected>().Count()).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_WindowedManifest_RangeBoundsTheRepairAsync() {
+    // #80-C range-bounded backfill: a deficit found while comparing a WINDOW is a deficit IN THAT
+    // WINDOW — the repair request carries the range, so the origin re-ships a slice instead of a
+    // stream's whole history. [since, until) maps to the redelivery command's exclusive-floor /
+    // inclusive-ceiling pair.
+    var coordinator = new _auditCoordinator();
+    var missing = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [];
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(missing, 12, 22, 3)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    var command = _deserializeRedelivery(transport.Published[0].Envelope);
+    await Assert.That(command.FromCommitSequence).IsEqualTo(99L)
+      .Because("[100, 300) maps to exclusive floor 99 — sequence 100 must be included");
+    await Assert.That(command.ToCommitSequence).IsEqualTo(299L)
+      .Because("and inclusive ceiling 299 — the origin re-ships the window, not all history");
+  }
+
   // ── #80-B: negotiated scope — the origin honors windowed asks ───────────
 
   [Test]

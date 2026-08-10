@@ -276,13 +276,25 @@ public sealed partial class IntegrityManifestReceptor(
         continue;   // the bucket changed inside the settle window — in-flight, not divergence.
       }
 
+      // #80-C taxonomy — only a DEFICIT is repairable. Equal counts with differing folds mean the
+      // consumer holds the same NUMBER of events with different IDENTITY: redelivery re-ships what
+      // it already has, dedup drops it, the fold never moves — a repair loop that can never
+      // converge (observed live as an unbounded redelivery storm). A local SURPLUS cannot be fixed
+      // by asking the origin for more, and local history is never auto-deleted on a remote's
+      // say-so. Both alarm; neither repairs.
+      var localCount = mine?.EventCount ?? 0;
+      var isDeficit = localCount < origin.EventCount;
+      var reason = isDeficit ? "deficit" : localCount == origin.EventCount ? "identity_mismatch" : "local_extra";
+
       metrics?.DivergencesDetected.Add(1,
         new KeyValuePair<string, object?>("origin", message.OriginServiceName),
-        new KeyValuePair<string, object?>("event_type", origin.EventType));
+        new KeyValuePair<string, object?>("event_type", origin.EventType),
+        new KeyValuePair<string, object?>("reason", reason));
       var shouldReport = await ledger.TryBeginReportAsync(
         key, origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, now, cooldown,
         cancellationToken).ConfigureAwait(false);
-      var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
+      var autoRepair = isDeficit
+        && options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
         && await ledger.TryBeginRepairAsync(key, now, backoff, options.MaxRepairAttemptsPerBucket,
              cancellationToken).ConfigureAwait(false);
       if (autoRepair) {
@@ -492,6 +504,12 @@ public sealed partial class IntegrityManifestReceptor(
         StreamIds = streamIds,
         RequesterService = requester,
         Topic = topic,
+        // #80-C range-bounded backfill: a deficit found comparing a WINDOW is a deficit in that
+        // window — the origin re-ships the slice, not the streams' whole history. [since, until)
+        // maps to the command's exclusive-floor / inclusive-ceiling pair; legacy (unwindowed)
+        // manifests leave both null, the pre-existing whole-history semantics.
+        FromCommitSequence = manifest.SinceSequence is long since && since > 0 ? since - 1 : null,
+        ToCommitSequence = manifest.ComputedThrough is long through ? through - 1 : null,
       },
       Hops = [
         new MessageHop {
