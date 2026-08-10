@@ -254,3 +254,82 @@ $$;
 
 COMMENT ON FUNCTION __SCHEMA__.refold_digest_epochs IS
 'Recomputes closed epochs in [p_from, p_to] (clamped to the lane''s frontier) after a repair delivered events into their range. The scheduled self-sweep backstops any missed call.';
+
+-- Serves type-level digest answers FROM the epochs: sealed history composes by XOR of epoch rows
+-- and only the OPEN window (above the frontier) folds live — O(open window) instead of O(store).
+-- Once sealed, an epoch row is AUTHORITATIVE here: answers do not re-verify it against the store
+-- (that would re-buy the full-scan cost on every answer); the scheduled self-sweep owns detecting
+-- a bad seal. With no frontier the whole lane is "open" and this degrades to the plain full fold.
+CREATE OR REPLACE FUNCTION __SCHEMA__.compute_type_digests_epoch(
+  p_origin_lane    UUID,          -- NULL = the local lane (this service's own emissions)
+  p_event_types    TEXT[],        -- NULL = all types
+  p_now            TIMESTAMPTZ,
+  p_settle_seconds INTEGER
+) RETURNS TABLE (tenant TEXT, event_type TEXT, digest_lo BIGINT, digest_hi BIGINT, event_count INTEGER)
+LANGUAGE plpgsql STABLE
+AS $$
+DECLARE
+  c_zero CONSTANT UUID := '00000000-0000-0000-0000-000000000000';
+  v_lane      UUID := COALESCE(p_origin_lane, c_zero);
+  v_frontier  BIGINT := -1;
+  v_width     BIGINT;
+  v_open_from BIGINT := 0;
+  v_types     TEXT[];
+BEGIN
+  IF p_event_types IS NOT NULL THEN
+    SELECT array_agg(__SCHEMA__.normalize_event_type(t)) INTO v_types
+    FROM unnest(p_event_types) AS t;
+  END IF;
+
+  SELECT f.closed_through_epoch, f.epoch_width INTO v_frontier, v_width
+  FROM __SCHEMA__.wh_digest_epoch_frontiers f
+  WHERE f.origin_service_id = v_lane;
+
+  IF v_width IS NULL OR v_frontier < 0 THEN
+    v_frontier := -1;      -- nothing sealed: the whole lane folds live below
+    v_open_from := 0;
+  ELSE
+    v_open_from := (v_frontier + 1) * v_width;
+  END IF;
+
+  RETURN QUERY
+  WITH sealed AS (
+    SELECT de.scope_tenant AS b_tenant, de.event_type AS b_type,
+           bit_xor(de.digest_lo) AS lo, bit_xor(de.digest_hi) AS hi,
+           SUM(de.event_count)::bigint AS cnt
+    FROM __SCHEMA__.wh_digest_epochs de
+    WHERE de.origin_service_id = v_lane
+      AND de.epoch_id <= v_frontier
+      AND (v_types IS NULL OR de.event_type = ANY(v_types))
+    GROUP BY 1, 2
+  ),
+  open_fold AS (
+    -- The live remainder. A row the stamper has not yet sequenced belongs here by definition —
+    -- it can be in no epoch, so the NULL-sequence branch keeps it from falling through the crack.
+    SELECT COALESCE(es.scope ->> 't', '') AS b_tenant, es.event_type AS b_type,
+           bit_xor(hashtextextended(es.event_id::text, 0)) AS lo,
+           bit_xor(hashtextextended(es.event_id::text, 1)) AS hi,
+           COUNT(*)::bigint AS cnt
+    FROM __SCHEMA__.wh_event_store es
+    LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
+    WHERE ((p_origin_lane IS NULL AND es.origin_service_id IS NULL)
+           OR es.origin_service_id = p_origin_lane)
+      AND (CASE WHEN p_origin_lane IS NULL
+                THEN es.commit_sequence IS NULL OR es.commit_sequence >= v_open_from
+                ELSE es.origin_commit_sequence IS NULL OR es.origin_commit_sequence >= v_open_from
+           END)
+      AND (v_types IS NULL OR es.event_type = ANY(v_types))
+      AND COALESCE(es.flags, 0) & 8 = 0
+      AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
+      AND es.created_at < p_now - make_interval(secs => p_settle_seconds)
+    GROUP BY 1, 2
+  )
+  SELECT u.b_tenant, u.b_type, bit_xor(u.lo), bit_xor(u.hi), SUM(u.cnt)::int
+  FROM (SELECT * FROM sealed UNION ALL SELECT * FROM open_fold) u
+  GROUP BY 1, 2
+  ORDER BY 1, 2;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.compute_type_digests_epoch IS
+'Type-level digest answer served from sealed epochs + a live fold of only the open window. Sealed rows are authoritative (the self-sweep owns detecting a bad seal). Falls back to the plain full fold when the lane has no closed epochs.';

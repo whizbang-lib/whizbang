@@ -1821,34 +1821,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
     TimeSpan settleWindow,
     CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
-      // The type-level roll-up happens AT THE STORE: same gates as the per-stream compute, but
-      // grouped by (tenant, type) — the result is bounded by #types × #tenants instead of one row
-      // per stream. XOR over the type's events equals XOR over its stream buckets (they partition
-      // the events), so this is bit-identical to rolling the per-stream compute up in C# — without
-      // materializing a large store's stream set in memory to get a types-level answer.
-      cmd.CommandText = $"""
-        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type,
-               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
-               COUNT(*)::int
-        FROM {schema}.wh_event_store es
-        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
-        WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
-               OR es.origin_service_id = @p_origin)
-          AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, "normalize_event_type")}(t) FROM unnest(@p_types::text[]) AS t))
-          AND COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
-          AND es.created_at < NOW() - @p_settle::interval
-        GROUP BY 1, 2
-        ORDER BY 1, 2
-        """;
+      // The type-level roll-up happens AT THE STORE, and (since #80-E) it is served FROM THE
+      // EPOCHS: sealed history composes by XOR of immutable wh_digest_epochs rows and only the
+      // open window above the closure frontier folds live, so the answer costs O(open window)
+      // instead of O(everything ever stored). Sealed rows are authoritative here — a per-answer
+      // re-verification would re-buy the full-scan cost the epochs exist to end; the scheduled
+      // self-sweep owns detecting a bad seal. A lane with no closed epochs degrades to the plain
+      // full fold, bit-identical to rolling the per-stream compute up in C#.
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText =
+        "SELECT tenant, event_type, digest_lo, digest_hi, event_count " +
+        $"FROM {BuildSchemaQualifiedName(schema, "compute_type_digests_epoch")}(@p_origin, @p_types, NOW(), @p_settle)";
+#pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = (object?)originServiceId ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", (int)settleWindow.TotalSeconds));
 
       var results = new List<StreamDigest>();
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
