@@ -100,6 +100,11 @@ public sealed partial class MaintenanceWorker(
       LogPointerPruneFailed(_logger, ex);
     }
 
+    // Reclaim space held but unusable — churn leaves free space inside pages that autovacuum
+    // returns to the free space map but never to the OS, and a dropped column leaves bytes that
+    // autovacuum can never reclaim at all. Reports by default; rewrites only when permitted.
+    await _rewriteBloatedTablesAsync(coordinator, ct);
+
     // v0.657 slice 5: structural stuck-row sentinel. Runs after the regular
     // maintenance cycle so backings that don't implement it (default no-op
     // returning empty list) pay zero cost; Postgres backends use the partial
@@ -113,6 +118,57 @@ public sealed partial class MaintenanceWorker(
   // No-op without a runner registry (non-perspective host) or without ephemeral bodies. Per-pair failures
   // are logged, never fatal — a snapshot failure just leaves the body for a later cycle (the coverage gate
   // holds it), it never loses data.
+
+  /// <summary>
+  /// Reclaims space a table holds but cannot use, when the operator has permitted it.
+  /// </summary>
+  /// <remarks>
+  /// Candidates come from <c>wh_tables_needing_rewrite()</c>, which re-measures each one, so a
+  /// migration that replayed and re-recorded an already-rewritten table yields nothing rather
+  /// than an expensive no-op. The request is cleared only after the ratio is confirmed to have
+  /// dropped: an interrupted or ineffective rewrite stays queued and is retried next cycle
+  /// instead of being silently forgotten.
+  /// </remarks>
+  private async Task _rewriteBloatedTablesAsync(IWorkCoordinator coordinator, CancellationToken ct) {
+    IReadOnlyList<Whizbang.Core.Messaging.TableRewriteCandidate> candidates;
+    try {
+      candidates = await coordinator.GetTablesNeedingRewriteAsync(ct);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogRewriteScanFailed(_logger, ex);
+      return;
+    }
+
+    foreach (var c in candidates) {
+      if (ct.IsCancellationRequested) {
+        return;
+      }
+      if (!_options.AllowTableRewrite) {
+        // Report and stop. An operator who never looks at this still gets the bloat gauge.
+        LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
+        continue;
+      }
+      try {
+        var after = await coordinator.RewriteTableAsync(c.TableName, ct);
+        if (after is null || after >= c.BloatRatio) {
+          // No improvement — leave the request in place so it is retried, and say so, rather
+          // than clearing it and reporting success we did not achieve.
+          LogRewriteIneffective(_logger, c.TableName, c.BloatRatio, after ?? -1);
+          continue;
+        }
+        LogRewriteDone(_logger, c.TableName, c.BloatRatio, after.Value);
+        if (c.Requested) {
+          await coordinator.ClearTableRewriteRequestAsync(c.TableName, ct);
+        }
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogRewriteFailed(_logger, c.TableName, ex);
+      }
+    }
+  }
+
   private async Task _reapDrivenEphemeralSnapshotAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var registry = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>();
     if (registry is null) {
@@ -264,6 +320,25 @@ public sealed partial class MaintenanceWorker(
     Message = "Tier-2 ephemeral pointer prune failed (non-fatal — retried next due interval)")]
   static partial void LogPointerPruneFailed(ILogger logger, Exception ex);
 
+  [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
+    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Set MaintenanceWorkerOptions.AllowTableRewrite to let maintenance do it (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
+  static partial void LogRewriteNeeded(ILogger logger, string table, double ratio);
+
+  [LoggerMessage(EventId = 31, Level = LogLevel.Information,
+    Message = "Rewrote {Table}: bloat ratio {Before}x -> {After}x")]
+  static partial void LogRewriteDone(ILogger logger, string table, double before, double after);
+
+  [LoggerMessage(EventId = 32, Level = LogLevel.Warning,
+    Message = "Rewrite of {Table} did not reduce its bloat ratio ({Before}x -> {After}x); leaving it queued for retry")]
+  static partial void LogRewriteIneffective(ILogger logger, string table, double before, double after);
+
+  [LoggerMessage(EventId = 33, Level = LogLevel.Warning, Message = "Rewrite of {Table} failed")]
+  static partial void LogRewriteFailed(ILogger logger, string table, Exception ex);
+
+  [LoggerMessage(EventId = 34, Level = LogLevel.Debug, Message = "Could not scan for tables needing rewrite")]
+  static partial void LogRewriteScanFailed(ILogger logger, Exception ex);
+
+
   [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
     Message = "PreDestruction hook ran for a batch of {TargetCount} ephemeral events (cancel={Cancel}, defer={Defer}) — decision not yet enforced (E2-2)")]
   static partial void LogPreDestruction(ILogger logger, int targetCount, bool cancel, bool defer);
@@ -299,6 +374,18 @@ public sealed class MaintenanceWorkerOptions {
   /// Killswitch. Set to <c>false</c> to disable the maintenance loop. Default <c>true</c>.
   /// </summary>
   public bool Enabled { get; set; } = true;
+
+  /// <summary>
+  /// Whether maintenance may rewrite a table to reclaim space it holds but cannot use.
+  /// Default <c>false</c> — detect and report only.
+  /// </summary>
+  /// <remarks>
+  /// A rewrite takes an ACCESS EXCLUSIVE lock for its duration, and the framework cannot know how
+  /// large a consumer's table is. Taking that lock unattended is the operator's decision, so the
+  /// default reports the need and does nothing. The backing SQL re-measures every candidate at
+  /// call time, so enabling this cannot trigger a rewrite of a table that is already lean.
+  /// </remarks>
+  public bool AllowTableRewrite { get; set; }
 
   /// <summary>
   /// Interval between maintenance runs, in minutes. Default 10.
