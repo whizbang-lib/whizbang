@@ -326,6 +326,7 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   public int MaxDivergenceReportsPerManifest { get; set; } = 100;
 
+
   /// <summary>
   /// Hard cap on confirmed-gap REPORTS published per received checkpoint (default 100). The third
   /// member of the same family as <see cref="MaxCoverageGapReportsPerAudit"/> and

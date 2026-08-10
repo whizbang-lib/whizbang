@@ -33,21 +33,15 @@ public class TableStatisticsCollectorTests {
   }
 
 
-  /// <summary>
-  /// Records what the collector asked for and answers with a bloated table, so the test can tell
-  /// whether the bloat ratio actually reaches the metric rather than merely being computable.
-  /// </summary>
+  /// <summary>Answers with a bloated table so the test can tell whether the ratio reaches the metric.</summary>
   private sealed class BloatReportingProvider : ITableStatisticsProvider {
-    public TaskCompletionSource Asked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<IReadOnlyDictionary<string, long>> GetEstimatedTableSizesAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long>());
     public Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long>());
-    public Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) {
-      Asked.TrySetResult();
-      return Task.FromResult<IReadOnlyDictionary<string, double>>(
+    public Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyDictionary<string, double>>(
         new Dictionary<string, double> { ["wh_event_store"] = 4.2 });
-    }
   }
 
   private sealed class SingleProviderScopeFactory(ITableStatisticsProvider provider)
@@ -70,6 +64,13 @@ public class TableStatisticsCollectorTests {
   /// So the collector must actually PUBLISH the ratio, not merely be able to compute it. This
   /// asserts the value reaches the metric, because a gauge that is wired but never fed reports
   /// a healthy silence indistinguishable from a healthy system.
+  ///
+  /// <para>
+  /// Waits on <c>CycleCompleted</c>, which fires after the caches are written. An earlier version
+  /// waited on the provider being CALLED, which only proves the collector asked — the write lands
+  /// on the following line, so the assertion raced it and lost under CI load. Subscribing before
+  /// StartAsync closes the other direction: the cycle cannot complete before we are listening.
+  /// </para>
   /// </summary>
   [Test]
   public async Task Collector_PublishesTableBloatRatioAsync() {
@@ -77,9 +78,22 @@ public class TableStatisticsCollectorTests {
     var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
     var worker = new TableStatisticsCollector(new SingleProviderScopeFactory(provider), metrics);
 
+    var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    double? ratioWhenSignalled = null;
+    worker.CycleCompleted += () => {
+      // Sampled INSIDE the handler, so this also pins the ordering: a signal raised before the
+      // write would read null here no matter how the continuations happen to be scheduled.
+      ratioWhenSignalled = metrics.GetBloatRatioForTest("wh_event_store");
+      cycled.TrySetResult();
+    };
+
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await provider.Asked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cycled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(ratioWhenSignalled).IsEqualTo(4.2)
+      .Because("the cycle signal must come after the caches are written, or every observer of it "
+               + "races the value it is waiting for — which is how this test failed under CI load");
 
     await Assert.That(metrics.GetBloatRatioForTest("wh_event_store")).IsEqualTo(4.2)
       .Because("the collector must feed the bloat gauge; an unfed gauge is silent, and silence "

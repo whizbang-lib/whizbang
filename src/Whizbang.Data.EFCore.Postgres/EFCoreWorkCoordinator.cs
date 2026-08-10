@@ -487,6 +487,88 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<bool> IntegrityTryBeginReportAsync(
+      IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+      DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
+    await _integrityLedgerBoolAsync("wh_integrity_try_begin_report", cmd => {
+      _bindDivergenceKey(cmd, key);
+      cmd.Parameters.AddWithValue("p_origin_lo", originLo);
+      cmd.Parameters.AddWithValue("p_origin_hi", originHi);
+      cmd.Parameters.AddWithValue("p_local_lo", localLo);
+      cmd.Parameters.AddWithValue("p_local_hi", localHi);
+      cmd.Parameters.AddWithValue("p_now", now);
+      cmd.Parameters.AddWithValue("p_cooldown_seconds", (int)cooldown.TotalSeconds);
+    }, failOpen: true, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  public async Task<bool> IntegrityTryBeginRepairAsync(
+      IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+      CancellationToken cancellationToken = default) =>
+    await _integrityLedgerBoolAsync("wh_integrity_try_begin_repair", cmd => {
+      _bindDivergenceKey(cmd, key);
+      cmd.Parameters.AddWithValue("p_now", now);
+      cmd.Parameters.AddWithValue("p_base_backoff_secs", (int)baseBackoff.TotalSeconds);
+      cmd.Parameters.AddWithValue("p_max_attempts", maxAttempts);
+    }, failOpen: false, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  public async Task IntegrityMarkHealedAsync(
+      IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
+    _ = await _integrityLedgerBoolAsync("wh_integrity_mark_healed",
+      cmd => _bindDivergenceKey(cmd, key), failOpen: false, cancellationToken).ConfigureAwait(false);
+
+  private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
+    cmd.Parameters.AddWithValue("p_origin_service_id", key.OriginServiceId);
+    cmd.Parameters.AddWithValue("p_tenant_scope", (object?)key.TenantScope ?? string.Empty);
+    cmd.Parameters.AddWithValue("p_event_type", key.EventType);
+    cmd.Parameters.AddWithValue("p_stream_id", key.StreamId);
+  }
+
+  /// <summary>
+  /// Calls a ledger function. On failure the caller's prior behaviour is preserved via
+  /// <paramref name="failOpen"/>: reporting proceeds (over-reporting is recoverable), repair does
+  /// not (an unbounded repair request against real data is not).
+  /// </summary>
+  private async Task<bool> _integrityLedgerBoolAsync(
+      string fn, Action<Npgsql.NpgsqlCommand> bind, bool failOpen, CancellationToken ct) {
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+      var schema = GetSchemaWithFallback(
+        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var qualified = BuildSchemaQualifiedName(schema, fn);
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), ct);
+      var conn = __scope.Connection;
+      await using var cmd = conn.CreateCommand();
+      // Bind first, then build the call from the bound names. Positional $n placeholders require
+      // POSITIONAL parameters in Npgsql; binding by name against them fails at execute time with
+      // "bind message supplies 0 parameters", which the catch below would have turned into a
+      // silent fail-open — reporting unbounded and repair permanently off, i.e. worse than the
+      // in-memory ledger this replaces. Deriving the argument list from the parameters themselves
+      // makes the two impossible to disagree.
+      bind(cmd);
+      var args = string.Join(",", cmd.Parameters
+        .Cast<Npgsql.NpgsqlParameter>()
+        .Select(p => "@" + p.ParameterName));
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}({args})";
+#pragma warning restore S2077
+      var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+      return result is bool b ? b : failOpen;
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      // Never silent: a swallowed failure here degrades convergence invisibly, which is exactly
+      // how a broken ledger would masquerade as a working one.
+#pragma warning disable CA1848 // Rare error path; a source-generated message would require making this type partial.
+      _logger?.LogWarning(ex,
+        "Integrity ledger call {Function} failed; continuing with failOpen={FailOpen}. " +
+        "Convergence bounding is degraded until this is resolved.", fn, failOpen);
+#pragma warning restore CA1848
+      return failOpen;
+    }
+  }
+
   /// <inheritdoc />
   public async Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(
     CancellationToken cancellationToken = default) {
@@ -602,6 +684,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
+  /// <inheritdoc />
   public async Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

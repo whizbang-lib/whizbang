@@ -182,6 +182,13 @@ public static class PostgresDriverExtensions {
           return new PostgresTableStatisticsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
+
+        // Durable stream-integrity convergence state. The in-memory ledger is per-process and
+        // dies on restart, which is sound only while restarts are rare — but a report storm is
+        // what causes the restarts, so every boot cleared the state that would have suppressed
+        // it, and each replica reported the same divergence independently.
+        selector.Services.TryAddSingleton<Whizbang.Core.Messaging.IIntegrityRepairLedger,
+          CoordinatorIntegrityRepairLedger>();
         selector.Services.AddHostedService<TableStatisticsCollector>();
 
         // v0.502 DLQ — register IDeadLetterStore + IDeadLetterRecoveryService so the

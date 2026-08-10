@@ -868,6 +868,26 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Durable stream-integrity convergence state. Defaults keep the caller's prior behaviour when a
+  /// provider cannot store it: reporting proceeds (over-reporting is recoverable) and repair does
+  /// not (an unbounded repair request against real data is not).
+  /// </summary>
+  Task<bool> IntegrityTryBeginReportAsync(
+      IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+      DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
+    Task.FromResult(true);
+
+  /// <inheritdoc cref="IntegrityTryBeginReportAsync"/>
+  Task<bool> IntegrityTryBeginRepairAsync(
+      IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+      CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>Forgets a bucket that folded identical.</summary>
+  Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is

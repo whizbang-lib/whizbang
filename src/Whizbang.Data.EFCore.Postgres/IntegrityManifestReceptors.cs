@@ -206,7 +206,13 @@ public sealed partial class IntegrityManifestReceptor(
     // cooldown and backs off repair re-requests per bucket — a persistent divergence (origin
     // down, damaged bucket) must trickle, not storm. Unregistered ledger (bare tests) degrades
     // to per-call state: everything reports once per manifest, still batched and still directed.
-    var ledger = services.GetService<IntegrityRepairLedger>() ?? new IntegrityRepairLedger();
+    // Prefer a durable ledger. The in-memory one is per-process and dies on restart, which is
+    // sound only while restarts are rare — and here the report storm is what CAUSES the restarts,
+    // so every boot cleared the state that would have suppressed it. It is also per-replica, so
+    // each pod reported the same divergence independently.
+    var ledger = services.GetService<IIntegrityRepairLedger>()
+      ?? (IIntegrityRepairLedger?)services.GetService<IntegrityRepairLedger>()
+      ?? new IntegrityRepairLedger();
     var cooldown = TimeSpan.FromMinutes(options.DivergenceReportCooldownMinutes);
     var backoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
     var now = DateTimeOffset.UtcNow;
@@ -222,7 +228,7 @@ public sealed partial class IntegrityManifestReceptor(
       var key = new IntegrityRepairLedger.DivergenceKey(
         message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId);
       if (mine is not null && mine.DigestLo == origin.DigestLo && mine.DigestHi == origin.DigestHi) {
-        ledger.MarkHealed(key);   // provably complete — a later divergence is a fresh incident.
+        await ledger.MarkHealedAsync(key, cancellationToken).ConfigureAwait(false);   // provably complete — a later divergence is a fresh incident.
         continue;
       }
       if (!message.Recomputed && IntegrityDigestMath.IsInsideSettle(origin.UpdatedAt, mine?.UpdatedAt, settle)) {
@@ -232,10 +238,12 @@ public sealed partial class IntegrityManifestReceptor(
       metrics?.DivergencesDetected.Add(1,
         new KeyValuePair<string, object?>("origin", message.OriginServiceName),
         new KeyValuePair<string, object?>("event_type", origin.EventType));
-      var shouldReport = ledger.TryBeginReport(
-        key, origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, now, cooldown);
+      var shouldReport = await ledger.TryBeginReportAsync(
+        key, origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, now, cooldown,
+        cancellationToken).ConfigureAwait(false);
       var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
-        && ledger.TryBeginRepair(key, now, backoff, options.MaxRepairAttemptsPerBucket);
+        && await ledger.TryBeginRepairAsync(key, now, backoff, options.MaxRepairAttemptsPerBucket,
+             cancellationToken).ConfigureAwait(false);
       if (autoRepair) {
         repairBudget--;
         metrics?.RepairsRequested.Add(1,

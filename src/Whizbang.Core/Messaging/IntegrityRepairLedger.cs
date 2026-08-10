@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Whizbang.Core.Messaging;
 
@@ -17,7 +19,8 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTests.cs</tests>
-public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger.DEFAULT_MAX_ENTRIES) {
+public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger.DEFAULT_MAX_ENTRIES)
+  : IIntegrityRepairLedger {
   private const int DEFAULT_MAX_ENTRIES = 10_000;
   /// <summary>Backoff doublings are capped here so the wait never overflows (base × 2^6).</summary>
   private const int MAX_BACKOFF_DOUBLINGS = 6;
@@ -102,6 +105,24 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
       entry.LastRepairAt = now;
       return true;
     }
+  }
+
+  /// <inheritdoc />
+  public ValueTask<bool> TryBeginReportAsync(
+      DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+      DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(TryBeginReport(key, originLo, originHi, localLo, localHi, now, cooldown));
+
+  /// <inheritdoc />
+  public ValueTask<bool> TryBeginRepairAsync(
+      DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+      CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(TryBeginRepair(key, now, baseBackoff, maxAttempts));
+
+  /// <inheritdoc />
+  public ValueTask MarkHealedAsync(DivergenceKey key, CancellationToken cancellationToken = default) {
+    MarkHealed(key);
+    return ValueTask.CompletedTask;
   }
 
   /// <summary>The bucket folded identical — forget it. A later divergence is a brand-new incident.</summary>

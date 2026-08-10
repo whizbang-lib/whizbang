@@ -24,6 +24,16 @@ public sealed partial class TableStatisticsCollector(
 
   private const int COLLECTION_INTERVAL_SECONDS = 30;
 
+  /// <summary>
+  /// Raised once every collection cycle, AFTER all three metric caches have been written.
+  /// </summary>
+  /// <remarks>
+  /// Exists so an observer can tell that a cycle's values have actually landed. Watching the
+  /// provider instead only proves the collector asked — the writes happen after the provider
+  /// returns, so anything keyed on the request races the update it is waiting for.
+  /// </remarks>
+  internal event Action? CycleCompleted;
+
   /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     // Wait for schema readiness (replaces IDatabaseReadinessCheck — same intent: don't query
@@ -57,6 +67,8 @@ public sealed partial class TableStatisticsCollector(
         // rather than having to go looking.
         var bloat = await provider.GetTableBloatRatiosAsync(stoppingToken);
         metrics.UpdateTableBloat(bloat);
+
+        CycleCompleted?.Invoke();
       } catch (ObjectDisposedException) {
         break;  // Host is shutting down — exit the collection loop
       } catch (Exception ex) when (ex is not OperationCanceledException) {
