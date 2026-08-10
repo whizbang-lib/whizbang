@@ -124,4 +124,46 @@ public class CoordinatorIntegrityRepairLedgerTests {
     await Assert.That(await ledger.TryBeginRepairAsync(_key(), DateTimeOffset.UtcNow, TimeSpan.FromSeconds(300), 8))
       .IsTrue().Because("an allowed repair must actually proceed — always-false is the broken-call signature");
   }
+
+  /// <summary>A coordinator whose ledger calls all throw — the shape a broken query takes.</summary>
+  private sealed class ThrowingCoordinator : IWorkCoordinator {
+    public Task<bool> IntegrityTryBeginReportAsync(
+        IntegrityRepairLedger.DivergenceKey key, long a, long b, long c, long d,
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) =>
+      throw new InvalidOperationException("ledger unavailable");
+
+    public Task<bool> IntegrityTryBeginRepairAsync(
+        IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan backoff, int maxAttempts,
+        CancellationToken ct = default) =>
+      throw new InvalidOperationException("ledger unavailable");
+
+    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken ct = default) =>
+      throw new InvalidOperationException("ledger unavailable");
+
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  [Test]
+  public async Task WhenTheLedgerThrows_TheAuditKeepsRunningWithTheSafeDefaultsAsync() {
+    // The exact path the parameter-binding bug took. Every call threw, and because the failure was
+    // swallowed the system looked healthy while reporting stayed unbounded and repair was off
+    // everywhere. An exception must not escape into the audit — but it must also not be invisible,
+    // which is why the implementation logs before returning these defaults.
+    var ledger = new CoordinatorIntegrityRepairLedger(_factoryWith(new ThrowingCoordinator()));
+
+    await Assert.That(await ledger.TryBeginReportAsync(_key(), 1, 2, 3, 4, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(60)))
+      .IsTrue().Because("a broken ledger must not silence a real integrity report");
+
+    await Assert.That(await ledger.TryBeginRepairAsync(_key(), DateTimeOffset.UtcNow, TimeSpan.FromSeconds(300), 8))
+      .IsFalse().Because("a broken ledger must never license an unbounded repair against real data");
+
+    // MarkHealed has nothing to fall back to; it must simply not take the audit down with it.
+    await ledger.MarkHealedAsync(_key());
+  }
 }
