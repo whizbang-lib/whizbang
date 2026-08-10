@@ -139,4 +139,42 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     await Assert.That(await coordinator.IntegrityTryBeginReportAsync(a, 1, 2, 3, 4, t0.AddMinutes(1), cooldown))
       .IsFalse().Because("and suppression still applies per bucket");
   }
+
+  /// <summary>
+  /// The summary is what an operator watches instead of a stream of report events, so it has to
+  /// move in both directions: up as buckets diverge, down as they heal. A number that only rises
+  /// is the counter this replaces.
+  /// </summary>
+  [Test]
+  public async Task LedgerSummary_CountsUnhealedAndExhausted_AndFallsWhenHealedAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var t0 = DateTimeOffset.UtcNow;
+    var cooldown = TimeSpan.FromMinutes(60);
+    var backoff = TimeSpan.FromSeconds(1);
+    var healthy = _key(Guid.Parse("aaaa1111-0000-0000-0000-00000000aaaa"));
+    var stuck = _key(Guid.Parse("bbbb2222-0000-0000-0000-00000000bbbb"));
+
+    _ = await coordinator.IntegrityTryBeginReportAsync(healthy, 1, 2, 3, 4, t0, cooldown);
+    _ = await coordinator.IntegrityTryBeginReportAsync(stuck, 1, 2, 3, 4, t0, cooldown);
+
+    // Spend the second bucket's repair budget (cap 1: the first attempt lands, the next is refused).
+    _ = await coordinator.IntegrityTryBeginRepairAsync(stuck, t0, backoff, maxAttempts: 1);
+
+    var summary = await coordinator.GetIntegrityLedgerSummaryAsync(maxRepairAttempts: 1);
+    await Assert.That(summary.UnhealedBuckets).IsGreaterThanOrEqualTo(2)
+      .Because("both divergent buckets are unhealed and must be counted");
+    await Assert.That(summary.RepairExhausted).IsGreaterThanOrEqualTo(1)
+      .Because("a bucket that has spent its budget has stopped asking — that is the set needing a human");
+    await Assert.That(summary.OldestUnhealedAgeSeconds).IsGreaterThanOrEqualTo(0)
+      .Because("age comes from first_seen_at, which is stamped on insert");
+
+    var before = summary.UnhealedBuckets;
+    await coordinator.IntegrityMarkHealedAsync(healthy);
+    var after = await coordinator.GetIntegrityLedgerSummaryAsync(maxRepairAttempts: 1);
+
+    await Assert.That(after.UnhealedBuckets).IsEqualTo(before - 1)
+      .Because("healing DELETEs the row, so the gauge falls on its own — the property that makes "
+               + "this a usable replacement for publishing an event per sighting");
+  }
 }
