@@ -62,15 +62,17 @@ public abstract class RequestResponseStoreContractTests {
     var responseEnvelope = _createTestEnvelope();
     await store.SaveRequestAsync(correlationId, requestId, TimeSpan.FromSeconds(30));
 
-    // Act - Save response in background
-    _ = Task.Run(async () => {
-      await Task.Delay(100);
-      await store.SaveResponseAsync(correlationId, responseEnvelope);
-    });
-
-    // Wait for response
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    var response = await store.WaitForResponseAsync<TestResponse>(correlationId, cts.Token);
+    // Act - begin waiting, THEN complete the wait.
+    //
+    // This used to fire the save from a detached Task.Run after a 100 ms sleep and race it against
+    // a 5-second deadline. The sleep was standing in for "the waiter has registered by now", and
+    // the detached task can simply be starved past the deadline on a loaded machine — which is how
+    // it failed in CI, as a bare "expected not null". Starting the waiter and then saving needs no
+    // sleep and cannot be starved: the save is awaited on this thread.
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));   // hang guard only
+    var waiter = store.WaitForResponseAsync<TestResponse>(correlationId, cts.Token);
+    await store.SaveResponseAsync(correlationId, responseEnvelope);
+    var response = await waiter;
 
     // Assert
     await Assert.That(response).IsNotNull();
