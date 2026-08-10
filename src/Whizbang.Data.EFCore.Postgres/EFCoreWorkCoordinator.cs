@@ -784,6 +784,31 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return result is long max ? (long?)max : null;
     }, cancellationToken);
 
+  /// <inheritdoc />
+  public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      cmd.CommandText = $"SELECT sealed_through FROM {schema}.wh_integrity_seals WHERE origin_service_id = @p_origin";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", originServiceId));
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is long sealedThrough ? sealedThrough : 0L;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // GREATEST: monotonic by construction — a late or replayed advance can only move forward.
+      cmd.CommandText = $"""
+        INSERT INTO {schema}.wh_integrity_seals (origin_service_id, sealed_through, updated_at)
+        VALUES (@p_origin, @p_through, NOW())
+        ON CONFLICT (origin_service_id) DO UPDATE
+          SET sealed_through = GREATEST(wh_integrity_seals.sealed_through, EXCLUDED.sealed_through),
+              updated_at = NOW()
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", originServiceId));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_through", through));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+
   /// <summary>Clamps a requested window against the lane's settled max. Null = cannot window
   /// (nothing settled / no lane); otherwise the exclusive end the answer will actually cover.</summary>
   private async Task<long?> _clampWindowEndAsync(

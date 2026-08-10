@@ -129,6 +129,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     // do-while: a WINDOWED quiet window (zero digests, watermark advanced) must still publish —
     // only an answer can carry the watermark, and silence would freeze the asker's seal forever
     // on a quiet type. The legacy path never reaches here empty.
+    var totalChunks = Math.Max(1, (digests.Count + options.MaxDigestsPerManifest - 1) / options.MaxDigestsPerManifest);
     var offset = 0;
     do {
       var chunk = digests.Skip(offset).Take(options.MaxDigestsPerManifest).ToList();
@@ -144,6 +145,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           SinceSequence = answeredWindowed ? message.SinceSequence : null,
           ComputedThrough = computedThrough,
           ResumeAfterStreamId = resumeAfter,
+          ChunkCount = totalChunks,
         },
         Hops = [
           new MessageHop {
@@ -236,11 +238,28 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
 
-    // Stream level. A sweep manifest (Recomputed) compares recompute-to-recompute — the pre-A1c
-    // semantics, covering busy buckets; a table manifest compares table-to-table with settle-skip.
-    var local = message.Recomputed
-      ? await coordinator.ComputeStreamDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false)
-      : await _tableDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, streamLevel: true, cancellationToken).ConfigureAwait(false);
+    // Stream level. A WINDOWED manifest (#80-B) is compared against a WINDOWED local fold over
+    // the manifest's exact range — window counts against all-history folds would fabricate a
+    // mismatch on any stream with prior history. A sweep manifest (Recomputed) compares
+    // recompute-to-recompute — the pre-A1c semantics, covering busy buckets; a table manifest
+    // compares table-to-table with settle-skip.
+    IReadOnlyList<StreamDigest> local;
+    if (message.ComputedThrough is long streamWindowEnd) {
+      var windowedLocal = await coordinator.ComputeStreamDigestsWindowedAsync(
+        message.OriginServiceId, types, message.SinceSequence ?? 0, streamWindowEnd,
+        resumeAfterStreamId: null, maxDigests: int.MaxValue, settle, cancellationToken).ConfigureAwait(false);
+      if (windowedLocal is null) {
+        // This engine cannot fold the manifest's window; comparing incomparable ranges would
+        // alarm on phantoms. Skip — the origin re-answers next cycle, legacy if we keep failing.
+        LogWindowedCompareUnsupported(logger, message.OriginServiceName);
+        return;
+      }
+      local = windowedLocal.Digests;
+    } else {
+      local = message.Recomputed
+        ? await coordinator.ComputeStreamDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false)
+        : await _tableDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, streamLevel: true, cancellationToken).ConfigureAwait(false);
+    }
     var localByBucket = local.ToDictionary(d => (d.TenantScope, d.EventType, d.StreamId));
 
     // Convergence bounding: the ledger suppresses re-reports of unchanged divergence inside the
@@ -381,9 +400,24 @@ public sealed partial class IntegrityManifestReceptor(
       IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message,
       List<string> types, TimeSpan settle, CancellationToken cancellationToken) {
     var coordinator = services.GetRequiredService<IWorkCoordinator>();
-    var local = message.Recomputed
-      ? await coordinator.ComputeTypeDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false)
-      : await _tableDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, streamLevel: false, cancellationToken).ConfigureAwait(false);
+    var windowed = message.ComputedThrough is not null;
+    IReadOnlyList<StreamDigest> local;
+    if (message.ComputedThrough is long windowEnd) {
+      // #80-B/C: the local fold covers the manifest's EXACT window — anything else compares
+      // incomparable ranges and alarms on phantoms.
+      var windowedLocal = await coordinator.ComputeTypeDigestsWindowedAsync(
+        message.OriginServiceId, types, message.SinceSequence ?? 0, windowEnd, settle,
+        cancellationToken).ConfigureAwait(false);
+      if (windowedLocal is null) {
+        LogWindowedCompareUnsupported(logger, message.OriginServiceName);
+        return;
+      }
+      local = windowedLocal.Digests;
+    } else {
+      local = message.Recomputed
+        ? await coordinator.ComputeTypeDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false)
+        : await _tableDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, streamLevel: false, cancellationToken).ConfigureAwait(false);
+    }
     var localByBucket = local.ToDictionary(d => (d.TenantScope, d.EventType));
 
     var mismatched = new List<string>();
@@ -392,14 +426,24 @@ public sealed partial class IntegrityManifestReceptor(
       if (mine is not null && mine.DigestLo == origin.DigestLo && mine.DigestHi == origin.DigestHi) {
         continue;
       }
-      if (!message.Recomputed && IntegrityDigestMath.IsInsideSettle(origin.UpdatedAt, mine?.UpdatedAt, settle)) {
-        continue;
+      if (!message.Recomputed && !windowed && IntegrityDigestMath.IsInsideSettle(origin.UpdatedAt, mine?.UpdatedAt, settle)) {
+        continue;   // windowed folds already exclude unsettled rows on both sides.
       }
       if (!mismatched.Contains(origin.EventType)) {
         mismatched.Add(origin.EventType);
       }
     }
     if (mismatched.Count == 0) {
+      // #80-C seal advance — only when the whole window PROVABLY passed: every bucket matched,
+      // the answer was one complete chunk, and no resume cursor was pending. Chunks carry no
+      // assembly protocol, so a multi-chunk window can never be certified from one chunk — it
+      // still compared and repaired above, it just does not move the seal.
+      if (windowed && message.ChunkCount == 1 && message.ResumeAfterStreamId is null
+          && message.ComputedThrough is long through) {
+        await coordinator.AdvanceIntegritySealAsync(message.OriginServiceId, through, cancellationToken)
+          .ConfigureAwait(false);
+        LogSealAdvanced(logger, message.OriginServiceName, through);
+      }
       return;   // every type roll-up matches — the whole subscribed surface is provably complete.
     }
 
@@ -425,6 +469,12 @@ public sealed partial class IntegrityManifestReceptor(
         EventTypes = drillDown,
         Level = ManifestLevel.Streams,
         UseRecompute = message.Recomputed,
+        // #80-C: the drill-down inherits the window that disagreed — the stream-level exchange
+        // (and the repairs it spawns) stay bounded to that range instead of re-shipping history.
+        Windowed = windowed,
+        SinceSequence = message.SinceSequence ?? 0,
+        UntilSequence = message.ComputedThrough,
+        MaxDigests = windowed ? options.MaxDigestsPerManifest : null,
       },
       Hops = [
         new MessageHop {
@@ -563,10 +613,20 @@ public sealed partial class IntegrityManifestReceptor(
               "no origin-carried request address yet; the origin's next checkpoint teaches it")]
   static partial void LogRepairSkippedNoOriginTopic(ILogger logger, string originServiceName, string eventType, int streamCount);
 
-  [LoggerMessage(EventId = 57, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 58, Level = LogLevel.Information,
     Message = "Drill-down to '{OriginServiceName}' withheld ({TypeCount} type(s)) — " +
               "no origin-carried request address yet; the origin's next checkpoint teaches it")]
   static partial void LogDrillDownSkippedNoOriginTopic(ILogger logger, string originServiceName, int typeCount);
+
+  [LoggerMessage(EventId = 59, Level = LogLevel.Warning,
+    Message = "Windowed manifest from '{OriginServiceName}' skipped — this engine cannot fold the manifest's " +
+              "window, and comparing incomparable ranges would alarm on phantoms")]
+  static partial void LogWindowedCompareUnsupported(ILogger logger, string originServiceName);
+
+  [LoggerMessage(EventId = 60, Level = LogLevel.Information,
+    Message = "Integrity seal vs origin '{OriginServiceName}' advanced through sequence {Through} — " +
+              "the window audited clean and complete; future audits start here")]
+  static partial void LogSealAdvanced(ILogger logger, string originServiceName, long through);
 }
 
 /// <summary>

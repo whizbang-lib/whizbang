@@ -196,6 +196,12 @@ public sealed partial class IntegrityAuditWorker(
         LogManifestRequestSkippedNoTopic(_logger, originName, originId);
         continue;
       }
+      // #80-B/C: steady-state cycles ask WINDOWED from the stored seal — verified history is
+      // never re-shipped or re-verified. The sweep deliberately asks FULL: it is trust-but-verify
+      // for exactly the state the seals assume is fine; a windowed sweep would be circular trust.
+      // An origin that predates the protocol ignores the extra fields and answers unwindowed —
+      // the comparator then compares legacy and the seal simply stays put.
+      var since = sweep ? 0L : await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
         MessageId = new MessageId(TrackedGuid.NewMedo()),
         Payload = new RequestIntegrityManifest {
@@ -204,6 +210,8 @@ public sealed partial class IntegrityAuditWorker(
           EventTypes = subscribed,
           Level = ManifestLevel.Types,
           UseRecompute = sweep,
+          Windowed = !sweep,
+          SinceSequence = since,
         },
         Hops = [
           new MessageHop {

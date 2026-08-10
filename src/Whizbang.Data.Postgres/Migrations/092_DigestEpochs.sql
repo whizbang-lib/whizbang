@@ -460,3 +460,16 @@ $$;
 
 COMMENT ON FUNCTION __SCHEMA__.compute_type_digests_epoch_window IS
 'Windowed type-level fold [p_since, p_until): fully-contained sealed epochs answer from their seal, fringes fold live. Caller pre-clamps p_until at integrity_settled_max.';
+
+-- The consumer's per-origin verified watermark (#80-C): every sequence below sealed_through
+-- proved clean in a past complete-window audit. Steady-state audits start here — this row is
+-- what stops verified history from being re-shipped and re-verified forever. Monotonic by the
+-- GREATEST upsert; the trust-but-verify sweep is what catches a seal that should not have been.
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_integrity_seals (
+  origin_service_id UUID        PRIMARY KEY,
+  sealed_through    BIGINT      NOT NULL,
+  updated_at        TIMESTAMPTZ NOT NULL
+);
+
+COMMENT ON TABLE __SCHEMA__.wh_integrity_seals IS
+'Per-origin verified watermark: the exclusive end of the highest window that audited clean and complete. The next windowed audit asks from here.';

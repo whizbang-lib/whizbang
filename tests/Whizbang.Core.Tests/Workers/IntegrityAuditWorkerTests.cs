@@ -208,6 +208,46 @@ public class IntegrityAuditWorkerTests {
       .Because("0 disables sweeps — every cycle stays table-driven.");
   }
 
+  // ── #80-B/C: steady cycles ask WINDOWED, from the stored seal ───────────
+
+  [Test]
+  public async Task DefaultCycle_AsksWindowed_FromTheStoredSealAsync() {
+    // The seal is the consumer's "verified through here" watermark per origin. Asking from it is
+    // what stops every audit from re-shipping and re-verifying history that already proved clean.
+    var coordinator = new _auditCoordinator { SealedThrough = 123 };
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.Windowed).IsTrue()
+      .Because("steady-state audits are incremental — the negotiated window is the whole point of the seal");
+    await Assert.That(request.SinceSequence).IsEqualTo(123L)
+      .Because("the window starts at the seal — anything below it already proved clean");
+  }
+
+  [Test]
+  public async Task SweepCycle_AsksFullHistory_NotWindowedAsync() {
+    // The sweep is trust-but-verify: it exists to catch exactly the state the seals assume is
+    // fine. A windowed sweep would only re-verify what the seals already cover — circular trust.
+    var coordinator = new _auditCoordinator { SealedThrough = 123 };
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.Windowed).IsFalse()
+      .Because("a sweep that trusted the seals could never catch a bad seal");
+    await Assert.That(request.UseRecompute).IsTrue();
+  }
+
   private static RequestIntegrityManifest _deserializeRequest(IMessageEnvelope envelope) {
     var options = JsonContextRegistry.CreateCombinedOptions();
     return (RequestIntegrityManifest)JsonSerializer.Deserialize(
@@ -374,6 +414,11 @@ public class IntegrityAuditWorkerTests {
       AuditClaimWindow = claimWindow;
       return Task.FromResult(AuditClaimResult);
     }
+
+    public long SealedThrough { get; init; }
+
+    public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(SealedThrough);
 
     public Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
       TimeSpan settleWindow, int maxGaps, CancellationToken cancellationToken = default) {

@@ -327,4 +327,27 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
       .Because("seq 10 sits below since (already verified) and seq 30 at/above until — neither may re-ship");
     await Assert.That(result.Digests[0].EventCount).IsEqualTo(1);
   }
+
+  [Test]
+  public async Task IntegritySeal_IsMonotonic_ALateAdvanceCanOnlyMoveForwardAsync() {
+    // The seal is the consumer's "verified through here" claim. Redelivered manifest chunks can
+    // replay an OLD advance after a newer one landed; going backward would re-open history that
+    // already proved clean — and worse, let a replayed old window overwrite a newer verdict.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = Guid.NewGuid();
+
+    await Assert.That(await coordinator.GetIntegritySealAsync(origin)).IsEqualTo(0L)
+      .Because("an origin never audited has nothing verified — audits start from the beginning");
+
+    await coordinator.AdvanceIntegritySealAsync(origin, 100);
+    await Assert.That(await coordinator.GetIntegritySealAsync(origin)).IsEqualTo(100L);
+
+    await coordinator.AdvanceIntegritySealAsync(origin, 50);   // a replayed stale advance
+    await Assert.That(await coordinator.GetIntegritySealAsync(origin)).IsEqualTo(100L)
+      .Because("GREATEST makes the seal monotonic — a stale replay must never re-open verified history");
+
+    await coordinator.AdvanceIntegritySealAsync(origin, 250);
+    await Assert.That(await coordinator.GetIntegritySealAsync(origin)).IsEqualTo(250L);
+  }
 }

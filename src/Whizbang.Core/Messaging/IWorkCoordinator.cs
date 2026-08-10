@@ -996,6 +996,30 @@ public interface IWorkCoordinator {
     Task.FromResult<WindowedDigestResult?>(null);
 
   /// <summary>
+  /// The consumer's verified watermark for an origin (#80-C): every sequence below it proved
+  /// clean in a past complete-window audit, so steady-state audits start here instead of zero —
+  /// what stops verified history from being re-shipped and re-verified forever. Default 0 =
+  /// nothing verified (engines without the seal store audit from the beginning every time).
+  /// </summary>
+  /// <param name="originServiceId">The origin the seal is against.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0L);
+
+  /// <summary>
+  /// Advances the seal after a window proved clean AND complete (every bucket matched, one chunk,
+  /// no resume cursor). Monotonic — a late or replayed advance can only move it forward. Default
+  /// no-op for engines without the seal store.
+  /// </summary>
+  /// <param name="originServiceId">The origin the seal is against.</param>
+  /// <param name="through">The verified window's exclusive end — the next audit's start.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
   /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
   /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing

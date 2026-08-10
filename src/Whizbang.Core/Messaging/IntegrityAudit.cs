@@ -121,6 +121,14 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// again from this stream id and do not advance any seal. Stamped on every chunk of the answer
   /// (chunks share one window).</summary>
   public Guid? ResumeAfterStreamId { get; init; }
+
+  /// <summary>
+  /// #80-C: total chunks in this answer (0 = a legacy answer that never said). Chunks carry no
+  /// assembly protocol, so a receiver can only certify a window it provably saw ALL of — the seal
+  /// advances only on a single-chunk (<c>ChunkCount == 1</c>) clean window. Multi-chunk windows
+  /// still compare and repair; they just never certify.
+  /// </summary>
+  public int ChunkCount { get; init; }
 }
 
 /// <summary>
