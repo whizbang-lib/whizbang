@@ -517,6 +517,46 @@ public class EFCoreWorkCoordinator<TDbContext>(
     _ = await _integrityLedgerBoolAsync("wh_integrity_mark_healed",
       cmd => _bindDivergenceKey(cmd, key), failOpen: false, cancellationToken).ConfigureAwait(false);
 
+  /// <inheritdoc />
+  /// <remarks>
+  /// Degrades to the empty reading rather than throwing: a metrics refresh that cannot reach the
+  /// ledger must never take down the caller. It is logged, because a gauge silently pinned at zero
+  /// reads exactly like a healthy system — the failure mode this whole change exists to avoid.
+  /// </remarks>
+  public async Task<Whizbang.Core.Observability.LedgerGaugeSnapshot> GetIntegrityLedgerSummaryAsync(
+      int maxRepairAttempts, CancellationToken cancellationToken = default) {
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = GetSchemaWithFallback(
+        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var fn = BuildSchemaQualifiedName(schema, "wh_integrity_ledger_summary");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant.
+      cmd.CommandText = $"SELECT unhealed_buckets, repair_exhausted, oldest_unhealed_secs FROM {fn}(@max)";
+#pragma warning restore S2077
+      cmd.Parameters.AddWithValue("max", maxRepairAttempts);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        return Whizbang.Core.Observability.LedgerGaugeSnapshot.Empty;
+      }
+      return new Whizbang.Core.Observability.LedgerGaugeSnapshot {
+        UnhealedBuckets = reader.GetInt64(0),
+        RepairExhausted = reader.GetInt64(1),
+        OldestUnhealedAgeSeconds = reader.GetDouble(2),
+      };
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; a source-generated message would require making this type partial.
+      _logger?.LogWarning(ex,
+        "Integrity ledger summary failed; convergence gauges will read as healthy until this is resolved.");
+#pragma warning restore CA1848
+      return Whizbang.Core.Observability.LedgerGaugeSnapshot.Empty;
+    }
+  }
+
   private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
     cmd.Parameters.AddWithValue("p_origin_service_id", key.OriginServiceId);
     cmd.Parameters.AddWithValue("p_tenant_scope", (object?)key.TenantScope ?? string.Empty);

@@ -116,5 +116,53 @@ public sealed class StreamIntegrityMetrics {
     RedeliveryRequestsReceived = meter.CreateCounter<long>(
       "whizbang.stream_integrity.redelivery_requests_received",
       description: "Re-delivery requests served as an origin (repair + backfill flows)");
+
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.unhealed_buckets",
+      () => _ledger.UnhealedBuckets,
+      description: "Divergent buckets currently unhealed (ledger rows). Falls as repair works — a heal deletes the row");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.repair_exhausted_buckets",
+      () => _ledger.RepairExhausted,
+      description: "Unhealed buckets that have spent their repair budget and stopped asking — these need operator attention, not patience");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.oldest_unhealed_age_seconds",
+      () => _ledger.OldestUnhealedAgeSeconds,
+      description: "Age of the longest-standing unhealed divergence; distinguishes a transient blip from a stuck one");
   }
+
+  private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;
+
+  /// <summary>
+  /// Publishes the ledger's current state to the gauges above.
+  /// </summary>
+  /// <remarks>
+  /// These gauges are what an operator watches instead of a stream of report events. A counter
+  /// ("how many divergences have we ever noticed") only ever rises and says nothing about now;
+  /// these fall on their own as buckets heal, because healing deletes the row. Written from a
+  /// collector on an interval and read by the meter's observation callback, so the snapshot is
+  /// swapped atomically rather than mutated field by field — a half-updated reading would be
+  /// indistinguishable from a real one.
+  /// </remarks>
+  public void UpdateLedgerGauges(LedgerGaugeSnapshot snapshot) =>
+    _ledger = snapshot ?? LedgerGaugeSnapshot.Empty;
+
+  /// <summary>The reading the gauges would currently report — the observation callbacks' source.</summary>
+  internal LedgerGaugeSnapshot CurrentLedgerGaugesForTest => _ledger;
+}
+
+/// <summary>An atomically-swappable reading of the integrity ledger, for the gauges.</summary>
+/// <docs>resilience/stream-integrity</docs>
+public sealed record LedgerGaugeSnapshot {
+  /// <summary>Nothing diverged (also the pre-first-collection reading).</summary>
+  public static LedgerGaugeSnapshot Empty { get; } = new();
+
+  /// <summary>Divergent buckets currently unhealed.</summary>
+  public long UnhealedBuckets { get; init; }
+
+  /// <summary>Unhealed buckets past their repair-attempt budget.</summary>
+  public long RepairExhausted { get; init; }
+
+  /// <summary>Seconds since the oldest unhealed bucket first diverged (0 when none).</summary>
+  public double OldestUnhealedAgeSeconds { get; init; }
 }

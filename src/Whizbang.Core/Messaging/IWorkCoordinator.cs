@@ -888,6 +888,16 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
+  /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
+  /// </summary>
+  /// <param name="maxRepairAttempts">The repair budget, so the query can count who has spent it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  Task<Observability.LedgerGaugeSnapshot> GetIntegrityLedgerSummaryAsync(
+    int maxRepairAttempts, CancellationToken cancellationToken = default) =>
+    Task.FromResult(Observability.LedgerGaugeSnapshot.Empty);
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is
