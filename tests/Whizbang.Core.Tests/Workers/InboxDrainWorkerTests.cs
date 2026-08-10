@@ -495,4 +495,52 @@ public class InboxDrainWorkerTests {
     await Assert.That(firstArray).Contains(streamB);
     await Assert.That(firstArray).Contains(streamC);
   }
+
+  /// <summary>
+  /// A non-routable inbox row is looked up by message_id, and the SQL treats BOTH a NULL and a
+  /// <see cref="Guid.Empty"/> stream_id that way — migration 040's WHERE clause reads
+  /// <c>(i.stream_id IS NULL OR i.stream_id = '00000000-...') AND i.message_id = ANY(p_stream_ids)</c>,
+  /// mirroring the outbox function. Guid.Empty occurs where a producer writes the default instead
+  /// of NULL.
+  ///
+  /// The batched fetch grouped by <c>StreamId ?? MessageId</c>, which covers NULL but NOT
+  /// Guid.Empty: such a row was fetched, filed under Guid.Empty, then looked up by its message_id
+  /// and missed. Because the miss is deterministic it repeats every cycle, so the row is not
+  /// merely delayed — it is never dispatched by the batched path at all.
+  /// </summary>
+  [Test]
+  public async Task InboxDrainWorker_EmptyGuidStreamId_IsDrainedUnderItsMessageIdAsync() {
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    var coord = new FakeWorkCoordinator();
+    // The SQL matches this row by message_id (the sentinel), so the fake keys it that way —
+    // while the ROW itself carries Guid.Empty as its stream_id.
+    coord.RowsByStream[messageId] = [_row(messageId, Guid.Empty)];
+
+    var drain = new FakeInboxDrainChannel();
+    var inbox = new CapturingInboxChannel { TargetCount = 1 };
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drain, inbox, gate,
+      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(messageId);
+
+    _ = await Task.WhenAny(inbox.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(inbox.Written.Count).IsEqualTo(1)
+      .Because("a Guid.Empty stream_id is the by-message_id sentinel, exactly like NULL; grouping "
+               + "that only handles NULL files the row under a key no caller ever looks up");
+  }
 }
