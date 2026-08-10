@@ -56,8 +56,11 @@ BEGIN
     RETURN;   -- already recorded
   END IF;
 
+  -- length() rather than `= ''`: in Oracle an empty string IS NULL, so `x = ''` never holds, and
+  -- static analysis flags the comparison on that basis. Postgres treats '' as a real empty string
+  -- so the original was correct here, but length() = 0 says exactly what is meant in any dialect.
   UPDATE wh_settings
-  SET setting_value = CASE WHEN v_current = '' THEN p_table ELSE v_current || ',' || p_table END,
+  SET setting_value = CASE WHEN length(v_current) = 0 THEN p_table ELSE v_current || ',' || p_table END,
       updated_at = NOW()
   WHERE setting_key = 'pending_table_rewrites';
 END;
