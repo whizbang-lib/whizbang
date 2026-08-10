@@ -42,7 +42,7 @@ public class IntegrityManifestReceptorTests {
       _digest(stream1, 11, 21, 2), _digest(stream2, 12, 22, 1), _digest(stream3, 13, 23, 3),
     ];
     var transport = new _captureTransport();
-    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { MaxDigestsPerManifest = 2 });
+    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { MaxDigestsPerManifest = 2, PublishReportEvents = true });
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
@@ -120,6 +120,7 @@ public class IntegrityManifestReceptorTests {
       new StreamIntegrityOptions {
         RepairMode = IntegrityRepairMode.ReportOnly,
         MaxDivergenceReportsPerManifest = cap,
+        PublishReportEvents = true,
       },
       dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
@@ -139,6 +140,50 @@ public class IntegrityManifestReceptorTests {
       .Because("capping must not silence divergence entirely — the first ones still have to be named.");
   }
 
+  /// <summary>
+  /// The default: detect and repair, but publish nothing.
+  ///
+  /// <para>
+  /// Nothing in the framework consumes <see cref="IntegrityDivergenceDetected"/>, and each one
+  /// carries its own ReportStreamId — so every report minted a NEW stream, with a stream row, an
+  /// outbox row, an event-store pointer and body, and perspective work items. With no consumer no
+  /// cursor advances past them, so the consumption-gated reaper can never collect them: unbounded
+  /// permanent growth in the tables the work pump scans on every poll, rather than a backlog that
+  /// drains. That is what turned a reporting feature into the thing that saturated a shared server.
+  /// </para>
+  ///
+  /// <para>
+  /// What must NOT change is detection. The ledger still records the divergence and the repair
+  /// still goes out — this test asserts exactly that split, because a "fix" that quietly stopped
+  /// auditing would look identical from the outbox's point of view.
+  /// </para>
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_ByDefault_DetectsAndRepairsButPublishesNoReportsAsync() {
+    var coordinator = new _auditCoordinator();
+    var mismatched = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(mismatched, 99, 21, 1)];
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    // No PublishReportEvents — the production default.
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(mismatched, 11, 21, 2)]));
+
+    await Assert.That(dispatcher.Published.OfType<IntegrityDivergenceDetected>().Any()).IsFalse()
+      .Because("a durable event nothing reads, on a stream nothing can reap, is pure cost");
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("REPAIR is the closed half of the loop and must be completely unaffected — "
+               + "silencing the report must not silence the fix");
+  }
+
   [Test]
   public async Task ManifestReceptor_Divergence_ReportsAndCappedRepairsAsync() {
     var coordinator = new _auditCoordinator();
@@ -149,7 +194,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRepairRequestsPerAudit = 1 },
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRepairRequestsPerAudit = 1, PublishReportEvents = true },
       dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
@@ -410,7 +455,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 1 }, dispatcher, tracker: tracker);
+      new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 1, PublishReportEvents = true }, dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -660,7 +705,10 @@ public class IntegrityManifestReceptorTests {
     services.AddSingleton<IDispatcher>(dispatcher ?? new _captureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("auditor-svc"));
-    services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions()));
+    // Report publishing is OFF by default in production (nothing consumes the events, and each
+    // one mints its own stream). These tests exercise the opt-in publish path, so the fallback
+    // turns it on; the default-off contract has its own tests below.
+    services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions { PublishReportEvents = true }));
     if (tracker is not null) {
       services.AddSingleton(tracker);
     }
@@ -844,6 +892,7 @@ public class IntegrityManifestReceptorTests {
       new StreamIntegrityOptions {
         RepairMode = IntegrityRepairMode.ReportOnly,
         MaxDivergenceReportsPerManifest = 10,
+        PublishReportEvents = true,
       },
       dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");

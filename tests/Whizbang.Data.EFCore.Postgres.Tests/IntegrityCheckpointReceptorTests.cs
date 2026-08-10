@@ -67,6 +67,7 @@ public class IntegrityCheckpointReceptorTests {
     var fx = _fixture(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.ReportOnly,
       MaxGapReportsPerCheckpoint = cap,
+      PublishReportEvents = true,
     });
     // Every bucket stays short on the recount, so every pending confirms as a real gap.
     fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 0 }];
@@ -84,7 +85,7 @@ public class IntegrityCheckpointReceptorTests {
 
   [Test]
   public async Task DeficitPersistingPastNextCheckpoint_ConfirmsAndReportsAsync() {
-    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly });
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true });
     fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));   // deficit → pending
@@ -117,9 +118,29 @@ public class IntegrityCheckpointReceptorTests {
       .Because("a deficit that heals before the next checkpoint was an in-flight straggler, not a gap.");
   }
 
+  /// <summary>
+  /// Sibling of ManifestReceptor_ByDefault_DetectsAndRepairsButPublishesNoReports, for the
+  /// checkpoint path: a confirmed gap is still detected and still repaired, but publishes no
+  /// durable <see cref="IntegrityGapDetected"/> unless the operator opts in.
+  /// </summary>
+  [Test]
+  public async Task ByDefault_ConfirmedGap_RepairsWithoutPublishingAReportAsync() {
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Dispatcher.Published.OfType<IntegrityGapDetected>().Any()).IsFalse()
+      .Because("the gap is real and recorded; publishing an event nobody consumes is not how it "
+               + "gets recorded");
+    await Assert.That(fx.Transport.Published.Count).IsEqualTo(1)
+      .Because("the repair request is the half of this that actually fixes the deficit");
+  }
+
   [Test]
   public async Task AutoRepairCapped_SendsTargetedWireOnlyRepairRequestAsync() {
-    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true });
     fx.Coordinator.Counts = _ => [];
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
@@ -149,7 +170,7 @@ public class IntegrityCheckpointReceptorTests {
 
   [Test]
   public async Task ConfirmedGap_NoOriginRequestTopic_WithholdsRepairRequestAsync() {
-    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true });
     fx.Coordinator.Counts = _ => [];
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4));
@@ -245,7 +266,8 @@ public class IntegrityCheckpointReceptorTests {
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IEventTypeProvider>(new _typeProvider());
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("consumer-svc"));
-    services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions()));
+    // See IntegrityManifestReceptorTests: publishing is opt-in; these exercise that path.
+    services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions { PublishReportEvents = true }));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);

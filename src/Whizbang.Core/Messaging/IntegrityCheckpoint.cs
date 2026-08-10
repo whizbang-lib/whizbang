@@ -382,4 +382,33 @@ public sealed class StreamIntegrityOptions {
   /// budget.
   /// </summary>
   public int MaxRepairAttemptsPerBucket { get; set; } = 8;
+
+  /// <summary>
+  /// Publish <see cref="IntegrityDivergenceDetected"/> / <see cref="IntegrityGapDetected"/> as
+  /// durable events (default <c>false</c>).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Stream integrity has two halves. REPAIR is a closed loop — a request goes to the origin, the
+  /// origin answers, the divergence heals. REPORTING was an open loop: nothing in the framework
+  /// consumes either report type, so every one published was a durable write that no code path
+  /// ever read.
+  /// </para>
+  /// <para>
+  /// The cost was not proportional to "some unread messages". Each report carries its own
+  /// <c>ReportStreamId</c>, so it mints a NEW event stream — a stream row, an outbox row, an
+  /// event-store pointer and body, and perspective work items, per sighting. With no consumer no
+  /// cursor ever advances past them, so the consumption-gated reaper can never collect them
+  /// either: not a backlog that drains, but unbounded permanent growth in the tables the work
+  /// pump scans every poll.
+  /// </para>
+  /// <para>
+  /// The state those reports described is what the durable ledger already holds — one row per
+  /// divergent bucket, deduplicated, surviving restarts — and it is surfaced as gauges
+  /// (<c>whizbang.integrity.unhealed_buckets</c> and friends) that go DOWN when things heal.
+  /// A count of currently-broken things is what an operator can act on; a stream of past-tense
+  /// notifications is not. Enable this only if you have a consumer that genuinely reacts.
+  /// </para>
+  /// </remarks>
+  public bool PublishReportEvents { get; set; }
 }

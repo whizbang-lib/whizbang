@@ -83,7 +83,17 @@ public sealed partial class IntegrityCheckpointReceptor(
       // count instead of publishing: an unhealed deficit is re-detected on the next checkpoint, so
       // the condition keeps surfacing until it is genuinely repaired.
       confirmedGaps++;
-      if (gapReportsPublished >= gapReportCap) {
+
+      // Log the confirmation for EVERY gap, before the publish gate. It used to sit after it, so a
+      // capped report also lost its log line — the operator-facing record thinned out precisely
+      // when there was most to say, and turning publishing off would have removed it altogether
+      // instead of only the durable writes.
+      LogGapConfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
+        pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual, autoRepair);
+
+      // Opt-in: nothing consumes these and each mints its own stream. See
+      // StreamIntegrityOptions.PublishReportEvents.
+      if (!options.PublishReportEvents || gapReportsPublished >= gapReportCap) {
         continue;
       }
       gapReportsPublished++;
@@ -99,8 +109,6 @@ public sealed partial class IntegrityCheckpointReceptor(
         ActualCount = actual,
         AutoRepairRequested = autoRepair,
       }).ConfigureAwait(false);
-      LogGapConfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
-        pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual, autoRepair);
     }
 
     if (confirmedGaps > gapReportsPublished) {
