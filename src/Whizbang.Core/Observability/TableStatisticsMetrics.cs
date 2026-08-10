@@ -18,6 +18,7 @@ public sealed class TableStatisticsMetrics {
 
   private readonly ConcurrentDictionary<string, long> _tableSizes = new();
   private readonly ConcurrentDictionary<string, long> _queueDepths = new();
+  private readonly ConcurrentDictionary<string, double> _tableBloat = new();
 
   /// <summary>Initializes table statistics meters on the shared Whizbang meter.</summary>
   public TableStatisticsMetrics(WhizbangMetrics whizbangMetrics) {
@@ -36,6 +37,20 @@ public sealed class TableStatisticsMetrics {
         new Measurement<long>(kv.Value, new KeyValuePair<string, object?>("queue_name", kv.Key))),
       unit: "messages",
       description: "Unprocessed message count for inbox/outbox queues");
+
+    // How many times larger the heap is than the live rows need. Storage that a table occupies
+    // but does not use costs on every read: index heap-fetches pull emptier pages and the
+    // buffer cache holds fewer useful rows, so a table can be slow purely because of its shape.
+    // Dead tuples awaiting vacuum are the familiar cause; a dropped column is the invisible one,
+    // because Postgres leaves that column's bytes in every pre-existing row forever and only a
+    // table rewrite removes them. Around 1.0 is healthy; a sustained large multiple means the
+    // table needs a rewrite, not more vacuuming.
+    meter.CreateObservableGauge(
+      "whizbang.table.bloat_ratio",
+      observeValues: () => _tableBloat.Select(kv =>
+        new Measurement<double>(kv.Value, new KeyValuePair<string, object?>("table_name", kv.Key))),
+      unit: "ratio",
+      description: "Heap bytes per live row divided by the expected row width — 1.0 is lean");
   }
 
   /// <summary>
@@ -55,4 +70,20 @@ public sealed class TableStatisticsMetrics {
       _queueDepths[queue] = depth;
     }
   }
+
+  /// <summary>
+  /// Updates the cached per-table bloat ratios. Called by <see cref="TableStatisticsCollector"/>.
+  /// </summary>
+  public void UpdateTableBloat(IReadOnlyDictionary<string, double> ratios) {
+    foreach (var (table, ratio) in ratios) {
+      _tableBloat[table] = ratio;
+    }
+  }
+
+  /// <summary>
+  /// Test seam: reads back a published ratio. Observable gauges are only sampled by an active
+  /// meter listener, so asserting on the cache is the direct way to prove the value was fed.
+  /// </summary>
+  internal double? GetBloatRatioForTest(string table) =>
+    _tableBloat.TryGetValue(table, out var v) ? v : null;
 }
