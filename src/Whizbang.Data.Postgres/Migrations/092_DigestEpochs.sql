@@ -333,3 +333,130 @@ $$;
 
 COMMENT ON FUNCTION __SCHEMA__.compute_type_digests_epoch IS
 'Type-level digest answer served from sealed epochs + a live fold of only the open window. Sealed rows are authoritative (the self-sweep owns detecting a bad seal). Falls back to the plain full fold when the lane has no closed epochs.';
+
+-- The lane's SETTLED maximum sequence — the watermark ceiling for negotiated-scope answers
+-- (#80-B). An answer must never claim coverage of an unsettled sequence: redelivery or in-flight
+-- stamping could still land events there, and an asker that sealed past it would alarm on them.
+CREATE OR REPLACE FUNCTION __SCHEMA__.integrity_settled_max(
+  p_origin_lane    UUID,          -- NULL = the local lane
+  p_now            TIMESTAMPTZ,
+  p_settle_seconds INTEGER
+) RETURNS BIGINT
+LANGUAGE plpgsql STABLE
+AS $$
+DECLARE
+  v_max BIGINT;
+BEGIN
+  IF p_origin_lane IS NULL THEN
+    SELECT MAX(es.commit_sequence) INTO v_max
+    FROM __SCHEMA__.wh_event_store es
+    WHERE es.origin_service_id IS NULL
+      AND es.commit_sequence IS NOT NULL
+      AND es.created_at < p_now - make_interval(secs => p_settle_seconds);
+  ELSE
+    SELECT MAX(es.origin_commit_sequence) INTO v_max
+    FROM __SCHEMA__.wh_event_store es
+    WHERE es.origin_service_id = p_origin_lane
+      AND es.origin_commit_sequence IS NOT NULL
+      AND es.created_at < p_now - make_interval(secs => p_settle_seconds);
+  END IF;
+  RETURN v_max;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.integrity_settled_max IS
+'Settled maximum sequence for a lane — the ceiling every negotiated-scope answer''s watermark is capped at.';
+
+-- Negotiated-scope type-level fold (#80-B): digests for the half-open window [p_since, p_until).
+-- Epochs FULLY inside the window contribute their sealed fold (authoritative, same rule as the
+-- unwindowed path); PARTIALLY covered epochs fold live over just the covered fringe — a seal is
+-- indivisible, it cannot answer for half its range. The caller clamps p_until at the settled max
+-- BEFORE calling (integrity_settled_max), so this function is a pure window fold.
+-- Rows without a sequence (stamper in flight) are not addressable by any window and are excluded;
+-- they appear only in unwindowed answers.
+CREATE OR REPLACE FUNCTION __SCHEMA__.compute_type_digests_epoch_window(
+  p_origin_lane    UUID,          -- NULL = the local lane
+  p_event_types    TEXT[],        -- NULL = all types
+  p_since          BIGINT,        -- inclusive
+  p_until          BIGINT,        -- exclusive, pre-clamped at the settled max
+  p_now            TIMESTAMPTZ,
+  p_settle_seconds INTEGER
+) RETURNS TABLE (tenant TEXT, event_type TEXT, digest_lo BIGINT, digest_hi BIGINT, event_count INTEGER)
+LANGUAGE plpgsql STABLE
+AS $$
+DECLARE
+  c_zero CONSTANT UUID := '00000000-0000-0000-0000-000000000000';
+  v_lane     UUID := COALESCE(p_origin_lane, c_zero);
+  v_frontier BIGINT := -1;
+  v_width    BIGINT;
+  v_e_lo     BIGINT;
+  v_e_hi     BIGINT;
+  v_types    TEXT[];
+BEGIN
+  IF p_event_types IS NOT NULL THEN
+    SELECT array_agg(__SCHEMA__.normalize_event_type(t)) INTO v_types
+    FROM unnest(p_event_types) AS t;
+  END IF;
+
+  SELECT f.closed_through_epoch, f.epoch_width INTO v_frontier, v_width
+  FROM __SCHEMA__.wh_digest_epoch_frontiers f
+  WHERE f.origin_service_id = v_lane;
+
+  IF v_width IS NULL OR v_frontier < 0 THEN
+    v_e_lo := 0;
+    v_e_hi := -1;   -- no sealed epochs: the whole window folds live
+  ELSE
+    -- Sealed epochs fully inside [p_since, p_until): first with start >= since, last whose
+    -- exclusive end fits, both clamped to the frontier. An empty run (e_lo > e_hi) = all live.
+    v_e_lo := (p_since + v_width - 1) / v_width;
+    v_e_hi := LEAST(p_until / v_width - 1, v_frontier);
+  END IF;
+
+  RETURN QUERY
+  WITH sealed AS (
+    SELECT de.scope_tenant AS b_tenant, de.event_type AS b_type,
+           bit_xor(de.digest_lo) AS lo, bit_xor(de.digest_hi) AS hi,
+           SUM(de.event_count)::bigint AS cnt
+    FROM __SCHEMA__.wh_digest_epochs de
+    WHERE de.origin_service_id = v_lane
+      AND de.epoch_id BETWEEN v_e_lo AND v_e_hi
+      AND (v_types IS NULL OR de.event_type = ANY(v_types))
+    GROUP BY 1, 2
+  ),
+  lane AS (
+    SELECT es.*,
+           CASE WHEN p_origin_lane IS NULL THEN es.commit_sequence
+                ELSE es.origin_commit_sequence END AS lane_seq
+    FROM __SCHEMA__.wh_event_store es
+    WHERE ((p_origin_lane IS NULL AND es.origin_service_id IS NULL)
+           OR es.origin_service_id = p_origin_lane)
+  ),
+  live_fold AS (
+    -- The window minus the sealed run: the low fringe [since, e_lo*width) and the tail
+    -- [(e_hi+1)*width, until) — or the whole window when no epoch fits (e_lo > e_hi).
+    SELECT COALESCE(l.scope ->> 't', '') AS b_tenant, l.event_type AS b_type,
+           bit_xor(hashtextextended(l.event_id::text, 0)) AS lo,
+           bit_xor(hashtextextended(l.event_id::text, 1)) AS hi,
+           COUNT(*)::bigint AS cnt
+    FROM lane l
+    LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = l.event_id
+    WHERE l.lane_seq IS NOT NULL
+      AND l.lane_seq >= p_since AND l.lane_seq < p_until
+      AND (v_e_lo > v_e_hi
+           OR l.lane_seq < v_e_lo * v_width
+           OR l.lane_seq >= (v_e_hi + 1) * v_width)
+      AND (v_types IS NULL OR l.event_type = ANY(v_types))
+      AND COALESCE(l.flags, 0) & 8 = 0
+      AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
+      AND l.created_at < p_now - make_interval(secs => p_settle_seconds)
+    GROUP BY 1, 2
+  )
+  SELECT u.b_tenant, u.b_type, bit_xor(u.lo), bit_xor(u.hi), SUM(u.cnt)::int
+  FROM (SELECT * FROM sealed UNION ALL SELECT * FROM live_fold) u
+  GROUP BY 1, 2
+  ORDER BY 1, 2;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.compute_type_digests_epoch_window IS
+'Windowed type-level fold [p_since, p_until): fully-contained sealed epochs answer from their seal, fringes fold live. Caller pre-clamps p_until at integrity_settled_max.';

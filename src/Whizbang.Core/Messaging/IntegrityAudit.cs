@@ -84,6 +84,28 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
 }
 
 /// <summary>
+/// Stream-integrity #80-B: the result of a NEGOTIATED-SCOPE digest read — digests for a sequence
+/// window <c>[since, until)</c> plus the two-dimensional resume cursor. The window is half-open on
+/// purpose: epoch boundaries align exactly and <see cref="ComputedThrough"/> (the exclusive end
+/// actually covered, capped at the settled max) IS the next ask's <c>since</c> — verified history
+/// is never re-shipped.
+/// </summary>
+/// <docs>resilience/stream-integrity</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EpochWindowedDigestSqlTests.cs</tests>
+public sealed record WindowedDigestResult {
+  /// <summary>Digest rows for the covered window (and page, at stream level).</summary>
+  public required IReadOnlyList<StreamDigest> Digests { get; init; }
+
+  /// <summary>The exclusive end sequence this answer actually covered — the watermark. Always
+  /// capped at the origin's settled max: an answer never claims coverage of what has not settled.</summary>
+  public required long ComputedThrough { get; init; }
+
+  /// <summary>Stream-level paging cursor: non-null = the window is NOT complete — ask again from
+  /// this stream id and do not advance any seal; null = the window answered completely.</summary>
+  public Guid? ResumeAfterStreamId { get; init; }
+}
+
+/// <summary>
 /// Stream-integrity Phase A: a CONFIRMED audit divergence — a (tenant, type, stream) bucket whose
 /// consumer-side digest disagrees with the origin's manifest (missing events, or a differing
 /// fold). The ops report; at <see cref="IntegrityRepairMode.AutoRepairCapped"/> a stream-scoped

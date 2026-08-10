@@ -937,6 +937,65 @@ public interface IWorkCoordinator {
     Task.FromResult(-1);
 
   /// <summary>
+  /// The lane's SETTLED maximum sequence — the watermark ceiling for negotiated-scope answers
+  /// (#80-B). An answer must never claim coverage of an unsettled sequence, or the asker could
+  /// seal over an in-flight delivery. Null = unsupported (engines without sequence lanes) or
+  /// nothing settled; callers treat both as "cannot window".
+  /// </summary>
+  /// <param name="originServiceId">Null = the local lane (own emissions); a value = the received
+  /// lane for that origin, measured on the ORIGIN's sequence.</param>
+  /// <param name="settleWindow">Only events older than this count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<long?> GetIntegritySettledMaxAsync(
+    Guid? originServiceId, TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
+  /// Negotiated-scope type-level digest read (#80-B): folds only the window
+  /// <c>[sinceSequence, untilSequence)</c>. Epochs fully inside the window contribute their
+  /// SEALED fold (authoritative); partially covered epochs fold live over just the covered
+  /// fringe — a seal is indivisible. <see cref="WindowedDigestResult.ComputedThrough"/> is the
+  /// exclusive end actually covered, capped at the settled max. Null return = the engine cannot
+  /// window (no substrate) — the caller answers unwindowed rather than silently wrong.
+  /// </summary>
+  /// <param name="originServiceId">Null = the local lane; a value = that origin's received lane.</param>
+  /// <param name="eventTypes">Types to fold (null = all).</param>
+  /// <param name="sinceSequence">Inclusive window start — the asker's current watermark.</param>
+  /// <param name="untilSequence">Exclusive window end; null = through the settled max.</param>
+  /// <param name="settleWindow">Only events older than this count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<WindowedDigestResult?> ComputeTypeDigestsWindowedAsync(
+    Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+    long sinceSequence, long? untilSequence, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<WindowedDigestResult?>(null);
+
+  /// <summary>
+  /// Negotiated-scope stream-level digest read (#80-B): the drill-down granularity, bounded on
+  /// BOTH cursor dimensions — the sequence window <c>[sinceSequence, untilSequence)</c> and a
+  /// stream-id page (<paramref name="resumeAfterStreamId"/> + <paramref name="maxDigests"/>).
+  /// A non-null <see cref="WindowedDigestResult.ResumeAfterStreamId"/> in the result means the
+  /// window is NOT complete: ask again from there, and never advance a seal past a partial
+  /// window. Null return = the engine cannot window.
+  /// </summary>
+  /// <param name="originServiceId">Null = the local lane; a value = that origin's received lane.</param>
+  /// <param name="eventTypes">Types to fold (null = all).</param>
+  /// <param name="sinceSequence">Inclusive window start — the asker's current watermark.</param>
+  /// <param name="untilSequence">Exclusive window end; null = through the settled max.</param>
+  /// <param name="resumeAfterStreamId">Page start: only streams ABOVE this id (null = from the first).</param>
+  /// <param name="maxDigests">The asker's page bound — whole streams are paged, never split.</param>
+  /// <param name="settleWindow">Only events older than this count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<WindowedDigestResult?> ComputeStreamDigestsWindowedAsync(
+    Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+    long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
+    TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
+    Task.FromResult<WindowedDigestResult?>(null);
+
+  /// <summary>
   /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
   /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
   /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing

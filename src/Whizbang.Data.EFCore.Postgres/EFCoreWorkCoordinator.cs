@@ -770,6 +770,175 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<long?> GetIntegritySettledMaxAsync(
+    Guid? originServiceId, TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "integrity_settled_max")}(@p_origin, NOW(), @p_settle)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = (object?)originServiceId ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", (int)settleWindow.TotalSeconds));
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is long max ? (long?)max : null;
+    }, cancellationToken);
+
+  /// <summary>Clamps a requested window against the lane's settled max. Null = cannot window
+  /// (nothing settled / no lane); otherwise the exclusive end the answer will actually cover.</summary>
+  private async Task<long?> _clampWindowEndAsync(
+      Guid? originServiceId, long? untilSequence, TimeSpan settleWindow, CancellationToken ct) {
+    var settledMax = await GetIntegritySettledMaxAsync(originServiceId, settleWindow, ct).ConfigureAwait(false);
+    if (settledMax is null) {
+      return null;
+    }
+    return Math.Min(untilSequence ?? long.MaxValue, settledMax.Value + 1);
+  }
+
+  /// <inheritdoc />
+  public async Task<WindowedDigestResult?> ComputeTypeDigestsWindowedAsync(
+    Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+    long sinceSequence, long? untilSequence, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) {
+    var through = await _clampWindowEndAsync(originServiceId, untilSequence, settleWindow, cancellationToken)
+      .ConfigureAwait(false);
+    if (through is null || through <= sinceSequence) {
+      // Nothing settled beyond the asker's watermark: an empty-but-honest answer. The watermark
+      // stays put — claiming progress without coverage is how seals drift past reality.
+      return new WindowedDigestResult { Digests = [], ComputedThrough = sinceSequence };
+    }
+    return await _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText =
+        "SELECT tenant, event_type, digest_lo, digest_hi, event_count " +
+        $"FROM {BuildSchemaQualifiedName(schema, "compute_type_digests_epoch_window")}(@p_origin, @p_types, @p_since, @p_until, NOW(), @p_settle)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = (object?)originServiceId ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", (int)settleWindow.TotalSeconds));
+
+      var results = new List<StreamDigest>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var tenant = reader.GetString(0);
+        results.Add(new StreamDigest {
+          TenantScope = tenant.Length == 0 ? null : tenant,
+          EventType = reader.GetString(1),
+          StreamId = Guid.Empty,
+          DigestLo = reader.GetInt64(2),
+          DigestHi = reader.GetInt64(3),
+          EventCount = reader.GetInt32(4),
+          UpdatedAt = null,
+        });
+      }
+      return (WindowedDigestResult?)new WindowedDigestResult {
+        Digests = results,
+        ComputedThrough = through.Value,
+      };
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public async Task<WindowedDigestResult?> ComputeStreamDigestsWindowedAsync(
+    Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+    long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
+    TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+    var through = await _clampWindowEndAsync(originServiceId, untilSequence, settleWindow, cancellationToken)
+      .ConfigureAwait(false);
+    if (through is null || through <= sinceSequence) {
+      return new WindowedDigestResult { Digests = [], ComputedThrough = sinceSequence };
+    }
+    var pageBound = Math.Max(1, maxDigests);
+    return await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // Pages walk WHOLE streams in stream-id order (streams are homogeneous — one type, one
+      // tenant — so rows ≈ streams). The pick fetches one sentinel stream past the bound: its
+      // presence is how we know the window is not complete without a second count query.
+      cmd.CommandText = $"""
+        WITH lane AS (
+          SELECT es.*,
+                 CASE WHEN (@p_origin::uuid) IS NULL THEN es.commit_sequence
+                      ELSE es.origin_commit_sequence END AS lane_seq
+          FROM {schema}.wh_event_store es
+          WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
+                 OR es.origin_service_id = @p_origin)
+        ),
+        win AS (
+          SELECT l.* FROM lane l
+          LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = l.event_id
+          WHERE l.lane_seq IS NOT NULL AND l.lane_seq >= @p_since AND l.lane_seq < @p_until
+            AND ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, "normalize_event_type")}(t) FROM unnest(@p_types::text[]) AS t))
+            AND COALESCE(l.flags, 0) & 8 = 0
+            AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+            AND l.created_at < NOW() - @p_settle::interval
+        ),
+        pick AS (
+          SELECT DISTINCT w.stream_id FROM win w
+          WHERE (@p_resume::uuid IS NULL OR w.stream_id > @p_resume)
+          ORDER BY w.stream_id
+          LIMIT @p_limit
+        )
+        SELECT COALESCE(w.scope->>'t', '') AS tenant, w.event_type, w.stream_id,
+               bit_xor(hashtextextended(w.event_id::text, 0)) AS digest_lo,
+               bit_xor(hashtextextended(w.event_id::text, 1)) AS digest_hi,
+               COUNT(*)::int
+        FROM win w JOIN pick p ON p.stream_id = w.stream_id
+        GROUP BY 1, 2, 3
+        ORDER BY 3, 1, 2
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = (object?)originServiceId ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = (object?)resumeAfterStreamId ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_limit", pageBound + 1));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
+
+      var rows = new List<StreamDigest>();
+      await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          var tenant = reader.GetString(0);
+          rows.Add(new StreamDigest {
+            TenantScope = tenant.Length == 0 ? null : tenant,
+            EventType = reader.GetString(1),
+            StreamId = reader.GetGuid(2),
+            DigestLo = reader.GetInt64(3),
+            DigestHi = reader.GetInt64(4),
+            EventCount = reader.GetInt32(5),
+            UpdatedAt = null,
+          });
+        }
+      }
+
+      // The sentinel stream (if present) is dropped WHOLE — a split stream would let the asker
+      // treat half its buckets as the complete story for that stream.
+      var streamsInOrder = rows.Select(r => r.StreamId).Distinct().ToList();
+      Guid? resume = null;
+      if (streamsInOrder.Count > pageBound) {
+        var sentinel = streamsInOrder[^1];
+        rows.RemoveAll(r => r.StreamId == sentinel);
+        resume = streamsInOrder[^2];
+      }
+      return (WindowedDigestResult?)new WindowedDigestResult {
+        Digests = rows,
+        ComputedThrough = through.Value,
+        ResumeAfterStreamId = resume,
+      };
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task<StreamCloseResult> CloseStreamAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
