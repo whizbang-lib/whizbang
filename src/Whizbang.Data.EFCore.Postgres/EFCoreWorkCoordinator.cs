@@ -487,6 +487,121 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "wh_tables_needing_rewrite");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT table_name, bloat_ratio, requested FROM {fn}()";
+#pragma warning restore S2077
+    var results = new List<TableRewriteCandidate>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      results.Add(new TableRewriteCandidate(reader.GetString(0), (double)reader.GetDecimal(1), reader.GetBoolean(2)));
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// VACUUM FULL cannot be parameterised and cannot run inside a transaction, so the table name is
+  /// validated against the framework's own naming rule and quoted before interpolation, and the
+  /// command runs on its own connection outside any ambient transaction. Callers only ever pass
+  /// names this coordinator itself returned from <see cref="GetTablesNeedingRewriteAsync"/>, but
+  /// the check is here rather than at the call site because that is where the injection risk
+  /// actually lands.
+  /// </remarks>
+  public async Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    if (!_isFrameworkTableName(tableName)) {
+      throw new ArgumentException(
+        $"Refusing to rewrite '{tableName}': only framework tables matching wh_[a-z0-9_] may be rewritten.",
+        nameof(tableName));
+    }
+
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var qualified = BuildSchemaQualifiedName(schema, tableName);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+
+    await using (var vacuum = conn.CreateCommand()) {
+#pragma warning disable S2077 // Table name validated against ^wh_[a-z0-9_]+$ above; VACUUM takes no parameters
+      vacuum.CommandText = $"VACUUM (FULL) {qualified}";
+#pragma warning restore S2077
+      vacuum.CommandTimeout = 0;   // a large table can take minutes; the operator opted into this
+      await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    // Re-measure so the caller can verify the rewrite actually helped rather than assuming it did.
+    await using (var analyze = conn.CreateCommand()) {
+#pragma warning disable S2077
+      analyze.CommandText = $"ANALYZE {qualified}";
+#pragma warning restore S2077
+      await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    await using var measure = conn.CreateCommand();
+    measure.CommandText = """
+      SELECT (pg_relation_size(st.relid)::NUMERIC / NULLIF(st.n_live_tup,0)) / GREATEST(w.expected, 1)
+      FROM pg_stat_user_tables st
+      JOIN LATERAL (
+        SELECT COALESCE(sum(s.avg_width), 0) + 28 AS expected
+        FROM pg_stats s WHERE s.schemaname = st.schemaname AND s.tablename = st.relname
+      ) w ON TRUE
+      WHERE st.schemaname = current_schema() AND st.relname = @t
+      """;
+    measure.Parameters.AddWithValue("t", tableName);
+    var scalar = await measure.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return scalar is decimal d ? (double)d : null;
+  }
+
+  /// <inheritdoc />
+  /// <summary>
+  /// Whether a name is one of the framework's own tables, checked character by character rather
+  /// than by regex. VACUUM FULL cannot be parameterised, so this is the only thing standing
+  /// between a caller-supplied name and interpolated DDL — a plain scan has no backtracking
+  /// behaviour to reason about and no timeout to forget.
+  /// </summary>
+  private static bool _isFrameworkTableName(string name) {
+    if (name.Length <= 3 || name.Length > 63 || !name.StartsWith("wh_", StringComparison.Ordinal)) {
+      return false;
+    }
+    foreach (var c in name) {
+      var ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  public async Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "wh_clear_table_rewrite");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}(@t)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("t", tableName);
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
   public async Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

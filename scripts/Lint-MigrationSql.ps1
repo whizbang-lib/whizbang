@@ -160,6 +160,45 @@ function Remove-SqlCommentsAndStrings([string]$text) {
   return (-join $out)
 }
 
+function Get-OverQualifiedPublicViolations {
+  <#
+    Rule 5 — a genuinely-public object must NOT be __SCHEMA__-qualified.
+
+    $PublicAllowList names objects that live in one shared place rather than per service schema.
+    Rule 3 exists so per-schema tables are never left bare; this is its mirror, and without it the
+    two rules are asymmetric: qualifying a public table passes every check here and then fails at
+    runtime on any multi-schema consumer with 42P01 relation "<schema>.wh_settings" does not exist.
+    A single-schema deployment never notices, because there __SCHEMA__ happens to be where the
+    public object lives — so this is precisely the mistake that survives local testing and CI on
+    the common configuration, and breaks only for the consumers who partition by schema.
+  #>
+  # Known pre-existing over-qualifications, inside FUNCTION BODIES only. Those resolve when the
+  # function is CALLED rather than at migration time, so they have not surfaced — but they are the
+  # same latent bug and will fail on a multi-schema deployment the moment those functions run.
+  # Left as debt deliberately: correcting them bumps each migration's content hash (forcing a
+  # replay) and needs a multi-schema test to verify. Tracked separately; do not grow this list.
+  $KnownOverQualified = @('032_PerformMaintenance.sql::wh_dead_letter_summary',
+                          '087_StreamDigests.sql::wh_settings')
+  $results = [System.Collections.Generic.List[object]]::new()
+  $files = Get-ChildItem -Path $MigrationsPath -Filter '*.sql' | Sort-Object Name
+  foreach ($f in $files) {
+    $text = Get-Content -Path $f.FullName -Raw
+    if (-not $text) { continue }
+    $masked = Remove-SqlCommentsAndStrings $text
+    $lines = $text -split "`n"
+    $maskedLines = $masked -split "`n"
+    for ($i = 0; $i -lt $maskedLines.Count; $i++) {
+      foreach ($pub in $PublicAllowList) {
+        if ($KnownOverQualified -contains "$($f.Name)::$pub") { continue }
+        if ($maskedLines[$i] -match ("(?i)__SCHEMA__\.\s*" + [regex]::Escape($pub) + "\b")) {
+          $results.Add([pscustomobject]@{ File = $f.Name; Line = $i + 1; Ref = $pub; Text = $lines[$i].Trim() })
+        }
+      }
+    }
+  }
+  return $results
+}
+
 function Get-DropColumnViolations {
   <#
     Rule 4 — a DROP COLUMN must acknowledge that it does NOT reclaim the space.
@@ -282,6 +321,21 @@ if ($fixed) {
   Write-Host ''
   Write-Host 'Run:  pwsh scripts/Lint-MigrationSql.ps1 -UpdateBaseline'
 }
+$overQualified = Get-OverQualifiedPublicViolations
+if ($overQualified) {
+  $exit = 1
+  Write-Host ''
+  Write-Host 'Public objects wrongly __SCHEMA__-qualified (rule 5 — these fail CI):' -ForegroundColor Red
+  foreach ($v in $overQualified) {
+    Write-Host ("  {0}:{1}  __SCHEMA__.{2}  ->  {2}" -f $v.File, $v.Line, $v.Ref)
+  }
+  Write-Host ''
+  Write-Host 'These objects live in one shared place, not in each service schema. Qualifying them'
+  Write-Host 'works on a single-schema deployment and fails on every multi-schema one with'
+  Write-Host '  42P01: relation "<schema>.<table>" does not exist'
+  Write-Host 'Drop the __SCHEMA__. prefix. (Rule 3 is the mirror: per-schema tables must keep it.)'
+}
+
 $dropColumn = Get-DropColumnViolations
 if ($dropColumn) {
   $exit = 1
