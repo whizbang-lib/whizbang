@@ -63,25 +63,58 @@ public sealed partial class IntegrityManifestRequestReceptor(
     var settle = TimeSpan.FromMinutes(options.AuditSettleWindowMinutes);
     IReadOnlyList<StreamDigest> digests;
     var recomputed = message.UseRecompute;
-    if (!message.UseRecompute) {
-      digests = message.Level == ManifestLevel.Types
-        ? await coordinator.GetTypeDigestsAsync(null, message.EventTypes, cancellationToken).ConfigureAwait(false)
-        : await coordinator.GetStreamDigestsAsync(null, message.EventTypes, cancellationToken).ConfigureAwait(false);
-      // Empty table read: either genuinely nothing emitted OR the provider has no digest table
-      // (the DIM default). The recompute distinguishes them — cheap when truly empty.
-      recomputed = digests.Count == 0;
+    long? computedThrough = null;
+    Guid? resumeAfter = null;
+    var answeredWindowed = false;
+
+    if (message.Windowed) {
+      // #80-B negotiated scope: answer only [SinceSequence, UntilSequence) — epoch-served, so the
+      // cost is the open window, not the store. A null result means the engine cannot window;
+      // the honest fallback is the legacy full answer below (correct, just unbounded) — never a
+      // fabricated watermark the engine cannot stand behind.
+      var windowed = message.Level == ManifestLevel.Types
+        ? await coordinator.ComputeTypeDigestsWindowedAsync(
+            null, message.EventTypes, message.SinceSequence, message.UntilSequence, settle,
+            cancellationToken).ConfigureAwait(false)
+        : await coordinator.ComputeStreamDigestsWindowedAsync(
+            null, message.EventTypes, message.SinceSequence, message.UntilSequence,
+            message.ResumeAfterStreamId, message.MaxDigests ?? options.MaxDigestsPerManifest, settle,
+            cancellationToken).ConfigureAwait(false);
+      if (windowed is not null) {
+        if (windowed.Digests.Count == 0 && windowed.ComputedThrough <= message.SinceSequence) {
+          return;   // nothing settled beyond the asker's watermark — no progress to report.
+        }
+        digests = windowed.Digests;
+        computedThrough = windowed.ComputedThrough;
+        resumeAfter = windowed.ResumeAfterStreamId;
+        recomputed = true;   // windowed answers are compute-class by construction
+        answeredWindowed = true;
+      } else {
+        digests = [];
+      }
     } else {
       digests = [];
     }
-    if (recomputed) {
-      // Types-level answers roll up AT THE STORE — materializing one row per stream to answer a
-      // types-level request has memory-killed origins with large stores.
-      digests = message.Level == ManifestLevel.Types
-        ? await coordinator.ComputeTypeDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false)
-        : await coordinator.ComputeStreamDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false);
-    }
-    if (digests.Count == 0) {
-      return;   // nothing this origin emitted for those types — silence, not an empty manifest.
+
+    if (!answeredWindowed) {
+      if (!message.UseRecompute) {
+        digests = message.Level == ManifestLevel.Types
+          ? await coordinator.GetTypeDigestsAsync(null, message.EventTypes, cancellationToken).ConfigureAwait(false)
+          : await coordinator.GetStreamDigestsAsync(null, message.EventTypes, cancellationToken).ConfigureAwait(false);
+        // Empty table read: either genuinely nothing emitted OR the provider has no digest table
+        // (the DIM default). The recompute distinguishes them — cheap when truly empty.
+        recomputed = digests.Count == 0;
+      }
+      if (recomputed) {
+        // Types-level answers roll up AT THE STORE — materializing one row per stream to answer a
+        // types-level request has memory-killed origins with large stores.
+        digests = message.Level == ManifestLevel.Types
+          ? await coordinator.ComputeTypeDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false)
+          : await coordinator.ComputeStreamDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false);
+      }
+      if (digests.Count == 0) {
+        return;   // nothing this origin emitted for those types — silence, not an empty manifest.
+      }
     }
 
     var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
@@ -93,7 +126,11 @@ public sealed partial class IntegrityManifestRequestReceptor(
     var destination = Whizbang.Core.Transports.ControlPlaneDestination.For(message.Topic, originServiceId, typeof(IntegrityManifest));
     var chunks = 0;
 
-    for (var offset = 0; offset < digests.Count; offset += options.MaxDigestsPerManifest) {
+    // do-while: a WINDOWED quiet window (zero digests, watermark advanced) must still publish —
+    // only an answer can carry the watermark, and silence would freeze the asker's seal forever
+    // on a quiet type. The legacy path never reaches here empty.
+    var offset = 0;
+    do {
       var chunk = digests.Skip(offset).Take(options.MaxDigestsPerManifest).ToList();
       var envelope = new MessageEnvelope<IntegrityManifest> {
         MessageId = new MessageId(TrackedGuid.NewMedo()),
@@ -104,6 +141,9 @@ public sealed partial class IntegrityManifestRequestReceptor(
           Digests = chunk,
           Level = message.Level,
           Recomputed = recomputed,
+          SinceSequence = answeredWindowed ? message.SinceSequence : null,
+          ComputedThrough = computedThrough,
+          ResumeAfterStreamId = resumeAfter,
         },
         Hops = [
           new MessageHop {
@@ -119,7 +159,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
       await transport.PublishAsync(serialized.JsonEnvelope, destination, serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       chunks++;
-    }
+      offset += options.MaxDigestsPerManifest;
+    } while (offset < digests.Count);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestChunksSent.Add(chunks,
       new KeyValuePair<string, object?>("level", message.Level.ToString()));
     LogManifestSent(logger, digests.Count, chunks, message.RequesterService);

@@ -48,6 +48,30 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// <summary>True = answer from a full recompute over the event store (the sweep cycle);
   /// false (default) = answer from the maintained digest table.</summary>
   public bool UseRecompute { get; init; }
+
+  /// <summary>
+  /// #80-B: true = a NEGOTIATED-SCOPE ask — the origin answers only the window
+  /// <c>[<see cref="SinceSequence"/>, <see cref="UntilSequence"/>)</c> (epoch-served) and stamps
+  /// the watermark fields on the manifest. False (default) = the legacy full-history ask,
+  /// byte-identical behavior — old peers never see a windowed answer they did not ask for.
+  /// </summary>
+  public bool Windowed { get; init; }
+
+  /// <summary>Inclusive window start — the asker's current verified watermark (default 0 =
+  /// nothing verified yet). Only read when <see cref="Windowed"/>.</summary>
+  public long SinceSequence { get; init; }
+
+  /// <summary>Exclusive window end; null = through the origin's settled max. Only read when
+  /// <see cref="Windowed"/>.</summary>
+  public long? UntilSequence { get; init; }
+
+  /// <summary>The asker's page bound for stream-level answers (null = the origin's
+  /// <c>MaxDigestsPerManifest</c>). The ASKER'S memory is the constraint the page protects.</summary>
+  public int? MaxDigests { get; init; }
+
+  /// <summary>Stream-level resume cursor from the previous answer's
+  /// <see cref="IntegrityManifest.ResumeAfterStreamId"/> (null = the window's first page).</summary>
+  public Guid? ResumeAfterStreamId { get; init; }
 }
 
 /// <summary>
@@ -81,6 +105,22 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// then compares against its OWN recompute; false = table-driven, compared against the
   /// consumer's table with settle-skipping. Drill-down requests inherit this flag.</summary>
   public bool Recomputed { get; init; }
+
+  /// <summary>#80-B: echo of the ask's window start. Null = a legacy unwindowed answer.</summary>
+  public long? SinceSequence { get; init; }
+
+  /// <summary>
+  /// #80-B: the watermark — the exclusive end sequence this answer actually covered, capped at
+  /// the origin's settled max. The asker's next window starts here; it advances its seal to it
+  /// ONLY when the window answered completely (<see cref="ResumeAfterStreamId"/> null). Null = a
+  /// legacy unwindowed answer, or the engine could not window — no coverage claim is made.
+  /// </summary>
+  public long? ComputedThrough { get; init; }
+
+  /// <summary>#80-B: stream-level paging cursor — non-null means the window is NOT complete; ask
+  /// again from this stream id and do not advance any seal. Stamped on every chunk of the answer
+  /// (chunks share one window).</summary>
+  public Guid? ResumeAfterStreamId { get; init; }
 }
 
 /// <summary>

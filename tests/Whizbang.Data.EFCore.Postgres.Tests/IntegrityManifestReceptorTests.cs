@@ -650,6 +650,156 @@ public class IntegrityManifestReceptorTests {
                "immediately instead of waiting out a stale cooldown.");
   }
 
+  // ── #80-B: negotiated scope — the origin honors windowed asks ───────────
+
+  [Test]
+  public async Task RequestReceptor_WindowedTypesAsk_AnswersFromTheWindowedRead_WithTheWatermarkAsync() {
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 71, 72, 4)],
+        ComputedThrough = 900,
+      },
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      EventTypes = ["Contracts.TypeX"],
+      Level = ManifestLevel.Types,
+      Windowed = true,
+      SinceSequence = 400,
+    });
+
+    await Assert.That(coordinator.WindowedSinceSeen).IsEqualTo(400L)
+      .Because("the asker's watermark IS the window start — anything else re-ships verified history");
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.ComputedThrough).IsEqualTo(900L)
+      .Because("the watermark rides the answer so the asker knows what it got and what to ask for next");
+    await Assert.That(manifest.SinceSequence).IsEqualTo(400L);
+    await Assert.That(manifest.Digests.Count).IsEqualTo(1);
+    await Assert.That(manifest.Digests[0].DigestLo).IsEqualTo(71L);
+  }
+
+  [Test]
+  public async Task RequestReceptor_WindowedQuietWindow_StillAnswers_SoTheSealCanAdvanceAsync() {
+    // A window with no matching events is NOT the legacy nothing-emitted case: coverage advanced
+    // even though no digests exist, and only an answer can carry that watermark. Legacy silence
+    // here would freeze the asker's seal forever on a quiet type.
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 500 },
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      Level = ManifestLevel.Types,
+      Windowed = true,
+      SinceSequence = 100,
+    });
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("an empty answer with a watermark is progress; silence would freeze the seal");
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.Digests).IsEmpty();
+    await Assert.That(manifest.ComputedThrough).IsEqualTo(500L);
+  }
+
+  [Test]
+  public async Task RequestReceptor_WindowedNothingNewSettled_StaysSilentAsync() {
+    // ComputedThrough == since means the origin has nothing settled beyond the asker's watermark.
+    // There is no progress to report — the asker simply re-asks on its next cadence.
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 100 },
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      Level = ManifestLevel.Types,
+      Windowed = true,
+      SinceSequence = 100,
+    });
+
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  [Test]
+  public async Task RequestReceptor_WindowedStreamsAsk_CarriesTheResumeCursorAsync() {
+    var stream = TrackedGuid.NewMedo().Value;
+    var cursor = TrackedGuid.NewMedo().Value;
+    var coordinator = new _auditCoordinator {
+      WindowedStreamResult = new WindowedDigestResult {
+        Digests = [_digest(stream, 11, 21, 2)],
+        ComputedThrough = 300,
+        ResumeAfterStreamId = cursor,
+      },
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      Level = ManifestLevel.Streams,
+      Windowed = true,
+      SinceSequence = 0,
+      MaxDigests = 1,
+      ResumeAfterStreamId = null,
+    });
+
+    await Assert.That(coordinator.WindowedMaxSeen).IsEqualTo(1)
+      .Because("the asker's page bound is honored — its memory, not the origin's default, is the constraint");
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.ResumeAfterStreamId).IsEqualTo(cursor)
+      .Because("a non-null cursor tells the asker the window is incomplete — do not advance the seal");
+    await Assert.That(manifest.ComputedThrough).IsEqualTo(300L);
+  }
+
+  [Test]
+  public async Task RequestReceptor_WindowedButEngineCannotWindow_FallsBackToTheFullAnswerAsync() {
+    // The DIM default returns null = "cannot window". The honest fallback is the legacy full
+    // answer (correct, just unbounded) — never a fabricated watermark the engine cannot stand
+    // behind.
+    var coordinator = new _auditCoordinator {   // WindowedTypeResult stays null
+      OwnTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      EventTypes = ["Contracts.TypeX"],
+      Level = ManifestLevel.Types,
+      Windowed = true,
+      SinceSequence = 400,
+    });
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.ComputedThrough).IsNull()
+      .Because("no watermark may be claimed when the engine could not actually window the fold");
+    await Assert.That(manifest.Digests[0].DigestLo).IsEqualTo(41L);
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static StreamDigest _digest(Guid stream, long lo, long hi, int count) => new() {
@@ -776,6 +926,32 @@ public class IntegrityManifestReceptorTests {
         await gate.Task;
       }
       return IntegrityDigestMath.RollUpToTypes(originServiceId is null ? OwnDigests : ReceivedDigests);
+    }
+
+    public WindowedDigestResult? WindowedTypeResult { get; set; }
+    public WindowedDigestResult? WindowedStreamResult { get; set; }
+    public long? WindowedSinceSeen;
+    public long? WindowedUntilSeen;
+    public Guid? WindowedResumeSeen;
+    public int? WindowedMaxSeen;
+
+    public Task<WindowedDigestResult?> ComputeTypeDigestsWindowedAsync(
+      Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+      long sinceSequence, long? untilSequence, TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+      WindowedSinceSeen = sinceSequence;
+      WindowedUntilSeen = untilSequence;
+      return Task.FromResult(WindowedTypeResult);
+    }
+
+    public Task<WindowedDigestResult?> ComputeStreamDigestsWindowedAsync(
+      Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+      long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
+      TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+      WindowedSinceSeen = sinceSequence;
+      WindowedUntilSeen = untilSequence;
+      WindowedResumeSeen = resumeAfterStreamId;
+      WindowedMaxSeen = maxDigests;
+      return Task.FromResult(WindowedStreamResult);
     }
 
     public Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
