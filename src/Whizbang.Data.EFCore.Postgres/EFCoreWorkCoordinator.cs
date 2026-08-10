@@ -785,6 +785,28 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken);
 
   /// <inheritdoc />
+  public Task<long> GetIntegrityOriginGenerationAsync(CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      cmd.CommandText =
+        "SELECT COALESCE((SELECT setting_value::bigint FROM wh_settings WHERE setting_key = 'integrity_origin_generation'), 0)";
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is long generation ? generation : 0L;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<bool> EnsureIntegritySealGenerationAsync(
+    Guid originServiceId, long generation, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "integrity_seal_generation_guard")}(@p_origin, @p_generation)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", originServiceId));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_generation", generation));
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is bool coherent && coherent;
+    }, cancellationToken);
+
+  /// <inheritdoc />
   public Task<EpochVerificationResult> VerifyDigestEpochsAsync(
     TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {

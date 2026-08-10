@@ -1034,6 +1034,32 @@ public interface IWorkCoordinator {
     Task.FromResult(new EpochVerificationResult(0, 0));
 
   /// <summary>
+  /// #80-F: this origin's history generation — bumped by the two legitimate fold-mutation sites
+  /// (close-the-books truncation, reclassification) and stamped on every manifest answer so
+  /// consumers can distinguish deliberate change from damage. Default 0 for engines without the
+  /// generation store.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<long> GetIntegrityOriginGenerationAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult(0L);
+
+  /// <summary>
+  /// #80-F: the consumer-side generation guard, one atomic call. True = the carried generation
+  /// matches the stored one (or first contact) — compare away. False = the origin's history
+  /// legitimately moved: the seal was reset to zero, the new generation recorded, and the caller
+  /// must SKIP this comparison round (its windows were aligned to the old world). The reset
+  /// happens once per generation change. Default true (no store — proceed as before).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose generation the manifest carried.</param>
+  /// <param name="generation">The carried generation.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<bool> EnsureIntegritySealGenerationAsync(
+    Guid originServiceId, long generation, CancellationToken cancellationToken = default) =>
+    Task.FromResult(true);
+
+  /// <summary>
   /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
   /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
   /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing

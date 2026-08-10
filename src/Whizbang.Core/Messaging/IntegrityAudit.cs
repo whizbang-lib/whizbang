@@ -129,6 +129,14 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// still compare and repair; they just never certify.
   /// </summary>
   public int ChunkCount { get; init; }
+
+  /// <summary>
+  /// #80-F: the origin's history generation — bumped whenever folded history legitimately
+  /// mutates (a close-the-books truncation, a reclassification). A consumer seeing it change
+  /// resets its seal and re-verifies instead of alarming on deliberate change; sealed-range
+  /// divergence WITHOUT a generation change remains damage. Null = a pre-generation origin.
+  /// </summary>
+  public long? OriginGeneration { get; init; }
 }
 
 /// <summary>

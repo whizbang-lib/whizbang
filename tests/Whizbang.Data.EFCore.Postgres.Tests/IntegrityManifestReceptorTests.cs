@@ -650,6 +650,76 @@ public class IntegrityManifestReceptorTests {
                "immediately instead of waiting out a stale cooldown.");
   }
 
+  // ── #80-F: origin generation — seal coherence across legitimate mutation ─
+
+  [Test]
+  public async Task RequestReceptor_StampsTheOriginGeneration_OnEveryAnswerAsync() {
+    var coordinator = new _auditCoordinator { OriginGeneration = 7 };
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.OwnDigests = [_digest(stream, 11, 21, 2)];
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.OriginGeneration).IsEqualTo(7L)
+      .Because("the generation is how a consumer distinguishes legitimate history mutation from damage — every answer carries it");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_GenerationChanged_ResetsAndSkipsTheComparisonAsync() {
+    // The origin's history legitimately moved (a close, a reclassification). This round's
+    // comparison was aligned to the OLD world — running it would alarm on deliberate change.
+    // The guard resets the seal; the next audit re-verifies from the beginning.
+    var coordinator = new _auditCoordinator { SealGenerationCoherent = false };
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [];
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]) with { OriginGeneration = 9 };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(coordinator.GenerationGuardSeen).IsEqualTo(9L)
+      .Because("the guard runs against the carried generation before any comparison");
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no repairs from a comparison aligned to the old world");
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("and no divergence reports — deliberate change is not damage");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_GenerationUnchanged_ComparesNormallyAsync() {
+    var coordinator = new _auditCoordinator { SealGenerationCoherent = true };
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [];   // missing bucket → deficit → repair
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]) with { OriginGeneration = 9 };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("a coherent generation is the steady state — the deficit repairs exactly as before");
+  }
+
   // ── #80-C: deficit drives repair; equal-count mismatch drives alarm ─────
 
   [Test]
@@ -1135,11 +1205,23 @@ public class IntegrityManifestReceptorTests {
     public int? WindowedMaxSeen;
     public long? SealAdvancedTo;
     public Guid? SealAdvancedOrigin;
+    public long OriginGeneration { get; set; }
+    public bool SealGenerationCoherent { get; set; } = true;
+    public long? GenerationGuardSeen;
 
     public Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) {
       SealAdvancedOrigin = originServiceId;
       SealAdvancedTo = through;
       return Task.CompletedTask;
+    }
+
+    public Task<long> GetIntegrityOriginGenerationAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(OriginGeneration);
+
+    public Task<bool> EnsureIntegritySealGenerationAsync(
+        Guid originServiceId, long generation, CancellationToken cancellationToken = default) {
+      GenerationGuardSeen = generation;
+      return Task.FromResult(SealGenerationCoherent);
     }
 
     public Task<WindowedDigestResult?> ComputeTypeDigestsWindowedAsync(

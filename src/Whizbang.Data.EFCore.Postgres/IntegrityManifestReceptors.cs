@@ -118,6 +118,9 @@ public sealed partial class IntegrityManifestRequestReceptor(
     }
 
     var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
+    // #80-F: every answer carries the history generation — how a consumer distinguishes a
+    // deliberate mutation of folded history (reset + re-verify) from damage (alarm).
+    var originGeneration = await coordinator.GetIntegrityOriginGenerationAsync(cancellationToken).ConfigureAwait(false);
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var originName = instanceProvider?.ServiceName ?? string.Empty;
     // All chunks of one manifest share the manifest stream (the origin id) as their session —
@@ -146,6 +149,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           ComputedThrough = computedThrough,
           ResumeAfterStreamId = resumeAfter,
           ChunkCount = totalChunks,
+          OriginGeneration = originGeneration,
         },
         Hops = [
           new MessageHop {
@@ -228,6 +232,19 @@ public sealed partial class IntegrityManifestReceptor(
     var self = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
     if (message.OriginServiceId == self) {
       return;   // own manifest looping back — nothing to compare against ourselves.
+    }
+
+    // #80-F: the generation guard runs before ANY comparison. A changed generation means the
+    // origin's history legitimately moved (a close, a reclassification) — this round's windows
+    // and folds were aligned to the OLD world, and comparing them would alarm on deliberate
+    // change. The guard resets the seal once; the next audit re-verifies from the beginning.
+    if (message.OriginGeneration is long carriedGeneration) {
+      var coherent = await coordinator.EnsureIntegritySealGenerationAsync(
+        message.OriginServiceId, carriedGeneration, cancellationToken).ConfigureAwait(false);
+      if (!coherent) {
+        LogGenerationChanged(logger, message.OriginServiceName, carriedGeneration);
+        return;
+      }
     }
 
     var types = message.Digests.Select(d => d.EventType).Distinct(StringComparer.Ordinal).ToList();
@@ -627,6 +644,11 @@ public sealed partial class IntegrityManifestReceptor(
     Message = "Integrity seal vs origin '{OriginServiceName}' advanced through sequence {Through} — " +
               "the window audited clean and complete; future audits start here")]
   static partial void LogSealAdvanced(ILogger logger, string originServiceName, long through);
+
+  [LoggerMessage(EventId = 61, Level = LogLevel.Information,
+    Message = "Origin '{OriginServiceName}' history generation changed to {Generation} — a legitimate " +
+              "mutation (close/reclassify); seal reset, this comparison round skipped, re-verifying from the beginning next audit")]
+  static partial void LogGenerationChanged(ILogger logger, string originServiceName, long generation);
 }
 
 /// <summary>
