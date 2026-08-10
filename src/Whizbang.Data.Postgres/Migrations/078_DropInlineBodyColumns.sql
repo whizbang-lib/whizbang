@@ -710,6 +710,24 @@ COMMENT ON FUNCTION __SCHEMA__.reclassify_events_ephemeral IS
 
 DROP FUNCTION IF EXISTS __SCHEMA__.wh_backfill_event_bodies();
 
+-- RECLAIM: dropping a column is a catalog operation only. Every row written BEFORE this
+--          migration keeps the dropped columns' bytes in the heap permanently, and autovacuum
+--          never returns them — only a table rewrite does.
+--
+--          That matters more here than almost anywhere else: wh_event_store is the hottest
+--          table in the system, and the bodies being dropped were copied into wh_event_body
+--          moments earlier in this same migration. So on an established store this leaves what
+--          amounts to a second copy of every event body as dead weight. The heap can measure
+--          several times the size its live tuples need, which inflates every index heap-fetch
+--          and evicts far more shared_buffers than the data warrants.
+--
+--          Operators upgrading an EXISTING deployment should rewrite the table after this
+--          migration: pg_repack (online, no ACCESS EXCLUSIVE lock) is preferred; VACUUM FULL or
+--          CLUSTER work in a maintenance window. A fresh deployment applies this before rows
+--          accumulate and needs nothing.
+--
+--          Detection: compare pg_relation_size(relid)/n_live_tup against the summed
+--          pg_stats.avg_width for the table; a large multiple is the residue, not real data.
 ALTER TABLE __SCHEMA__.wh_event_store
   DROP COLUMN IF EXISTS event_data,
   DROP COLUMN IF EXISTS metadata;
