@@ -19,6 +19,49 @@ public sealed class PostgresTableStatisticsProvider(
     "wh_perspective_events", "wh_perspective_cursors", "wh_perspective_snapshots"
   ];
 
+  /// <inheritdoc />
+  /// <remarks>
+  /// Heap bytes per live row over the width those rows should need. The expected width comes
+  /// from <c>pg_stats.avg_width</c> (planner statistics, already maintained by autoanalyze) plus
+  /// per-tuple overhead, so this costs nothing beyond a catalog read — unlike pgstattuple, which
+  /// is exact but scans the table and needs an extension that managed Postgres may not allow.
+  ///
+  /// Around 1.0 means the heap is about the size its rows need. A sustained large multiple means
+  /// space that cannot be used: dead tuples awaiting vacuum, or — the case autovacuum can never
+  /// fix — bytes left behind by a dropped column, which persist in every row written before the
+  /// drop until the table is rewritten.
+  ///
+  /// Small tables are excluded: with few rows the per-row average is dominated by page overhead
+  /// and reports alarming ratios for tables measured in kilobytes.
+  /// </remarks>
+  public async Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) {
+    var results = new Dictionary<string, double>();
+
+    await using var connection = await dataSource.OpenConnectionAsync(ct);
+    await using var cmd = new NpgsqlCommand("""
+      SELECT st.relname,
+             (pg_relation_size(st.relid)::numeric / st.n_live_tup) / GREATEST(w.expected, 1)
+      FROM pg_stat_user_tables st
+      JOIN LATERAL (
+        SELECT COALESCE(sum(s.avg_width), 0) + 28 AS expected
+        FROM pg_stats s
+        WHERE s.schemaname = st.schemaname AND s.tablename = st.relname
+      ) w ON TRUE
+      WHERE st.schemaname = @schema
+        AND st.relname = ANY(@tables)
+        AND st.n_live_tup > 1000
+      """, connection);
+
+    cmd.Parameters.AddWithValue("schema", schema);
+    cmd.Parameters.AddWithValue("tables", _trackedTables);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    while (await reader.ReadAsync(ct)) {
+      results[reader.GetString(0)] = (double)reader.GetDecimal(1);
+    }
+    return results;
+  }
+
   public async Task<IReadOnlyDictionary<string, long>> GetEstimatedTableSizesAsync(CancellationToken ct = default) {
     var results = new Dictionary<string, long>();
 

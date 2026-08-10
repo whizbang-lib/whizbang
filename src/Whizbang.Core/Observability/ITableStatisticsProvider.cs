@@ -20,4 +20,17 @@ public interface ITableStatisticsProvider {
   /// Uses partial index scans — cheap on indexed columns.
   /// </summary>
   Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default);
+
+  /// <summary>
+  /// Returns a per-table bloat ratio: heap bytes per live row divided by the expected row width.
+  /// Roughly 1.0 means the heap is about the size its rows need; a large sustained multiple means
+  /// the table is carrying space it cannot use — dead tuples awaiting vacuum, or bytes from a
+  /// dropped column, which Postgres keeps in every pre-existing row until the table is rewritten.
+  /// </summary>
+  /// <remarks>
+  /// Defaults to empty so providers that cannot estimate this keep working unchanged; the gauge
+  /// simply reports nothing for them.
+  /// </remarks>
+  Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) =>
+    Task.FromResult<IReadOnlyDictionary<string, double>>(new Dictionary<string, double>());
 }
