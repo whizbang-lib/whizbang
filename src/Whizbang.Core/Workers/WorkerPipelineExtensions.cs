@@ -109,7 +109,6 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IntegrityAuditWorker>();
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityGapTracker>();
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
-    services.TryAddSingleton<IntegrityLedgerGaugeCollector>();
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();
     services.TryAddSingleton<OutboxDrainWorker>();
@@ -232,7 +231,6 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<IntegrityCheckpointWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<IntegrityAuditWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<IntegrityLedgerGaugeCollector>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());

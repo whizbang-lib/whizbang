@@ -412,10 +412,4 @@ public sealed class StreamIntegrityOptions {
   /// </remarks>
   public bool PublishReportEvents { get; set; }
 
-  /// <summary>
-  /// How often (seconds, default 60) the ledger is read to refresh the convergence gauges. Floored
-  /// at 5. Deliberately independent of <see cref="AuditIntervalMinutes"/>: the audit is daily by
-  /// default, and a number that refreshes daily is not one an operator can watch.
-  /// </summary>
-  public int LedgerGaugeIntervalSeconds { get; set; } = 60;
 }
