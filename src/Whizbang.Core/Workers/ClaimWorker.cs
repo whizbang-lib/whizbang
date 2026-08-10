@@ -41,6 +41,15 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly SemaphoreSlim _wake = new(0, 1);
   private int _consecutiveEmptyPolls;
 
+  /// <summary>
+  /// Identity of the previous claim's work set. A claim that returns exactly what the last one
+  /// did is a re-offer, not progress — see the cadence handling in the run loop.
+  /// </summary>
+  private int _lastWorkSignature;
+
+  /// <summary>True when the most recent claim re-offered the previous claim's work set.</summary>
+  private bool _lastClaimWasRepeat;
+
   /// <summary>Constructor.</summary>
 #pragma warning disable S107 // ClaimWorker is the central poller — its channel/option dependencies are unavoidable.
   public ClaimWorker(
@@ -275,8 +284,28 @@ public sealed partial class ClaimWorker : BackgroundService {
           Interlocked.Increment(ref _startupCatchUpCount);
         }
 
+        // A claim that returns exactly the previous claim's work set is a RE-OFFER, not
+        // progress. claim_work's eligible CTEs match every leased-but-uncompleted row
+        // (instance_id = me AND lease_expiry > NOW() AND processed_at IS NULL), so a row that
+        // is leased and awaiting its completion flush is re-emitted on every poll — by design,
+        // because the in-memory in-flight filter that used to suppress it proved unrecoverable
+        // (see _distributeAsync). Treating "non-empty" as "there was work" therefore pins the
+        // empty-poll streak at zero forever: the backoff never engages and the loop re-claims as
+        // fast as the database can answer, a rate set by query latency rather than by workload.
+        //
+        // So a repeat counts toward the idle streak for CADENCE purposes only. Emission is
+        // deliberately left untouched — every stream_id is still distributed on every cycle, so
+        // nothing can wedge waiting on a suppressed emit. Only the wait adapts.
+        var signature = _workSignature(batch);
+        _lastClaimWasRepeat = hadWork && signature == _lastWorkSignature;
+        _lastWorkSignature = signature;
+
         if (hadWork) {
-          _consecutiveEmptyPolls = 0;
+          if (_lastClaimWasRepeat) {
+            Interlocked.Increment(ref _consecutiveEmptyPolls);
+          } else {
+            _consecutiveEmptyPolls = 0;
+          }
           await _distributeAsync(batch, stoppingToken);
           OnBatchClaimed?.Invoke(batch);
         } else {
@@ -299,6 +328,20 @@ public sealed partial class ClaimWorker : BackgroundService {
       // longer than the bus-wake tests' wait window, so signal-driven behavior is unchanged for them.
       // When the bus isn't wired (legacy DI), fall back to the adaptive backoff.
       try {
+        // A pending wake permit short-circuits both waits below, and the system's own completion
+        // traffic keeps setting one: publishes complete, completions signal, the permit is
+        // released, and the loop re-enters immediately — even when the claim is only re-offering
+        // work it already emitted. That feedback path is why the spin rate tracks query latency
+        // rather than workload, and why an almost-empty store sustains it as readily as a large
+        // one. When the last claim was a pure re-offer, space the next one out BEFORE waiting on
+        // the permit. New work stays responsive: it sets the permit during this delay, so the
+        // wait below returns immediately and the added latency is bounded by the delay itself.
+        if (_lastClaimWasRepeat) {
+          var floorMs = Math.Min(_computeAdaptivePollWaitMs(), _options.PollingMaxIntervalMilliseconds);
+          if (floorMs > 0) {
+            await Task.Delay(floorMs, stoppingToken);
+          }
+        }
         if (_signalBus is not null) {
           _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingMaxIntervalMilliseconds), stoppingToken);
         } else {
@@ -388,6 +431,24 @@ public sealed partial class ClaimWorker : BackgroundService {
       ProcessId: _instanceProvider.ProcessId), ct);
   }
 
+
+  /// <summary>
+  /// Cheap identity for a claimed batch: the emitted stream_id sets plus the direct work counts.
+  /// Two consecutive claims sharing a signature carried the same work, so the second made no
+  /// progress. If claim_work ever returned these in an unstable order the signatures would
+  /// differ and the loop would simply fall back to today's cadence — the degradation is toward
+  /// the existing behaviour, never toward suppressing work.
+  /// </summary>
+  private static int _workSignature(WorkBatch batch) {
+    var hash = new HashCode();
+    hash.Add(batch.OutboxWork.Count);
+    hash.Add(batch.InboxWork.Count);
+    hash.Add(batch.PerspectiveWork.Count);
+    foreach (var id in batch.OutboxStreamIds) { hash.Add(id); }
+    foreach (var id in batch.InboxStreamIds) { hash.Add(id); }
+    foreach (var id in batch.PerspectiveStreamIds) { hash.Add(id); }
+    return hash.ToHashCode();
+  }
 
   private int _computeAdaptivePollWaitMs() {
     var baseMs = _options.PollingIntervalMilliseconds;
