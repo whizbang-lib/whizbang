@@ -35,8 +35,17 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_integrity_ledger (
   last_repair_at     TIMESTAMPTZ,
   repair_attempts    INTEGER     NOT NULL DEFAULT 0,
   last_touched       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- When this bucket FIRST diverged, never updated afterwards. last_touched moves on every
+  -- sighting, so it answers "when did we last look", not "how long has this been broken" —
+  -- and the second question is the one an operator acts on. A heal DELETEs the row, so a later
+  -- re-divergence is genuinely new and starts its own clock.
+  first_seen_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (origin_service_id, tenant_scope, event_type, stream_id)
 );
+
+-- Existing installs (the table shipped before this column did).
+ALTER TABLE __SCHEMA__.wh_integrity_ledger
+  ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 COMMENT ON TABLE __SCHEMA__.wh_integrity_ledger IS
 'One row per divergent bucket. The primary key is the identity of a divergence, so a repeat sighting updates a row instead of emitting another report, across restarts and across replicas.';
@@ -70,7 +79,7 @@ DECLARE
   v_changed BOOLEAN;
   v_report  BOOLEAN;
 BEGIN
-  -- Lock the row for the duration so concurrent replicas serialise on this bucket and exactly one
+  -- Lock the row for the duration so concurrent replicas serialize on this bucket and exactly one
   -- of them is told to report. This is the part in-memory state could never provide.
   SELECT * INTO v_row FROM __SCHEMA__.wh_integrity_ledger
   WHERE origin_service_id = p_origin_service_id AND tenant_scope = v_scope
@@ -80,9 +89,11 @@ BEGIN
   IF NOT FOUND THEN
     INSERT INTO __SCHEMA__.wh_integrity_ledger (
       origin_service_id, tenant_scope, event_type, stream_id,
-      origin_lo, origin_hi, local_lo, local_hi, last_reported_at, repair_attempts, last_touched)
+      origin_lo, origin_hi, local_lo, local_hi, last_reported_at, repair_attempts, last_touched,
+      first_seen_at)
     VALUES (p_origin_service_id, v_scope, p_event_type, p_stream_id,
-            p_origin_lo, p_origin_hi, p_local_lo, p_local_hi, p_now, 0, p_now)
+            p_origin_lo, p_origin_hi, p_local_lo, p_local_hi, p_now, 0, p_now,
+            p_now)
     ON CONFLICT (origin_service_id, tenant_scope, event_type, stream_id) DO NOTHING;
     -- A racing replica may have inserted first; only the winner reports.
     IF FOUND THEN
@@ -225,3 +236,35 @@ BEGIN
   RETURN v_deleted;
 END;
 $$;
+
+-- The ledger, read as a GAUGE.
+--
+-- This is what replaces publishing a durable event per divergence sighting. Those events had no
+-- consumer, and each one minted its own stream, so they grew without bound and could never be
+-- reaped. More importantly they were the wrong SHAPE: a stream of past-tense notifications tells
+-- an operator what was noticed, never what is currently broken, and it never goes down when
+-- things heal. A row per unhealed bucket does both — mark_healed DELETEs, so these numbers fall
+-- on their own as repair works.
+--
+-- p_max_attempts is the caller's MaxRepairAttemptsPerBucket. Buckets at or past it have stopped
+-- asking for repair, which is exactly the set that needs human attention rather than patience.
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_integrity_ledger_summary(p_max_attempts INTEGER)
+RETURNS TABLE (
+  unhealed_buckets       BIGINT,
+  repair_exhausted       BIGINT,
+  oldest_unhealed_secs   DOUBLE PRECISION
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    COUNT(*)::BIGINT,
+    COUNT(*) FILTER (WHERE repair_attempts >= p_max_attempts)::BIGINT,
+    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(first_seen_at))), 0)::DOUBLE PRECISION
+  FROM __SCHEMA__.wh_integrity_ledger;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_integrity_ledger_summary IS
+'Ledger as a gauge: currently-unhealed buckets, how many have exhausted their repair budget, and the age of the oldest. Replaces per-sighting report events, which had no consumer and never fell when things healed.';

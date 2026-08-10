@@ -393,10 +393,20 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+  /// <inheritdoc />
+  public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
     Guid instanceId,
     int maxPerStream = 100,
+    CancellationToken cancellationToken = default)
+    => FetchInboxBatchAsync(streamIds, instanceId, maxPerStream, null, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
@@ -407,8 +417,9 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<InboxBatchRowDto>(
-      "SELECT * FROM fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream)",
-      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream });
+      "SELECT * FROM fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      // NULL = count bound only, the pre-byte-budget behavior.
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes });
 
     return [.. rows.Select(r => new InboxBatchRow {
       MessageId = r.message_id,

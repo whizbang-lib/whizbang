@@ -78,6 +78,25 @@ public sealed partial class MaintenanceWorker(
     // targets so PostDestruction can fire after the delete. Inert without a registered hook.
     var destructionTargets = await _runPreDestructionHooksAsync(coordinator, sp, ct);
 
+    // Stream-integrity convergence gauges. Deliberately folded into THIS cycle rather than given
+    // their own timer: a standalone collector would be one more background service acquiring a
+    // connection on a schedule in every host, and small pools feel that immediately (the sample
+    // harnesses run with Max Pool Size 2). This rides a scope and a cadence that already exist, so
+    // it costs one extra query rather than a new periodic connection. Best-effort — a metrics read
+    // must never fail a maintenance cycle.
+    try {
+      var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
+      var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+      if (integrity is not null && integrityMetrics is not null) {
+        integrityMetrics.UpdateLedgerGauges(
+          await coordinator.GetIntegrityLedgerSummaryAsync(integrity.MaxRepairAttemptsPerBucket, ct));
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogLedgerGaugeRefreshFailed(_logger, ex);
+    }
+
     var results = await coordinator.PerformMaintenanceAsync(ct);
     foreach (var r in results) {
       LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
@@ -319,6 +338,10 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 23, Level = LogLevel.Warning,
     Message = "Tier-2 ephemeral pointer prune failed (non-fatal — retried next due interval)")]
   static partial void LogPointerPruneFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
+    Message = "Stream-integrity ledger gauge refresh failed — convergence gauges will read stale until the next cycle")]
+  static partial void LogLedgerGaugeRefreshFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
     Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Set MaintenanceWorkerOptions.AllowTableRewrite to let maintenance do it (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]

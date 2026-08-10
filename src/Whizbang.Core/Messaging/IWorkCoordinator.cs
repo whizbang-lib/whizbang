@@ -888,6 +888,16 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
+  /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
+  /// </summary>
+  /// <param name="maxRepairAttempts">The repair budget, so the query can count who has spent it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  Task<Observability.LedgerGaugeSnapshot> GetIntegrityLedgerSummaryAsync(
+    int maxRepairAttempts, CancellationToken cancellationToken = default) =>
+    Task.FromResult(Observability.LedgerGaugeSnapshot.Empty);
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is
@@ -1096,6 +1106,36 @@ public interface IWorkCoordinator {
     int maxPerStream = 100,
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<InboxBatchRow>>([]);
+
+  /// <summary>
+  /// Byte-budgeted fetch: bounds the slice by payload bytes as well as row count.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A separate overload rather than a parameter on the one above, deliberately. Changing the
+  /// signature of a method that carries a default implementation SILENTLY un-implements it for
+  /// every existing implementer — their method stops matching the interface, the class still
+  /// compiles, and every call quietly falls through to the default. Doing exactly that here broke
+  /// nineteen drain tests with empty results and no diagnostic, and would have done the same to
+  /// any consumer's own coordinator.
+  /// </para>
+  /// <para>
+  /// The default delegates to the count-only overload, so an engine that has not implemented this
+  /// keeps its previous behavior (unbounded by bytes) instead of silently returning nothing.
+  /// </para>
+  /// </remarks>
+  /// <param name="streamIds">Streams to drain.</param>
+  /// <param name="instanceId">The claiming instance.</param>
+  /// <param name="maxPerStream">Row cap per stream.</param>
+  /// <param name="maxBytes">Payload-byte cap per stream; null disables it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
+    CancellationToken cancellationToken = default)
+    => FetchInboxBatchAsync(streamIds, instanceId, maxPerStream, cancellationToken);
 
   /// <summary>
   /// Cheap ID-only prefetch for the perspective drainer (Phase H step 7 slice 2). Returns

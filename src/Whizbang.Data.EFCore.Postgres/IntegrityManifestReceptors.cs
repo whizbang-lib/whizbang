@@ -264,7 +264,28 @@ public sealed partial class IntegrityManifestReceptor(
       // killed. Nothing is lost — the ledger keeps these unhealed, so the next comparison
       // re-offers whatever is still divergent and a real problem still converges.
       divergentSeen++;
-      if (reportsPublished >= reportCap) {
+
+      // Aggregate rather than log per stream. One line per (tenant, type) carrying a count and a
+      // sample is what an operator can actually act on; hundreds of near-identical lines bury the
+      // signal and cost real work on the same thread that owes the liveness probe an answer.
+      //
+      // This runs for EVERY divergent bucket, before the publish gate. It used to sit after it,
+      // which meant a capped report also lost its line in the tally — so the aggregate under-counted
+      // exactly when there was most to report, and switching publishing off would have silenced the
+      // operator-facing log entirely rather than only the durable writes.
+      if (!divergenceTallies.TryGetValue((origin.TenantScope, origin.EventType), out var tally)) {
+        tally = new _divergenceTally { SampleStreamId = origin.StreamId };
+        divergenceTallies[(origin.TenantScope, origin.EventType)] = tally;
+      }
+      tally.Count++;
+      tally.OriginTotal += origin.EventCount;
+      tally.LocalTotal += mine?.EventCount ?? 0;
+      tally.AnyAutoRepair |= autoRepair;
+
+      // The ledger row IS the durable record of this divergence, and it surfaces as a gauge that
+      // falls when the bucket heals. Publishing is opt-in because nothing consumes these events and
+      // each one mints its own stream — see StreamIntegrityOptions.PublishReportEvents.
+      if (!options.PublishReportEvents || reportsPublished >= reportCap) {
         continue;
       }
       reportsPublished++;
@@ -279,18 +300,6 @@ public sealed partial class IntegrityManifestReceptor(
         LocalCount = mine?.EventCount ?? 0,
         AutoRepairRequested = autoRepair,
       }).ConfigureAwait(false);
-
-      // Aggregate rather than log per stream. One line per (tenant, type) carrying a count and a
-      // sample is what an operator can actually act on; hundreds of near-identical lines bury the
-      // signal and cost real work on the same thread that owes the liveness probe an answer.
-      if (!divergenceTallies.TryGetValue((origin.TenantScope, origin.EventType), out var tally)) {
-        tally = new _divergenceTally { SampleStreamId = origin.StreamId };
-        divergenceTallies[(origin.TenantScope, origin.EventType)] = tally;
-      }
-      tally.Count++;
-      tally.OriginTotal += origin.EventCount;
-      tally.LocalTotal += mine?.EventCount ?? 0;
-      tally.AnyAutoRepair |= autoRepair;
     }
 
     foreach (var ((tenantScope, eventType), tally) in divergenceTallies) {

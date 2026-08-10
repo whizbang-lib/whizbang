@@ -166,6 +166,13 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   /// tail. Per-stream error isolation matches the prior foreach pattern.
   /// </summary>
   /// <docs>fundamentals/work-coordinator/inbox-drain</docs>
+  /// <summary>
+  /// The configured byte budget, or null when disabled. Non-positive is treated as "off" so a
+  /// misconfigured zero cannot silently starve every fetch down to one row per stream.
+  /// </summary>
+  private long? _byteBudget() =>
+    _options.MaxBytesPerStream is > 0 ? _options.MaxBytesPerStream : null;
+
   private async Task _drainStreamBatchAsync(IReadOnlyList<Guid> streamIds, CancellationToken ct) {
     foreach (var sid in streamIds) {
       _drainChannel.MarkDraining(sid);
@@ -176,7 +183,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
       var rowsRaw = await coordinator.FetchInboxBatchAsync(
-        streamIds, _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+        streamIds, _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
       batchScopeOk = true;
 
       // Group rows by drain-key (stream_id when set, else message_id — matches the
@@ -259,7 +266,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     while (!ct.IsCancellationRequested) {
       fetchCount++;
       var rowsRaw = await coordinator.FetchInboxBatchAsync(
-        [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+        [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
 
       if (rowsRaw.Count == 0) {
         if (hadAnyNew) {
@@ -392,6 +399,33 @@ public sealed class InboxDrainWorkerOptions {
 
   /// <summary>Cap on how many leased inbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;
+
+  /// <summary>
+  /// Cap on the PAYLOAD BYTES a single fetch may return per stream. Default 4 MB;
+  /// <c>null</c> or non-positive disables it, restoring the count-only bound.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <see cref="MaxPerStream"/> assumes rows are roughly the same size. Control-plane traffic
+  /// breaks that badly: an integrity manifest carries up to MaxDigestsPerManifest digests, so one
+  /// row can dwarf an ordinary command by orders of magnitude. Fetching 100 of those is tens of
+  /// megabytes of JSON in one round trip, several times that once deserialized, per concurrent
+  /// drain consumer — enough to OOM a service whose ordinary working set is comfortable.
+  /// </para>
+  /// <para>
+  /// Observed live before this existed: services holding 540-700 queued manifests (83-105 MB)
+  /// were OOMKilled on every start and never drained the backlog, because the fetch meant to make
+  /// progress was what killed the process. The redelivery pump already had the equivalent bound
+  /// (<c>MaxBytesPerComposite</c>); the drain fetch did not.
+  /// </para>
+  /// <para>
+  /// The budget trims the TAIL of a slice: at least one row per stream is always returned, so an
+  /// oversized message is still delivered rather than stalling its stream forever. Ordinary
+  /// traffic never reaches the budget, so this changes nothing for it — 100 rows at 2 KB is
+  /// 200 KB against a 4 MB ceiling.
+  /// </para>
+  /// </remarks>
+  public long? MaxBytesPerStream { get; set; } = 4L * 1024 * 1024;
 
   /// <summary>
   /// Sliding-window batching policy for stream_id signals from <see cref="IInboxDrainChannel"/>.
