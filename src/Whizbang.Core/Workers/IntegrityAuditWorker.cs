@@ -149,6 +149,19 @@ public sealed partial class IntegrityAuditWorker(
       } else {
         LogDigestVerified(_logger, verification.BucketsChecked);
       }
+
+      // #80-D: the seal backstop. Manifest answers trust sealed epochs WITHOUT re-verifying (the
+      // whole point of the epochs), so this is the ONE place a bad seal gets caught. Bounded per
+      // sweep — a very large store finishes across several nightly sweeps.
+      var epochVerification = await coordinator.VerifyDigestEpochsAsync(
+        settle, _options.MaxEpochVerificationsPerSweep, cancellationToken).ConfigureAwait(false);
+      if (epochVerification.EpochsDrifted > 0) {
+        metrics?.DigestDriftHealed.Add(epochVerification.EpochsDrifted,
+          new KeyValuePair<string, object?>("kind", "epoch-refolded"));
+        LogEpochDrift(_logger, epochVerification.EpochsDrifted, epochVerification.EpochsChecked);
+      } else if (epochVerification.EpochsChecked > 0) {
+        LogEpochsVerified(_logger, epochVerification.EpochsChecked);
+      }
     }
 
     // ── L: local perspective coverage ────────────────────────────────────
@@ -294,4 +307,13 @@ public sealed partial class IntegrityAuditWorker(
   [LoggerMessage(EventId = 89, Level = LogLevel.Debug,
     Message = "Audit cycle skipped — a sibling instance claimed it within the last {ClaimWindowMinutes} minute(s)")]
   static partial void LogAuditCycleAlreadyClaimed(ILogger logger, double claimWindowMinutes);
+
+  [LoggerMessage(EventId = 90, Level = LogLevel.Warning,
+    Message = "SWEEP: {EpochsDrifted} of {EpochsChecked} sealed epoch(s) DRIFTED and were refolded — " +
+              "an unaccounted write path touched sealed history; manifest answers served from those seals were wrong until now")]
+  static partial void LogEpochDrift(ILogger logger, int epochsDrifted, int epochsChecked);
+
+  [LoggerMessage(EventId = 91, Level = LogLevel.Information,
+    Message = "SWEEP: {EpochsChecked} sealed epoch(s) verified clean against the store recompute")]
+  static partial void LogEpochsVerified(ILogger logger, int epochsChecked);
 }

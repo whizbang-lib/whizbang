@@ -232,6 +232,98 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task VerifyDigestEpochs_DetectsAndHealsADriftedSeal_ThenReportsCleanAsync() {
+    // #80-D: manifest answers trust seals WITHOUT re-verifying (that is the whole point); the
+    // nightly sweep is therefore the ONE place a bad seal gets caught. Verify must both detect
+    // the drift and heal it — a detector that only counted would leave every future answer wrong.
+    await using var conn = await _openAsync();
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    await _setWidthAsync(conn, 100);
+    var stream = Guid.NewGuid();
+    const string TYPE = "Contracts.EpochVerifyProbe";
+
+    var e1 = Guid.NewGuid();
+    var e2 = Guid.NewGuid();
+    await _seedAsync(conn, stream, e1, TYPE, 5);
+    await _seedAsync(conn, stream, e2, TYPE, 10);
+    await _seedAsync(conn, stream, Guid.NewGuid(), TYPE, 150);
+    await using (var close = conn.CreateCommand()) {
+      close.CommandText = "SELECT close_digest_epochs(NOW(), 3600, 100)";
+      _ = await close.ExecuteScalarAsync();
+    }
+    await _corruptEpochAsync(conn, TYPE, epochId: 0, lo: 666, hi: 777);
+
+    var result = await coordinator.VerifyDigestEpochsAsync(TimeSpan.FromHours(1), maxEpochs: 100);
+
+    await Assert.That(result.EpochsDrifted).IsEqualTo(1)
+      .Because("the corrupted seal must be DETECTED — non-zero drift here means an unaccounted write path");
+    var expected = await _expectedFoldAsync(conn, e1, e2);
+    var (healedLo, _) = (await _epochRowForAsync(conn, TYPE, 0))!.Value;
+    await Assert.That(healedLo).IsEqualTo(expected.Lo)
+      .Because("and HEALED — the refolded seal serves correct answers again");
+
+    var second = await coordinator.VerifyDigestEpochsAsync(TimeSpan.FromHours(1), maxEpochs: 100);
+    await Assert.That(second.EpochsDrifted).IsEqualTo(0)
+      .Because("a healed store verifies clean — persistent drift would mean the heal is not sticking");
+    await Assert.That(second.EpochsChecked).IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task VerifyDigestEpochs_SkipsAnEpochWithAnUnsettledArrivalAsync() {
+    // A backfill can land a FRESH event into a closed range. Folding it into the seal before it
+    // settles would seal an in-flight delivery — the same guard closure applies. The epoch stays
+    // as-is and verifies on a later sweep once the arrival settles.
+    await using var conn = await _openAsync();
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    await _setWidthAsync(conn, 100);
+    var stream = Guid.NewGuid();
+    const string TYPE = "Contracts.EpochVerifyFreshProbe";
+
+    await _seedAsync(conn, stream, Guid.NewGuid(), TYPE, 5);
+    await _seedAsync(conn, stream, Guid.NewGuid(), TYPE, 150);
+    await using (var close = conn.CreateCommand()) {
+      close.CommandText = "SELECT close_digest_epochs(NOW(), 3600, 100)";
+      _ = await close.ExecuteScalarAsync();
+    }
+    // A FRESH arrival (created_at NOW) with an old sequence inside sealed epoch 0.
+    await using (var fresh = conn.CreateCommand()) {
+      fresh.CommandText = """
+        INSERT INTO wh_event_store
+          (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version,
+           commit_sequence, flags, created_at)
+        VALUES (@e, @s, @s, 'TestAggregate', @t, 'null'::jsonb, 42, 42, 0, NOW())
+        """;
+      fresh.Parameters.AddWithValue("e", Guid.NewGuid());
+      fresh.Parameters.AddWithValue("s", stream);
+      fresh.Parameters.AddWithValue("t", TYPE);
+      await fresh.ExecuteNonQueryAsync();
+    }
+    await _corruptEpochAsync(conn, TYPE, epochId: 0, lo: 666, hi: 777);
+
+    var result = await coordinator.VerifyDigestEpochsAsync(TimeSpan.FromHours(1), maxEpochs: 100);
+
+    await Assert.That(result.EpochsDrifted).IsEqualTo(0)
+      .Because("the epoch with the unsettled arrival is skipped whole — verifying it now would fold an in-flight delivery into a seal");
+    var (lo, _) = (await _epochRowForAsync(conn, TYPE, 0))!.Value;
+    await Assert.That(lo).IsEqualTo(666L)
+      .Because("skipped means untouched — it heals on a later sweep once the arrival settles");
+  }
+
+  private static async Task<(long Lo, long Hi)?> _epochRowForAsync(NpgsqlConnection conn, string type, long epochId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT digest_lo, digest_hi FROM wh_digest_epochs WHERE event_type = @t AND epoch_id = @e";
+    cmd.Parameters.AddWithValue("t", type);
+    cmd.Parameters.AddWithValue("e", epochId);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    if (!await reader.ReadAsync()) {
+      return null;
+    }
+    return (reader.GetInt64(0), reader.GetInt64(1));
+  }
+
+  [Test]
   public async Task TenantBuckets_SurviveTheComposition_AsSeparateRowsAsync() {
     // Epochs are bucketed per (tenant, type); the composed answer must keep those buckets
     // separate — collapsing tenants would make a divergence in one tenant smear across all.

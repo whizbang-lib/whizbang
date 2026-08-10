@@ -1020,6 +1020,20 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// #80-D: the sweep's SEAL backstop — recomputes each closed digest epoch from the store,
+  /// compares bucket-for-bucket, and refolds on drift. Epochs holding an unsettled arrival are
+  /// skipped whole (verifying now would fold an in-flight delivery into a seal). Default: nothing
+  /// checked, for engines without the epoch substrate.
+  /// </summary>
+  /// <param name="settleWindow">The settle window — an arrival younger than this blocks its epoch.</param>
+  /// <param name="maxEpochs">Cap on epochs recomputed this call.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<EpochVerificationResult> VerifyDigestEpochsAsync(
+    TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) =>
+    Task.FromResult(new EpochVerificationResult(0, 0));
+
+  /// <summary>
   /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
   /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
   /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing

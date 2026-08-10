@@ -211,6 +211,37 @@ public class IntegrityAuditWorkerTests {
   // ── #80-D: the sweep moves to a scheduled idle-time cron ────────────────
 
   [Test]
+  public async Task SweepCycle_AlsoVerifiesTheSealedEpochsAsync() {
+    // Manifest answers trust seals without re-verifying (the whole point of the epochs); the
+    // sweep is therefore the ONE place a bad seal gets caught. A sweep that verified only the
+    // digest table would leave every epoch-served answer trusting rows nothing ever re-checks.
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.EpochVerifyCalls).IsEqualTo(1)
+      .Because("sealed epochs are authoritative for answers — only the sweep ever re-checks them");
+  }
+
+  [Test]
+  public async Task SteadyCycle_NeverVerifiesEpochsAsync() {
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.EpochVerifyCalls).IsEqualTo(0)
+      .Because("re-verifying seals on every cycle would re-buy the full-scan cost the epochs exist to end");
+  }
+
+  [Test]
   public async Task CronScheduledSweep_DisablesTheCounterSweepAsync() {
     // With the sweep on the temporal engine's clock, the every-Nth-cycle counter must stand down
     // — otherwise the full-store recompute runs on BOTH cadences, and the counter lands it at
@@ -469,6 +500,14 @@ public class IntegrityAuditWorkerTests {
 
     public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
       Task.FromResult(SealedThrough);
+
+    public int EpochVerifyCalls { get; private set; }
+
+    public Task<EpochVerificationResult> VerifyDigestEpochsAsync(
+      TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) {
+      EpochVerifyCalls++;
+      return Task.FromResult(new EpochVerificationResult(0, 0));
+    }
 
     public Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
       TimeSpan settleWindow, int maxGaps, CancellationToken cancellationToken = default) {

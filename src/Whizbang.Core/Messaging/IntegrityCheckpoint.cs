@@ -205,6 +205,17 @@ public sealed record DigestVerificationResult {
 }
 
 /// <summary>
+/// #80-D: result of the sweep's SEAL backstop — each closed digest epoch recomputed from the
+/// store, compared bucket-for-bucket, and refolded on drift. Manifest answers trust seals
+/// without re-verifying, so this pass is the one place a bad seal gets caught; non-zero
+/// <paramref name="EpochsDrifted"/> means an unaccounted write path touched sealed history.
+/// </summary>
+/// <param name="EpochsChecked">Closed epochs the pass compared (unsettled-arrival epochs skip).</param>
+/// <param name="EpochsDrifted">Epochs whose stored folds disagreed with the recompute (refolded).</param>
+/// <docs>resilience/stream-integrity</docs>
+public sealed record EpochVerificationResult(int EpochsChecked, int EpochsDrifted);
+
+/// <summary>
 /// Stream-integrity Phase S: one row of the consumed-type registry — when an event type joined
 /// this service's consumed set, and where its backfill stands.
 /// </summary>
@@ -365,6 +376,15 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   /// <docs>resilience/stream-integrity</docs>
   public string? FullSweepCron { get; set; } = "0 3 * * *";
+
+  /// <summary>
+  /// #80-D: cap on closed epochs the sweep's seal backstop recomputes per sweep (default 10000).
+  /// Manifest answers trust sealed epochs without re-verifying, so the sweep is the one place a
+  /// bad seal gets caught — but the recompute is O(events-in-epoch) each, and a very large store
+  /// finishes verification across several nightly sweeps rather than stalling one.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public int MaxEpochVerificationsPerSweep { get; set; } = 10_000;
 
   /// <summary>
   /// A1c: storm cap on the DRILL-DOWN — how many mismatched types one type-level manifest may

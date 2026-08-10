@@ -67,9 +67,58 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_digest_epoch_frontiers (
 COMMENT ON TABLE __SCHEMA__.wh_digest_epoch_frontiers IS
 'Per-lane contiguous closure frontier + the pinned epoch width. Every epoch at or below the frontier is closed; bucket rows exist only where the epoch was non-empty.';
 
--- Folds ONE epoch for ONE lane: delete-then-insert, so it serves both first close and refold.
--- The unsettled-in-range guard lives in the CALLERS (close checks it, refold deliberately does
--- not — a repair refold must fold what is there now).
+-- The CANONICAL epoch fold: one epoch's bucket folds for one lane, computed from the event
+-- store. Every consumer of "what should this epoch hold" — close, refold, verify — reads THIS
+-- function, so the predicates (mirroring the 087 emit-chain fold: ephemeral flags&8 and
+-- at-most-once excluded) live in exactly one place and cannot drift apart.
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_epoch_buckets(
+  p_lane  UUID,
+  p_epoch BIGINT,
+  p_width BIGINT
+) RETURNS TABLE (b_tenant TEXT, b_type TEXT, b_lo BIGINT, b_hi BIGINT, b_cnt INTEGER)
+LANGUAGE plpgsql STABLE
+AS $$
+DECLARE
+  c_zero CONSTANT UUID := '00000000-0000-0000-0000-000000000000';
+  v_from  BIGINT := p_epoch * p_width;
+  v_to    BIGINT := (p_epoch + 1) * p_width;   -- exclusive
+BEGIN
+  IF p_lane = c_zero THEN
+    RETURN QUERY
+    SELECT COALESCE(es.scope ->> 't', ''), es.event_type::text,
+           bit_xor(hashtextextended(es.event_id::text, 0)),
+           bit_xor(hashtextextended(es.event_id::text, 1)),
+           COUNT(*)::int
+    FROM __SCHEMA__.wh_event_store es
+    LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
+    WHERE es.origin_service_id IS NULL
+      AND es.commit_sequence >= v_from AND es.commit_sequence < v_to
+      AND COALESCE(es.flags, 0) & 8 = 0
+      AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
+    GROUP BY 1, 2;
+  ELSE
+    RETURN QUERY
+    SELECT COALESCE(es.scope ->> 't', ''), es.event_type::text,
+           bit_xor(hashtextextended(es.event_id::text, 0)),
+           bit_xor(hashtextextended(es.event_id::text, 1)),
+           COUNT(*)::int
+    FROM __SCHEMA__.wh_event_store es
+    LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
+    WHERE es.origin_service_id = p_lane
+      AND es.origin_commit_sequence >= v_from AND es.origin_commit_sequence < v_to
+      AND COALESCE(es.flags, 0) & 8 = 0
+      AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
+    GROUP BY 1, 2;
+  END IF;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__._wh_epoch_buckets IS
+'Internal: the canonical epoch fold — the single source of truth for what an epoch should hold. Predicates mirror the 087 emit-chain fold exactly.';
+
+-- Folds ONE epoch for ONE lane: delete-then-insert, so it serves close, refold, and heal.
+-- The unsettled-in-range guard lives in the CALLERS (close and verify check it; refold
+-- deliberately does not — a repair refold must fold what is there now).
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_fold_digest_epoch(
   p_lane      UUID,
   p_epoch     BIGINT,
@@ -78,48 +127,102 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._wh_fold_digest_epoch(
 ) RETURNS VOID
 LANGUAGE plpgsql
 AS $$
-DECLARE
-  c_zero CONSTANT UUID := '00000000-0000-0000-0000-000000000000';
-  v_from  BIGINT := p_epoch * p_width;
-  v_to    BIGINT := (p_epoch + 1) * p_width;   -- exclusive
 BEGIN
   DELETE FROM __SCHEMA__.wh_digest_epochs
   WHERE origin_service_id = p_lane AND epoch_id = p_epoch;
 
-  IF p_lane = c_zero THEN
-    INSERT INTO __SCHEMA__.wh_digest_epochs
-      (origin_service_id, scope_tenant, event_type, epoch_id, digest_lo, digest_hi, event_count, closed_at)
-    SELECT c_zero, COALESCE(es.scope ->> 't', ''), es.event_type, p_epoch,
-           bit_xor(hashtextextended(es.event_id::text, 0)),
-           bit_xor(hashtextextended(es.event_id::text, 1)),
-           COUNT(*)::int, p_closed_at
-    FROM __SCHEMA__.wh_event_store es
-    LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
-    WHERE es.origin_service_id IS NULL
-      AND es.commit_sequence >= v_from AND es.commit_sequence < v_to
-      AND COALESCE(es.flags, 0) & 8 = 0
-      AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
-    GROUP BY 2, 3;
-  ELSE
-    INSERT INTO __SCHEMA__.wh_digest_epochs
-      (origin_service_id, scope_tenant, event_type, epoch_id, digest_lo, digest_hi, event_count, closed_at)
-    SELECT p_lane, COALESCE(es.scope ->> 't', ''), es.event_type, p_epoch,
-           bit_xor(hashtextextended(es.event_id::text, 0)),
-           bit_xor(hashtextextended(es.event_id::text, 1)),
-           COUNT(*)::int, p_closed_at
-    FROM __SCHEMA__.wh_event_store es
-    LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
-    WHERE es.origin_service_id = p_lane
-      AND es.origin_commit_sequence >= v_from AND es.origin_commit_sequence < v_to
-      AND COALESCE(es.flags, 0) & 8 = 0
-      AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
-    GROUP BY 2, 3;
-  END IF;
+  INSERT INTO __SCHEMA__.wh_digest_epochs
+    (origin_service_id, scope_tenant, event_type, epoch_id, digest_lo, digest_hi, event_count, closed_at)
+  SELECT p_lane, b.b_tenant, b.b_type, p_epoch, b.b_lo, b.b_hi, b.b_cnt, p_closed_at
+  FROM __SCHEMA__._wh_epoch_buckets(p_lane, p_epoch, p_width) b;
 END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_fold_digest_epoch IS
-'Internal: (re)computes one epoch''s bucket folds for one lane from the event store. Predicates mirror the 087 emit-chain fold exactly — ephemeral (flags&8) and at-most-once excluded.';
+'Internal: (re)writes one epoch''s bucket rows from the canonical fold (_wh_epoch_buckets).';
+
+-- #80-D: the sweep''s seal backstop. Manifest answers trust sealed epochs WITHOUT re-verifying
+-- (that is the whole point of the epochs), so this is the ONE place a bad seal gets caught —
+-- each closed epoch is recomputed from the store, compared bucket-for-bucket, and refolded on
+-- drift. Epochs holding an UNSETTLED arrival (a fresh backfill into a closed range) are skipped
+-- whole, exactly like closure: verifying now would fold an in-flight delivery into a seal; they
+-- verify on a later sweep.
+CREATE OR REPLACE FUNCTION __SCHEMA__.verify_digest_epochs(
+  p_now            TIMESTAMPTZ,
+  p_settle_seconds INTEGER,
+  p_max_epochs     INTEGER
+) RETURNS TABLE (epochs_checked INTEGER, epochs_drifted INTEGER)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  c_zero CONSTANT UUID := '00000000-0000-0000-0000-000000000000';
+  v_lane     UUID;
+  v_frontier BIGINT;
+  v_width    BIGINT;
+  v_epoch    BIGINT;
+  v_blocked  BOOLEAN;
+  v_stored   TEXT[];
+  v_fresh    TEXT[];
+  v_checked  INTEGER := 0;
+  v_drifted  INTEGER := 0;
+BEGIN
+  FOR v_lane, v_frontier, v_width IN
+    SELECT f.origin_service_id, f.closed_through_epoch, f.epoch_width
+    FROM __SCHEMA__.wh_digest_epoch_frontiers f
+    WHERE f.closed_through_epoch >= 0
+  LOOP
+    v_epoch := 0;
+    WHILE v_epoch <= v_frontier LOOP
+      IF v_checked >= p_max_epochs THEN
+        RETURN QUERY SELECT v_checked, v_drifted;
+        RETURN;
+      END IF;
+
+      IF v_lane = c_zero THEN
+        SELECT EXISTS (
+          SELECT 1 FROM __SCHEMA__.wh_event_store es
+          WHERE es.origin_service_id IS NULL
+            AND es.commit_sequence >= v_epoch * v_width AND es.commit_sequence < (v_epoch + 1) * v_width
+            AND es.created_at >= p_now - make_interval(secs => p_settle_seconds)
+        ) INTO v_blocked;
+      ELSE
+        SELECT EXISTS (
+          SELECT 1 FROM __SCHEMA__.wh_event_store es
+          WHERE es.origin_service_id = v_lane
+            AND es.origin_commit_sequence >= v_epoch * v_width AND es.origin_commit_sequence < (v_epoch + 1) * v_width
+            AND es.created_at >= p_now - make_interval(secs => p_settle_seconds)
+        ) INTO v_blocked;
+      END IF;
+
+      IF NOT v_blocked THEN
+        SELECT array_agg((de.scope_tenant, de.event_type, de.digest_lo, de.digest_hi, de.event_count)::text
+                         ORDER BY de.scope_tenant, de.event_type)
+        INTO v_stored
+        FROM __SCHEMA__.wh_digest_epochs de
+        WHERE de.origin_service_id = v_lane AND de.epoch_id = v_epoch;
+
+        SELECT array_agg((b.b_tenant, b.b_type, b.b_lo, b.b_hi, b.b_cnt)::text
+                         ORDER BY b.b_tenant, b.b_type)
+        INTO v_fresh
+        FROM __SCHEMA__._wh_epoch_buckets(v_lane, v_epoch, v_width) b;
+
+        IF v_stored IS DISTINCT FROM v_fresh THEN
+          PERFORM __SCHEMA__._wh_fold_digest_epoch(v_lane, v_epoch, v_width, p_now);
+          v_drifted := v_drifted + 1;
+        END IF;
+        v_checked := v_checked + 1;
+      END IF;
+
+      v_epoch := v_epoch + 1;
+    END LOOP;
+  END LOOP;
+
+  RETURN QUERY SELECT v_checked, v_drifted;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.verify_digest_epochs IS
+'Sweep backstop: recomputes each closed epoch from the store, compares bucket-for-bucket, refolds on drift. Non-zero drift means an unaccounted write path — alarm-worthy, not routine. Epochs with unsettled arrivals are skipped whole.';
 
 -- Advances each lane's contiguous frontier, folding every closable epoch. Returns epochs closed
 -- across all lanes (empty epochs advance the frontier and count, but write no rows).

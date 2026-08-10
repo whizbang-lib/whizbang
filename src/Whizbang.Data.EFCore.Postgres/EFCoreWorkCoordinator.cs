@@ -785,6 +785,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken);
 
   /// <inheritdoc />
+  public Task<EpochVerificationResult> VerifyDigestEpochsAsync(
+    TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText =
+        "SELECT epochs_checked, epochs_drifted " +
+        $"FROM {BuildSchemaQualifiedName(schema, "verify_digest_epochs")}(NOW(), @p_settle, @p_max)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", (int)settleWindow.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_max", Math.Max(1, maxEpochs)));
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+      return new EpochVerificationResult(reader.GetInt32(0), reader.GetInt32(1));
+    }, cancellationToken);
+
+  /// <inheritdoc />
   public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
       cmd.CommandText = $"SELECT sealed_through FROM {schema}.wh_integrity_seals WHERE origin_service_id = @p_origin";
