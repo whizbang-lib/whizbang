@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -81,6 +83,55 @@ public class IntegrityLedgerContractTests {
 
     await Assert.That(await ledger.TryBeginReportAsync(_key(), 1, 2, 3, 4, t0.AddMinutes(1), cooldown)).IsTrue()
       .Because("a bucket that folded identical and later diverges again is a brand-new incident");
+  }
+
+  /// <summary>
+  /// A provider that cannot store convergence state still has to answer, and the two answers are
+  /// deliberately asymmetric: over-reporting is noisy but self-correcting, whereas an unbounded
+  /// repair request runs against real data. So the safe default is report-yes / repair-no. Locking
+  /// it here means a driver that forgets to implement the ledger degrades loudly rather than
+  /// dangerously.
+  /// </summary>
+  [Test]
+  public async Task CoordinatorWithoutLedgerSupport_ReportsButRefusesRepairAsync() {
+    IWorkCoordinator coordinator = new LedgerlessCoordinator();
+    var now = DateTimeOffset.UtcNow;
+
+    await Assert.That(await coordinator.IntegrityTryBeginReportAsync(
+        _key(), 1, 2, 3, 4, now, TimeSpan.FromMinutes(60))).IsTrue()
+      .Because("a provider that cannot suppress must not silence divergence reporting entirely — "
+               + "over-reporting is recoverable, blindness is not");
+
+    await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(
+        _key(), now, TimeSpan.FromSeconds(300), maxAttempts: 8)).IsFalse()
+      .Because("without durable attempt counting there is nothing to bound the repair loop, so the "
+               + "unsupported default must refuse rather than request repairs it cannot cap");
+
+    // Must not throw: the healed signal is fire-and-forget, and a driver without a ledger has
+    // nothing to forget.
+    await coordinator.IntegrityMarkHealedAsync(_key());
+  }
+
+  /// <summary>An engine with no ledger support — every ledger member falls to its default.</summary>
+  private sealed class LedgerlessCoordinator : IWorkCoordinator {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
+      IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new List<PerspectiveCursorInfo>());
+    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
   }
 
   [Test]
