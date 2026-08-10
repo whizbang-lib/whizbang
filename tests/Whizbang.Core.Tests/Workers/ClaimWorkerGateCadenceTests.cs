@@ -45,6 +45,20 @@ public class ClaimWorkerGateCadenceTests {
     public TaskCompletionSource FirstCallSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource SecondCallSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ThirdCallSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource? _nextCall;
+
+    /// <summary>
+    /// Arms a one-shot signal for the NEXT claim. Lets a test wait for a poll it is about to
+    /// provoke without reading <see cref="ClaimCallTimes"/> from another thread, and without
+    /// measuring elapsed wall-clock — the arrival itself is the evidence.
+    /// </summary>
+    public Task ArmNextCall() {
+      lock (_lock) {
+        _nextCall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        return _nextCall.Task;
+      }
+    }
+
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       lock (_lock) {
         ClaimCallTimes.Add(DateTimeOffset.UtcNow);
@@ -55,6 +69,8 @@ public class ClaimWorkerGateCadenceTests {
         } else if (ClaimCallTimes.Count == 3) {
           ThirdCallSignal.TrySetResult();
         }
+        _ = _nextCall?.TrySetResult();
+        _nextCall = null;
       }
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -176,39 +192,40 @@ public class ClaimWorkerGateCadenceTests {
 
   [Test]
   public async Task GateFlipsToAvailable_TriggersImmediatePollAsync() {
-    // When the gate transitions false → true (e.g., the network came back), a poll
-    // should fire RIGHT AWAY so any work that accumulated during the unavailable window
-    // doesn't wait out the next adaptive-backoff tick.
+    // When the gate transitions false → true (e.g., the network came back), a poll should fire
+    // RIGHT AWAY so any work that accumulated during the unavailable window doesn't wait out the
+    // next tick.
+    //
+    // The base interval is deliberately LONG here, and that is the whole design of the test. The
+    // earlier version used a 50 ms base and measured wake latency against a 500 ms budget, which
+    // could not fail: an unavailable gate pins the interval at base (see _computeAdaptiveWait's
+    // IsAvailable == false branch), so a poll landed within ~50 ms whether or not the flip woke
+    // anything — and a poll landing between the list Clear() and the timestamp read even produced
+    // a NEGATIVE latency, which also passes "< 500 ms". Deleting the behavior under test left it
+    // green. With a 5 s base, the only way the next claim can arrive promptly is the flip waking
+    // the loop; otherwise the worker sits out the interval and the wait below times out.
     var (worker, coord, gate) = _newWorker(
-      pollingIntervalMilliseconds: 50,
+      pollingIntervalMilliseconds: 5_000,
       pollingMaxIntervalMilliseconds: 5_000,
       gateAvailable: true);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-    // Force a long-ish wait that would otherwise apply: drive several empty polls so
-    // the backoff stretches, then flip the gate. The flip should wake us within ~base
-    // rather than after the full backoff.
-    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // Available → unavailable also wakes the loop; take that poll so the worker then parks on a
+    // full 5 s unavailable-cadence wait, which is the state the flip has to interrupt.
+    var afterGoingDown = coord.ArmNextCall();
     gate.Set(false);
-    var fourthSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    coord.ClaimCallTimes.Clear();
-    coord.FirstCallSignal.TrySetResult();
-    coord.SecondCallSignal.TrySetResult();
-    coord.ThirdCallSignal.TrySetResult();
+    await afterGoingDown.WaitAsync(TimeSpan.FromSeconds(10));
 
-    // Trigger the transition + measure wake latency.
-    var beforeFlip = DateTimeOffset.UtcNow;
+    // Now the discriminating step: the worker is parked for ~5 s. Arm BEFORE flipping so the
+    // signal cannot be missed, then require the poll well inside that interval.
+    var afterComingBack = coord.ArmNextCall();
     gate.Set(true);
-    while (coord.ClaimCallTimes.Count == 0) { await Task.Delay(20); }
-    var afterFlip = coord.ClaimCallTimes[0];
-    var wakeLatency = afterFlip - beforeFlip;
 
-    await Assert.That(wakeLatency).IsLessThan(TimeSpan.FromMilliseconds(500))
-      .Because("gate available transition should RequestImmediatePoll, waking the worker promptly");
+    await afterComingBack.WaitAsync(TimeSpan.FromSeconds(2))
+      .ConfigureAwait(false);   // times out at 2 s if the flip did not RequestImmediatePoll
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
