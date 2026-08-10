@@ -487,6 +487,74 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<bool> IntegrityTryBeginReportAsync(
+      IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+      DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
+    await _integrityLedgerBoolAsync("wh_integrity_try_begin_report", cmd => {
+      _bindDivergenceKey(cmd, key);
+      cmd.Parameters.AddWithValue("p_origin_lo", originLo);
+      cmd.Parameters.AddWithValue("p_origin_hi", originHi);
+      cmd.Parameters.AddWithValue("p_local_lo", localLo);
+      cmd.Parameters.AddWithValue("p_local_hi", localHi);
+      cmd.Parameters.AddWithValue("p_now", now);
+      cmd.Parameters.AddWithValue("p_cooldown_seconds", (int)cooldown.TotalSeconds);
+    }, 10, failOpen: true, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  public async Task<bool> IntegrityTryBeginRepairAsync(
+      IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+      CancellationToken cancellationToken = default) =>
+    await _integrityLedgerBoolAsync("wh_integrity_try_begin_repair", cmd => {
+      _bindDivergenceKey(cmd, key);
+      cmd.Parameters.AddWithValue("p_now", now);
+      cmd.Parameters.AddWithValue("p_base_backoff_secs", (int)baseBackoff.TotalSeconds);
+      cmd.Parameters.AddWithValue("p_max_attempts", maxAttempts);
+    }, 7, failOpen: false, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  public async Task IntegrityMarkHealedAsync(
+      IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
+    _ = await _integrityLedgerBoolAsync("wh_integrity_mark_healed",
+      cmd => _bindDivergenceKey(cmd, key), 4, failOpen: false, cancellationToken).ConfigureAwait(false);
+
+  private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
+    cmd.Parameters.AddWithValue("p_origin_service_id", key.OriginServiceId);
+    cmd.Parameters.AddWithValue("p_tenant_scope", (object?)key.TenantScope ?? string.Empty);
+    cmd.Parameters.AddWithValue("p_event_type", key.EventType);
+    cmd.Parameters.AddWithValue("p_stream_id", key.StreamId);
+  }
+
+  /// <summary>
+  /// Calls a ledger function. On failure the caller's prior behaviour is preserved via
+  /// <paramref name="failOpen"/>: reporting proceeds (over-reporting is recoverable), repair does
+  /// not (an unbounded repair request against real data is not).
+  /// </summary>
+  private async Task<bool> _integrityLedgerBoolAsync(
+      string fn, Action<Npgsql.NpgsqlCommand> bind, int argCount, bool failOpen, CancellationToken ct) {
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+      var schema = GetSchemaWithFallback(
+        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var qualified = BuildSchemaQualifiedName(schema, fn);
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), ct);
+      var conn = __scope.Connection;
+      await using var cmd = conn.CreateCommand();
+      var args = string.Join(",", Enumerable.Range(1, argCount).Select(i => "$" + i));
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}({args})";
+#pragma warning restore S2077
+      bind(cmd);
+      var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+      return result is bool b ? b : failOpen;
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception) {
+      return failOpen;
+    }
+  }
+
+  /// <inheritdoc />
   public async Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
