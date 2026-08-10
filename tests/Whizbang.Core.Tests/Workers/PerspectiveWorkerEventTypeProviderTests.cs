@@ -69,14 +69,11 @@ public class PerspectiveWorkerEventTypeProviderTests {
       WorkId = eventId,
     }, cts.Token);
 
-    // Wait for the worker to process — cursor lands on completion channel via the InstantCompletionStrategy
-    // when ReportCompletionAsync runs; but the strategy reports DIRECTLY to the coordinator (not the channel).
-    // Easier signal: the FakeEventStore call that proves lazy-resolve worked.
-    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-    while (eventStore.GetEventsBetweenPolymorphicCallCount == 0 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(10);
-    }
-    cts.Cancel();
+    // Wait on the event-store read itself — the call that proves lazy-resolve worked. The fake
+    // completes this only after recording the call, so the assertion below cannot observe a
+    // half-written state the way a poll on the counter could.
+    await eventStore.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
 
     // Assert — If lazy-resolve works, the worker should have resolved IEventTypeProvider from scope
@@ -134,11 +131,12 @@ public class PerspectiveWorkerEventTypeProviderTests {
       WorkId = eventId,
     }, cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-    while (eventTypeProvider.GetEventTypesCallCount == 0 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(10);
-    }
-    cts.Cancel();
+    // Wait on the provider's own completion signal, which it raises only after BOTH counters are
+    // written. Polling GetEventTypesCallCount instead let the loop exit between the increment and
+    // the LastReturnedCount assignment, so the assertion below read 0 — a real CI failure, and one
+    // that no amount of extra deadline would have fixed.
+    await eventTypeProvider.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
 
     // Assert — The resolved provider should have been called and returned non-empty types
@@ -154,7 +152,11 @@ public class PerspectiveWorkerEventTypeProviderTests {
 
   private sealed class FakeEventStore : IEventStore {
     private readonly Dictionary<Guid, List<MessageEnvelope<IEvent>>> _events = [];
-    public int GetEventsBetweenPolymorphicCallCount { get; private set; }
+    private int _getEventsBetweenCalls;
+
+    /// <summary>Completed once the polymorphic read has been made — see TrackingEventTypeProvider.</summary>
+    public TaskCompletionSource Called { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int GetEventsBetweenPolymorphicCallCount => Volatile.Read(ref _getEventsBetweenCalls);
 
     public void AddEvent(Guid streamId, Guid eventId, IEvent payload) {
       if (!_events.TryGetValue(streamId, out var list)) {
@@ -186,7 +188,8 @@ public class PerspectiveWorkerEventTypeProviderTests {
     public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
         Guid streamId, Guid? afterEventId, Guid upToEventId,
         IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
-      GetEventsBetweenPolymorphicCallCount++;
+      _ = Interlocked.Increment(ref _getEventsBetweenCalls);
+      Called.TrySetResult();
       if (_events.TryGetValue(streamId, out var events)) {
         return Task.FromResult(events);
       }
@@ -211,13 +214,24 @@ public class PerspectiveWorkerEventTypeProviderTests {
   /// <summary>
   /// EventTypeProvider that tracks calls to GetEventTypes for assertion.
   /// </summary>
+  /// <remarks>
+  /// <see cref="Called"/> is completed LAST, after both counters are written. Waiting on the call
+  /// count instead let a reader observe the increment while <see cref="LastReturnedCount"/> was
+  /// still zero — the fields are written on the worker thread and read on the test thread, so
+  /// without the completion source there is neither ordering nor a memory barrier between them.
+  /// </remarks>
   private sealed class TrackingEventTypeProvider(IReadOnlyList<Type> eventTypes) : IEventTypeProvider {
-    public int GetEventTypesCallCount { get; private set; }
-    public int LastReturnedCount { get; private set; }
+    private int _calls;
+    private int _lastReturned;
+
+    public TaskCompletionSource Called { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int GetEventTypesCallCount => Volatile.Read(ref _calls);
+    public int LastReturnedCount => Volatile.Read(ref _lastReturned);
 
     public IReadOnlyList<Type> GetEventTypes() {
-      GetEventTypesCallCount++;
-      LastReturnedCount = eventTypes.Count;
+      Volatile.Write(ref _lastReturned, eventTypes.Count);
+      _ = Interlocked.Increment(ref _calls);
+      Called.TrySetResult();
       return eventTypes;
     }
   }
