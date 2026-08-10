@@ -107,6 +107,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IntegrityCheckpointWorker>();
     services.TryAddSingleton<SubscriptionExpansionWorker>();
     services.TryAddSingleton<IntegrityAuditWorker>();
+    // #80-D: the audit worker doubles as the sweep runner (the scheduled occurrence's receptor
+    // resolves it); the state object is how the driver's cron scheduler stands the counter down.
+    services.TryAddSingleton<IIntegritySweepRunner>(sp => sp.GetRequiredService<IntegrityAuditWorker>());
+    services.TryAddSingleton<IntegritySweepScheduleState>();
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityGapTracker>();
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     services.TryAddSingleton<OutboxPublishWorker>();

@@ -31,7 +31,7 @@ public sealed partial class IntegrityAuditWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
   IOptions<StreamIntegrityOptions> options,
-  ILogger<IntegrityAuditWorker> logger) : BackgroundService {
+  ILogger<IntegrityAuditWorker> logger) : BackgroundService, IIntegritySweepRunner {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -92,7 +92,16 @@ public sealed partial class IntegrityAuditWorker(
       : TimeSpan.FromMinutes(options.AuditIntervalMinutes);
 
   /// <summary>One audit cycle: the local coverage half, then the cross-service manifest requests.</summary>
-  public async Task RunAuditOnceAsync(CancellationToken cancellationToken) {
+  public Task RunAuditOnceAsync(CancellationToken cancellationToken) =>
+    _runAuditCoreAsync(forceSweep: false, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>#80-D: the scheduled idle-time entry point. The cycle claim still applies, so a
+  /// just-swept service's next steady audit is naturally deduped too.</remarks>
+  public Task RunSweepOnceAsync(CancellationToken cancellationToken) =>
+    _runAuditCoreAsync(forceSweep: true, cancellationToken);
+
+  private async Task _runAuditCoreAsync(bool forceSweep, CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
@@ -120,8 +129,14 @@ public sealed partial class IntegrityAuditWorker(
     // settle-skip on busy buckets). Every Nth cycle is the trust-but-verify sweep: heal our OWN
     // table against a full recompute (non-zero drift = an unaccounted write path — alarm), and
     // exchange recomputed digests end to end so busy buckets get their coverage too.
+    // #80-D: once the idle-time cron owns the sweep (the driver registered it on the temporal
+    // engine), the counter stands down — otherwise the heaviest work runs on both cadences, and
+    // the counter lands it at arbitrary load times. Hosts without the temporal engine never set
+    // the state, keeping the every-Nth-cycle counter as the fallback.
+    var cronOwnsTheSweep = services.GetService<IntegritySweepScheduleState>()?.CronActive == true;
     var cycle = Interlocked.Increment(ref _cycleCount);
-    var sweep = _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0;
+    var sweep = forceSweep
+      || (!cronOwnsTheSweep && _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0);
     if (sweep) {
       var verification = await coordinator.VerifyDigestTableAsync(settle, cancellationToken).ConfigureAwait(false);
       metrics?.DigestBucketsVerified.Add(verification.BucketsChecked);

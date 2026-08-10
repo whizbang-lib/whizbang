@@ -115,6 +115,12 @@ public static class PostgresDriverExtensions {
         // RequestRedeliveryCommand drives the selection + targeted re-delivery pump. Same rationale as above.
         selector.Services.AddHostedService<RedeliveryRequestReceptorRegistrar>();
 
+        // TURNKEY: #80-D scheduled integrity sweep — the receptor reacts to the idle-time cron's
+        // occurrences, and the scheduler registers that cron on the temporal engine (standing the
+        // audit worker's every-Nth-cycle counter down). Same rationale as above.
+        selector.Services.AddHostedService<ScheduledIntegritySweepReceptorRegistrar>();
+        selector.Services.AddHostedService<IntegritySweepScheduler>();
+
         // TURNKEY: stream-integrity B2/B3 — runtime-register IntegrityCheckpointReceptor so received
         // checkpoints drive windowed gap detection (and ladder-gated auto-repair). Same rationale as above.
         selector.Services.AddHostedService<IntegrityCheckpointReceptorRegistrar>();

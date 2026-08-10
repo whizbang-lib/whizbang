@@ -348,8 +348,23 @@ public sealed class StreamIntegrityOptions {
   /// (<see cref="IWorkCoordinator.VerifyDigestTableAsync"/>) and the manifest exchange runs on
   /// recomputed digests end to end — covering buckets whose steady traffic settle-skips them on
   /// table-driven cycles. 0 or negative disables sweeps (table-driven cycles only).
+  /// #80-D: this counter is the FALLBACK cadence — once <see cref="FullSweepCron"/> is registered
+  /// on the temporal engine, the counter stands down and the cron owns the sweep.
   /// </summary>
   public int FullSweepEveryNthAudit { get; set; } = 7;
+
+  /// <summary>
+  /// #80-D: cron for the full sweep on the temporal engine (default <c>"0 3 * * *"</c> — daily at
+  /// 03:00 UTC), so the heaviest verification runs at a configured IDLE hour instead of wherever
+  /// the every-Nth-cycle counter happens to land it. When the cron's minute field is <c>0</c>
+  /// (the default), each service replaces it with a stable per-service splay minute so a fleet
+  /// sharing one database server does not sweep in unison; an explicit non-zero minute is honored
+  /// verbatim. Null or empty disables cron scheduling —
+  /// <see cref="FullSweepEveryNthAudit"/> then remains the cadence, as it does on hosts without
+  /// the temporal engine.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public string? FullSweepCron { get; set; } = "0 3 * * *";
 
   /// <summary>
   /// A1c: storm cap on the DRILL-DOWN — how many mismatched types one type-level manifest may

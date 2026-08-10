@@ -132,6 +132,18 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
 }
 
 /// <summary>
+/// #80-D: the occurrence a scheduled integrity-sweep fires at the configured idle-time cron. The
+/// driver's built-in receptor reacts by running one full sweep
+/// (<see cref="Whizbang.Core.Workers.IIntegritySweepRunner"/>) — the trust-but-verify pass that
+/// catches exactly the state the epoch seals and audit seals assume is fine. A command (imperative
+/// "sweep now"), riding the F2 occurrence mechanism like <c>ScheduledStreamClose</c>.
+/// </summary>
+/// <docs>resilience/stream-integrity</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySweepSchedulingTests.cs</tests>
+[PinnedId("a7d2e9c4-5b18-4f36-8e0a-1c9b7d4f2a85")]
+public sealed record ScheduledIntegritySweep : ICommand;
+
+/// <summary>
 /// Stream-integrity #80-B: the result of a NEGOTIATED-SCOPE digest read — digests for a sequence
 /// window <c>[since, until)</c> plus the two-dimensional resume cursor. The window is half-open on
 /// purpose: epoch boundaries align exactly and <see cref="ComputedThrough"/> (the exclusive end
