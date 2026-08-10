@@ -520,7 +520,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </remarks>
   public async Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
-    if (!System.Text.RegularExpressions.Regex.IsMatch(tableName, "^wh_[a-z0-9_]{1,60}$")) {
+    if (!_isFrameworkTableName(tableName)) {
       throw new ArgumentException(
         $"Refusing to rewrite '{tableName}': only framework tables matching wh_[a-z0-9_] may be rewritten.",
         nameof(tableName));
@@ -566,6 +566,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <summary>
+  /// Whether a name is one of the framework's own tables, checked character by character rather
+  /// than by regex. VACUUM FULL cannot be parameterised, so this is the only thing standing
+  /// between a caller-supplied name and interpolated DDL — a plain scan has no backtracking
+  /// behaviour to reason about and no timeout to forget.
+  /// </summary>
+  private static bool _isFrameworkTableName(string name) {
+    if (name.Length <= 3 || name.Length > 63 || !name.StartsWith("wh_", StringComparison.Ordinal)) {
+      return false;
+    }
+    foreach (var c in name) {
+      var ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   public async Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

@@ -49,7 +49,10 @@ BEGIN
     v_current := '';
   END IF;
 
-  IF p_table = ANY(string_to_array(NULLIF(v_current, ''), ',')) THEN
+  -- COALESCE to an empty array rather than letting string_to_array return NULL: `x = ANY(NULL)`
+  -- evaluates to NULL, not FALSE, and relying on IF treating NULL as false is accidental
+  -- correctness. An empty array makes the comparison definitively FALSE.
+  IF p_table = ANY(COALESCE(string_to_array(NULLIF(v_current, ''), ','), ARRAY[]::TEXT[])) THEN
     RETURN;   -- already recorded
   END IF;
 
