@@ -384,6 +384,27 @@ public sealed class StreamIntegrityOptions {
   public int MaxRepairAttemptsPerBucket { get; set; } = 8;
 
   /// <summary>
+  /// Advance the digest-epoch closure frontier on the maintenance cadence (default true).
+  /// Epochs (migration 092) are what let manifest answers read immutable folds instead of
+  /// re-aggregating live history; without closure the frontier never moves and every audit
+  /// keeps paying the full-scan cost the epochs exist to end. Disable only on engines that
+  /// serve no integrity manifests.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public bool EpochClosureEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Max epochs closed per maintenance cycle across all lanes (default 64). Each closure is an
+  /// O(events-in-epoch) recompute, so this bounds a cycle's closure work by the operator's cap
+  /// rather than by backlog size — a long-unclosed store catches up over several cycles instead
+  /// of stalling one. The settle window closure uses is <see cref="AuditSettleWindowMinutes"/>:
+  /// closure and the audit MUST agree on what "settled" means, or a seal could disagree with a
+  /// manifest folded over the same range.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public int MaxEpochClosuresPerMaintenanceCycle { get; set; } = 64;
+
+  /// <summary>
   /// Publish <see cref="IntegrityDivergenceDetected"/> / <see cref="IntegrityGapDetected"/> as
   /// durable events (default <c>false</c>).
   /// </summary>

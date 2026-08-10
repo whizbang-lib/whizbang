@@ -914,6 +914,29 @@ public interface IWorkCoordinator {
     Task.FromResult(new EphemeralPointerPruneResult(0, "unsupported"));
 
   /// <summary>
+  /// Advances the digest-epoch closure frontier (migration 092): folds every closable epoch —
+  /// settled max beyond it AND no unsettled event inside its range — into immutable
+  /// <c>wh_digest_epochs</c> bucket rows, up to <paramref name="maxEpochs"/> across all lanes.
+  /// Called from the maintenance cycle; the epoch substrate is inert without this.
+  /// </summary>
+  /// <param name="settleSeconds">The settle window — MUST equal the audit's
+  /// (<see cref="StreamIntegrityOptions.AuditSettleWindowMinutes"/> in seconds), or a seal could
+  /// disagree with a manifest folded over the same range.</param>
+  /// <param name="maxEpochs">Cap on epochs closed this call, bounding the cycle's recompute work.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// Epochs closed, or <c>-1</c> for engines without the substrate. The sentinel is deliberate:
+  /// this is a default interface method, and a default that returned a plausible <c>0</c> would
+  /// make a missed override look exactly like a healthy idle system (the same silent-fallback
+  /// hazard the byte-budget overload documented).
+  /// </returns>
+  /// <docs>resilience/stream-integrity</docs>
+
+  Task<int> CloseDigestEpochsAsync(
+    int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) =>
+    Task.FromResult(-1);
+
+  /// <summary>
   /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
   /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
   /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing

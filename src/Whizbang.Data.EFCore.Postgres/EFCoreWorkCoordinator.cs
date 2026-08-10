@@ -744,6 +744,32 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<int> CloseDigestEpochsAsync(
+    int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "close_digest_epochs");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}(NOW(), @settle, @max)";
+#pragma warning restore S2077
+    var pSettle = cmd.CreateParameter();
+    pSettle.ParameterName = "settle";
+    pSettle.Value = settleSeconds;
+    cmd.Parameters.Add(pSettle);
+    var pMax = cmd.CreateParameter();
+    pMax.ParameterName = "max";
+    pMax.Value = maxEpochs;
+    cmd.Parameters.Add(pMax);
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return result is int closed ? closed : 0;
+  }
+
+  /// <inheritdoc />
   public async Task<StreamCloseResult> CloseStreamAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

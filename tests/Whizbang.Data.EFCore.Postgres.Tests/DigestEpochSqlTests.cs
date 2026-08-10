@@ -346,4 +346,28 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     await Assert.That(await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 1)).IsNotNull()
       .Because("epoch 1 under the pinned width [100,200) is closable once the frontier passes it");
   }
+
+  [Test]
+  public async Task Coordinator_CloseDigestEpochsAsync_DrivesTheSqlFunctionAsync() {
+    // The C# seam MaintenanceWorker rides. The Core default returns the "unsupported" sentinel, so
+    // this pins that the Postgres coordinator actually overrides it and reaches the function — a
+    // wiring mistake here would leave the substrate inert while every unit test stayed green
+    // (the fake-channel lesson: prove the live effect, not the enqueue).
+    await using var conn = await _openAsync();
+    await using var ctx = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    await _setWidthAsync(conn, 100);
+    var stream = Guid.NewGuid();
+
+    await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochProbe", 7, settled: true);
+    await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochProbe", 130, settled: true);
+
+    var closed = await coordinator.CloseDigestEpochsAsync(settleSeconds: 3600, maxEpochs: 100);
+
+    await Assert.That(closed).IsGreaterThanOrEqualTo(1)
+      .Because("epoch 0 was closable, and the coordinator must have actually run the closure to know that");
+    await Assert.That(await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0)).IsNotNull()
+      .Because("the live effect — a persisted epoch row — is the proof the call reached the database");
+  }
 }
