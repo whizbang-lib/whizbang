@@ -79,6 +79,12 @@ COMMENT ON COLUMN __SCHEMA__.wh_perspective_events.failure_reason IS 'Reason for
 
 -- Remove lease management from wh_perspective_cursors
 -- (lease management has moved to wh_perspective_events)
+-- RECLAIM: these bytes persist per PRE-EXISTING row until the table is rewritten (a uuid plus a
+--          timestamptz, so roughly 24 bytes and some null-bitmap padding). wh_perspective_cursors
+--          holds one row per (stream, perspective) and both columns are narrow, so the residue is
+--          small and a rewrite is NOT worth scheduling for this alone — let routine maintenance
+--          absorb it. Recorded because Postgres never reclaims dropped-column bytes on its own,
+--          so the obligation should be explicit even when the answer is "nothing to do".
 ALTER TABLE __SCHEMA__.wh_perspective_cursors
   DROP COLUMN IF EXISTS claimed_by_instance_id,
   DROP COLUMN IF EXISTS claimed_at;

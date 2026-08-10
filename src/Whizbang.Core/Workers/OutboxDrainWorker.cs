@@ -323,7 +323,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// matches non-routable rows (NULL or <see cref="Guid.Empty"/> stream_id) by message_id.
   /// </summary>
   private static Guid _drainKey(OutboxBatchRow row) =>
-    row.StreamId is { } s && s != Guid.Empty ? s : row.MessageId;
+    DrainKey.For(row.StreamId, row.MessageId);
 
   /// <summary>
   /// Drains one stream to empty: publish the rows in hand, then keep fetching that stream until

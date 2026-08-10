@@ -183,7 +183,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       // fallback semantics in fetch_inbox_batch's WHERE clause for unscoped/null-stream
       // rows). The drain channel feeds the same key, so dispatch can look it up.
       var perStream = rowsRaw
-        .GroupBy(r => r.StreamId ?? r.MessageId)
+        .GroupBy(r => DrainKey.For(r.StreamId, r.MessageId))
         .ToDictionary(g => g.Key, g => g.OrderByMessageId().ToList());
 
       foreach (var sid in streamIds) {
