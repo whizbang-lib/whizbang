@@ -830,4 +830,33 @@ public class IntegrityManifestReceptorTests {
       public Guid? StreamId => null;
     }
   }
+
+  [Test]
+  public async Task ManifestReceptor_ReportOnly_StillPublishesReportsAsync() {
+    // ReportOnly is the operator's explicit report-and-decide opt-down. Bounding reports by
+    // repairs must not silence the mode whose entire purpose is reporting without repairing.
+    var coordinator = new _auditCoordinator();
+    coordinator.ReceivedDigests = [];
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions {
+        RepairMode = IntegrityRepairMode.ReportOnly,
+        MaxDivergenceReportsPerManifest = 10,
+      },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var digests = Enumerable.Range(1, 50)
+      .Select(i => _digest(TrackedGuid.NewMedo().Value, i, i + 1, i))
+      .ToList();
+
+    await receptor.HandleAsync(_manifest(coordinator, digests));
+
+    await Assert.That(dispatcher.Published.OfType<IntegrityDivergenceDetected>().Any()).IsTrue()
+      .Because("an operator who chose report-and-decide must still get reports");
+  }
 }
