@@ -50,6 +50,13 @@ public sealed partial class TableStatisticsCollector(
 
         var depths = await provider.GetQueueDepthsAsync(stoppingToken);
         metrics.UpdateQueueDepths(depths);
+
+        // Space a table holds but cannot use is invisible without being asked for: dead tuples
+        // awaiting vacuum, or a dropped column whose bytes Postgres keeps in every pre-existing
+        // row until the table is rewritten. Publishing the ratio means an operator is told
+        // rather than having to go looking.
+        var bloat = await provider.GetTableBloatRatiosAsync(stoppingToken);
+        metrics.UpdateTableBloat(bloat);
       } catch (ObjectDisposedException) {
         break;  // Host is shutting down — exit the collection loop
       } catch (Exception ex) when (ex is not OperationCanceledException) {

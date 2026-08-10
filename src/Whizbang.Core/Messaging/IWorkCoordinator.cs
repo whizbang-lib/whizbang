@@ -843,6 +843,29 @@ public interface IWorkCoordinator {
       DriftRemoved = 0,
       DriftAdded = 0,
     });
+  /// <summary>
+  /// Tables whose heap is disproportionate to their live rows, re-measured at call time.
+  /// </summary>
+  /// <remarks>
+  /// Space a table holds but cannot use costs on every read — index heap-fetches pull emptier
+  /// pages and the buffer cache holds fewer useful rows. Churn is the usual cause: autovacuum
+  /// reclaims deleted rows to the free space map for reuse but never returns them to the OS, so
+  /// the file stays large. A dropped column is the other, and autovacuum can never reclaim that
+  /// at all. Only a table rewrite recovers either.
+  /// </remarks>
+  Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<TableRewriteCandidate>>([]);
+
+  /// <summary>
+  /// Rewrites a table to reclaim unusable space, returning the ratio afterwards so the caller can
+  /// confirm it worked. Takes an ACCESS EXCLUSIVE lock for the duration.
+  /// </summary>
+  Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.FromResult<double?>(null);
+
+  /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
+  Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
 
   /// <summary>
   /// Durable stream-integrity convergence state. Defaults keep the caller's prior behaviour when a
@@ -875,6 +898,7 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Rows pruned plus a status string (<c>disabled</c> | <c>not due</c> | <c>ok</c> | …).</returns>
   /// <docs>fundamentals/events/ephemeral-events</docs>
+
   Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(
     CancellationToken cancellationToken = default) =>
     Task.FromResult(new EphemeralPointerPruneResult(0, "unsupported"));
@@ -2286,3 +2310,9 @@ public sealed record InboxBatchRow {
   public string? Error { get; init; }
 }
 
+
+/// <summary>A table offered for rewrite, with the measurement that justified offering it.</summary>
+/// <param name="TableName">Unqualified table name.</param>
+/// <param name="BloatRatio">Heap bytes per live row over the expected row width; ~1.0 is lean.</param>
+/// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
+public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested);
