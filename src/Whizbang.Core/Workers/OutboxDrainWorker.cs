@@ -217,6 +217,13 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   }
 
   /// <summary>
+  /// The configured byte budget, or null when disabled. Non-positive is treated as "off" so a
+  /// misconfigured zero cannot silently starve every fetch down to one row per stream.
+  /// </summary>
+  private long? _byteBudget() =>
+    _options.MaxBytesPerStream is > 0 ? _options.MaxBytesPerStream : null;
+
+  /// <summary>
   /// Drains a whole batch of stream_ids with ONE multi-stream fetch, then publishes each
   /// stream's rows concurrently.
   /// </summary>
@@ -254,7 +261,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         using var scope = _scopeFactory.CreateScope();
         var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
         rowsRaw = await coordinator.FetchOutboxBatchAsync(
-          streamIds, _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+          streamIds, _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
       } catch (Exception ex) when (!ct.IsCancellationRequested) {
         // One batched fetch means one shared failure: a single poisoned stream would take its
         // siblings down with it, losing the per-stream fault isolation the old fan-out gave for
@@ -369,7 +376,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       } else {
         LogFetchBatchStart(_logger, streamId, fetchCount);
         rowsRaw = await coordinator.FetchOutboxBatchAsync(
-          [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+          [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
         LogFetchBatchReturned(_logger, streamId, fetchCount, rowsRaw.Count);
       }
 
@@ -1132,6 +1139,31 @@ public sealed class OutboxDrainWorkerOptions {
 
   /// <summary>Cap on how many leased outbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;
+
+  /// <summary>
+  /// Cap on the total PAYLOAD BYTES fetched per stream per iteration. Default 4 MB.
+  /// <c>null</c> or non-positive disables it, restoring the count-only bound.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The outbox sibling of <see cref="InboxDrainWorkerOptions.MaxBytesPerStream"/>.
+  /// <see cref="MaxPerStream"/> assumes rows are roughly the same size; control-plane traffic
+  /// breaks that badly — a redelivery composite carries a whole page of event history, so one
+  /// row can dwarf an ordinary command by orders of magnitude. An origin serving a backlog of
+  /// queued redelivery requests turns "fetch 100 rows" into tens of megabytes per round trip,
+  /// several times that on the managed heap, per concurrent drain consumer. Observed live as an
+  /// origin service OOM-looping through a raised memory limit while productively serving
+  /// backfill: each restart re-fetched the same oversized slice and died on it.
+  /// </para>
+  /// <para>
+  /// The budget trims the TAIL of a slice in publish order: at least one row per stream is
+  /// always returned, so an oversized message is still published rather than stalling its
+  /// stream forever. Ordinary traffic never reaches the budget — 100 rows at 2 KB is 200 KB
+  /// against a 4 MB ceiling.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  public long? MaxBytesPerStream { get; set; } = 4L * 1024 * 1024;
 
   /// <summary>
   /// Dead-letter threshold for wh_outbox rows. Total number of publish attempts permitted

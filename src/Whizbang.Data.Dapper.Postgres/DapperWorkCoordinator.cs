@@ -358,10 +358,19 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+  public Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
     Guid instanceId,
     int maxPerStream = 100,
+    CancellationToken cancellationToken = default)
+    => FetchOutboxBatchAsync(streamIds, instanceId, maxPerStream, null, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
@@ -372,8 +381,8 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<OutboxBatchRowDto>(
-      "SELECT * FROM fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream)",
-      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream });
+      "SELECT * FROM fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes });
 
     return [.. rows.Select(r => new OutboxBatchRow {
       MessageId = r.message_id,
@@ -392,7 +401,6 @@ public partial class DapperWorkCoordinator(
     })];
   }
 
-  /// <inheritdoc />
   /// <inheritdoc />
   public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
     IReadOnlyList<Guid> streamIds,

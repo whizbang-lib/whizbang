@@ -1306,6 +1306,28 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<OutboxBatchRow>>([]);
 
   /// <summary>
+  /// Byte-budgeted outbox fetch: bounds the slice by payload bytes as well as row count — the
+  /// outbox sibling of the byte-budgeted <c>FetchInboxBatchAsync</c> overload below, and shaped
+  /// as a separate overload for the same reason (see that overload's remarks: changing a
+  /// defaulted-interface-method signature silently un-implements it for every existing
+  /// implementer). The default delegates to the count-only overload, so an engine that has not
+  /// implemented this keeps its previous behavior (unbounded by bytes).
+  /// </summary>
+  /// <param name="streamIds">Streams to drain.</param>
+  /// <param name="instanceId">The claiming instance.</param>
+  /// <param name="maxPerStream">Row cap per stream.</param>
+  /// <param name="maxBytes">Payload-byte cap per stream; null disables it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
+    CancellationToken cancellationToken = default)
+    => FetchOutboxBatchAsync(streamIds, instanceId, maxPerStream, cancellationToken);
+
+  /// <summary>
   /// Per-stream-id payload fetch for the InboxDrainWorker. Mirror of
   /// <see cref="FetchOutboxBatchAsync"/> for <c>wh_inbox</c>, ordered by received_at within each stream.
   /// </summary>
