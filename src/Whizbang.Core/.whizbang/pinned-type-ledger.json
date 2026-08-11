@@ -170,6 +170,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "a7d2e9c4-5b18-4f36-8e0a-1c9b7d4f2a85",
+      "clrTypeName": "Whizbang.Core.Messaging.ScheduledIntegritySweep",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
       "pinnedId": "d4e8c1a6-9b03-4f27-8a5e-1c7b2d9e6f04",
       "clrTypeName": "Whizbang.Core.Perspectives.Compacted",
       "kind": "event",

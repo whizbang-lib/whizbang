@@ -84,8 +84,8 @@ public sealed partial class MaintenanceWorker(
     // harnesses run with Max Pool Size 2). This rides a scope and a cadence that already exist, so
     // it costs one extra query rather than a new periodic connection. Best-effort — a metrics read
     // must never fail a maintenance cycle.
+    var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
     try {
-      var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
       var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
       if (integrity is not null && integrityMetrics is not null) {
         integrityMetrics.UpdateLedgerGauges(
@@ -95,6 +95,25 @@ public sealed partial class MaintenanceWorker(
       throw;
     } catch (Exception ex) {
       LogLedgerGaugeRefreshFailed(_logger, ex);
+    }
+
+    // Digest-epoch closure (migration 092). The substrate is inert without a caller — nothing
+    // else advances the frontier, and an unclosed frontier means manifests keep re-aggregating
+    // live history. The settle window is the AUDIT's settle window on purpose: closure and the
+    // audit must agree on what "settled" means, or a seal could disagree with a manifest folded
+    // over the same range. Best-effort — the frontier just advances on a later cycle.
+    if (integrity is { EpochClosureEnabled: true }) {
+      try {
+        var closed = await coordinator.CloseDigestEpochsAsync(
+          integrity.AuditSettleWindowMinutes * 60, integrity.MaxEpochClosuresPerMaintenanceCycle, ct);
+        if (closed > 0) {
+          LogEpochsClosed(_logger, closed);
+        }
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogEpochClosureFailed(_logger, ex);
+      }
     }
 
     var results = await coordinator.PerformMaintenanceAsync(ct);
@@ -342,6 +361,14 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
     Message = "Stream-integrity ledger gauge refresh failed — convergence gauges will read stale until the next cycle")]
   static partial void LogLedgerGaugeRefreshFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 25, Level = LogLevel.Information,
+    Message = "Digest-epoch closure sealed {EpochsClosed} epoch(s) — manifest answers for those ranges now read immutable folds")]
+  static partial void LogEpochsClosed(ILogger logger, int epochsClosed);
+
+  [LoggerMessage(EventId = 26, Level = LogLevel.Warning,
+    Message = "Digest-epoch closure failed (non-fatal — the frontier advances on a later cycle)")]
+  static partial void LogEpochClosureFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
     Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Set MaintenanceWorkerOptions.AllowTableRewrite to let maintenance do it (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]

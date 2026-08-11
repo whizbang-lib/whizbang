@@ -48,6 +48,30 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// <summary>True = answer from a full recompute over the event store (the sweep cycle);
   /// false (default) = answer from the maintained digest table.</summary>
   public bool UseRecompute { get; init; }
+
+  /// <summary>
+  /// #80-B: true = a NEGOTIATED-SCOPE ask — the origin answers only the window
+  /// <c>[<see cref="SinceSequence"/>, <see cref="UntilSequence"/>)</c> (epoch-served) and stamps
+  /// the watermark fields on the manifest. False (default) = the legacy full-history ask,
+  /// byte-identical behavior — old peers never see a windowed answer they did not ask for.
+  /// </summary>
+  public bool Windowed { get; init; }
+
+  /// <summary>Inclusive window start — the asker's current verified watermark (default 0 =
+  /// nothing verified yet). Only read when <see cref="Windowed"/>.</summary>
+  public long SinceSequence { get; init; }
+
+  /// <summary>Exclusive window end; null = through the origin's settled max. Only read when
+  /// <see cref="Windowed"/>.</summary>
+  public long? UntilSequence { get; init; }
+
+  /// <summary>The asker's page bound for stream-level answers (null = the origin's
+  /// <c>MaxDigestsPerManifest</c>). The ASKER'S memory is the constraint the page protects.</summary>
+  public int? MaxDigests { get; init; }
+
+  /// <summary>Stream-level resume cursor from the previous answer's
+  /// <see cref="IntegrityManifest.ResumeAfterStreamId"/> (null = the window's first page).</summary>
+  public Guid? ResumeAfterStreamId { get; init; }
 }
 
 /// <summary>
@@ -81,6 +105,72 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// then compares against its OWN recompute; false = table-driven, compared against the
   /// consumer's table with settle-skipping. Drill-down requests inherit this flag.</summary>
   public bool Recomputed { get; init; }
+
+  /// <summary>#80-B: echo of the ask's window start. Null = a legacy unwindowed answer.</summary>
+  public long? SinceSequence { get; init; }
+
+  /// <summary>
+  /// #80-B: the watermark — the exclusive end sequence this answer actually covered, capped at
+  /// the origin's settled max. The asker's next window starts here; it advances its seal to it
+  /// ONLY when the window answered completely (<see cref="ResumeAfterStreamId"/> null). Null = a
+  /// legacy unwindowed answer, or the engine could not window — no coverage claim is made.
+  /// </summary>
+  public long? ComputedThrough { get; init; }
+
+  /// <summary>#80-B: stream-level paging cursor — non-null means the window is NOT complete; ask
+  /// again from this stream id and do not advance any seal. Stamped on every chunk of the answer
+  /// (chunks share one window).</summary>
+  public Guid? ResumeAfterStreamId { get; init; }
+
+  /// <summary>
+  /// #80-C: total chunks in this answer (0 = a legacy answer that never said). Chunks carry no
+  /// assembly protocol, so a receiver can only certify a window it provably saw ALL of — the seal
+  /// advances only on a single-chunk (<c>ChunkCount == 1</c>) clean window. Multi-chunk windows
+  /// still compare and repair; they just never certify.
+  /// </summary>
+  public int ChunkCount { get; init; }
+
+  /// <summary>
+  /// #80-F: the origin's history generation — bumped whenever folded history legitimately
+  /// mutates (a close-the-books truncation, a reclassification). A consumer seeing it change
+  /// resets its seal and re-verifies instead of alarming on deliberate change; sealed-range
+  /// divergence WITHOUT a generation change remains damage. Null = a pre-generation origin.
+  /// </summary>
+  public long? OriginGeneration { get; init; }
+}
+
+/// <summary>
+/// #80-D: the occurrence a scheduled integrity-sweep fires at the configured idle-time cron. The
+/// driver's built-in receptor reacts by running one full sweep
+/// (<see cref="Whizbang.Core.Workers.IIntegritySweepRunner"/>) — the trust-but-verify pass that
+/// catches exactly the state the epoch seals and audit seals assume is fine. A command (imperative
+/// "sweep now"), riding the F2 occurrence mechanism like <c>ScheduledStreamClose</c>.
+/// </summary>
+/// <docs>resilience/stream-integrity</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySweepSchedulingTests.cs</tests>
+[PinnedId("a7d2e9c4-5b18-4f36-8e0a-1c9b7d4f2a85")]
+public sealed record ScheduledIntegritySweep : ICommand;
+
+/// <summary>
+/// Stream-integrity #80-B: the result of a NEGOTIATED-SCOPE digest read — digests for a sequence
+/// window <c>[since, until)</c> plus the two-dimensional resume cursor. The window is half-open on
+/// purpose: epoch boundaries align exactly and <see cref="ComputedThrough"/> (the exclusive end
+/// actually covered, capped at the settled max) IS the next ask's <c>since</c> — verified history
+/// is never re-shipped.
+/// </summary>
+/// <docs>resilience/stream-integrity</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EpochWindowedDigestSqlTests.cs</tests>
+public sealed record WindowedDigestResult {
+  /// <summary>Digest rows for the covered window (and page, at stream level).</summary>
+  public required IReadOnlyList<StreamDigest> Digests { get; init; }
+
+  /// <summary>The exclusive end sequence this answer actually covered — the watermark. Always
+  /// capped at the origin's settled max: an answer never claims coverage of what has not settled.</summary>
+  public required long ComputedThrough { get; init; }
+
+  /// <summary>Stream-level paging cursor: non-null = the window is NOT complete — ask again from
+  /// this stream id and do not advance any seal; null = the window answered completely.</summary>
+  public Guid? ResumeAfterStreamId { get; init; }
 }
 
 /// <summary>

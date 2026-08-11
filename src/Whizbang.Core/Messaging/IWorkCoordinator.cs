@@ -914,6 +914,152 @@ public interface IWorkCoordinator {
     Task.FromResult(new EphemeralPointerPruneResult(0, "unsupported"));
 
   /// <summary>
+  /// Advances the digest-epoch closure frontier (migration 092): folds every closable epoch —
+  /// settled max beyond it AND no unsettled event inside its range — into immutable
+  /// <c>wh_digest_epochs</c> bucket rows, up to <paramref name="maxEpochs"/> across all lanes.
+  /// Called from the maintenance cycle; the epoch substrate is inert without this.
+  /// </summary>
+  /// <param name="settleSeconds">The settle window — MUST equal the audit's
+  /// (<see cref="StreamIntegrityOptions.AuditSettleWindowMinutes"/> in seconds), or a seal could
+  /// disagree with a manifest folded over the same range.</param>
+  /// <param name="maxEpochs">Cap on epochs closed this call, bounding the cycle's recompute work.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// Epochs closed, or <c>-1</c> for engines without the substrate. The sentinel is deliberate:
+  /// this is a default interface method, and a default that returned a plausible <c>0</c> would
+  /// make a missed override look exactly like a healthy idle system (the same silent-fallback
+  /// hazard the byte-budget overload documented).
+  /// </returns>
+  /// <docs>resilience/stream-integrity</docs>
+
+  Task<int> CloseDigestEpochsAsync(
+    int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) =>
+    Task.FromResult(-1);
+
+  /// <summary>
+  /// The lane's SETTLED maximum sequence — the watermark ceiling for negotiated-scope answers
+  /// (#80-B). An answer must never claim coverage of an unsettled sequence, or the asker could
+  /// seal over an in-flight delivery. Null = unsupported (engines without sequence lanes) or
+  /// nothing settled; callers treat both as "cannot window".
+  /// </summary>
+  /// <param name="originServiceId">Null = the local lane (own emissions); a value = the received
+  /// lane for that origin, measured on the ORIGIN's sequence.</param>
+  /// <param name="settleWindow">Only events older than this count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<long?> GetIntegritySettledMaxAsync(
+    Guid? originServiceId, TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
+  /// Negotiated-scope type-level digest read (#80-B): folds only the window
+  /// <c>[sinceSequence, untilSequence)</c>. Epochs fully inside the window contribute their
+  /// SEALED fold (authoritative); partially covered epochs fold live over just the covered
+  /// fringe — a seal is indivisible. <see cref="WindowedDigestResult.ComputedThrough"/> is the
+  /// exclusive end actually covered, capped at the settled max. Null return = the engine cannot
+  /// window (no substrate) — the caller answers unwindowed rather than silently wrong.
+  /// </summary>
+  /// <param name="originServiceId">Null = the local lane; a value = that origin's received lane.</param>
+  /// <param name="eventTypes">Types to fold (null = all).</param>
+  /// <param name="sinceSequence">Inclusive window start — the asker's current watermark.</param>
+  /// <param name="untilSequence">Exclusive window end; null = through the settled max.</param>
+  /// <param name="settleWindow">Only events older than this count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<WindowedDigestResult?> ComputeTypeDigestsWindowedAsync(
+    Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+    long sinceSequence, long? untilSequence, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<WindowedDigestResult?>(null);
+
+  /// <summary>
+  /// Negotiated-scope stream-level digest read (#80-B): the drill-down granularity, bounded on
+  /// BOTH cursor dimensions — the sequence window <c>[sinceSequence, untilSequence)</c> and a
+  /// stream-id page (<paramref name="resumeAfterStreamId"/> + <paramref name="maxDigests"/>).
+  /// A non-null <see cref="WindowedDigestResult.ResumeAfterStreamId"/> in the result means the
+  /// window is NOT complete: ask again from there, and never advance a seal past a partial
+  /// window. Null return = the engine cannot window.
+  /// </summary>
+  /// <param name="originServiceId">Null = the local lane; a value = that origin's received lane.</param>
+  /// <param name="eventTypes">Types to fold (null = all).</param>
+  /// <param name="sinceSequence">Inclusive window start — the asker's current watermark.</param>
+  /// <param name="untilSequence">Exclusive window end; null = through the settled max.</param>
+  /// <param name="resumeAfterStreamId">Page start: only streams ABOVE this id (null = from the first).</param>
+  /// <param name="maxDigests">The asker's page bound — whole streams are paged, never split.</param>
+  /// <param name="settleWindow">Only events older than this count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<WindowedDigestResult?> ComputeStreamDigestsWindowedAsync(
+    Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+    long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
+    TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
+    Task.FromResult<WindowedDigestResult?>(null);
+
+  /// <summary>
+  /// The consumer's verified watermark for an origin (#80-C): every sequence below it proved
+  /// clean in a past complete-window audit, so steady-state audits start here instead of zero —
+  /// what stops verified history from being re-shipped and re-verified forever. Default 0 =
+  /// nothing verified (engines without the seal store audit from the beginning every time).
+  /// </summary>
+  /// <param name="originServiceId">The origin the seal is against.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0L);
+
+  /// <summary>
+  /// Advances the seal after a window proved clean AND complete (every bucket matched, one chunk,
+  /// no resume cursor). Monotonic — a late or replayed advance can only move it forward. Default
+  /// no-op for engines without the seal store.
+  /// </summary>
+  /// <param name="originServiceId">The origin the seal is against.</param>
+  /// <param name="through">The verified window's exclusive end — the next audit's start.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #80-D: the sweep's SEAL backstop — recomputes each closed digest epoch from the store,
+  /// compares bucket-for-bucket, and refolds on drift. Epochs holding an unsettled arrival are
+  /// skipped whole (verifying now would fold an in-flight delivery into a seal). Default: nothing
+  /// checked, for engines without the epoch substrate.
+  /// </summary>
+  /// <param name="settleWindow">The settle window — an arrival younger than this blocks its epoch.</param>
+  /// <param name="maxEpochs">Cap on epochs recomputed this call.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<EpochVerificationResult> VerifyDigestEpochsAsync(
+    TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) =>
+    Task.FromResult(new EpochVerificationResult(0, 0));
+
+  /// <summary>
+  /// #80-F: this origin's history generation — bumped by the two legitimate fold-mutation sites
+  /// (close-the-books truncation, reclassification) and stamped on every manifest answer so
+  /// consumers can distinguish deliberate change from damage. Default 0 for engines without the
+  /// generation store.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<long> GetIntegrityOriginGenerationAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult(0L);
+
+  /// <summary>
+  /// #80-F: the consumer-side generation guard, one atomic call. True = the carried generation
+  /// matches the stored one (or first contact) — compare away. False = the origin's history
+  /// legitimately moved: the seal was reset to zero, the new generation recorded, and the caller
+  /// must SKIP this comparison round (its windows were aligned to the old world). The reset
+  /// happens once per generation change. Default true (no store — proceed as before).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose generation the manifest carried.</param>
+  /// <param name="generation">The carried generation.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<bool> EnsureIntegritySealGenerationAsync(
+    Guid originServiceId, long generation, CancellationToken cancellationToken = default) =>
+    Task.FromResult(true);
+
+  /// <summary>
   /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
   /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
   /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing

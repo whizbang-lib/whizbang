@@ -205,6 +205,17 @@ public sealed record DigestVerificationResult {
 }
 
 /// <summary>
+/// #80-D: result of the sweep's SEAL backstop — each closed digest epoch recomputed from the
+/// store, compared bucket-for-bucket, and refolded on drift. Manifest answers trust seals
+/// without re-verifying, so this pass is the one place a bad seal gets caught; non-zero
+/// <paramref name="EpochsDrifted"/> means an unaccounted write path touched sealed history.
+/// </summary>
+/// <param name="EpochsChecked">Closed epochs the pass compared (unsettled-arrival epochs skip).</param>
+/// <param name="EpochsDrifted">Epochs whose stored folds disagreed with the recompute (refolded).</param>
+/// <docs>resilience/stream-integrity</docs>
+public sealed record EpochVerificationResult(int EpochsChecked, int EpochsDrifted);
+
+/// <summary>
 /// Stream-integrity Phase S: one row of the consumed-type registry — when an event type joined
 /// this service's consumed set, and where its backfill stands.
 /// </summary>
@@ -348,8 +359,32 @@ public sealed class StreamIntegrityOptions {
   /// (<see cref="IWorkCoordinator.VerifyDigestTableAsync"/>) and the manifest exchange runs on
   /// recomputed digests end to end — covering buckets whose steady traffic settle-skips them on
   /// table-driven cycles. 0 or negative disables sweeps (table-driven cycles only).
+  /// #80-D: this counter is the FALLBACK cadence — once <see cref="FullSweepCron"/> is registered
+  /// on the temporal engine, the counter stands down and the cron owns the sweep.
   /// </summary>
   public int FullSweepEveryNthAudit { get; set; } = 7;
+
+  /// <summary>
+  /// #80-D: cron for the full sweep on the temporal engine (default <c>"0 3 * * *"</c> — daily at
+  /// 03:00 UTC), so the heaviest verification runs at a configured IDLE hour instead of wherever
+  /// the every-Nth-cycle counter happens to land it. When the cron's minute field is <c>0</c>
+  /// (the default), each service replaces it with a stable per-service splay minute so a fleet
+  /// sharing one database server does not sweep in unison; an explicit non-zero minute is honored
+  /// verbatim. Null or empty disables cron scheduling —
+  /// <see cref="FullSweepEveryNthAudit"/> then remains the cadence, as it does on hosts without
+  /// the temporal engine.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public string? FullSweepCron { get; set; } = "0 3 * * *";
+
+  /// <summary>
+  /// #80-D: cap on closed epochs the sweep's seal backstop recomputes per sweep (default 10000).
+  /// Manifest answers trust sealed epochs without re-verifying, so the sweep is the one place a
+  /// bad seal gets caught — but the recompute is O(events-in-epoch) each, and a very large store
+  /// finishes verification across several nightly sweeps rather than stalling one.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public int MaxEpochVerificationsPerSweep { get; set; } = 10_000;
 
   /// <summary>
   /// A1c: storm cap on the DRILL-DOWN — how many mismatched types one type-level manifest may
@@ -382,6 +417,27 @@ public sealed class StreamIntegrityOptions {
   /// budget.
   /// </summary>
   public int MaxRepairAttemptsPerBucket { get; set; } = 8;
+
+  /// <summary>
+  /// Advance the digest-epoch closure frontier on the maintenance cadence (default true).
+  /// Epochs (migration 092) are what let manifest answers read immutable folds instead of
+  /// re-aggregating live history; without closure the frontier never moves and every audit
+  /// keeps paying the full-scan cost the epochs exist to end. Disable only on engines that
+  /// serve no integrity manifests.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public bool EpochClosureEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Max epochs closed per maintenance cycle across all lanes (default 64). Each closure is an
+  /// O(events-in-epoch) recompute, so this bounds a cycle's closure work by the operator's cap
+  /// rather than by backlog size — a long-unclosed store catches up over several cycles instead
+  /// of stalling one. The settle window closure uses is <see cref="AuditSettleWindowMinutes"/>:
+  /// closure and the audit MUST agree on what "settled" means, or a seal could disagree with a
+  /// manifest folded over the same range.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public int MaxEpochClosuresPerMaintenanceCycle { get; set; } = 64;
 
   /// <summary>
   /// Publish <see cref="IntegrityDivergenceDetected"/> / <see cref="IntegrityGapDetected"/> as

@@ -208,6 +208,123 @@ public class IntegrityAuditWorkerTests {
       .Because("0 disables sweeps — every cycle stays table-driven.");
   }
 
+  // ── #80-D: the sweep moves to a scheduled idle-time cron ────────────────
+
+  [Test]
+  public async Task SweepCycle_AlsoVerifiesTheSealedEpochsAsync() {
+    // Manifest answers trust seals without re-verifying (the whole point of the epochs); the
+    // sweep is therefore the ONE place a bad seal gets caught. A sweep that verified only the
+    // digest table would leave every epoch-served answer trusting rows nothing ever re-checks.
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.EpochVerifyCalls).IsEqualTo(1)
+      .Because("sealed epochs are authoritative for answers — only the sweep ever re-checks them");
+  }
+
+  [Test]
+  public async Task SteadyCycle_NeverVerifiesEpochsAsync() {
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.EpochVerifyCalls).IsEqualTo(0)
+      .Because("re-verifying seals on every cycle would re-buy the full-scan cost the epochs exist to end");
+  }
+
+  [Test]
+  public async Task CronScheduledSweep_DisablesTheCounterSweepAsync() {
+    // With the sweep on the temporal engine's clock, the every-Nth-cycle counter must stand down
+    // — otherwise the full-store recompute runs on BOTH cadences, and the counter lands it at
+    // arbitrary load times, which is exactly what the idle-time cron exists to end. The counter
+    // remains only as the fallback for hosts without the temporal engine.
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var transport = new _captureTransport();
+    var sweepState = new IntegritySweepScheduleState { CronActive = true };
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker, sweepState: sweepState);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.VerifyCalls).IsEqualTo(0)
+      .Because("the cron owns the sweep now — the counter running too would double the heaviest work");
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.UseRecompute).IsFalse()
+      .Because("every periodic cycle is a steady-state cycle once the cron owns the sweep");
+  }
+
+  [Test]
+  public async Task RunSweepOnceAsync_ForcesTheFullSweep_RegardlessOfTheCounterAsync() {
+    // The entry point the scheduled occurrence's receptor calls at the configured idle hour.
+    var coordinator = new _auditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker,
+      sweepState: new IntegritySweepScheduleState { CronActive = true });
+
+    await ((IIntegritySweepRunner)worker).RunSweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.VerifyCalls).IsEqualTo(1)
+      .Because("the scheduled sweep IS the trust-but-verify pass — it must verify even with the counter disabled");
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.UseRecompute).IsTrue();
+    await Assert.That(request.Windowed).IsFalse()
+      .Because("a sweep that trusted the seals could never catch a bad seal");
+  }
+
+  // ── #80-B/C: steady cycles ask WINDOWED, from the stored seal ───────────
+
+  [Test]
+  public async Task DefaultCycle_AsksWindowed_FromTheStoredSealAsync() {
+    // The seal is the consumer's "verified through here" watermark per origin. Asking from it is
+    // what stops every audit from re-shipping and re-verifying history that already proved clean.
+    var coordinator = new _auditCoordinator { SealedThrough = 123 };
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.Windowed).IsTrue()
+      .Because("steady-state audits are incremental — the negotiated window is the whole point of the seal");
+    await Assert.That(request.SinceSequence).IsEqualTo(123L)
+      .Because("the window starts at the seal — anything below it already proved clean");
+  }
+
+  [Test]
+  public async Task SweepCycle_AsksFullHistory_NotWindowedAsync() {
+    // The sweep is trust-but-verify: it exists to catch exactly the state the seals assume is
+    // fine. A windowed sweep would only re-verify what the seals already cover — circular trust.
+    var coordinator = new _auditCoordinator { SealedThrough = 123 };
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.Windowed).IsFalse()
+      .Because("a sweep that trusted the seals could never catch a bad seal");
+    await Assert.That(request.UseRecompute).IsTrue();
+  }
+
   private static RequestIntegrityManifest _deserializeRequest(IMessageEnvelope envelope) {
     var options = JsonContextRegistry.CreateCombinedOptions();
     return (RequestIntegrityManifest)JsonSerializer.Deserialize(
@@ -322,8 +439,12 @@ public class IntegrityAuditWorkerTests {
   private static IntegrityAuditWorker _buildWorker(
       _auditCoordinator coordinator, _captureDispatcher dispatcher, _captureTransport transport,
       StreamIntegrityOptions options, IntegrityGapTracker? tracker = null,
-      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null) {
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
+      IntegritySweepScheduleState? sweepState = null) {
     var services = new ServiceCollection();
+    if (sweepState is not null) {
+      services.AddSingleton(sweepState);
+    }
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<ITransport>(transport);
@@ -373,6 +494,19 @@ public class IntegrityAuditWorkerTests {
       AuditClaimCalls++;
       AuditClaimWindow = claimWindow;
       return Task.FromResult(AuditClaimResult);
+    }
+
+    public long SealedThrough { get; init; }
+
+    public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(SealedThrough);
+
+    public int EpochVerifyCalls { get; private set; }
+
+    public Task<EpochVerificationResult> VerifyDigestEpochsAsync(
+      TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) {
+      EpochVerifyCalls++;
+      return Task.FromResult(new EpochVerificationResult(0, 0));
     }
 
     public Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(

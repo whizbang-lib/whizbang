@@ -31,7 +31,7 @@ public sealed partial class IntegrityAuditWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
   IOptions<StreamIntegrityOptions> options,
-  ILogger<IntegrityAuditWorker> logger) : BackgroundService {
+  ILogger<IntegrityAuditWorker> logger) : BackgroundService, IIntegritySweepRunner {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -92,7 +92,16 @@ public sealed partial class IntegrityAuditWorker(
       : TimeSpan.FromMinutes(options.AuditIntervalMinutes);
 
   /// <summary>One audit cycle: the local coverage half, then the cross-service manifest requests.</summary>
-  public async Task RunAuditOnceAsync(CancellationToken cancellationToken) {
+  public Task RunAuditOnceAsync(CancellationToken cancellationToken) =>
+    _runAuditCoreAsync(forceSweep: false, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>#80-D: the scheduled idle-time entry point. The cycle claim still applies, so a
+  /// just-swept service's next steady audit is naturally deduped too.</remarks>
+  public Task RunSweepOnceAsync(CancellationToken cancellationToken) =>
+    _runAuditCoreAsync(forceSweep: true, cancellationToken);
+
+  private async Task _runAuditCoreAsync(bool forceSweep, CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
@@ -120,8 +129,14 @@ public sealed partial class IntegrityAuditWorker(
     // settle-skip on busy buckets). Every Nth cycle is the trust-but-verify sweep: heal our OWN
     // table against a full recompute (non-zero drift = an unaccounted write path — alarm), and
     // exchange recomputed digests end to end so busy buckets get their coverage too.
+    // #80-D: once the idle-time cron owns the sweep (the driver registered it on the temporal
+    // engine), the counter stands down — otherwise the heaviest work runs on both cadences, and
+    // the counter lands it at arbitrary load times. Hosts without the temporal engine never set
+    // the state, keeping the every-Nth-cycle counter as the fallback.
+    var cronOwnsTheSweep = services.GetService<IntegritySweepScheduleState>()?.CronActive == true;
     var cycle = Interlocked.Increment(ref _cycleCount);
-    var sweep = _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0;
+    var sweep = forceSweep
+      || (!cronOwnsTheSweep && _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0);
     if (sweep) {
       var verification = await coordinator.VerifyDigestTableAsync(settle, cancellationToken).ConfigureAwait(false);
       metrics?.DigestBucketsVerified.Add(verification.BucketsChecked);
@@ -133,6 +148,19 @@ public sealed partial class IntegrityAuditWorker(
           verification.DriftRemoved, verification.DriftAdded, verification.BucketsChecked);
       } else {
         LogDigestVerified(_logger, verification.BucketsChecked);
+      }
+
+      // #80-D: the seal backstop. Manifest answers trust sealed epochs WITHOUT re-verifying (the
+      // whole point of the epochs), so this is the ONE place a bad seal gets caught. Bounded per
+      // sweep — a very large store finishes across several nightly sweeps.
+      var epochVerification = await coordinator.VerifyDigestEpochsAsync(
+        settle, _options.MaxEpochVerificationsPerSweep, cancellationToken).ConfigureAwait(false);
+      if (epochVerification.EpochsDrifted > 0) {
+        metrics?.DigestDriftHealed.Add(epochVerification.EpochsDrifted,
+          new KeyValuePair<string, object?>("kind", "epoch-refolded"));
+        LogEpochDrift(_logger, epochVerification.EpochsDrifted, epochVerification.EpochsChecked);
+      } else if (epochVerification.EpochsChecked > 0) {
+        LogEpochsVerified(_logger, epochVerification.EpochsChecked);
       }
     }
 
@@ -196,6 +224,12 @@ public sealed partial class IntegrityAuditWorker(
         LogManifestRequestSkippedNoTopic(_logger, originName, originId);
         continue;
       }
+      // #80-B/C: steady-state cycles ask WINDOWED from the stored seal — verified history is
+      // never re-shipped or re-verified. The sweep deliberately asks FULL: it is trust-but-verify
+      // for exactly the state the seals assume is fine; a windowed sweep would be circular trust.
+      // An origin that predates the protocol ignores the extra fields and answers unwindowed —
+      // the comparator then compares legacy and the seal simply stays put.
+      var since = sweep ? 0L : await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
         MessageId = new MessageId(TrackedGuid.NewMedo()),
         Payload = new RequestIntegrityManifest {
@@ -204,6 +238,8 @@ public sealed partial class IntegrityAuditWorker(
           EventTypes = subscribed,
           Level = ManifestLevel.Types,
           UseRecompute = sweep,
+          Windowed = !sweep,
+          SinceSequence = since,
         },
         Hops = [
           new MessageHop {
@@ -271,4 +307,13 @@ public sealed partial class IntegrityAuditWorker(
   [LoggerMessage(EventId = 89, Level = LogLevel.Debug,
     Message = "Audit cycle skipped — a sibling instance claimed it within the last {ClaimWindowMinutes} minute(s)")]
   static partial void LogAuditCycleAlreadyClaimed(ILogger logger, double claimWindowMinutes);
+
+  [LoggerMessage(EventId = 90, Level = LogLevel.Warning,
+    Message = "SWEEP: {EpochsDrifted} of {EpochsChecked} sealed epoch(s) DRIFTED and were refolded — " +
+              "an unaccounted write path touched sealed history; manifest answers served from those seals were wrong until now")]
+  static partial void LogEpochDrift(ILogger logger, int epochsDrifted, int epochsChecked);
+
+  [LoggerMessage(EventId = 91, Level = LogLevel.Information,
+    Message = "SWEEP: {EpochsChecked} sealed epoch(s) verified clean against the store recompute")]
+  static partial void LogEpochsVerified(ILogger logger, int epochsChecked);
 }

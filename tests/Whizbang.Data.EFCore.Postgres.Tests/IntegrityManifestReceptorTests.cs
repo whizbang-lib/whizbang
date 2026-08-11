@@ -650,6 +650,425 @@ public class IntegrityManifestReceptorTests {
                "immediately instead of waiting out a stale cooldown.");
   }
 
+  // ── #80-F: origin generation — seal coherence across legitimate mutation ─
+
+  [Test]
+  public async Task RequestReceptor_StampsTheOriginGeneration_OnEveryAnswerAsync() {
+    var coordinator = new _auditCoordinator { OriginGeneration = 7 };
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.OwnDigests = [_digest(stream, 11, 21, 2)];
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.OriginGeneration).IsEqualTo(7L)
+      .Because("the generation is how a consumer distinguishes legitimate history mutation from damage — every answer carries it");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_GenerationChanged_ResetsAndSkipsTheComparisonAsync() {
+    // The origin's history legitimately moved (a close, a reclassification). This round's
+    // comparison was aligned to the OLD world — running it would alarm on deliberate change.
+    // The guard resets the seal; the next audit re-verifies from the beginning.
+    var coordinator = new _auditCoordinator { SealGenerationCoherent = false };
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [];
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]) with { OriginGeneration = 9 };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(coordinator.GenerationGuardSeen).IsEqualTo(9L)
+      .Because("the guard runs against the carried generation before any comparison");
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no repairs from a comparison aligned to the old world");
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("and no divergence reports — deliberate change is not damage");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_GenerationUnchanged_ComparesNormallyAsync() {
+    var coordinator = new _auditCoordinator { SealGenerationCoherent = true };
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [];   // missing bucket → deficit → repair
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]) with { OriginGeneration = 9 };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("a coherent generation is the steady state — the deficit repairs exactly as before");
+  }
+
+  // ── #80-C: deficit drives repair; equal-count mismatch drives alarm ─────
+
+  [Test]
+  public async Task ManifestReceptor_EqualCountDifferentFold_AlarmsButNeverRequestsRepairAsync() {
+    // The non-convergence at the heart of the observed storm: counts agree but folds differ, so
+    // the consumer holds the same NUMBER of events with different IDENTITY. Redelivery re-ships
+    // what the origin has, dedup drops what the consumer already holds, the fold never moves —
+    // and the repair loop retries forever. Identity damage needs a human, not a redelivery.
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(stream, 99, 98, 2)];   // count 2, folds differ
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("redelivery cannot change identity the consumer already holds — a repair request here loops forever");
+    var reports = dispatcher.Published.OfType<IntegrityDivergenceDetected>().ToList();
+    await Assert.That(reports.Count).IsEqualTo(1)
+      .Because("the ALARM half must survive the repair suppression — this bucket needs eyes, not silence");
+    await Assert.That(reports[0].LocalCount).IsEqualTo(2);
+    await Assert.That(reports[0].AutoRepairRequested).IsFalse();
+  }
+
+  [Test]
+  public async Task ManifestReceptor_LocalExtra_AlarmsButNeverRequestsRepairAsync() {
+    // The consumer holds MORE than the origin claims. Redelivery only ever adds — it cannot
+    // converge a surplus — and auto-deleting local history on a remote's say-so is not a thing
+    // the framework will ever do. Investigation item.
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(stream, 99, 98, 5)];   // 5 held, origin claims 2
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("more-than-the-origin cannot be fixed by asking the origin for more");
+    await Assert.That(dispatcher.Published.OfType<IntegrityDivergenceDetected>().Count()).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_WindowedManifest_RangeBoundsTheRepairAsync() {
+    // #80-C range-bounded backfill: a deficit found while comparing a WINDOW is a deficit IN THAT
+    // WINDOW — the repair request carries the range, so the origin re-ships a slice instead of a
+    // stream's whole history. [since, until) maps to the redelivery command's exclusive-floor /
+    // inclusive-ceiling pair.
+    var coordinator = new _auditCoordinator();
+    var missing = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [];
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    // A windowed manifest is compared against a WINDOWED local fold — window counts against
+    // all-history table folds would fabricate mismatches on any stream with prior history.
+    coordinator.WindowedStreamResult = new WindowedDigestResult { Digests = [], ComputedThrough = 300 };
+    var manifest = _manifest(coordinator, [_digest(missing, 12, 22, 3)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(coordinator.WindowedSinceSeen).IsEqualTo(100L)
+      .Because("the local fold must cover the manifest's exact window, or the buckets are not comparable");
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    var command = _deserializeRedelivery(transport.Published[0].Envelope);
+    await Assert.That(command.FromCommitSequence).IsEqualTo(99L)
+      .Because("[100, 300) maps to exclusive floor 99 — sequence 100 must be included");
+    await Assert.That(command.ToCommitSequence).IsEqualTo(299L)
+      .Because("and inclusive ceiling 299 — the origin re-ships the window, not all history");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_CleanCompleteWindow_AdvancesTheSealAsync() {
+    // The seal-advance rule: every bucket in the window matched, the answer was ONE complete
+    // chunk with no resume cursor — only then has the whole window provably been verified, and
+    // only then may the next audit start past it.
+    var coordinator = new _auditCoordinator();
+    coordinator.WindowedTypeResult = new WindowedDigestResult {
+      Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+      ComputedThrough = 300,
+    };
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(coordinator.SealAdvancedTo).IsEqualTo(300L)
+      .Because("a clean complete window is verified history — the seal is what stops re-verifying it forever");
+    await Assert.That(coordinator.SealAdvancedOrigin).IsEqualTo(coordinator.OriginId);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_WindowedMismatch_KeepsTheSeal_AndDrillsDownWindowedAsync() {
+    // A mismatch means the window is NOT verified: the seal stays put (the same window re-audits
+    // after repair), and the drill-down inherits the window so the stream-level exchange — and
+    // the repairs it spawns — stay bounded to the range that actually disagreed.
+    var coordinator = new _auditCoordinator();
+    coordinator.WindowedTypeResult = new WindowedDigestResult {
+      Digests = [_typeDigest("Contracts.TypeX", 99, 98, 5)],   // fold differs
+      ComputedThrough = 300,
+    };
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(coordinator.SealAdvancedTo).IsNull()
+      .Because("an unverified window must re-audit — advancing the seal would bury the divergence forever");
+    var drillDown = transport.Published
+      .Select(p => p.Envelope).OfType<MessageEnvelope<RequestIntegrityManifest>>().Select(e => e.Payload)
+      .Concat(transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Where(r => r is not null)!)
+      .First();
+    await Assert.That(drillDown!.Level).IsEqualTo(ManifestLevel.Streams);
+    await Assert.That(drillDown.Windowed).IsTrue()
+      .Because("the drill-down inherits the window — an unwindowed drill-down would re-ship all history");
+    await Assert.That(drillDown.SinceSequence).IsEqualTo(100L);
+    await Assert.That(drillDown.UntilSequence).IsEqualTo(300L);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_MultiChunkWindow_NeverAdvancesTheSealAsync() {
+    // Chunks carry no assembly protocol — a lost chunk's buckets simply never arrive. With more
+    // than one chunk this receiver cannot know it saw the whole window, so it must not certify it.
+    var coordinator = new _auditCoordinator();
+    coordinator.WindowedTypeResult = new WindowedDigestResult {
+      Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+      ComputedThrough = 300,
+    };
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 2,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(coordinator.SealAdvancedTo).IsNull()
+      .Because("certifying a window from one chunk of two would seal over whatever the lost chunk carried");
+  }
+
+  private static RequestIntegrityManifest? _tryDeserializeRequest(IMessageEnvelope envelope) {
+    try {
+      var options = JsonContextRegistry.CreateCombinedOptions();
+      return (RequestIntegrityManifest?)JsonSerializer.Deserialize(
+        ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
+        options.GetTypeInfo(typeof(RequestIntegrityManifest)));
+    } catch (JsonException) {
+      return null;
+    }
+  }
+
+  // ── #80-B: negotiated scope — the origin honors windowed asks ───────────
+
+  [Test]
+  public async Task RequestReceptor_WindowedTypesAsk_AnswersFromTheWindowedRead_WithTheWatermarkAsync() {
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 71, 72, 4)],
+        ComputedThrough = 900,
+      },
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      EventTypes = ["Contracts.TypeX"],
+      Level = ManifestLevel.Types,
+      Windowed = true,
+      SinceSequence = 400,
+    });
+
+    await Assert.That(coordinator.WindowedSinceSeen).IsEqualTo(400L)
+      .Because("the asker's watermark IS the window start — anything else re-ships verified history");
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.ComputedThrough).IsEqualTo(900L)
+      .Because("the watermark rides the answer so the asker knows what it got and what to ask for next");
+    await Assert.That(manifest.SinceSequence).IsEqualTo(400L);
+    await Assert.That(manifest.Digests.Count).IsEqualTo(1);
+    await Assert.That(manifest.Digests[0].DigestLo).IsEqualTo(71L);
+  }
+
+  [Test]
+  public async Task RequestReceptor_WindowedQuietWindow_StillAnswers_SoTheSealCanAdvanceAsync() {
+    // A window with no matching events is NOT the legacy nothing-emitted case: coverage advanced
+    // even though no digests exist, and only an answer can carry that watermark. Legacy silence
+    // here would freeze the asker's seal forever on a quiet type.
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 500 },
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      Level = ManifestLevel.Types,
+      Windowed = true,
+      SinceSequence = 100,
+    });
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("an empty answer with a watermark is progress; silence would freeze the seal");
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.Digests).IsEmpty();
+    await Assert.That(manifest.ComputedThrough).IsEqualTo(500L);
+  }
+
+  [Test]
+  public async Task RequestReceptor_WindowedNothingNewSettled_StaysSilentAsync() {
+    // ComputedThrough == since means the origin has nothing settled beyond the asker's watermark.
+    // There is no progress to report — the asker simply re-asks on its next cadence.
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 100 },
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      Level = ManifestLevel.Types,
+      Windowed = true,
+      SinceSequence = 100,
+    });
+
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  [Test]
+  public async Task RequestReceptor_WindowedStreamsAsk_CarriesTheResumeCursorAsync() {
+    var stream = TrackedGuid.NewMedo().Value;
+    var cursor = TrackedGuid.NewMedo().Value;
+    var coordinator = new _auditCoordinator {
+      WindowedStreamResult = new WindowedDigestResult {
+        Digests = [_digest(stream, 11, 21, 2)],
+        ComputedThrough = 300,
+        ResumeAfterStreamId = cursor,
+      },
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      Level = ManifestLevel.Streams,
+      Windowed = true,
+      SinceSequence = 0,
+      MaxDigests = 1,
+      ResumeAfterStreamId = null,
+    });
+
+    await Assert.That(coordinator.WindowedMaxSeen).IsEqualTo(1)
+      .Because("the asker's page bound is honored — its memory, not the origin's default, is the constraint");
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.ResumeAfterStreamId).IsEqualTo(cursor)
+      .Because("a non-null cursor tells the asker the window is incomplete — do not advance the seal");
+    await Assert.That(manifest.ComputedThrough).IsEqualTo(300L);
+  }
+
+  [Test]
+  public async Task RequestReceptor_WindowedButEngineCannotWindow_FallsBackToTheFullAnswerAsync() {
+    // The DIM default returns null = "cannot window". The honest fallback is the legacy full
+    // answer (correct, just unbounded) — never a fabricated watermark the engine cannot stand
+    // behind.
+    var coordinator = new _auditCoordinator {   // WindowedTypeResult stays null
+      OwnTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      EventTypes = ["Contracts.TypeX"],
+      Level = ManifestLevel.Types,
+      Windowed = true,
+      SinceSequence = 400,
+    });
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    var manifest = _deserializeManifest(transport.Published[0].Envelope);
+    await Assert.That(manifest.ComputedThrough).IsNull()
+      .Because("no watermark may be claimed when the engine could not actually window the fold");
+    await Assert.That(manifest.Digests[0].DigestLo).IsEqualTo(41L);
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static StreamDigest _digest(Guid stream, long lo, long hi, int count) => new() {
@@ -776,6 +1195,52 @@ public class IntegrityManifestReceptorTests {
         await gate.Task;
       }
       return IntegrityDigestMath.RollUpToTypes(originServiceId is null ? OwnDigests : ReceivedDigests);
+    }
+
+    public WindowedDigestResult? WindowedTypeResult { get; set; }
+    public WindowedDigestResult? WindowedStreamResult { get; set; }
+    public long? WindowedSinceSeen;
+    public long? WindowedUntilSeen;
+    public Guid? WindowedResumeSeen;
+    public int? WindowedMaxSeen;
+    public long? SealAdvancedTo;
+    public Guid? SealAdvancedOrigin;
+    public long OriginGeneration { get; set; }
+    public bool SealGenerationCoherent { get; set; } = true;
+    public long? GenerationGuardSeen;
+
+    public Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) {
+      SealAdvancedOrigin = originServiceId;
+      SealAdvancedTo = through;
+      return Task.CompletedTask;
+    }
+
+    public Task<long> GetIntegrityOriginGenerationAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(OriginGeneration);
+
+    public Task<bool> EnsureIntegritySealGenerationAsync(
+        Guid originServiceId, long generation, CancellationToken cancellationToken = default) {
+      GenerationGuardSeen = generation;
+      return Task.FromResult(SealGenerationCoherent);
+    }
+
+    public Task<WindowedDigestResult?> ComputeTypeDigestsWindowedAsync(
+      Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+      long sinceSequence, long? untilSequence, TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+      WindowedSinceSeen = sinceSequence;
+      WindowedUntilSeen = untilSequence;
+      return Task.FromResult(WindowedTypeResult);
+    }
+
+    public Task<WindowedDigestResult?> ComputeStreamDigestsWindowedAsync(
+      Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+      long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
+      TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+      WindowedSinceSeen = sinceSequence;
+      WindowedUntilSeen = untilSequence;
+      WindowedResumeSeen = resumeAfterStreamId;
+      WindowedMaxSeen = maxDigests;
+      return Task.FromResult(WindowedStreamResult);
     }
 
     public Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
