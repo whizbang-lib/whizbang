@@ -85,7 +85,19 @@ internal sealed class AsbReceiveDecisionMaker {
         && typeBinder != null) {
       var bound = typeBinder.Bind(envelopeTypeName);
       if (bound != null) {
-        typeInfo = jsonOptions.GetTypeInfo(bound);
+        // A binder-bound type is LOADABLE but not necessarily SERVABLE — when no registered
+        // context holds metadata for it, GetTypeInfo throws NotSupportedException. An unguarded
+        // throw here escapes the decision entirely: the transport abandons the delivery and the
+        // broker redelivers the same undeserializable message forever. Degrade to the registry-miss
+        // path instead (raw receptor, then ack-and-drop) — the graceful outcome every other
+        // unbindable message gets.
+        try {
+          typeInfo = jsonOptions.GetTypeInfo(bound);
+        } catch (NotSupportedException) {
+          typeInfo = null;
+        } catch (InvalidOperationException) {
+          typeInfo = null;
+        }
       }
     }
 

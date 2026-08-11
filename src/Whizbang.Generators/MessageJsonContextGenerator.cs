@@ -1093,7 +1093,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       GetTypeInfoSnippets snippets,
       ImmutableArray<JsonMessageTypeInfo> allTypes) {
     sb.AppendLine("  // MessageEnvelope<T> for discovered message types");
-    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
+    // Must cover the SAME set the RegisterTypeName envelope map covers (commands/events/composites/
+    // serializables) — a name-registered envelope whose resolver cannot dispatch it resolves to null,
+    // and the receive side can never bind that envelope type (a redelivery composite arriving on the
+    // wire failed typed binding forever). Composites are wire-only but they ARE received and expanded,
+    // so their envelope must be dispatchable.
+    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent || t.IsComposite || t.IsSerializable)) {
       var check = snippets.Envelope
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
           .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
@@ -1539,8 +1544,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var message in messages) {
       sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>> CreateMessageEnvelope_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
 
-      // Generate properties array for MessageEnvelope<T> (MessageId, Payload, Hops)
-      sb.AppendLine("  var properties = new JsonPropertyInfo[3];");
+      // Generate properties array for MessageEnvelope<T> (MessageId, Payload, Hops, Target, StateOnly)
+      sb.AppendLine("  var properties = new JsonPropertyInfo[5];");
       sb.AppendLine();
 
       // Property 0: MessageId using snippet - JSON name is "id" per [JsonPropertyName] on MessageEnvelope
@@ -1574,6 +1579,32 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(hopsProperty);
+      sb.AppendLine();
+
+      // Properties 3+4: Target ("tgt") + StateOnly ("sto") — the two envelope fields the
+      // conversion layer deliberately preserves (directed delivery + Phase S state-only). The
+      // wire (serialized via the attribute-honoring MessageEnvelope<JsonElement> shape) carries
+      // both; a typed receive factory that drops them un-directs the envelope and re-fires
+      // trigger receptors on backfilled history at the consumer. Both are settable, so they ride
+      // as setter properties beside the 3-arg constructor.
+      var targetProperty = propertyCreationSnippet
+          .Replace(PLACEHOLDER_INDEX, "3")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, "string?")
+          .Replace(PLACEHOLDER_PROPERTY_NAME, "Target")
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "tgt")
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace(PLACEHOLDER_SETTER, $"(obj, value) => ((MessageEnvelope<{message.FullyQualifiedName}>)obj).Target = value");
+      sb.AppendLine(targetProperty);
+      sb.AppendLine();
+
+      var stateOnlyProperty = propertyCreationSnippet
+          .Replace(PLACEHOLDER_INDEX, "4")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, "bool")
+          .Replace(PLACEHOLDER_PROPERTY_NAME, "StateOnly")
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "sto")
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace(PLACEHOLDER_SETTER, $"(obj, value) => ((MessageEnvelope<{message.FullyQualifiedName}>)obj).StateOnly = value");
+      sb.AppendLine(stateOnlyProperty);
       sb.AppendLine();
 
       // Constructor parameters using snippet

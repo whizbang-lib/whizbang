@@ -310,6 +310,25 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Phase A: storm cap on stream-scoped repair requests per received manifest chunk (default 25).</summary>
   public int MaxAutoRepairRequestsPerAudit { get; set; } = 25;
 
+  /// <summary>
+  /// #80-B cursor-following: pages of a windowed stream-level answer the consumer follows per
+  /// (origin, window) burst (default 8). Without following, a lane wider than one page only ever
+  /// audited its first <see cref="MaxDigestsPerManifest"/> streams — the rest of the window was
+  /// never compared, never repaired, and the seal never certified it. The cap bounds a paging
+  /// storm; whatever it leaves unfollowed re-audits from the seal next cycle.
+  /// </summary>
+  public int MaxManifestPagesPerAudit { get; set; } = 8;
+
+  /// <summary>
+  /// Bulk-deficit escalation: when a TYPE-level windowed roll-up shows this service missing at
+  /// least this many events of one (tenant, type) in the window (default 1000), the consumer asks
+  /// the origin for ONE state-only range-bounded backfill of the whole type instead of drilling
+  /// down stream-by-stream — a large deficit paged 500 streams at a time with 25 repairs per
+  /// cycle takes days the bulk path covers in one request. Small deficits keep the precise
+  /// drill-down. 0 or negative disables escalation.
+  /// </summary>
+  public int BulkBackfillThresholdEvents { get; set; } = 1000;
+
   /// <summary>Phase L: storm cap on local rebuilds dispatched per audit cycle (default 5).</summary>
   public int MaxAutoRebuildsPerAudit { get; set; } = 5;
 
