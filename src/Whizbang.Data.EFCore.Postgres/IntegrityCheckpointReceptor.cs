@@ -111,7 +111,10 @@ public sealed partial class IntegrityCheckpointReceptor(
       }).ConfigureAwait(false);
     }
 
-    if (confirmedGaps > gapReportsPublished) {
+    // Only a CAP warrants the warning — with publishing disabled (the production default) the
+    // published count is always 0 and every confirmed gap would trigger it. Same rationale as
+    // the manifest receptor's divergence-cap warning.
+    if (options.PublishReportEvents && confirmedGaps > gapReportsPublished) {
       LogGapReportsCapped(logger, message.OriginServiceName, confirmedGaps, gapReportsPublished);
     }
 

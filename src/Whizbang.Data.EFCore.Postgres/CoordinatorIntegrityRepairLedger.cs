@@ -149,16 +149,24 @@ public sealed class CoordinatorIntegrityRepairLedger(
   /// <inheritdoc />
   public async ValueTask MarkHealedBatchAsync(
       System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      CancellationToken cancellationToken = default) =>
+    _ = await MarkHealedBatchWithAgesAsync(keys, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  /// <remarks>Ages come from the batch heal's own delete (migration 095). The single-key
+  /// fallback still heals but reports no ages — "not measured", never "instant".</remarks>
+  public async ValueTask<System.Collections.Generic.IReadOnlyList<double>> MarkHealedBatchWithAgesAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
       CancellationToken cancellationToken = default) {
     if (keys.Count == 0) {
-      return;
+      return [];
     }
     try {
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
       if (coordinator is not null
-          && await coordinator.IntegrityMarkHealedBatchAsync(keys[0].OriginServiceId, keys, cancellationToken).ConfigureAwait(false)) {
-        return;
+          && await coordinator.IntegrityMarkHealedBatchWithAgesAsync(keys[0].OriginServiceId, keys, cancellationToken).ConfigureAwait(false) is { } ages) {
+        return ages;
       }
     } catch (OperationCanceledException) {
       throw;
@@ -168,6 +176,7 @@ public sealed class CoordinatorIntegrityRepairLedger(
     foreach (var key in keys) {
       await MarkHealedAsync(key, cancellationToken).ConfigureAwait(false);
     }
+    return [];
   }
 
   /// <inheritdoc />

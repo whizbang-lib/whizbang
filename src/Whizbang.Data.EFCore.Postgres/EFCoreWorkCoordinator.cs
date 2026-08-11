@@ -613,6 +613,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public async Task<bool> IntegrityMarkHealedBatchAsync(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      CancellationToken cancellationToken = default) =>
+    await IntegrityMarkHealedBatchWithAgesAsync(originServiceId, keys, cancellationToken).ConfigureAwait(false) is not null;
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
       CancellationToken cancellationToken = default) {
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
@@ -627,8 +633,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids)";
 #pragma warning restore S2077
-      _ = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return true;
+      var ages = new List<double>(keys.Count);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        if (!await reader.IsDBNullAsync(0, cancellationToken).ConfigureAwait(false)) {
+          ages.Add(reader.GetDouble(0));
+        }
+      }
+      return ages;
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -636,7 +648,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _logger?.LogWarning(ex,
         "Integrity ledger batch wh_integrity_mark_healed_batch failed; falling back to single-key calls for this chunk.");
 #pragma warning restore CA1848
-      return false;
+      return null;
     }
   }
 
@@ -664,11 +676,26 @@ public class EFCoreWorkCoordinator<TDbContext>(
       if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         return Whizbang.Core.Observability.LedgerGaugeSnapshot.Empty;
       }
-      return new Whizbang.Core.Observability.LedgerGaugeSnapshot {
+      var snapshot = new Whizbang.Core.Observability.LedgerGaugeSnapshot {
         UnhealedBuckets = reader.GetInt64(0),
         RepairExhausted = reader.GetInt64(1),
         OldestUnhealedAgeSeconds = reader.GetDouble(2),
       };
+      await reader.DisposeAsync().ConfigureAwait(false);
+      // Per-origin verified watermarks for the sealed_through gauge — a handful of rows read in
+      // the same breath (same connection scope, same cadence) as the ledger summary.
+      var sealsSchema = BuildSchemaQualifiedName(schema, "wh_integrity_seals");
+      await using var sealsCmd = __scope.Connection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified table name built from a validated schema constant.
+      sealsCmd.CommandText = $"SELECT origin_service_id, sealed_through FROM {sealsSchema}";
+#pragma warning restore S2077
+      var seals = new List<Whizbang.Core.Observability.OriginSeal>();
+      await using (var sealsReader = await sealsCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+        while (await sealsReader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          seals.Add(new Whizbang.Core.Observability.OriginSeal(sealsReader.GetGuid(0), sealsReader.GetInt64(1)));
+        }
+      }
+      return snapshot with { Seals = seals };
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -3411,11 +3438,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream = 100,
+    CancellationToken cancellationToken = default)
+    => FetchOutboxBatchAsync(streamIds, instanceId, maxPerStream, null, cancellationToken);
+
+  /// <inheritdoc />
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reader hydration covers the schema-shape drift between deployed migrations (older column set vs newer columns: commit_sequence + scope + envelope_type all have try-GetOrdinal fallbacks). The branches mirror migration adoption sequencing.")]
   public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
     Guid instanceId,
-    int maxPerStream = 100,
+    int maxPerStream,
+    long? maxBytes,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
@@ -3433,10 +3469,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
     await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
-    cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream)";
+    cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamArr });
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter("p_max_per_stream", maxPerStream));
+    // NULL = count bound only, which is exactly what this function did before the byte budget.
+    cmd.Parameters.Add(new NpgsqlParameter("p_max_bytes", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = (object?)maxBytes ?? DBNull.Value,
+    });
 
     var results = new List<OutboxBatchRow>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -3496,7 +3536,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return results;
   }
 
-  /// <inheritdoc />
   /// <inheritdoc />
   public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
     IReadOnlyList<Guid> streamIds,

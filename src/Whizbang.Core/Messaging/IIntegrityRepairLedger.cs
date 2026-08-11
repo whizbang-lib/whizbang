@@ -102,4 +102,17 @@ public interface IIntegrityRepairLedger {
       await MarkHealedAsync(key, cancellationToken).ConfigureAwait(false);
     }
   }
+
+  /// <summary>
+  /// <see cref="MarkHealedBatchAsync"/>, additionally returning each healed bucket's age in
+  /// seconds (first sighting → this heal — the per-bucket time-to-reconcile). The heal was
+  /// already destroying the row that carried the clock; an implementation that can read the age
+  /// back out of that destruction does, at zero extra cost. The default heals without ages —
+  /// an empty result means "not measured", never "instant".
+  /// </summary>
+  async ValueTask<IReadOnlyList<double>> MarkHealedBatchWithAgesAsync(
+    IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, CancellationToken cancellationToken = default) {
+    await MarkHealedBatchAsync(keys, cancellationToken).ConfigureAwait(false);
+    return [];
+  }
 }

@@ -49,6 +49,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
   }
 
   private async Task _handleCoreAsync(RequestIntegrityManifest message, CancellationToken cancellationToken) {
+    var answerTimer = System.Diagnostics.Stopwatch.StartNew();
     await using var scope = scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
@@ -167,8 +168,13 @@ public sealed partial class IntegrityManifestRequestReceptor(
       chunks++;
       offset += options.MaxDigestsPerManifest;
     } while (offset < digests.Count);
-    services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestChunksSent.Add(chunks,
+    var answerMetrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    answerMetrics?.ManifestChunksSent.Add(chunks,
       new KeyValuePair<string, object?>("level", message.Level.ToString()));
+    answerMetrics?.ManifestAnswerDuration.Record(answerTimer.Elapsed.TotalSeconds,
+      new KeyValuePair<string, object?>("level", message.Level.ToString()),
+      new KeyValuePair<string, object?>("windowed", answeredWindowed),
+      new KeyValuePair<string, object?>("recompute", recomputed));
     LogManifestSent(logger, digests.Count, chunks, message.RequesterService);
   }
 
@@ -219,13 +225,34 @@ public sealed partial class IntegrityManifestReceptor(
     // buckets simply re-audit next cycle), so the memory-safe move is to decline, not to wait.
     if (!await _compareGate.WaitAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false)) {
       LogCompareBusySkipped(logger, message.OriginServiceName, message.Digests.Count);
+      _declinedMetrics()?.ComparesDeclined.Add(1,
+        new KeyValuePair<string, object?>("origin", message.OriginServiceName));
       return;
     }
+    var compareTimer = System.Diagnostics.Stopwatch.StartNew();
     try {
       await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
     } finally {
       _compareGate.Release();
+      // Recorded gate-to-done: when p99 approaches the manifest arrival interval, chunks are
+      // being declined at the gate — the compare-slower-than-arrival pressure reading.
+      _declinedMetrics()?.ManifestCompareDuration.Record(compareTimer.Elapsed.TotalSeconds,
+        new KeyValuePair<string, object?>("level", message.Level.ToString()));
     }
+  }
+
+  /// <summary>Metrics for the gate path, which runs before any scope exists. Root-resolved and
+  /// cached — StreamIntegrityMetrics is a singleton wherever it is registered at all.</summary>
+  private Whizbang.Core.Observability.StreamIntegrityMetrics? _gateMetrics;
+  private bool _gateMetricsResolved;
+
+  private Whizbang.Core.Observability.StreamIntegrityMetrics? _declinedMetrics() {
+    if (!_gateMetricsResolved) {
+      using var scope = scopeFactory.CreateScope();
+      _gateMetrics = scope.ServiceProvider.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+      _gateMetricsResolved = true;
+    }
+    return _gateMetrics;
   }
 
   private async Task _handleCoreAsync(IntegrityManifest message, CancellationToken cancellationToken) {
@@ -360,7 +387,12 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     if (healedKeys.Count > 0) {
-      await ledger.MarkHealedBatchAsync(healedKeys, cancellationToken).ConfigureAwait(false);
+      // The heal's own delete reports each bucket's first-sighting age — per-stream
+      // time-to-reconcile, measured by destroying the row that carried the clock.
+      var healAges = await ledger.MarkHealedBatchWithAgesAsync(healedKeys, cancellationToken).ConfigureAwait(false);
+      foreach (var age in healAges) {
+        metrics?.BucketHealSeconds.Record(age);
+      }
     }
     var observations = new IntegrityReportObservation[divergent.Count];
     for (var i = 0; i < divergent.Count; i++) {
@@ -463,7 +495,11 @@ public sealed partial class IntegrityManifestReceptor(
       LogDivergence(logger, eventType, tenantScope, tally.Count, tally.SampleStreamId,
         message.OriginServiceName, tally.OriginTotal, tally.LocalTotal, tally.AnyAutoRepair);
     }
-    if (divergentSeen > reportsPublished) {
+    // Only a CAP warrants the warning. With publishing disabled (the production default),
+    // reportsPublished is always 0 and "N divergent, 0 reported" would fire on every comparison
+    // that found anything — reading as data loss when the ledger row was written and the repair
+    // went out. Disabled-by-choice is not truncation.
+    if (options.PublishReportEvents && divergentSeen > reportsPublished) {
       LogDivergenceReportsCapped(logger, message.OriginServiceName, divergentSeen, reportsPublished);
     }
 
@@ -508,6 +544,8 @@ public sealed partial class IntegrityManifestReceptor(
       : (Pages: 0, Last: now);
     if (entry.Pages >= Math.Max(0, options.MaxManifestPagesPerAudit)) {
       LogCursorFollowCapped(logger, message.OriginServiceName, entry.Pages);
+      services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesCapped.Add(1,
+        new KeyValuePair<string, object?>("origin", message.OriginServiceName));
       return;   // the rest of the lane re-audits from the seal next cycle.
     }
 
@@ -528,6 +566,8 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     _pagesFollowed[key] = (entry.Pages + 1, now);
+    services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesFollowed.Add(1,
+      new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     if (_pagesFollowed.Count > 256) {
       _pagesFollowed.Clear();   // windows advance; stale keys are waste, not state.
     }

@@ -918,6 +918,18 @@ public interface IWorkCoordinator {
     Task.FromResult(false);
 
   /// <summary>
+  /// <see cref="IntegrityMarkHealedBatchAsync"/>, additionally returning each healed bucket's age
+  /// in seconds (first sighting → heal) read from the rows the delete destroys — the per-stream
+  /// time-to-reconcile at zero extra work. Null = unsupported (fall back to the ageless batch or
+  /// singles); an empty list is a real answer (no tracked bucket matched).
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<double>?>(null);
+
+  /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
   /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
   /// </summary>
@@ -1292,6 +1304,28 @@ public interface IWorkCoordinator {
     int maxPerStream = 100,
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<OutboxBatchRow>>([]);
+
+  /// <summary>
+  /// Byte-budgeted outbox fetch: bounds the slice by payload bytes as well as row count — the
+  /// outbox sibling of the byte-budgeted <c>FetchInboxBatchAsync</c> overload below, and shaped
+  /// as a separate overload for the same reason (see that overload's remarks: changing a
+  /// defaulted-interface-method signature silently un-implements it for every existing
+  /// implementer). The default delegates to the count-only overload, so an engine that has not
+  /// implemented this keeps its previous behavior (unbounded by bytes).
+  /// </summary>
+  /// <param name="streamIds">Streams to drain.</param>
+  /// <param name="instanceId">The claiming instance.</param>
+  /// <param name="maxPerStream">Row cap per stream.</param>
+  /// <param name="maxBytes">Payload-byte cap per stream; null disables it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
+    CancellationToken cancellationToken = default)
+    => FetchOutboxBatchAsync(streamIds, instanceId, maxPerStream, cancellationToken);
 
   /// <summary>
   /// Per-stream-id payload fetch for the InboxDrainWorker. Mirror of
