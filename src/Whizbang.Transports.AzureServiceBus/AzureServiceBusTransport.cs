@@ -768,7 +768,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
       return _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
     };
-    sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination);
+    sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination,
+      () => sessionProcessor.StopProcessingAsync(), () => sessionProcessor.StartProcessingAsync());
 
     await sessionProcessor.StartProcessingAsync(cancellationToken);
     return subscription;
@@ -838,7 +839,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       return Task.CompletedTask;
     };
 
-    processor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination);
+    processor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination,
+      () => processor.StopProcessingAsync(), () => processor.StartProcessingAsync());
 
     await processor.StartProcessingAsync(cancellationToken);
     return subscription;
@@ -958,7 +960,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           await _processReceivedMessageAsync(args, handler, destination);
         };
 
-        sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination);
+        sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination,
+          () => sessionProcessor.StopProcessingAsync(), () => sessionProcessor.StartProcessingAsync());
 
         await sessionProcessor.StartProcessingAsync(cancellationToken);
       } else {
@@ -1307,9 +1310,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
   }
 
+  /// <summary>
+  /// One namespace-wide accept-pressure governor per transport: ServiceBusy throttling is a
+  /// NAMESPACE condition, so every processor on this client shares one backoff streak and one
+  /// single-flight pause. Base 2s (the broker's own guidance), capped at 60s, streak resets
+  /// after 5 quiet minutes.
+  /// </summary>
+  private readonly AsbThrottleBackoffPolicy _throttlePolicy =
+    new(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(60), TimeSpan.FromMinutes(5));
+
   private async Task _handleProcessorErrorAsync(
     ProcessErrorEventArgs args,
-    TransportDestination destination
+    TransportDestination destination,
+    Func<Task>? stopProcessingAsync = null,
+    Func<Task>? startProcessingAsync = null
   ) {
     _logger.LogError(
       args.Exception,
@@ -1325,6 +1339,44 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         (args.Exception as ServiceBusException)?.Reason
       );
       await _invokeRecoveryHandlerAsync();
+    }
+
+    // Namespace throttling (50009 ServiceBusy): the SDK's accept loop retries immediately across
+    // every concurrent session slot, which AMPLIFIES the throttle — observed live as a fleet whose
+    // consumers could not accept one session while thousands of messages queued broker-side. The
+    // governor answers with ONE exponentially-backed pause per streak; the pause runs detached
+    // because StopProcessingAsync awaits in-flight handlers (including this one).
+    if (args.Exception is ServiceBusException sbEx
+        && _throttlePolicy.RecordError(sbEx.Reason, DateTimeOffset.UtcNow) is { } pause
+        && stopProcessingAsync is not null && startProcessingAsync is not null
+        && _throttlePolicy.TryBeginPause()) {
+      if (_logger.IsEnabled(LogLevel.Warning)) {
+        _logger.LogWarning(
+          "Namespace throttled (ServiceBusy) on {TopicName}/{SubscriptionName}; pausing accepts for {PauseSeconds}s to shed pressure",
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName,
+          pause.TotalSeconds);
+      }
+      _ = Task.Run(async () => {
+        try {
+          await stopProcessingAsync();
+          await Task.Delay(pause);
+          await startProcessingAsync();
+          if (_logger.IsEnabled(LogLevel.Information)) {
+            _logger.LogInformation(
+              "Resumed Service Bus processor for {TopicName}/{SubscriptionName} after throttle pause",
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName);
+          }
+        } catch (Exception ex) {
+          _logger.LogError(ex,
+            "Throttle pause/resume failed for {TopicName}/{SubscriptionName} — the receive-liveness watchdog is the backstop",
+            destination.Address,
+            destination.RoutingKey ?? _options.DefaultSubscriptionName);
+        } finally {
+          _throttlePolicy.EndPause();
+        }
+      });
     }
   }
 
