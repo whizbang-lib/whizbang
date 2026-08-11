@@ -383,6 +383,44 @@ public class AsbReceiveDecisionMakerTests {
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
   }
 
+  [Test]
+  public async Task Decide_BinderBindsButOptionsCannotResolve_ReturnsAckAndDropInsteadOfThrowingAsync() {
+    // The binder fallback resolves a LOADABLE type the serializer holds no metadata for.
+    // STJ's GetTypeInfo throws NotSupportedException there — and an unguarded throw escapes
+    // Decide, the transport abandons the delivery, and the broker redelivers the same
+    // undeserializable message forever (observed live: every redelivery bundle in a fleet
+    // looped at thousands of errors per hour). An unbindable message must degrade to the
+    // same graceful ack-and-drop as a registry miss, never an abandon loop.
+    var decider = new AsbReceiveDecisionMaker();
+    var props = _withEnvelopeType("Whizbang.Transports.AzureServiceBus.Tests.AsbReceiveDecisionMakerTests+_unresolvableProbe, Whizbang.Transports.AzureServiceBus.Tests");
+    var binder = new _bindsToUnresolvableType();
+    // Source-gen-shaped options with NO metadata for the probe — the production condition:
+    // the type is loadable but no registered context can serve it, so GetTypeInfo throws.
+    var barrenOptions = new JsonSerializerOptions {
+      TypeInfoResolver = JsonTypeInfoResolver.Combine()
+    };
+
+    var decision = decider.Decide(
+      props, """{"p":1}""", _resolveAlwaysNull, barrenOptions,
+      isHandledLocally: null,
+      rawReceptorRegistry: null,
+      typeBinder: binder);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
+  }
+
+  /// <summary>A loadable type deliberately absent from every registered JSON context.</summary>
+  private sealed class _unresolvableProbe {
+    public HashSet<string>? Keys { get; init; }
+  }
+
+  private sealed class _bindsToUnresolvableType : Whizbang.Core.Messaging.IMessageTypeBinder {
+    public Type? Bind(string assemblyQualifiedName) => typeof(_unresolvableProbe);
+    public (Type? Type, Whizbang.Core.Messaging.MessageTypeBinderPass Pass) BindWithDiagnostics(string assemblyQualifiedName) =>
+      (typeof(_unresolvableProbe), Whizbang.Core.Messaging.MessageTypeBinderPass.ExactStrongName);
+  }
+
   private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
     MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
     Payload = JsonDocument.Parse("{}").RootElement,

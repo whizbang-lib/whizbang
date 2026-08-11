@@ -491,6 +491,12 @@ public static class JsonContextRegistry {
     if (!_derivedTypes.TryGetValue(typeof(TBase), out var bag) || bag.IsEmpty) {
       return null;
     }
+    // Trial threads build throwaway placeholders bound to throwaway scratch options — never cache
+    // them (the cache is hash-keyed, and a dead scratch entry is at best waste, at worst a hash
+    // collision handing a future options a typeinfo bound to a disposed sibling).
+    if (_inTrialConfigure) {
+      return _createPolymorphicTypeInfoLazy<TBase>(options, bag);
+    }
     var cacheKey = (typeof(TBase), options.GetHashCode());
     return _resolverPolymorphicCache.GetOrAdd(cacheKey, _ => _createPolymorphicTypeInfoLazy<TBase>(options, bag));
   }
@@ -524,6 +530,15 @@ public static class JsonContextRegistry {
     if (elementTypeInfo is null) {
       return null;
     }
+    if (_inTrialConfigure) {
+      // Trial threads: never cache scratch-bound typeinfos (see _getLazyPolymorphicTypeInfo).
+      return JsonMetadataServices.CreateListInfo<List<TBase>, TBase>(
+        options,
+        collectionInfo: new JsonCollectionInfoValues<List<TBase>> {
+          ObjectCreator = () => [],
+          ElementInfo = elementTypeInfo
+        });
+    }
     var cacheKey = (typeof(List<TBase>), options.GetHashCode());
     var cached = _resolverPolymorphicCache.GetOrAdd(cacheKey, _ =>
       JsonMetadataServices.CreateListInfo<List<TBase>, TBase>(
@@ -546,6 +561,10 @@ public static class JsonContextRegistry {
     var payloadTypeInfo = (JsonTypeInfo<TBase>?)_getLazyPolymorphicTypeInfo<TBase>(options);
     if (payloadTypeInfo is null) {
       return null;
+    }
+    if (_inTrialConfigure) {
+      // Trial threads: never cache scratch-bound typeinfos (see _getLazyPolymorphicTypeInfo).
+      return _createPolymorphicEnvelopeTypeInfo<TBase>(options, payloadTypeInfo);
     }
     var cacheKey = (typeof(MessageEnvelope<TBase>), options.GetHashCode());
     var cached = _resolverPolymorphicCache.GetOrAdd(cacheKey, _ =>
@@ -573,6 +592,19 @@ public static class JsonContextRegistry {
     };
 
     var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo<TBase>(options, objectInfo);
+
+    // On a TRIAL thread, a nested polymorphic base is an INERT PLACEHOLDER — no PolymorphismOptions
+    // at all. STJ eagerly configures every derived type when it finalizes a polymorphic base, so a
+    // populated nested base would drag every OTHER candidate's property graph into this candidate's
+    // trial (a composite carrying an IMessage list would be blamed for a sibling's defect), and STJ
+    // rejects an EMPTY PolymorphismOptions outright. A plain zero-property object typeinfo configures
+    // cleanly, so the candidate's OWN closure is exactly what the trial validates. The placeholder
+    // never escapes: trials run on a dedicated thread (see _survivesTrialConfigure), so thread-static
+    // caches that captured it die with the thread.
+    if (_inTrialConfigure) {
+      return jsonTypeInfo;
+    }
+
     jsonTypeInfo.PolymorphismOptions = new JsonPolymorphismOptions {
       TypeDiscriminatorPropertyName = "$type",
       UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FallBackToNearestAncestor,
@@ -594,12 +626,101 @@ public static class JsonContextRegistry {
       if (!_isResolvableByRegisteredContext(derivedType, options)) {
         continue;
       }
+      // QUARANTINE (observed live): a derived type can RESOLVE (root metadata exists) yet fail to
+      // CONFIGURE — a property whose type no context holds metadata for. STJ configures a
+      // polymorphic typeinfo by configuring every derived type's property graph, so one such type
+      // fails the first serialize of EVERY message on this options: an entire fleet's repair
+      // publishing went dark because one contract event carried a HashSet property. Trial-configure
+      // each candidate in isolation and skip (loudly, via QuarantinedDerivedTypes) the ones that
+      // cannot configure — one bad contract type degrades that type, never the wire.
+      if (!_survivesTrialConfigure(derivedType, typeof(TBase), options)) {
+        continue;
+      }
       // No forcing here — adding a JsonDerivedType does not resolve the derived type's typeinfo, so
       // this cannot recurse into nested same-base members. STJ resolves it lazily on first use.
       jsonTypeInfo.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(derivedType, discriminator));
     }
 
     return jsonTypeInfo;
+  }
+
+  /// <summary>One quarantined polymorphic derived type: registered on <see cref="BaseType"/> but
+  /// excluded from serialization because its property graph cannot configure.</summary>
+  /// <param name="DerivedType">The excluded concrete type.</param>
+  /// <param name="BaseType">The polymorphic base it was registered under.</param>
+  /// <param name="Reason">The configure failure, verbatim — it names the missing metadata.</param>
+  /// <docs>fundamentals/messages/json-serialization</docs>
+  public sealed record QuarantinedDerivedType(Type DerivedType, Type BaseType, string Reason);
+
+  private static readonly ConcurrentDictionary<(Type derivedType, Type baseType, int optionsHash), QuarantinedDerivedType> _quarantined = new();
+  private static readonly ConcurrentDictionary<(Type derivedType, int optionsHash), bool> _trialResults = new();
+
+  [ThreadStatic]
+  private static bool _inTrialConfigure;
+
+  /// <summary>
+  /// Every derived type currently excluded from polymorphic serialization because its property
+  /// graph cannot configure (missing source-generated metadata for a property type). Empty in a
+  /// healthy deployment — a non-empty reading names a contract defect precisely, instead of the
+  /// whole wire failing with a generic serializer error.
+  /// </summary>
+  /// <docs>fundamentals/messages/json-serialization</docs>
+  public static IReadOnlyCollection<QuarantinedDerivedType> QuarantinedDerivedTypes => [.. _quarantined.Values];
+
+  /// <summary>
+  /// Trial-configures <paramref name="derivedType"/> on SCRATCH options sharing this options'
+  /// resolver chain, on a dedicated thread. The trial flag makes nested polymorphic bases build as
+  /// inert placeholders (no polymorphism) during the trial, so each candidate's OWN property closure
+  /// is what gets validated — a composite carrying an <c>IMessage</c> list neither recurses into
+  /// other candidates nor gets blamed for a sibling's defect. The dedicated thread discards the
+  /// thread-static typeinfo caches the trial seeds. Results are cached per (type, options).
+  /// </summary>
+  private static bool _survivesTrialConfigure(Type derivedType, Type baseType, JsonSerializerOptions options) {
+    var key = (derivedType, options.GetHashCode());
+    if (_trialResults.TryGetValue(key, out var cached)) {
+      return cached;
+    }
+    // The trial runs on a DEDICATED thread, for isolation, not parallelism. Source-generated
+    // contexts memoize resolved typeinfos in [ThreadStatic] caches keyed by TYPE alone — a trial on
+    // the caller's thread would seed those caches with typeinfos bound to the throwaway scratch
+    // options (including the inert placeholder bases), and the REAL configure on the same thread
+    // would then pick them up. On a private thread every such cache dies with the thread, and the
+    // trial flag (also [ThreadStatic]) scopes the placeholder behavior to the trial alone.
+    Exception? failure = null;
+    var trial = new Thread(() => {
+      try {
+        _inTrialConfigure = true;
+        // Read-only is load-bearing: on a MUTABLE options GetTypeInfo takes STJ's resolveIfMutable
+        // path, which resolves WITHOUT configuring — the property graph never gets walked and every
+        // trial vacuously passes. Only the read-only path runs EnsureConfigured, which is exactly
+        // the work STJ does when finalizing the real polymorphic typeinfo.
+        var scratch = new JsonSerializerOptions(options);
+        // Re-wrapping the resolver is ALSO load-bearing: STJ pools caching contexts keyed by
+        // options EQUALITY, and a plain copy is equal to its source — the trial would share the
+        // REAL options' cache, deadlocking against the in-flight base build on the caller thread
+        // (which is Join-ing this one) and publishing trial placeholders into the real cache. A
+        // fresh Combine wrapper is reference-unequal, so the scratch gets a private context that
+        // dies with the trial.
+        scratch.TypeInfoResolver = JsonTypeInfoResolver.Combine(scratch.TypeInfoResolver!);
+        scratch.MakeReadOnly();
+        _ = scratch.GetTypeInfo(derivedType);
+      } catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException) {
+        failure = ex;
+      }
+    }) {
+      IsBackground = true,
+      Name = "whizbang-json-trial-configure"
+    };
+    trial.Start();
+    trial.Join();
+
+    var survives = failure is null;
+    if (failure is not null) {
+      _quarantined.TryAdd((derivedType, baseType, options.GetHashCode()),
+        new QuarantinedDerivedType(derivedType, baseType, failure.Message));
+    }
+    _trialResults.TryAdd(key, survives);
+    return survives;
   }
 
   /// <summary>
