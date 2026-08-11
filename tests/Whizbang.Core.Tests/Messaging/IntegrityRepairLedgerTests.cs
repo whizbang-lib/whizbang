@@ -138,4 +138,23 @@ public class IntegrityRepairLedgerTests {
     await Assert.That(ledger.TryBeginReport(oldest, 1, 1, 0, 0, now + TimeSpan.FromSeconds(4), _cooldown)).IsTrue()
       .Because("the evicted (oldest-touched) entry reads as fresh — over-reporting is the safe failure mode.");
   }
+
+  [Test]
+  public async Task MarkHealedBatchWithAges_ReturnsOneAgePerKnownKey_AndForgetsThemAsync() {
+    // The heal already destroys the row that carried the first-seen clock — reading the age back
+    // out of that destruction is the whole point: per-bucket time-to-reconcile at zero extra cost.
+    var ledger = new IntegrityRepairLedger();
+    var known = _key();
+    var unknown = _key();
+    var now = DateTimeOffset.UtcNow;
+    ledger.TryBeginReport(known, 11, 21, 0, 0, now - TimeSpan.FromMinutes(10), _cooldown);
+
+    var ages = await ledger.MarkHealedBatchWithAgesAsync([known, unknown]);
+
+    await Assert.That(ages.Count).IsEqualTo(1)
+      .Because("only a bucket the ledger was tracking has a first-seen clock to report");
+    await Assert.That(ages[0]).IsGreaterThanOrEqualTo(0d);
+    await Assert.That(ledger.TryBeginReport(known, 11, 21, 0, 0, now, _cooldown)).IsTrue()
+      .Because("a healed bucket is forgotten — the same signature later is a brand-new incident");
+  }
 }

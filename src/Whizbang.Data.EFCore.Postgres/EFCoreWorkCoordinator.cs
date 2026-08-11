@@ -613,6 +613,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public async Task<bool> IntegrityMarkHealedBatchAsync(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      CancellationToken cancellationToken = default) =>
+    await IntegrityMarkHealedBatchWithAgesAsync(originServiceId, keys, cancellationToken).ConfigureAwait(false) is not null;
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
       CancellationToken cancellationToken = default) {
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
@@ -627,8 +633,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids)";
 #pragma warning restore S2077
-      _ = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return true;
+      var ages = new List<double>(keys.Count);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        if (!await reader.IsDBNullAsync(0, cancellationToken).ConfigureAwait(false)) {
+          ages.Add(reader.GetDouble(0));
+        }
+      }
+      return ages;
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -636,7 +648,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _logger?.LogWarning(ex,
         "Integrity ledger batch wh_integrity_mark_healed_batch failed; falling back to single-key calls for this chunk.");
 #pragma warning restore CA1848
-      return false;
+      return null;
     }
   }
 
@@ -664,11 +676,26 @@ public class EFCoreWorkCoordinator<TDbContext>(
       if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         return Whizbang.Core.Observability.LedgerGaugeSnapshot.Empty;
       }
-      return new Whizbang.Core.Observability.LedgerGaugeSnapshot {
+      var snapshot = new Whizbang.Core.Observability.LedgerGaugeSnapshot {
         UnhealedBuckets = reader.GetInt64(0),
         RepairExhausted = reader.GetInt64(1),
         OldestUnhealedAgeSeconds = reader.GetDouble(2),
       };
+      await reader.DisposeAsync().ConfigureAwait(false);
+      // Per-origin verified watermarks for the sealed_through gauge — a handful of rows read in
+      // the same breath (same connection scope, same cadence) as the ledger summary.
+      var sealsSchema = BuildSchemaQualifiedName(schema, "wh_integrity_seals");
+      await using var sealsCmd = __scope.Connection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified table name built from a validated schema constant.
+      sealsCmd.CommandText = $"SELECT origin_service_id, sealed_through FROM {sealsSchema}";
+#pragma warning restore S2077
+      var seals = new List<Whizbang.Core.Observability.OriginSeal>();
+      await using (var sealsReader = await sealsCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+        while (await sealsReader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          seals.Add(new Whizbang.Core.Observability.OriginSeal(sealsReader.GetGuid(0), sealsReader.GetInt64(1)));
+        }
+      }
+      return snapshot with { Seals = seals };
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {

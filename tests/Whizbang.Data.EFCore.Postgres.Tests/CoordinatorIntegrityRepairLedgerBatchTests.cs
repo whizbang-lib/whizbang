@@ -59,6 +59,17 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
         : Task.FromResult(BatchHealedHandled);
     }
 
+    // The ledger heals through the WithAges surface; "handled" answers a (possibly empty) age
+    // list and "not handled" answers null — the same fallback contract the bool method modeled.
+    public Task<System.Collections.Generic.IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
+        Guid originServiceId, System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+        CancellationToken cancellationToken = default) {
+      BatchCalls++;
+      return ThrowOnBatch
+        ? Task.FromException<System.Collections.Generic.IReadOnlyList<double>?>(new InvalidOperationException("batch heal exploded"))
+        : Task.FromResult<System.Collections.Generic.IReadOnlyList<double>?>(BatchHealedHandled ? [] : null);
+    }
+
     public Task<bool> IntegrityTryBeginReportAsync(
         IntegrityRepairLedger.DivergenceKey key, long ol, long oh, long ll, long lh,
         DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) {

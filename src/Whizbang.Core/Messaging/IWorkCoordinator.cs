@@ -918,6 +918,18 @@ public interface IWorkCoordinator {
     Task.FromResult(false);
 
   /// <summary>
+  /// <see cref="IntegrityMarkHealedBatchAsync"/>, additionally returning each healed bucket's age
+  /// in seconds (first sighting → heal) read from the rows the delete destroys — the per-stream
+  /// time-to-reconcile at zero extra work. Null = unsupported (fall back to the ageless batch or
+  /// singles); an empty list is a real answer (no tracked bucket matched).
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<double>?>(null);
+
+  /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
   /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
   /// </summary>

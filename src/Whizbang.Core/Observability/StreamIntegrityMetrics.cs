@@ -69,6 +69,39 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>Re-delivery requests served as an origin (repair + backfill flows).</summary>
   public Counter<long> RedeliveryRequestsReceived { get; }
 
+  /// <summary>Origin side: seconds from receiving a manifest request to publishing its last chunk.
+  /// Tagged level / windowed / recompute. Epoch-served answers should be milliseconds — a slow
+  /// answer means the epochs are not serving and the fold fell back to the store.</summary>
+  public Histogram<double> ManifestAnswerDuration { get; }
+
+  /// <summary>Consumer side: seconds from receiving a manifest chunk to finishing its comparison
+  /// (ledger batches and repair sends included). THE early warning for the compare-slower-than-
+  /// arrival failure: when p99 approaches the manifest arrival interval, chunks queue behind the
+  /// gate and every queued chunk holds its deserialized payload in memory.</summary>
+  public Histogram<double> ManifestCompareDuration { get; }
+
+  /// <summary>Origin side: seconds to select and publish one redelivery request's bundles.</summary>
+  public Histogram<double> RedeliveryBuildDuration { get; }
+
+  /// <summary>Seconds from a divergent bucket's FIRST sighting to its proven heal — the per-stream
+  /// time-to-reconcile. Read back from the heal's own delete (the row already carried the clock);
+  /// no extra work is done to measure it.</summary>
+  public Histogram<double> BucketHealSeconds { get; }
+
+  /// <summary>Manifest chunks declined at the non-queueing compare gate. Sustained growth means
+  /// comparisons cannot keep up with arrivals — the pressure reading behind the gate.</summary>
+  public Counter<long> ComparesDeclined { get; }
+
+  /// <summary>Events selected and shipped in redelivery bundles as an origin.</summary>
+  public Counter<long> RedeliveryEventsShipped { get; }
+
+  /// <summary>Windowed stream pages followed via the resume cursor (per follow).</summary>
+  public Counter<long> ManifestPagesFollowed { get; }
+
+  /// <summary>Cursor-follow chains stopped at MaxManifestPagesPerAudit. Persistent growth means
+  /// lanes are wider than the page budget covers per audit — raise the cap or accept the pace.</summary>
+  public Counter<long> ManifestPagesCapped { get; }
+
   /// <summary>Initializes a new instance of <see cref="StreamIntegrityMetrics"/>.</summary>
   public StreamIntegrityMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
@@ -116,6 +149,44 @@ public sealed class StreamIntegrityMetrics {
     RedeliveryRequestsReceived = meter.CreateCounter<long>(
       "whizbang.stream_integrity.redelivery_requests_received",
       description: "Re-delivery requests served as an origin (repair + backfill flows)");
+
+    ManifestAnswerDuration = meter.CreateHistogram<double>(
+      "whizbang.stream_integrity.manifest_answer_duration", unit: "s",
+      description: "Origin: receipt of a manifest request to its last chunk published (epoch-served answers should be ms)");
+    ManifestCompareDuration = meter.CreateHistogram<double>(
+      "whizbang.stream_integrity.manifest_compare_duration", unit: "s",
+      description: "Consumer: receipt of a manifest chunk to comparison done — p99 nearing the arrival interval means chunks are queuing");
+    RedeliveryBuildDuration = meter.CreateHistogram<double>(
+      "whizbang.stream_integrity.redelivery_build_duration", unit: "s",
+      description: "Origin: one redelivery request's select-and-publish, end to end");
+    BucketHealSeconds = meter.CreateHistogram<double>(
+      "whizbang.stream_integrity.bucket_heal_seconds", unit: "s",
+      description: "First sighting of a divergent bucket to its proven heal — per-stream time-to-reconcile");
+    ComparesDeclined = meter.CreateCounter<long>(
+      "whizbang.stream_integrity.compares_declined",
+      description: "Manifest chunks declined at the busy compare gate; sustained growth = comparisons losing to arrivals");
+    RedeliveryEventsShipped = meter.CreateCounter<long>(
+      "whizbang.stream_integrity.redelivery_events_shipped",
+      description: "Events selected and shipped in redelivery bundles as an origin");
+    ManifestPagesFollowed = meter.CreateCounter<long>(
+      "whizbang.stream_integrity.manifest_pages_followed",
+      description: "Windowed stream pages followed via the resume cursor");
+    ManifestPagesCapped = meter.CreateCounter<long>(
+      "whizbang.stream_integrity.manifest_pages_capped",
+      description: "Cursor-follow chains stopped at the per-window page budget");
+
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.sealed_through",
+      () => {
+        var seals = _ledger.Seals;
+        var measurements = new Measurement<long>[seals.Count];
+        for (var i = 0; i < seals.Count; i++) {
+          measurements[i] = new Measurement<long>(seals[i].SealedThrough,
+            new KeyValuePair<string, object?>("origin_service_id", seals[i].OriginServiceId.ToString()));
+        }
+        return measurements;
+      },
+      description: "Per-origin verified watermark — the exclusive end of the highest window that audited clean and complete");
 
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.unhealed_buckets",
@@ -165,4 +236,14 @@ public sealed record LedgerGaugeSnapshot {
 
   /// <summary>Seconds since the oldest unhealed bucket first diverged (0 when none).</summary>
   public double OldestUnhealedAgeSeconds { get; init; }
+
+  /// <summary>Per-origin verified watermarks (one gauge series each). Empty until the collector
+  /// reads the seals — a tiny table it visits in the same breath as the ledger summary.</summary>
+  public IReadOnlyList<OriginSeal> Seals { get; init; } = [];
 }
+
+/// <summary>One origin's verified watermark, for the <c>sealed_through</c> gauge.</summary>
+/// <param name="OriginServiceId">The audited origin.</param>
+/// <param name="SealedThrough">Exclusive end of the highest window that audited clean and complete.</param>
+/// <docs>resilience/stream-integrity</docs>
+public sealed record OriginSeal(Guid OriginServiceId, long SealedThrough);

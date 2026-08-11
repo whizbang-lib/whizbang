@@ -47,7 +47,9 @@ public sealed partial class RedeliveryRequestReceptor(
       return;
     }
 
-    services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.RedeliveryRequestsReceived.Add(1);
+    var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    metrics?.RedeliveryRequestsReceived.Add(1);
+    var buildTimer = System.Diagnostics.Stopwatch.StartNew();
     var options = services.GetService<RedeliveryPumpOptions>() ?? new RedeliveryPumpOptions();
     var cap = options.MaxEventsPerRequest;
     var maxEvents = message.MaxEvents is { } requested ? Math.Min(requested, cap) : cap;
@@ -96,6 +98,8 @@ public sealed partial class RedeliveryRequestReceptor(
         LogNothingSelected(logger, message.RequesterService);
         return;
       }
+      metrics?.RedeliveryEventsShipped.Add(totalSelected);
+      metrics?.RedeliveryBuildDuration.Record(buildTimer.Elapsed.TotalSeconds);
       LogRedeliveryPublished(logger, totalSelected, totalComposites, message.RequesterService, message.Topic);
     } finally {
       _buildGate.Release();

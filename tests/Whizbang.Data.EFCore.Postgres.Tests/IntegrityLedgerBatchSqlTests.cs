@@ -100,4 +100,54 @@ public class IntegrityLedgerBatchSqlTests : EFCoreTestBase {
     await Assert.That(after!.All(granted => granted)).IsTrue()
       .Because("a healed bucket is forgotten — the same signature minutes later is a brand-new incident");
   }
+
+  [Test]
+  public async Task HealedBatchWithAges_ReturnsEachDestroyedRowsAge_AndNothingForUnknownKeysAsync() {
+    // The delete was already destroying the rows that carry first_seen_at — the ages are read
+    // back out of that destruction (migration 095), not computed by any extra work.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = Guid.NewGuid();
+    var known = new[] { _key(origin, Guid.NewGuid()), _key(origin, Guid.NewGuid()) };
+    var unknown = _key(origin, Guid.NewGuid());
+    var now = DateTimeOffset.UtcNow;
+    _ = await coordinator.IntegrityTryBeginReportBatchAsync(
+      origin, known.Select(k => _obs(k)).ToList(), now, TimeSpan.FromMinutes(60));
+    await using (var conn = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      await using var cmd = conn.CreateCommand();
+      cmd.CommandText = "UPDATE wh_integrity_ledger SET first_seen_at = NOW() - INTERVAL '10 minutes'";
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    var ages = await coordinator.IntegrityMarkHealedBatchWithAgesAsync(origin, [.. known, unknown]);
+
+    await Assert.That(ages).IsNotNull();
+    await Assert.That(ages!.Count).IsEqualTo(2)
+      .Because("two tracked buckets healed; the unknown key had no row and therefore no clock");
+    await Assert.That(ages.All(a => a is > 500 and < 700)).IsTrue()
+      .Because("each age is read from the destroyed row's ten-minute-old first_seen_at");
+
+    var after = await coordinator.IntegrityTryBeginReportBatchAsync(
+      origin, known.Select(k => _obs(k)).ToList(), now.AddMinutes(1), TimeSpan.FromMinutes(60));
+    await Assert.That(after!.All(granted => granted)).IsTrue()
+      .Because("healed buckets are forgotten — the age read must not survive as ledger state");
+  }
+
+  [Test]
+  public async Task LedgerSummary_CarriesPerOriginSeals_ForTheSealedThroughGaugeAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var originA = Guid.NewGuid();
+    var originB = Guid.NewGuid();
+    await coordinator.AdvanceIntegritySealAsync(originA, 300);
+    await coordinator.AdvanceIntegritySealAsync(originB, 0);
+
+    var summary = await coordinator.GetIntegrityLedgerSummaryAsync(maxRepairAttempts: 8);
+
+    await Assert.That(summary.Seals.Count).IsEqualTo(2)
+      .Because("each audited origin is its own gauge series — one number would hide a stuck lane");
+    await Assert.That(summary.Seals.Any(x => x.OriginServiceId == originA && x.SealedThrough == 300)).IsTrue();
+    await Assert.That(summary.Seals.Any(x => x.OriginServiceId == originB && x.SealedThrough == 0)).IsTrue();
+  }
 }

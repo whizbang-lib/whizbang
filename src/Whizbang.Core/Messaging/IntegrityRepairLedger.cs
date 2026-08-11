@@ -38,6 +38,7 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
     public DateTimeOffset? LastRepairAt;
     public int RepairAttempts;
     public DateTimeOffset LastTouched;
+    public DateTimeOffset FirstSeen;
   }
 
   private readonly Lock _lock = new();
@@ -132,6 +133,23 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
     }
   }
 
+  /// <inheritdoc />
+  /// <remarks>Ages come straight off the entries this heal removes — the first-seen clock was
+  /// already there for the oldest-unhealed gauge; destroying the entry reads it back for free.</remarks>
+  public ValueTask<IReadOnlyList<double>> MarkHealedBatchWithAgesAsync(
+      IReadOnlyList<DivergenceKey> keys, CancellationToken cancellationToken = default) {
+    var now = DateTimeOffset.UtcNow;
+    var ages = new List<double>(keys.Count);
+    lock (_lock) {
+      foreach (var key in keys) {
+        if (_entries.Remove(key, out var entry)) {
+          ages.Add(Math.Max(0d, (now - entry.FirstSeen).TotalSeconds));
+        }
+      }
+    }
+    return ValueTask.FromResult<IReadOnlyList<double>>(ages);
+  }
+
   private Entry _getOrAdd(DivergenceKey key, DateTimeOffset now) {
     if (_entries.TryGetValue(key, out var entry)) {
       return entry;
@@ -148,6 +166,7 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
       LocalLo = long.MinValue,
       LocalHi = long.MinValue,
       LastTouched = now,
+      FirstSeen = now,
     };
     _entries[key] = entry;
     return entry;
