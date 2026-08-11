@@ -184,6 +184,38 @@ public class IntegrityManifestReceptorTests {
                + "silencing the report must not silence the fix");
   }
 
+  /// <summary>
+  /// With report publishing disabled (the production default), <c>reportsPublished</c> stays 0 —
+  /// which made the "divergence reports capped: N divergent, 0 reported" WARNING fire on every
+  /// comparison that found anything. That message describes hitting <c>MaxReportsPerAudit</c>;
+  /// firing it for a deliberate configuration choice reads as data loss ("the remainder stays
+  /// unhealed") when the ledger row was written and the repair went out. The cap warning must be
+  /// conditional on publishing actually being enabled.
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_ReportsDisabled_DoesNotWarnReportsCappedAsync() {
+    var coordinator = new _auditCoordinator();
+    var mismatched = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(mismatched, 99, 21, 1)];
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var logger = new _capturingLogger<IntegrityManifestReceptor>();
+    // No PublishReportEvents — the production default.
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(mismatched, 11, 21, 2)]));
+
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("reports capped"))).IsFalse()
+      .Because("publishing was never attempted, so nothing was capped — the warning is reserved "
+               + "for MaxReportsPerAudit actually truncating an enabled report stream");
+  }
+
   [Test]
   public async Task ManifestReceptor_Divergence_ReportsAndCappedRepairsAsync() {
     var coordinator = new _auditCoordinator();
@@ -1800,5 +1832,21 @@ public class IntegrityManifestReceptorTests {
 
     await Assert.That(dispatcher.Published.OfType<IntegrityDivergenceDetected>().Any()).IsTrue()
       .Because("an operator who chose report-and-decide must still get reports");
+  }
+
+  /// <summary>Minimal capturing logger — records level/message for assertions on log output.</summary>
+  private sealed class _capturingLogger<T> : Microsoft.Extensions.Logging.ILogger<T> {
+    public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => _nullScope.Instance;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter)
+      => Entries.Add((logLevel, formatter(state, exception)));
+
+    private sealed class _nullScope : IDisposable {
+      public static readonly _nullScope Instance = new();
+      public void Dispose() { }
+    }
   }
 }

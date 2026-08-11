@@ -495,7 +495,11 @@ public sealed partial class IntegrityManifestReceptor(
       LogDivergence(logger, eventType, tenantScope, tally.Count, tally.SampleStreamId,
         message.OriginServiceName, tally.OriginTotal, tally.LocalTotal, tally.AnyAutoRepair);
     }
-    if (divergentSeen > reportsPublished) {
+    // Only a CAP warrants the warning. With publishing disabled (the production default),
+    // reportsPublished is always 0 and "N divergent, 0 reported" would fire on every comparison
+    // that found anything — reading as data loss when the ledger row was written and the repair
+    // went out. Disabled-by-choice is not truncation.
+    if (options.PublishReportEvents && divergentSeen > reportsPublished) {
       LogDivergenceReportsCapped(logger, message.OriginServiceName, divergentSeen, reportsPublished);
     }
 
