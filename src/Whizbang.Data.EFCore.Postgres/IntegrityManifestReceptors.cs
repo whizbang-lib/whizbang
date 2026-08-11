@@ -255,27 +255,45 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
 
-    // Stream level. A WINDOWED manifest (#80-B) is compared against a WINDOWED local fold over
-    // the manifest's exact range — window counts against all-history folds would fabricate a
-    // mismatch on any stream with prior history. A sweep manifest (Recomputed) compares
-    // recompute-to-recompute — the pre-A1c semantics, covering busy buckets; a table manifest
-    // compares table-to-table with settle-skip.
+    // Stream level. The local fold is bounded by the CHUNK: a lane can hold a million streams,
+    // the chunk names at most the origin's chunk size, and the comparison only needs those.
+    // Observed live (fleet-wide OOM-crashloop): the windowed compare folded the WHOLE window and
+    // the legacy fallback recomputed the WHOLE store to check one 500-stream chunk. A windowed
+    // manifest (#80-B) still compares window-vs-window — via the chunk-bounded fold's sequence
+    // range — because window counts against all-history folds would fabricate mismatches on any
+    // stream with prior history.
+    var chunkStreams = message.Digests.Select(d => d.StreamId).Distinct().ToList();
     IReadOnlyList<StreamDigest> local;
     if (message.ComputedThrough is long streamWindowEnd) {
-      var windowedLocal = await coordinator.ComputeStreamDigestsWindowedAsync(
-        message.OriginServiceId, types, message.SinceSequence ?? 0, streamWindowEnd,
-        resumeAfterStreamId: null, maxDigests: int.MaxValue, settle, cancellationToken).ConfigureAwait(false);
-      if (windowedLocal is null) {
+      var bounded = await coordinator.ComputeStreamDigestsForChunkAsync(
+        message.OriginServiceId, chunkStreams, message.SinceSequence ?? 0, streamWindowEnd, settle,
+        cancellationToken).ConfigureAwait(false);
+      if (bounded is null) {
         // This engine cannot fold the manifest's window; comparing incomparable ranges would
         // alarm on phantoms. Skip — the origin re-answers next cycle, legacy if we keep failing.
         LogWindowedCompareUnsupported(logger, message.OriginServiceName);
         return;
       }
-      local = windowedLocal.Digests;
+      local = bounded;
+    } else if (message.Recomputed) {
+      // Sweep manifests compare recompute-to-recompute — now bounded to the chunk's streams.
+      // The whole-store recompute survives ONLY as the compat path for engines without the
+      // bounded fold; it is the memory-killer on large lanes.
+      local = await coordinator.ComputeStreamDigestsForChunkAsync(
+          message.OriginServiceId, chunkStreams, sinceSequence: null, untilSequence: null, settle,
+          cancellationToken).ConfigureAwait(false)
+        ?? await coordinator.ComputeStreamDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false);
     } else {
-      local = message.Recomputed
-        ? await coordinator.ComputeStreamDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false)
-        : await _tableDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, streamLevel: true, cancellationToken).ConfigureAwait(false);
+      // Table manifests keep table-to-table semantics (settle-skip rides UpdatedAt). Only the
+      // UNPOPULATED-table fallback changes: it used to be the whole-store recompute — the other
+      // shape of the same OOM — and is now the chunk-bounded fold over full history.
+      var table = await coordinator.GetStreamDigestsAsync(message.OriginServiceId, types, cancellationToken).ConfigureAwait(false);
+      local = table.Count > 0
+        ? table
+        : await coordinator.ComputeStreamDigestsForChunkAsync(
+            message.OriginServiceId, chunkStreams, sinceSequence: null, untilSequence: null, settle,
+            cancellationToken).ConfigureAwait(false)
+          ?? await coordinator.ComputeStreamDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false);
     }
     var localByBucket = local.ToDictionary(d => (d.TenantScope, d.EventType, d.StreamId));
 

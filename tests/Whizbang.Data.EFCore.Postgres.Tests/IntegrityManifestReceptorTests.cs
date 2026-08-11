@@ -650,6 +650,76 @@ public class IntegrityManifestReceptorTests {
                "immediately instead of waiting out a stale cooldown.");
   }
 
+  // ── hotfix: the stream-level local compare is bounded by the CHUNK ──────
+
+  [Test]
+  public async Task ManifestReceptor_WindowedStreamChunk_FoldsOnlyTheChunksStreamsAsync() {
+    // Observed live, fleet-wide: first-contact windowed audits (seal 0) drill down to stream
+    // manifests, and the local compare folded the WHOLE window — every stream in the lane — to
+    // check one 500-stream chunk. Pods OOMed in seconds, on every service at once. The local
+    // side only ever needs the streams THE CHUNK NAMES.
+    var coordinator = new _auditCoordinator();
+    var s1 = TrackedGuid.NewMedo().Value;
+    var s2 = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(s1, 11, 21, 2)];
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(s1, 11, 21, 2), _digest(s2, 12, 22, 3)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(coordinator.ForChunkStreamsSeen).IsNotNull()
+      .Because("the chunk-bounded fold is the ONLY acceptable local read at stream level");
+    await Assert.That(coordinator.ForChunkStreamsSeen!.OrderBy(s => s).ToList())
+      .IsEquivalentTo(new[] { s1, s2 }.OrderBy(s => s).ToList())
+      .Because("exactly the chunk's streams — folding the lane to check a chunk is the OOM this fixes");
+    await Assert.That(coordinator.ForChunkSinceSeen).IsEqualTo(100L);
+    await Assert.That(coordinator.ForChunkUntilSeen).IsEqualTo(300L)
+      .Because("window-vs-window, bounded by the chunk in the stream dimension");
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("s2 is a deficit (missing locally) and still repairs — bounding must not blunt detection");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_LegacyStreamChunk_FallsBackChunkBounded_NotWholeStoreAsync() {
+    // The pre-windowed shape of the same OOM: a legacy manifest against an unpopulated digest
+    // lane fell back to a WHOLE-STORE recompute per chunk. The bounded fold answers the same
+    // question for just the named streams.
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(stream, 99, 21, 1)];   // deficit vs origin's 2
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      dispatcher, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(coordinator.ForChunkStreamsSeen!).IsEquivalentTo([stream]);
+    await Assert.That(coordinator.ForChunkSinceSeen).IsNull()
+      .Because("a legacy manifest has no window — full history, but only for the named streams");
+    await Assert.That(coordinator.StreamComputeCalls).IsEqualTo(0)
+      .Because("the whole-store recompute is the memory-killer; it remains only as the compat path for engines without the bounded fold");
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("the deficit still repairs through the bounded path");
+  }
+
   // ── #80-F: origin generation — seal coherence across legitimate mutation ─
 
   [Test]
@@ -798,7 +868,6 @@ public class IntegrityManifestReceptorTests {
 
     // A windowed manifest is compared against a WINDOWED local fold — window counts against
     // all-history table folds would fabricate mismatches on any stream with prior history.
-    coordinator.WindowedStreamResult = new WindowedDigestResult { Digests = [], ComputedThrough = 300 };
     var manifest = _manifest(coordinator, [_digest(missing, 12, 22, 3)]) with {
       SinceSequence = 100,
       ComputedThrough = 300,
@@ -806,7 +875,7 @@ public class IntegrityManifestReceptorTests {
     };
     await receptor.HandleAsync(manifest);
 
-    await Assert.That(coordinator.WindowedSinceSeen).IsEqualTo(100L)
+    await Assert.That(coordinator.ForChunkSinceSeen).IsEqualTo(100L)
       .Because("the local fold must cover the manifest's exact window, or the buckets are not comparable");
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     var command = _deserializeRedelivery(transport.Published[0].Envelope);
@@ -1241,6 +1310,21 @@ public class IntegrityManifestReceptorTests {
       WindowedResumeSeen = resumeAfterStreamId;
       WindowedMaxSeen = maxDigests;
       return Task.FromResult(WindowedStreamResult);
+    }
+
+    public IReadOnlyList<Guid>? ForChunkStreamsSeen;
+    public long? ForChunkSinceSeen;
+    public long? ForChunkUntilSeen;
+
+    public Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
+      Guid originServiceId, IReadOnlyList<Guid> streamIds,
+      long? sinceSequence, long? untilSequence, TimeSpan settleWindow,
+      CancellationToken cancellationToken = default) {
+      ForChunkStreamsSeen = streamIds;
+      ForChunkSinceSeen = sinceSequence;
+      ForChunkUntilSeen = untilSequence;
+      return Task.FromResult<IReadOnlyList<StreamDigest>?>(
+        ReceivedDigests.Where(d => streamIds.Contains(d.StreamId)).ToList());
     }
 
     public Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(

@@ -823,6 +823,48 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken);
 
   /// <inheritdoc />
+  public Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
+    Guid originServiceId, IReadOnlyList<Guid> streamIds,
+    long? sinceSequence, long? untilSequence, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // Bounded by the chunk: stream_id = ANY(named set). A NULL origin sequence never satisfies
+      // a window comparison, so windowed folds naturally exclude unsequenced rows — matching the
+      // answer side; a null window includes them (full history).
+      cmd.CommandText = $"""
+        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
+               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
+               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               COUNT(*)::int
+        FROM {schema}.wh_event_store es
+        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+        WHERE es.origin_service_id = @p_origin
+          AND es.stream_id = ANY(@p_streams::uuid[])
+          AND ((@p_since::bigint) IS NULL OR es.origin_commit_sequence >= @p_since)
+          AND ((@p_until::bigint) IS NULL OR es.origin_commit_sequence < @p_until)
+          AND COALESCE(es.flags, 0) & 8 = 0
+          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+          AND es.created_at < NOW() - @p_settle::interval
+        GROUP BY 1, 2, 3
+        ORDER BY 1, 2, 3
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", originServiceId));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = streamIds.ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = (object?)sinceSequence ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = (object?)untilSequence ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_settle", $"{(int)settleWindow.TotalSeconds} seconds"));
+
+      return (IReadOnlyList<StreamDigest>?)await _readStreamDigestsAsync(
+        cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+
+  /// <inheritdoc />
   public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
       cmd.CommandText = $"SELECT sealed_through FROM {schema}.wh_integrity_seals WHERE origin_service_id = @p_origin";

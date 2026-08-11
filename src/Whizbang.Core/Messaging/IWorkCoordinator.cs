@@ -996,6 +996,28 @@ public interface IWorkCoordinator {
     Task.FromResult<WindowedDigestResult?>(null);
 
   /// <summary>
+  /// The CHUNK-BOUNDED local fold for stream-level manifest COMPARISON: digests for exactly
+  /// <paramref name="streamIds"/> on the origin's received lane, optionally limited to the
+  /// half-open window <c>[sinceSequence, untilSequence)</c> (both null = full history). The local
+  /// side of a chunk comparison only ever needs the streams the chunk names — observed live,
+  /// folding the whole lane (or the whole window) to check one 500-stream chunk OOM-crashlooped
+  /// an entire fleet within seconds of each audit. Memory is bounded by the chunk size no matter
+  /// how large the lane is. Null return = unsupported (callers fall back to the legacy paths).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose received lane is compared.</param>
+  /// <param name="streamIds">The manifest chunk's stream set (bounded by the origin's chunk size).</param>
+  /// <param name="sinceSequence">Inclusive window start on the origin's sequence; null = no floor.</param>
+  /// <param name="untilSequence">Exclusive window end; null = no ceiling.</param>
+  /// <param name="settleWindow">Only events older than this count — matching the answer side.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
+    Guid originServiceId, IReadOnlyList<Guid> streamIds,
+    long? sinceSequence, long? untilSequence, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<StreamDigest>?>(null);
+
+  /// <summary>
   /// The consumer's verified watermark for an origin (#80-C): every sequence below it proved
   /// clean in a past complete-window audit, so steady-state audits start here instead of zero —
   /// what stops verified history from being re-shipped and re-verified forever. Default 0 =
