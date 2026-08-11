@@ -152,7 +152,11 @@ public sealed class PerspectiveWorkerParallelTests {
     var (worker, harness) = _createWorker(coordinator, registry, maxConcurrentPerspectives: 3);
 
     // Act
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    // Generous lifetime: the assertion waits on COMPLETION SIGNALS (the countdown), not a pace —
+    // the bound only exists so a genuinely-broken worker fails instead of hanging. A tight bound
+    // here read as flaky under CI load (the 5s window lost to scheduler pressure while the
+    // invariant itself held).
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
     // Release gate immediately so normal runners can complete
     gate.Release(2);
@@ -164,8 +168,8 @@ public sealed class PerspectiveWorkerParallelTests {
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalB" }, cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.ThrowingPerspective" }, cts.Token);
 
-    // Give it time to process the batch
-    var normalEntered = allNormalEntered.Wait(TimeSpan.FromSeconds(5));
+    // Wait on the completion signal with the test-lifetime bound.
+    var normalEntered = allNormalEntered.Wait(TimeSpan.FromSeconds(45));
 
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }

@@ -89,24 +89,42 @@ $$;
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_try_begin_repair_batch IS
 'One round trip for a chunk''s repair decisions, capped at p_max_grants IN ORDER — past the cap keys are not consulted at all, so no attempt budget is burned on grants the caller cannot use.';
 
-CREATE OR REPLACE FUNCTION __SCHEMA__.wh_integrity_mark_healed_batch(
+-- The heal returns each destroyed row's age in seconds (first sighting -> heal): per-stream
+-- time-to-reconcile, read from the rows the delete was already destroying — zero extra work.
+-- One set-based DELETE replaces a loop over the single-key function; semantics are identical
+-- (the single is delete-by-key only, and keys with no row return no age). The DROP guards the
+-- RETURNS change on installs that hold an earlier VOID-returning definition — CREATE OR REPLACE
+-- cannot alter a return type, and the ledger replay re-applies this file over live stores.
+DROP FUNCTION IF EXISTS __SCHEMA__.wh_integrity_mark_healed_batch(UUID, TEXT[], TEXT[], UUID[]);
+
+CREATE FUNCTION __SCHEMA__.wh_integrity_mark_healed_batch(
   p_origin_service_id UUID,
   p_tenant_scopes     TEXT[],
   p_event_types       TEXT[],
   p_stream_ids        UUID[]
-) RETURNS VOID
+) RETURNS SETOF DOUBLE PRECISION
 LANGUAGE plpgsql
 AS $$
-DECLARE
-  v_n INTEGER := COALESCE(array_length(p_stream_ids, 1), 0);
-  v_i INTEGER;
 BEGIN
-  FOR v_i IN 1 .. v_n LOOP
-    PERFORM __SCHEMA__.wh_integrity_mark_healed(
-      p_origin_service_id, p_tenant_scopes[v_i], p_event_types[v_i], p_stream_ids[v_i]);
-  END LOOP;
+  RETURN QUERY
+  WITH keys AS (
+    SELECT unnest(p_tenant_scopes) AS tenant_scope,
+           unnest(p_event_types)   AS event_type,
+           unnest(p_stream_ids)    AS stream_id
+  ),
+  healed AS (
+    DELETE FROM __SCHEMA__.wh_integrity_ledger l
+    USING keys k
+    WHERE l.origin_service_id = p_origin_service_id
+      AND l.tenant_scope      = k.tenant_scope
+      AND l.event_type        = k.event_type
+      AND l.stream_id         = k.stream_id
+    RETURNING l.first_seen_at
+  )
+  SELECT EXTRACT(EPOCH FROM (NOW() - h.first_seen_at))::DOUBLE PRECISION
+  FROM healed h;
 END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_mark_healed_batch IS
-'One round trip to forget a chunk''s healed buckets.';
+'One round trip to forget a chunk''s healed buckets, returning each healed bucket''s age in seconds (first sighting -> heal) — read from the rows the delete destroys.';
