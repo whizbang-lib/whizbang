@@ -768,8 +768,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
       return _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
     };
+    // CancellationToken.None is deliberate: the throttle pause runs detached and must complete
+    // its stop/resume even after the error-handler scope (args.CancellationToken) has ended.
     sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination,
-      () => sessionProcessor.StopProcessingAsync(), () => sessionProcessor.StartProcessingAsync());
+      () => sessionProcessor.StopProcessingAsync(CancellationToken.None),
+      () => sessionProcessor.StartProcessingAsync(CancellationToken.None));
 
     await sessionProcessor.StartProcessingAsync(cancellationToken);
     return subscription;
@@ -839,8 +842,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       return Task.CompletedTask;
     };
 
+    // CancellationToken.None is deliberate — see the session-processor attach site above.
     processor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination,
-      () => processor.StopProcessingAsync(), () => processor.StartProcessingAsync());
+      () => processor.StopProcessingAsync(CancellationToken.None),
+      () => processor.StartProcessingAsync(CancellationToken.None));
 
     await processor.StartProcessingAsync(cancellationToken);
     return subscription;
@@ -960,8 +965,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           await _processReceivedMessageAsync(args, handler, destination);
         };
 
+        // CancellationToken.None is deliberate — see the batch session-processor attach site.
         sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination,
-          () => sessionProcessor.StopProcessingAsync(), () => sessionProcessor.StartProcessingAsync());
+          () => sessionProcessor.StopProcessingAsync(CancellationToken.None),
+          () => sessionProcessor.StartProcessingAsync(CancellationToken.None));
 
         await sessionProcessor.StartProcessingAsync(cancellationToken);
       } else {
@@ -1357,10 +1364,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           destination.RoutingKey ?? _options.DefaultSubscriptionName,
           pause.TotalSeconds);
       }
+      // CancellationToken.None throughout the detached pause is deliberate: args.CancellationToken
+      // is signaled when the processor stops — which is exactly what the pause DOES first, so
+      // flowing it here would cancel our own delay/resume and strand the processor stopped.
       _ = Task.Run(async () => {
         try {
           await stopProcessingAsync();
-          await Task.Delay(pause);
+          await Task.Delay(pause, CancellationToken.None);
           await startProcessingAsync();
           if (_logger.IsEnabled(LogLevel.Information)) {
             _logger.LogInformation(
@@ -1376,7 +1386,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         } finally {
           _throttlePolicy.EndPause();
         }
-      });
+      }, CancellationToken.None);
     }
   }
 
