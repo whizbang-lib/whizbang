@@ -1,8 +1,17 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Whizbang.Core.Messaging;
+
+/// <summary>
+/// One bucket's report inputs for the batched ledger consult — the same values
+/// <see cref="IIntegrityRepairLedger.TryBeginReportAsync"/> takes one key at a time.
+/// </summary>
+/// <docs>resilience/stream-integrity</docs>
+public readonly record struct IntegrityReportObservation(
+  IntegrityRepairLedger.DivergenceKey Key, long OriginLo, long OriginHi, long LocalLo, long LocalHi);
 
 /// <summary>
 /// Convergence state for stream integrity: what divergence has already been reported, and how
@@ -44,4 +53,53 @@ public interface IIntegrityRepairLedger {
 
   /// <summary>The bucket folded identical — forget it. A later divergence is a brand-new incident.</summary>
   ValueTask MarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Batched <see cref="TryBeginReportAsync"/>: element i answers observation i. A manifest chunk
+  /// carries hundreds of buckets, and consulting the ledger per bucket made each comparison
+  /// seconds long — slower than manifests arrive, which queued arrivals (payloads and all) in
+  /// memory behind the comparator's gate until the process died. Durable implementations override
+  /// with one round trip; this default preserves exact semantics by looping the single.
+  /// </summary>
+  async ValueTask<IReadOnlyList<bool>> TryBeginReportBatchAsync(
+    IReadOnlyList<IntegrityReportObservation> observations, DateTimeOffset now, TimeSpan cooldown,
+    CancellationToken cancellationToken = default) {
+    var results = new bool[observations.Count];
+    for (var i = 0; i < observations.Count; i++) {
+      var o = observations[i];
+      results[i] = await TryBeginReportAsync(
+        o.Key, o.OriginLo, o.OriginHi, o.LocalLo, o.LocalHi, now, cooldown, cancellationToken).ConfigureAwait(false);
+    }
+    return results;
+  }
+
+  /// <summary>
+  /// Batched <see cref="TryBeginRepairAsync"/>, capped at <paramref name="maxGrants"/> IN ORDER.
+  /// Past the cap, keys are not consulted at all — a grant records an attempt, and a grant the
+  /// caller must discard burns backoff budget for nothing. Element i answers key i.
+  /// </summary>
+  async ValueTask<IReadOnlyList<bool>> TryBeginRepairBatchAsync(
+    IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan baseBackoff,
+    int maxAttempts, int maxGrants, CancellationToken cancellationToken = default) {
+    var results = new bool[keys.Count];
+    var granted = 0;
+    for (var i = 0; i < keys.Count; i++) {
+      if (granted >= maxGrants) {
+        continue;   // stays false
+      }
+      results[i] = await TryBeginRepairAsync(keys[i], now, baseBackoff, maxAttempts, cancellationToken).ConfigureAwait(false);
+      if (results[i]) {
+        granted++;
+      }
+    }
+    return results;
+  }
+
+  /// <summary>Batched <see cref="MarkHealedAsync"/> — forget a chunk's healed buckets at once.</summary>
+  async ValueTask MarkHealedBatchAsync(
+    IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, CancellationToken cancellationToken = default) {
+    foreach (var key in keys) {
+      await MarkHealedAsync(key, cancellationToken).ConfigureAwait(false);
+    }
+  }
 }

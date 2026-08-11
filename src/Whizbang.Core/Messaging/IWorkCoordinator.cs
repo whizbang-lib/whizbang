@@ -888,6 +888,36 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Batched <see cref="IntegrityTryBeginReportAsync"/> — one round trip for a manifest chunk's
+  /// report decisions (element i answers observation i). Null = unsupported; the caller loops the
+  /// singles. All observations share one origin (a manifest chunk is per-origin by construction).
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<IReadOnlyList<bool>?> IntegrityTryBeginReportBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityReportObservation> observations,
+    DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<bool>?>(null);
+
+  /// <summary>
+  /// Batched <see cref="IntegrityTryBeginRepairAsync"/>, capped at <paramref name="maxGrants"/>
+  /// in order — past the cap keys are not consulted (a discarded grant burns attempt budget).
+  /// Null = unsupported.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<IReadOnlyList<bool>?> IntegrityTryBeginRepairBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<bool>?>(null);
+
+  /// <summary>Batched <see cref="IntegrityMarkHealedAsync"/>. False = unsupported.</summary>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<bool> IntegrityMarkHealedBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
   /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
   /// </summary>

@@ -517,6 +517,129 @@ public class EFCoreWorkCoordinator<TDbContext>(
     _ = await _integrityLedgerBoolAsync("wh_integrity_mark_healed",
       cmd => _bindDivergenceKey(cmd, key), failOpen: false, cancellationToken).ConfigureAwait(false);
 
+  private static void _bindDivergenceKeyArrays(
+      Npgsql.NpgsqlCommand cmd, Guid originServiceId,
+      IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys) {
+    cmd.Parameters.AddWithValue("p_origin_service_id", originServiceId);
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = keys.Select(k => k.TenantScope).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = keys.Select(k => k.EventType).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = keys.Select(k => k.StreamId).ToArray()
+    });
+  }
+
+  /// <summary>The array sibling of <c>_integrityLedgerBoolAsync</c>: one batch function call
+  /// returning BOOLEAN[]. Null on ANY failure — the caller then loops the single-key path, whose
+  /// per-operation fail-open/fail-closed semantics remain the authority.</summary>
+  private async Task<IReadOnlyList<bool>?> _integrityLedgerBoolArrayAsync(
+      string fn, Action<Npgsql.NpgsqlCommand> bind, CancellationToken ct) {
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+      var schema = GetSchemaWithFallback(
+        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var qualified = BuildSchemaQualifiedName(schema, fn);
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), ct);
+      var conn = __scope.Connection;
+      await using var cmd = conn.CreateCommand();
+      bind(cmd);
+      var args = string.Join(",", cmd.Parameters
+        .Cast<Npgsql.NpgsqlParameter>()
+        .Select(p => "@" + p.ParameterName));
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}({args})";
+#pragma warning restore S2077
+      var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+      return result as bool[];
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; falls back to the single-key functions.
+      _logger?.LogWarning(ex,
+        "Integrity ledger batch {Function} failed; falling back to single-key calls for this chunk.", fn);
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<bool>?> IntegrityTryBeginReportBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityReportObservation> observations,
+      DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
+    _integrityLedgerBoolArrayAsync("wh_integrity_try_begin_report_batch", cmd => {
+      cmd.Parameters.AddWithValue("p_origin_service_id", originServiceId);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = observations.Select(o => o.Key.TenantScope).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = observations.Select(o => o.Key.EventType).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = observations.Select(o => o.Key.StreamId).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin_los", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = observations.Select(o => o.OriginLo).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin_his", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = observations.Select(o => o.OriginHi).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_local_los", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = observations.Select(o => o.LocalLo).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_local_his", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = observations.Select(o => o.LocalHi).ToArray()
+      });
+      cmd.Parameters.AddWithValue("p_now", now);
+      cmd.Parameters.AddWithValue("p_cooldown_seconds", (int)cooldown.TotalSeconds);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<bool>?> IntegrityTryBeginRepairBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants,
+      CancellationToken cancellationToken = default) =>
+    _integrityLedgerBoolArrayAsync("wh_integrity_try_begin_repair_batch", cmd => {
+      _bindDivergenceKeyArrays(cmd, originServiceId, keys);
+      cmd.Parameters.AddWithValue("p_now", now);
+      cmd.Parameters.AddWithValue("p_base_backoff_secs", (int)baseBackoff.TotalSeconds);
+      cmd.Parameters.AddWithValue("p_max_attempts", maxAttempts);
+      cmd.Parameters.AddWithValue("p_max_grants", maxGrants);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<bool> IntegrityMarkHealedBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      CancellationToken cancellationToken = default) {
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = GetSchemaWithFallback(
+        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_mark_healed_batch");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      var conn = __scope.Connection;
+      await using var cmd = conn.CreateCommand();
+      _bindDivergenceKeyArrays(cmd, originServiceId, keys);
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids)";
+#pragma warning restore S2077
+      _ = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; falls back to the single-key functions.
+      _logger?.LogWarning(ex,
+        "Integrity ledger batch wh_integrity_mark_healed_batch failed; falling back to single-key calls for this chunk.");
+#pragma warning restore CA1848
+      return false;
+    }
+  }
+
   /// <inheritdoc />
   /// <remarks>
   /// Degrades to the empty reading rather than throwing: a metrics refresh that cannot reach the
