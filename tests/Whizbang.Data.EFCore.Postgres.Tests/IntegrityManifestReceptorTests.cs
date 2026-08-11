@@ -1253,6 +1253,228 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(manifest.Digests[0].DigestLo).IsEqualTo(41L);
   }
 
+  // ── cursor-following: multi-page windows audit past page one ────────────
+
+  [Test]
+  public async Task ManifestReceptor_StreamAnswerWithCursor_FollowsWithTheSameWindowAsync() {
+    // A windowed stream-level answer with a resume cursor means the window is NOT complete: the
+    // origin's lane holds more streams than one page. Without following, only the first page's
+    // streams were ever compared or repaired — the rest of a large lane was invisible to the
+    // audit forever, and the seal could never certify the window.
+    var cursor = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.NewMedo().Value;
+    var coordinator = new _auditCoordinator {
+      ReceivedDigests = [_digest(stream, 41, 42, 5)],
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 41, 42, 5)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+      ResumeAfterStreamId = cursor,
+    };
+    await receptor.HandleAsync(manifest);
+
+    var follow = transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).FirstOrDefault(r => r is not null);
+    await Assert.That(follow).IsNotNull()
+      .Because("a cursor is the origin saying 'there is more' — not following abandons the rest of the lane");
+    await Assert.That(follow!.Level).IsEqualTo(ManifestLevel.Streams);
+    await Assert.That(follow.ResumeAfterStreamId).IsEqualTo(cursor);
+    await Assert.That(follow.Windowed).IsTrue();
+    await Assert.That(follow.SinceSequence).IsEqualTo(100L)
+      .Because("the follow-up stays inside the SAME window — a shifted window compares incomparable folds");
+    await Assert.That(follow.UntilSequence).IsEqualTo(300L);
+    await Assert.That(follow.EventTypes).Contains("Contracts.TypeX");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_StreamAnswerWithoutCursor_DoesNotFollowAsync() {
+    var stream = TrackedGuid.NewMedo().Value;
+    var coordinator = new _auditCoordinator {
+      ReceivedDigests = [_digest(stream, 41, 42, 5)],
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 41, 42, 5)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    });
+
+    await Assert.That(transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Any(r => r is not null)).IsFalse()
+      .Because("a null cursor means the window answered completely — following would loop the audit");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_CursorFollowing_IsCappedPerWindowAsync() {
+    // The cap bounds a paging burst: each follow costs the origin an epoch read and this consumer
+    // a chunk compare, so a million-stream lane must not turn one audit into an unbounded chain.
+    // Whatever the cap leaves unfollowed re-audits from the seal next cycle.
+    var stream = TrackedGuid.NewMedo().Value;
+    var coordinator = new _auditCoordinator {
+      ReceivedDigests = [_digest(stream, 41, 42, 5)],
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { MaxManifestPagesPerAudit = 2 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    for (var page = 0; page < 3; page++) {
+      await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 41, 42, 5)]) with {
+        SinceSequence = 100,
+        ComputedThrough = 300,
+        ChunkCount = 1,
+        ResumeAfterStreamId = TrackedGuid.NewMedo().Value,
+      });
+    }
+
+    var follows = transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Count(r => r is not null);
+    await Assert.That(follows).IsEqualTo(2)
+      .Because("past the cap the chain stops — the rest of the lane re-audits next cycle from the seal");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_CursorWithoutOriginTopic_SkipsFollowAsync() {
+    // Directed or not at all — the same rule every other origin-bound request obeys.
+    var stream = TrackedGuid.NewMedo().Value;
+    var coordinator = new _auditCoordinator {
+      ReceivedDigests = [_digest(stream, 41, 42, 5)],
+    };
+    var transport = new _captureTransport();
+    var sp = _provider(coordinator, transport, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 41, 42, 5)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+      ResumeAfterStreamId = TrackedGuid.NewMedo().Value,
+    });
+
+    await Assert.That(transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Any(r => r is not null)).IsFalse();
+  }
+
+  // ── bulk-deficit escalation: big type-level deficits skip the drip ──────
+
+  [Test]
+  public async Task ManifestReceptor_TypeDeficitAtThreshold_SendsOneStateOnlyBulkBackfillAsync() {
+    // A type-level windowed roll-up showing thousands of missing events would take the per-stream
+    // path days: 500-stream pages, 25 repairs per cycle. One state-only range-bounded redelivery
+    // of the whole (tenant, type) window covers it in a single request — and state-only means the
+    // backfilled history builds state without re-firing trigger receptors.
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 99, 98, 100)],   // local: 100 events
+        ComputedThrough = 300,
+      },
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5000)], ManifestLevel.Types) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    });
+
+    var bulk = transport.Published
+      .Where(p => p.Envelope is MessageEnvelope<JsonElement> je && je.Payload.TryGetProperty("RequesterService", out _)
+        && p.EnvelopeType?.Contains("RequestRedeliveryCommand") == true)
+      .Select(p => _deserializeRedelivery(p.Envelope)).FirstOrDefault();
+    await Assert.That(bulk).IsNotNull()
+      .Because("a 4900-event deficit is a backfill, not a drip — one range-bounded request covers it");
+    await Assert.That(bulk!.StateOnly).IsTrue()
+      .Because("backfilled history must build state only — re-firing triggers replays side effects");
+    await Assert.That(bulk.EventTypes).Contains("Contracts.TypeX");
+    await Assert.That(bulk.StreamIds).IsNull()
+      .Because("the whole type's window backfills — a stream list is exactly the drip this path skips");
+    await Assert.That(bulk.FromCommitSequence).IsEqualTo(99L);
+    await Assert.That(bulk.ToCommitSequence).IsEqualTo(299L);
+
+    await Assert.That(transport.Published.Any(p => p.EnvelopeType?.Contains("RequestIntegrityManifest") == true)).IsFalse()
+      .Because("the bulk path REPLACES the stream drill-down for that type — both would double-ship");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_TypeDeficitBelowThreshold_KeepsTheDrillDownAsync() {
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 99, 98, 4500)],   // deficit 500 < 1000
+        ComputedThrough = 300,
+      },
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5000)], ManifestLevel.Types) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    });
+
+    await Assert.That(transport.Published.Any(p => p.EnvelopeType?.Contains("RequestIntegrityManifest") == true)).IsTrue()
+      .Because("a small deficit keeps the precise per-stream path — bulk would re-ship 4500 held events");
+    await Assert.That(transport.Published.Any(p => p.EnvelopeType?.Contains("RequestRedeliveryCommand") == true)).IsFalse();
+  }
+
+  [Test]
+  public async Task ManifestReceptor_BulkBackfill_IsLedgerGatedAsync() {
+    // The synthetic (origin, tenant, type, empty-stream) ledger key applies the same attempt
+    // backoff every stream-level repair gets — without it every audit cycle re-ships the whole
+    // window while the first backfill is still in flight.
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 99, 98, 100)],
+        ComputedThrough = 300,
+      },
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var ledger = new IntegrityRepairLedger();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { BulkBackfillThresholdEvents = 1000 }, tracker: tracker, ledger: ledger);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    for (var round = 0; round < 2; round++) {
+      await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5000)], ManifestLevel.Types) with {
+        SinceSequence = 100,
+        ComputedThrough = 300,
+        ChunkCount = 1,
+      });
+    }
+
+    var bulkCount = transport.Published.Count(p => p.EnvelopeType?.Contains("RequestRedeliveryCommand") == true);
+    await Assert.That(bulkCount).IsEqualTo(1)
+      .Because("the second sighting inside the backoff re-ships nothing — the first backfill is in flight");
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static StreamDigest _digest(Guid stream, long lo, long hi, int count) => new() {
