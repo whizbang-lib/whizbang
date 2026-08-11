@@ -77,6 +77,100 @@ public sealed class CoordinatorIntegrityRepairLedger(
   }
 
   /// <inheritdoc />
+  /// <remarks>One round trip per chunk (the per-bucket consult made comparisons slower than
+  /// manifests arrive, which queued arrivals in memory until the process died). A failed or
+  /// unsupported batch falls back to the single-key path, whose per-operation fail-open /
+  /// fail-closed semantics remain the authority.</remarks>
+  public async ValueTask<System.Collections.Generic.IReadOnlyList<bool>> TryBeginReportBatchAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityReportObservation> observations,
+      DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) {
+    if (observations.Count > 0) {
+      try {
+        using var scope = scopeFactory.CreateScope();
+        var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+        var batch = coordinator is null
+          ? null
+          : await coordinator.IntegrityTryBeginReportBatchAsync(
+              observations[0].Key.OriginServiceId, observations, now, cooldown, cancellationToken).ConfigureAwait(false);
+        if (batch is not null && batch.Count == observations.Count) {
+          return batch;
+        }
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        _degraded("report-batch", fallback: true, ex);
+      }
+    }
+    var results = new bool[observations.Count];
+    for (var i = 0; i < observations.Count; i++) {
+      var o = observations[i];
+      results[i] = await TryBeginReportAsync(
+        o.Key, o.OriginLo, o.OriginHi, o.LocalLo, o.LocalHi, now, cooldown, cancellationToken).ConfigureAwait(false);
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  public async ValueTask<System.Collections.Generic.IReadOnlyList<bool>> TryBeginRepairBatchAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants,
+      CancellationToken cancellationToken = default) {
+    if (keys.Count > 0 && maxGrants > 0) {
+      try {
+        using var scope = scopeFactory.CreateScope();
+        var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+        var batch = coordinator is null
+          ? null
+          : await coordinator.IntegrityTryBeginRepairBatchAsync(
+              keys[0].OriginServiceId, keys, now, baseBackoff, maxAttempts, maxGrants, cancellationToken).ConfigureAwait(false);
+        if (batch is not null && batch.Count == keys.Count) {
+          return batch;
+        }
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        _degraded("repair-batch", fallback: false, ex);
+      }
+    }
+    var results = new bool[keys.Count];
+    var granted = 0;
+    for (var i = 0; i < keys.Count; i++) {
+      if (granted >= maxGrants) {
+        continue;
+      }
+      results[i] = await TryBeginRepairAsync(keys[i], now, baseBackoff, maxAttempts, cancellationToken).ConfigureAwait(false);
+      if (results[i]) {
+        granted++;
+      }
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  public async ValueTask MarkHealedBatchAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      CancellationToken cancellationToken = default) {
+    if (keys.Count == 0) {
+      return;
+    }
+    try {
+      using var scope = scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (coordinator is not null
+          && await coordinator.IntegrityMarkHealedBatchAsync(keys[0].OriginServiceId, keys, cancellationToken).ConfigureAwait(false)) {
+        return;
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      _degraded("mark-healed-batch", fallback: false, ex);
+    }
+    foreach (var key in keys) {
+      await MarkHealedAsync(key, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <inheritdoc />
   public async ValueTask MarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) {
     try {
       using var scope = scopeFactory.CreateScope();

@@ -211,7 +211,16 @@ public sealed partial class IntegrityManifestReceptor(
     if (message.Digests.Count == 0) {
       return;
     }
-    await _compareGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+    // NON-QUEUEING by design. Waiting here looked free but was not: every queued manifest held
+    // its fully-deserialized digest payload while it waited, and when manifests arrive faster
+    // than one comparison completes, that queue IS the heap — observed live as a fleet-wide
+    // OOM-crashloop whose restart storm then amplified the very arrival rate it could not serve.
+    // A skipped chunk is the DOCUMENTED benign case (comparison is per-bucket independent; its
+    // buckets simply re-audit next cycle), so the memory-safe move is to decline, not to wait.
+    if (!await _compareGate.WaitAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false)) {
+      LogCompareBusySkipped(logger, message.OriginServiceName, message.Digests.Count);
+      return;
+    }
     try {
       await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
     } finally {
@@ -318,12 +327,20 @@ public sealed partial class IntegrityManifestReceptor(
     var reportCap = Math.Max(1, options.MaxDivergenceReportsPerManifest);
     var reportsPublished = 0;
     var divergentSeen = 0;
+
+    // PASS 1 — pure memory: classify every bucket. The ledger is then consulted in THREE batch
+    // round trips (healed / report / repair) instead of up to two PER BUCKET. The per-bucket
+    // consult made each chunk's comparison seconds long — slower than manifests arrive — and
+    // every waiting manifest held its deserialized payload behind the compare gate until the
+    // process died (observed live, fleet-wide).
+    var healedKeys = new List<IntegrityRepairLedger.DivergenceKey>();
+    var divergent = new List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>();
     foreach (var origin in message.Digests) {
       localByBucket.TryGetValue((origin.TenantScope, origin.EventType, origin.StreamId), out var mine);
-      var key = new IntegrityRepairLedger.DivergenceKey(
-        message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId);
       if (mine is not null && mine.DigestLo == origin.DigestLo && mine.DigestHi == origin.DigestHi) {
-        await ledger.MarkHealedAsync(key, cancellationToken).ConfigureAwait(false);   // provably complete — a later divergence is a fresh incident.
+        // provably complete — a later divergence is a fresh incident.
+        healedKeys.Add(new IntegrityRepairLedger.DivergenceKey(
+          message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId));
         continue;
       }
       if (!message.Recomputed && IntegrityDigestMath.IsInsideSettle(origin.UpdatedAt, mine?.UpdatedAt, settle)) {
@@ -339,20 +356,53 @@ public sealed partial class IntegrityManifestReceptor(
       var localCount = mine?.EventCount ?? 0;
       var isDeficit = localCount < origin.EventCount;
       var reason = isDeficit ? "deficit" : localCount == origin.EventCount ? "identity_mismatch" : "local_extra";
+      divergent.Add((origin, mine, isDeficit, reason));
+    }
 
+    if (healedKeys.Count > 0) {
+      await ledger.MarkHealedBatchAsync(healedKeys, cancellationToken).ConfigureAwait(false);
+    }
+    var observations = new IntegrityReportObservation[divergent.Count];
+    for (var i = 0; i < divergent.Count; i++) {
+      var (origin, mine, _, _) = divergent[i];
+      observations[i] = new IntegrityReportObservation(
+        new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId),
+        origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0);
+    }
+    var reportFlags = divergent.Count > 0
+      ? await ledger.TryBeginReportBatchAsync(observations, now, cooldown, cancellationToken).ConfigureAwait(false)
+      : [];
+    // Repair eligibility batches only the DEFICITS, in manifest order, with the budget enforced
+    // INSIDE the batch — past the cap keys are not consulted, so no attempt budget is burned on
+    // grants that would be discarded.
+    var deficitIndexes = new List<int>();
+    for (var i = 0; i < divergent.Count; i++) {
+      if (divergent[i].IsDeficit) {
+        deficitIndexes.Add(i);
+      }
+    }
+    var repairEligible = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0;
+    IReadOnlyList<bool> repairFlags = [];
+    if (repairEligible && deficitIndexes.Count > 0) {
+      var deficitKeys = deficitIndexes.Select(i => observations[i].Key).ToList();
+      repairFlags = await ledger.TryBeginRepairBatchAsync(
+        deficitKeys, now, backoff, options.MaxRepairAttemptsPerBucket, repairBudget, cancellationToken).ConfigureAwait(false);
+    }
+    var deficitFlagByIndex = new Dictionary<int, bool>();
+    for (var d = 0; d < deficitIndexes.Count; d++) {
+      deficitFlagByIndex[deficitIndexes[d]] = d < repairFlags.Count && repairFlags[d];
+    }
+
+    // PASS 2 — apply the batched decisions: metrics, repair batching, tallies, capped publishes.
+    for (var i = 0; i < divergent.Count; i++) {
+      var (origin, mine, _, reason) = divergent[i];
       metrics?.DivergencesDetected.Add(1,
         new KeyValuePair<string, object?>("origin", message.OriginServiceName),
         new KeyValuePair<string, object?>("event_type", origin.EventType),
         new KeyValuePair<string, object?>("reason", reason));
-      var shouldReport = await ledger.TryBeginReportAsync(
-        key, origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, now, cooldown,
-        cancellationToken).ConfigureAwait(false);
-      var autoRepair = isDeficit
-        && options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
-        && await ledger.TryBeginRepairAsync(key, now, backoff, options.MaxRepairAttemptsPerBucket,
-             cancellationToken).ConfigureAwait(false);
+      var shouldReport = i < reportFlags.Count && reportFlags[i];
+      var autoRepair = deficitFlagByIndex.TryGetValue(i, out var granted) && granted;
       if (autoRepair) {
-        repairBudget--;
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "audit"),
           new KeyValuePair<string, object?>("origin", message.OriginServiceName));
@@ -667,6 +717,11 @@ public sealed partial class IntegrityManifestReceptor(
     Message = "Origin '{OriginServiceName}' history generation changed to {Generation} — a legitimate " +
               "mutation (close/reclassify); seal reset, this comparison round skipped, re-verifying from the beginning next audit")]
   static partial void LogGenerationChanged(ILogger logger, string originServiceName, long generation);
+
+  [LoggerMessage(EventId = 62, Level = LogLevel.Debug,
+    Message = "Manifest chunk from '{OriginServiceName}' ({DigestCount} digest(s)) skipped — a comparison " +
+              "is already in flight, and queued chunks hold their payloads in memory; its buckets re-audit next cycle")]
+  static partial void LogCompareBusySkipped(ILogger logger, string originServiceName, int digestCount);
 }
 
 /// <summary>

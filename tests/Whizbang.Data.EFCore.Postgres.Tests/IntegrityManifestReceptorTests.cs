@@ -418,15 +418,18 @@ public class IntegrityManifestReceptorTests {
     var taskA = receptor.HandleAsync(manifest("A"));
     await Assert.That(coordinator.ComputeLog).IsEquivalentTo(["A"]);
 
-    var taskB = receptor.HandleAsync(manifest("B"));
+    // B completes IMMEDIATELY — declined, not queued. Queued manifests held their deserialized
+    // payloads while waiting, and when chunks arrive faster than one comparison completes that
+    // queue is the heap (observed live as a fleet-wide OOM-crashloop). A declined chunk's
+    // buckets simply re-audit next cycle.
+    await receptor.HandleAsync(manifest("B"));
     await Assert.That(coordinator.ComputeLog).IsEquivalentTo(["A"])
-      .Because("one manifest comparison at a time per process — a burst of chunks each falling " +
-               "back to a full-store recompute is what memory-cycled consumers.");
+      .Because("one manifest comparison at a time per process — and never a memory queue behind it");
 
     gate.SetResult();
     await taskA;
-    await taskB;
-    await Assert.That(coordinator.ComputeLog).Contains("B");
+    await Assert.That(coordinator.ComputeLog).IsEquivalentTo(["A"])
+      .Because("the declined chunk never runs from a queue — it waits durably in the audit cadence, not in memory");
   }
 
   [Test]
@@ -648,6 +651,118 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(dispatcher.Published.Count).IsEqualTo(2)
       .Because("a bucket that healed and re-diverged is a brand-new incident — it reports " +
                "immediately instead of waiting out a stale cooldown.");
+  }
+
+  // ── hotfix 2: non-queueing gate + one ledger round trip per chunk ───────
+
+  [Test]
+  public async Task ManifestReceptor_CompareInFlight_SkipsInsteadOfQueueingAsync() {
+    // Waiting on the gate looked free but was not: every queued manifest held its deserialized
+    // payload, and when arrivals outpace one comparison the queue IS the heap (observed live as
+    // a fleet-wide OOM-crashloop). A skipped chunk is the documented benign case — its buckets
+    // re-audit next cycle.
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [];
+    var blockFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    coordinator.BlockForChunk = blockFirst;
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly },
+      dispatcher, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var first = receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]) with {
+      SinceSequence = 0,
+      ComputedThrough = 100,
+      ChunkCount = 1,
+    }).AsTask();
+    await coordinator.ForChunkEntered.Task;   // the first comparison is provably in flight
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 12, 22, 3)]) with {
+      SinceSequence = 0,
+      ComputedThrough = 100,
+      ChunkCount = 1,
+    });   // completes immediately — no queueing
+
+    await Assert.That(coordinator.ForChunkCalls).IsEqualTo(1)
+      .Because("the second chunk must be DECLINED while a comparison runs — waiting in memory is the OOM");
+
+    blockFirst.SetResult();
+    await first;
+    await Assert.That(coordinator.ForChunkCalls).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ConsultsTheLedgerOncePerChunk_NotPerBucketAsync() {
+    // The per-bucket consult made a 500-bucket chunk up to ~1000 sequential round trips — each
+    // comparison took seconds, arrivals outpaced service, and the resulting in-memory queue was
+    // the OOM. One batched consult per decision kind, per chunk.
+    var ledger = new _countingLedger();
+    var coordinator = new _auditCoordinator();
+    var s1 = TrackedGuid.NewMedo().Value;
+    var s2 = TrackedGuid.NewMedo().Value;
+    var s3 = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(s3, 13, 23, 4)];   // s3 heals; s1/s2 are deficits
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      dispatcher, tracker: tracker, ledger: ledger);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator,
+      [_digest(s1, 11, 21, 2), _digest(s2, 12, 22, 3), _digest(s3, 13, 23, 4)]));
+
+    await Assert.That(ledger.ReportBatchCalls).IsEqualTo(1)
+      .Because("one report consult for the whole chunk — per-bucket round trips are the throughput killer");
+    await Assert.That(ledger.RepairBatchCalls).IsEqualTo(1);
+    await Assert.That(ledger.HealedBatchCalls).IsEqualTo(1);
+    await Assert.That(ledger.SingleCalls).IsEqualTo(0)
+      .Because("no per-bucket fallback when the batch path is available");
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("both deficits repair through the batched decisions — batching must not blunt repair");
+  }
+
+  private sealed class _countingLedger : IIntegrityRepairLedger {
+    public int SingleCalls;
+    public int ReportBatchCalls;
+    public int RepairBatchCalls;
+    public int HealedBatchCalls;
+
+    public ValueTask<bool> TryBeginReportAsync(IntegrityRepairLedger.DivergenceKey key, long ol, long oh, long ll, long lh,
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) {
+      SingleCalls++;
+      return ValueTask.FromResult(true);
+    }
+    public ValueTask<bool> TryBeginRepairAsync(IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now,
+        TimeSpan baseBackoff, int maxAttempts, CancellationToken ct = default) {
+      SingleCalls++;
+      return ValueTask.FromResult(true);
+    }
+    public ValueTask MarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken ct = default) {
+      SingleCalls++;
+      return ValueTask.CompletedTask;
+    }
+    public ValueTask<IReadOnlyList<bool>> TryBeginReportBatchAsync(IReadOnlyList<IntegrityReportObservation> observations,
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) {
+      ReportBatchCalls++;
+      return ValueTask.FromResult<IReadOnlyList<bool>>([.. observations.Select(_ => true)]);
+    }
+    public ValueTask<IReadOnlyList<bool>> TryBeginRepairBatchAsync(IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+        DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants, CancellationToken ct = default) {
+      RepairBatchCalls++;
+      return ValueTask.FromResult<IReadOnlyList<bool>>([.. keys.Select((_, i) => i < maxGrants)]);
+    }
+    public ValueTask MarkHealedBatchAsync(IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, CancellationToken ct = default) {
+      HealedBatchCalls++;
+      return ValueTask.CompletedTask;
+    }
   }
 
   // ── hotfix: the stream-level local compare is bounded by the CHUNK ──────
@@ -1186,7 +1301,7 @@ public class IntegrityManifestReceptorTests {
   private static ServiceProvider _provider(
       _auditCoordinator coordinator, _captureTransport transport,
       StreamIntegrityOptions? options = null, _captureDispatcher? dispatcher = null,
-      IntegrityGapTracker? tracker = null, IntegrityRepairLedger? ledger = null) {
+      IntegrityGapTracker? tracker = null, IIntegrityRepairLedger? ledger = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
@@ -1201,7 +1316,7 @@ public class IntegrityManifestReceptorTests {
       services.AddSingleton(tracker);
     }
     if (ledger is not null) {
-      services.AddSingleton(ledger);
+      services.AddSingleton<IIntegrityRepairLedger>(ledger);
     }
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
@@ -1315,16 +1430,23 @@ public class IntegrityManifestReceptorTests {
     public IReadOnlyList<Guid>? ForChunkStreamsSeen;
     public long? ForChunkSinceSeen;
     public long? ForChunkUntilSeen;
+    public int ForChunkCalls;
+    public TaskCompletionSource? BlockForChunk { get; set; }
+    public TaskCompletionSource ForChunkEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
+    public async Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
       Guid originServiceId, IReadOnlyList<Guid> streamIds,
       long? sinceSequence, long? untilSequence, TimeSpan settleWindow,
       CancellationToken cancellationToken = default) {
+      ForChunkCalls++;
       ForChunkStreamsSeen = streamIds;
       ForChunkSinceSeen = sinceSequence;
       ForChunkUntilSeen = untilSequence;
-      return Task.FromResult<IReadOnlyList<StreamDigest>?>(
-        ReceivedDigests.Where(d => streamIds.Contains(d.StreamId)).ToList());
+      ForChunkEntered.TrySetResult();
+      if (BlockForChunk is { } gate) {
+        await gate.Task;
+      }
+      return ReceivedDigests.Where(d => streamIds.Contains(d.StreamId)).ToList();
     }
 
     public Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
