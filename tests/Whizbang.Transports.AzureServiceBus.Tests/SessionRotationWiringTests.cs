@@ -29,10 +29,45 @@ public class SessionRotationWiringTests {
     new(new MinimalFakeClient("sb://unit.servicebus.windows.net/"),
         new JsonSerializerOptions(),
         new AzureServiceBusOptions { MaxAutoLockRenewalDuration = renewalWindow },
-        NullLogger<AzureServiceBusTransport>.Instance);
+        new DebugEnabledLogger());
+
+  /// <summary>
+  /// Debug-ENABLED no-op logger — NullLogger reports IsEnabled=false, which would skip the
+  /// rotation log branch and leave it untested; a swallowed formatting bug there would only
+  /// surface in production where debug logging is on.
+  /// </summary>
+  private sealed class DebugEnabledLogger : Microsoft.Extensions.Logging.ILogger<AzureServiceBusTransport> {
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullLogger.Instance.BeginScope(state);
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) => _ = formatter(state, exception);
+  }
 
   private sealed class MinimalFakeClient(string fullyQualifiedNamespace) : ServiceBusClient {
+    public RaisableSessionProcessor? LastSessionProcessor { get; private set; }
     public override string FullyQualifiedNamespace => fullyQualifiedNamespace;
+
+    public override ServiceBusSessionProcessor CreateSessionProcessor(
+        string topicName, string subscriptionName, ServiceBusSessionProcessorOptions options) {
+      LastSessionProcessor = new RaisableSessionProcessor();
+      return LastSessionProcessor;
+    }
+  }
+
+  /// <summary>Exposes the SDK's protected event-raise seams so tests drive the attached lambdas.</summary>
+  internal sealed class RaisableSessionProcessor : ServiceBusSessionProcessor {
+    private readonly InnerFake _inner = new();
+    protected override ServiceBusProcessor InnerProcessor => _inner;
+    public override Task StartProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public override Task StopProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public override Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task RaiseSessionInitializingAsync(ProcessSessionEventArgs args) => OnSessionInitializingAsync(args);
+    public Task RaiseSessionClosingAsync(ProcessSessionEventArgs args) => OnSessionClosingAsync(args);
+
+    private sealed class InnerFake : ServiceBusProcessor {
+    }
   }
 
   private sealed class RecordingSessionReceiver : ServiceBusSessionReceiver {
@@ -107,6 +142,42 @@ public class SessionRotationWiringTests {
     await Assert.That(args.Releases).IsEqualTo(0)
       .Because("an idle-closed session's next accept must not inherit a stale clock — a spurious "
                + "immediate rotation on every re-accept is exactly the churn the governor prevents");
+  }
+
+  [Test]
+  public async Task SubscribedSessionProcessor_LifecycleHooks_DriveTheOccupancyClockAsync() {
+    // Through the real subscribe path: the transport attaches SessionInitializing/Closing
+    // handlers whose bodies stamp/clear the governor clock. Raising the SDK events proves the
+    // attach wiring end-to-end — an initialize stamp makes a budget-later completion rotate,
+    // and a close clears the clock so the next completion does not.
+    var client = new MinimalFakeClient("sb://unit.servicebus.windows.net/");
+    var transport = new AzureServiceBusTransport(
+      client,
+      new JsonSerializerOptions(),
+      new AzureServiceBusOptions {
+        AutoProvisionInfrastructure = false,
+        EnableSessions = true,
+        MaxAutoLockRenewalDuration = TimeSpan.FromMinutes(5),
+      },
+      new DebugEnabledLogger());
+    await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _destination);
+    var processor = client.LastSessionProcessor;
+    await Assert.That(processor is not null).IsTrue()
+      .Because("session mode must create a session processor through the client");
+
+    var sessionArgs = new ProcessSessionEventArgs(new RecordingSessionReceiver(), CancellationToken.None);
+    await processor!.RaiseSessionInitializingAsync(sessionArgs);
+    var args = new RecordingArgs();
+    transport.RotateSessionIfPastBudget(args, _destination, DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5));
+    await Assert.That(args.Releases).IsEqualTo(1)
+      .Because("the initialize hook stamped the clock, so a budget-later completion rotates");
+
+    await processor.RaiseSessionClosingAsync(sessionArgs);
+    var afterClose = new RecordingArgs();
+    transport.RotateSessionIfPastBudget(afterClose, _destination, DateTimeOffset.UtcNow + TimeSpan.FromMinutes(6));
+    await Assert.That(afterClose.Releases).IsEqualTo(0)
+      .Because("the close hook cleared the clock — the completion path re-stamps fresh instead "
+               + "of rotating on a stale accept time");
   }
 
   [Test]
