@@ -413,7 +413,21 @@ public sealed partial class IntegrityManifestReceptor(
         deficitIndexes.Add(i);
       }
     }
-    var repairEligible = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0;
+    // Paced-drain mode (the default): the compare is DISCOVERY-ONLY — deficits are recorded
+    // (reports above) and their compared window stamped for the drain worker, which dispatches
+    // continuously at an adaptive rate instead of bursting the budget at the audit tick. The
+    // legacy burst path remains behind RepairDrainEnabled=false for engines without a
+    // drain-capable coordinator.
+    if (options.RepairDrainEnabled && deficitIndexes.Count > 0 && message.ComputedThrough is long stampUntil) {
+      var stampKeys = deficitIndexes.Select(i => observations[i].Key).ToList();
+      var stampCoordinator = services.GetService<IWorkCoordinator>();
+      if (stampCoordinator is not null) {
+        await stampCoordinator.IntegrityStampRepairWindowsAsync(
+          message.OriginServiceId, stampKeys, message.SinceSequence ?? 0, stampUntil, cancellationToken).ConfigureAwait(false);
+      }
+    }
+    var repairEligible = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
+      && !options.RepairDrainEnabled;
     IReadOnlyList<bool> repairFlags = [];
     if (repairEligible && deficitIndexes.Count > 0) {
       var deficitKeys = deficitIndexes.Select(i => observations[i].Key).ToList();

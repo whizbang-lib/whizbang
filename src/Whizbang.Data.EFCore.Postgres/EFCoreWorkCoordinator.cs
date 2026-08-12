@@ -611,6 +611,86 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken);
 
   /// <inheritdoc />
+  /// <remarks>Best-effort: a window stamp that cannot reach the ledger degrades to a coarser
+  /// dispatch range later, never a failed comparison now.</remarks>
+  public async Task IntegrityStampRepairWindowsAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      long windowFrom, long windowUntil, CancellationToken cancellationToken = default) {
+    if (keys.Count == 0) {
+      return;
+    }
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = GetSchemaWithFallback(
+        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_stamp_repair_windows");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand();
+      _bindDivergenceKeyArrays(cmd, originServiceId, keys);
+      cmd.Parameters.AddWithValue("p_window_from", windowFrom);
+      cmd.Parameters.AddWithValue("p_window_until", windowUntil);
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_window_from,@p_window_until)";
+#pragma warning restore S2077
+      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the drain derives a coarser window instead.
+      _logger?.LogWarning(ex, "Integrity window stamp failed; the drain will derive a coarser range for these buckets.");
+#pragma warning restore CA1848
+    }
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
+      IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+      int limit, CancellationToken cancellationToken = default) {
+    if (originIds.Count == 0 || limit <= 0) {
+      return [];
+    }
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = GetSchemaWithFallback(
+        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_claim_repair_drain");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand();
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = originIds.ToArray()
+      });
+      cmd.Parameters.AddWithValue("p_now", now);
+      cmd.Parameters.AddWithValue("p_base_backoff_secs", (int)baseBackoff.TotalSeconds);
+      cmd.Parameters.AddWithValue("p_max_attempts", maxAttempts);
+      cmd.Parameters.AddWithValue("p_limit", limit);
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT origin_service_id, tenant_scope, event_type, stream_id, window_from, window_until FROM {qualified}(@p_origin_ids,@p_now,@p_base_backoff_secs,@p_max_attempts,@p_limit)";
+#pragma warning restore S2077
+      var items = new List<IntegrityRepairDrainItem>(limit);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        items.Add(new IntegrityRepairDrainItem(
+          reader.GetGuid(0),
+          reader.GetString(1),
+          reader.GetString(2),
+          reader.GetGuid(3),
+          await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
+          await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)));
+      }
+      return items;
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the drain simply waits for the next pass.
+      _logger?.LogWarning(ex, "Integrity repair-drain claim failed; nothing dispatched this pass.");
+#pragma warning restore CA1848
+      return [];
+    }
+  }
+
+  /// <inheritdoc />
   public async Task<bool> IntegrityMarkHealedBatchAsync(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
       CancellationToken cancellationToken = default) =>

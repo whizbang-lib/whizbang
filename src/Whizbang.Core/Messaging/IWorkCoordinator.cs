@@ -910,6 +910,31 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<bool>?>(null);
 
+  /// <summary>
+  /// Stamps the compared window ([from, until] origin commit sequences) onto the keyed ledger
+  /// rows — discovery-time context the paced repair drain later dispatches with, so a repair
+  /// asks for exactly the slice that disagreed without the in-flight manifest. No-op = unsupported.
+  /// </summary>
+  /// <docs>proposals/paced-repair-drain</docs>
+  Task IntegrityStampRepairWindowsAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    long windowFrom, long windowUntil, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// Atomically claims up to <paramref name="limit"/> repair-eligible ledger rows for the paced
+  /// drain: past their exponential backoff, under <paramref name="maxAttempts"/>, restricted to
+  /// <paramref name="originIds"/> (origins whose request topic is learned — nothing else could be
+  /// sent), least-recently-attempted first, never the synthetic bulk lane. A claim stamps the
+  /// attempt exactly like a burst-path grant, and concurrent drainers skip each other's locked
+  /// rows, so a bucket is never double-dispatched. Empty = nothing eligible or unsupported.
+  /// </summary>
+  /// <docs>proposals/paced-repair-drain</docs>
+  Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
+    IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+    int limit, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityRepairDrainItem>>([]);
+
   /// <summary>Batched <see cref="IntegrityMarkHealedAsync"/>. False = unsupported.</summary>
   /// <docs>resilience/stream-integrity</docs>
   Task<bool> IntegrityMarkHealedBatchAsync(

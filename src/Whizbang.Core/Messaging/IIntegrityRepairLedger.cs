@@ -14,6 +14,16 @@ public readonly record struct IntegrityReportObservation(
   IntegrityRepairLedger.DivergenceKey Key, long OriginLo, long OriginHi, long LocalLo, long LocalHi);
 
 /// <summary>
+/// One repair-eligible ledger row claimed by the paced drain: the bucket's identity plus the
+/// compared window stamped at discovery ([WindowFrom, WindowUntil] origin commit sequences; null
+/// when the row predates window stamping — dispatch then derives a coarser range per origin).
+/// </summary>
+/// <docs>proposals/paced-repair-drain</docs>
+public readonly record struct IntegrityRepairDrainItem(
+  Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId,
+  long? WindowFrom, long? WindowUntil);
+
+/// <summary>
 /// Convergence state for stream integrity: what divergence has already been reported, and how
 /// often a bucket's repair has been requested.
 /// </summary>
