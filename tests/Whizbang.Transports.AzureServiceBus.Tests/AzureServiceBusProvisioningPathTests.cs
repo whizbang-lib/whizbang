@@ -304,7 +304,9 @@ public class AzureServiceBusProvisioningPathTests {
       SessionRequiredSubscriptions = { ("orders-topic", "unit-sub") },
       ExistingLockDuration = TimeSpan.FromMinutes(1),
     };
-    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _sessionOptions());
+    // Debug-enabled logger: the raise announcement's IsEnabled-gated body executes too.
+    var logger = new RecordingTransportLogger();
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _sessionOptions(), logger);
 
     await transport.SubscribeAsync(_noopHandler, _destination("orders-topic"));
 
@@ -312,6 +314,8 @@ public class AzureServiceBusProvisioningPathTests {
       .Because("the reconcile is what carries the fix to environments provisioned before it existed");
     await Assert.That(adminClient.DeletedSubscriptions).IsEmpty()
       .Because("LockDuration updates in place — no delete/recreate, no message loss");
+    await Assert.That(logger.Contains(Microsoft.Extensions.Logging.LogLevel.Information, "Raising LockDuration")).IsTrue()
+      .Because("an infrastructure mutation must announce itself — operators diagnose lock storms from this line");
   }
 
   /// <summary>
