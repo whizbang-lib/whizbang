@@ -769,6 +769,52 @@ public class IntegrityManifestReceptorTests {
                "the window would certify history that was never compared");
   }
 
+  /// <summary>
+  /// A windowed type-level deficit at or past BulkBackfillThresholdEvents must send ONE bulk
+  /// redelivery request for the whole (tenant, type) window instead of drilling down — the
+  /// stream-by-stream path drips a large deficit through page and budget caps for days.
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_TypeLevelBulkDeficit_SendsOneBulkBackfill_NotDrillDownAsync() {
+    var coordinator = new _auditCoordinator();
+    coordinator.WindowedTypeResult = new WindowedDigestResult {
+      Digests = [],   // the consumer holds NOTHING for this type in the window
+      ComputedThrough = 5000,
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [
+      _typeDigest("Contracts.BigType", 41, 42, 2500),   // 2 500-event deficit — past the threshold
+    ], ManifestLevel.Types) with {
+      SinceSequence = 0,
+      ComputedThrough = 5000,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    // Discriminate by the ENVELOPE TYPE, not payload shape — the two commands share enough field
+    // names that either JSON deserializes "successfully" as the other.
+    var redeliveries = transport.Published
+      .Where(p => p.EnvelopeType?.Contains(nameof(RequestRedeliveryCommand), StringComparison.Ordinal) == true)
+      .Select(p => _deserializeRedelivery(p.Envelope))
+      .ToList();
+    await Assert.That(redeliveries.Count).IsEqualTo(1)
+      .Because("a threshold-crossing type deficit escalates to ONE range-bounded bulk backfill");
+    await Assert.That(redeliveries[0].StreamIds is null || redeliveries[0].StreamIds!.Count == 0).IsTrue()
+      .Because("the bulk ask carries no stream list — the origin's WHERE covers the whole type window");
+    var drillDowns = transport.Published
+      .Where(p => p.EnvelopeType?.Contains(nameof(RequestIntegrityManifest), StringComparison.Ordinal) == true)
+      .ToList();
+    await Assert.That(drillDowns).IsEmpty()
+      .Because("an escalated type leaves the drill-down list — drilling beside the bulk ask double-ships the window");
+  }
+
   [Test]
   public async Task ManifestReceptor_HealedBucket_ForgetsLedgerStateAsync() {
     var coordinator = new _auditCoordinator();
