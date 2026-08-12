@@ -61,6 +61,7 @@ public interface IServiceBusAdminClient {
     string topicName,
     string subscriptionName,
     int maxDeliveryCount,
+    TimeSpan lockDuration,
     CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -77,6 +78,22 @@ public interface IServiceBusAdminClient {
     string subscriptionName,
     bool requiresSession,
     int maxDeliveryCount,
+    TimeSpan lockDuration,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Raises an existing subscription's lock duration in place. LockDuration is updatable
+  /// (unlike RequiresSession), so environments provisioned before the safe default existed
+  /// self-heal on their next deploy — no delete/recreate, no message loss.
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="lockDuration">The lock duration to apply.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  Task UpdateSubscriptionLockDurationAsync(
+    string topicName,
+    string subscriptionName,
+    TimeSpan lockDuration,
     CancellationToken cancellationToken = default);
 
   /// <summary>

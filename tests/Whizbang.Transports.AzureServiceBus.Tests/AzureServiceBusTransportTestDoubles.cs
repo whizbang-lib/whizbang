@@ -485,7 +485,7 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   public Task<bool> SubscriptionExistsAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) =>
     Task.FromResult(ExistingSubscriptions.Contains((topicName, subscriptionName)));
 
-  public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+  public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
     if (CreateSubscriptionException is not null) {
       return Task.FromException(CreateSubscriptionException);
     }
@@ -494,7 +494,7 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
     return Task.CompletedTask;
   }
 
-  public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+  public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
     if (CreateSubscriptionException is not null) {
       return Task.FromException(CreateSubscriptionException);
     }
@@ -505,6 +505,11 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
     }
     return Task.CompletedTask;
   }
+
+  public Task UpdateSubscriptionLockDurationAsync(string topicName, string subscriptionName, TimeSpan lockDuration, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+
 
   public Task<SubscriptionProperties> GetSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
     var properties = ServiceBusModelFactory.SubscriptionProperties(

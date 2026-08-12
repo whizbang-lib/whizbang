@@ -265,6 +265,78 @@ public class AzureServiceBusProvisioningPathTests {
   }
 
   /// <summary>
+  /// The broker-side subscription lock duration defaults to the ASB maximum (5 minutes). The
+  /// ASB default of 1 minute proved a hair-trigger on a live fleet: under many concurrent
+  /// sessions, lock renewals arriving seconds late killed session locks ~90s after accept,
+  /// completions failed, and messages redelivered until they dead-lettered.
+  /// </summary>
+  [Test]
+  public async Task Options_SubscriptionLockDuration_DefaultsToTheFiveMinuteMaximumAsync() {
+    await Assert.That(new AzureServiceBusOptions().SubscriptionLockDuration)
+      .IsEqualTo(TimeSpan.FromMinutes(5))
+      .Because("every renewal margin scales with the lock duration — the widest lock is the "
+               + "turnkey-safe default for session-heavy workloads");
+  }
+
+  /// <summary>Fresh subscriptions are created with the configured lock duration.</summary>
+  [Test]
+  public async Task SubscribeAsync_FreshSubscription_CarriesTheConfiguredLockDurationAsync() {
+    var adminClient = new RecordingAdminClient { ExistingTopics = { "orders-topic" } };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _sessionOptions());
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic"));
+
+    await Assert.That(adminClient.CreatedSubscriptions).Count().IsEqualTo(1);
+    await Assert.That(adminClient.CreatedSubscriptions[0].LockDuration).IsEqualTo(TimeSpan.FromMinutes(5))
+      .Because("a new environment must get the safe lock duration with zero configuration");
+  }
+
+  /// <summary>
+  /// An existing subscription with a SHORTER lock duration is raised in place on the ensure
+  /// path — LockDuration is updatable (unlike RequiresSession), so existing environments
+  /// self-heal on their next deploy instead of keeping the hair-trigger forever.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_ExistingSubscriptionWithShorterLock_IsRaisedInPlaceAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      SessionRequiredSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingLockDuration = TimeSpan.FromMinutes(1),
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _sessionOptions());
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic"));
+
+    await Assert.That(adminClient.UpdatedLockDurations.Contains(("orders-topic", "unit-sub", TimeSpan.FromMinutes(5)))).IsTrue()
+      .Because("the reconcile is what carries the fix to environments provisioned before it existed");
+    await Assert.That(adminClient.DeletedSubscriptions).IsEmpty()
+      .Because("LockDuration updates in place — no delete/recreate, no message loss");
+  }
+
+  /// <summary>
+  /// An existing subscription at (or above) the configured duration is left alone — the
+  /// reconcile only ever RAISES, so an operator's deliberate broker-side value is never
+  /// churned by every deploy.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_ExistingSubscriptionAtTheConfiguredLock_IsLeftAloneAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      SessionRequiredSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingLockDuration = TimeSpan.FromMinutes(5),
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _sessionOptions());
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic"));
+
+    await Assert.That(adminClient.UpdatedLockDurations).IsEmpty()
+      .Because("an idempotent reconcile that rewrites an unchanged value spams the management "
+               + "plane on every pod start");
+  }
+
+  /// <summary>
   /// Sessions enabled + existing subscription that already requires sessions is a no-op.
   /// </summary>
   [Test]
@@ -1001,8 +1073,10 @@ public class AzureServiceBusProvisioningPathTests {
     public List<string> CreatedTopics { get; } = [];
     public HashSet<(string Topic, string Subscription)> ExistingSubscriptions { get; init; } = [];
     public HashSet<(string Topic, string Subscription)> SessionRequiredSubscriptions { get; init; } = [];
-    public List<(string Topic, string Subscription, bool? RequiresSession, int MaxDeliveryCount)> CreatedSubscriptions { get; } = [];
+    public List<(string Topic, string Subscription, bool? RequiresSession, int MaxDeliveryCount, TimeSpan LockDuration)> CreatedSubscriptions { get; } = [];
     public List<(string Topic, string Subscription)> DeletedSubscriptions { get; } = [];
+    public TimeSpan ExistingLockDuration { get; init; } = TimeSpan.FromMinutes(1);
+    public List<(string Topic, string Subscription, TimeSpan LockDuration)> UpdatedLockDurations { get; } = [];
     public List<RuleProperties> ExistingRules { get; init; } = [];
     public List<(string Topic, string Subscription, string RuleName)> DeletedRules { get; } = [];
     public List<(string Topic, string Subscription, CreateRuleOptions Options)> CreatedRules { get; } = [];
@@ -1047,24 +1121,29 @@ public class AzureServiceBusProvisioningPathTests {
       return Task.FromResult(ExistingSubscriptions.Contains((topicName, subscriptionName)));
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
       if (CreateSubscriptionException is not null) {
         return Task.FromException(CreateSubscriptionException);
       }
-      CreatedSubscriptions.Add((topicName, subscriptionName, null, maxDeliveryCount));
+      CreatedSubscriptions.Add((topicName, subscriptionName, null, maxDeliveryCount, lockDuration));
       ExistingSubscriptions.Add((topicName, subscriptionName));
       return Task.CompletedTask;
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
       if (CreateSubscriptionException is not null) {
         return Task.FromException(CreateSubscriptionException);
       }
-      CreatedSubscriptions.Add((topicName, subscriptionName, requiresSession, maxDeliveryCount));
+      CreatedSubscriptions.Add((topicName, subscriptionName, requiresSession, maxDeliveryCount, lockDuration));
       ExistingSubscriptions.Add((topicName, subscriptionName));
       if (requiresSession) {
         SessionRequiredSubscriptions.Add((topicName, subscriptionName));
       }
+      return Task.CompletedTask;
+    }
+
+    public Task UpdateSubscriptionLockDurationAsync(string topicName, string subscriptionName, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
+      UpdatedLockDurations.Add((topicName, subscriptionName, lockDuration));
       return Task.CompletedTask;
     }
 
@@ -1073,7 +1152,7 @@ public class AzureServiceBusProvisioningPathTests {
       var properties = ServiceBusModelFactory.SubscriptionProperties(
         topicName: topicName,
         subscriptionName: subscriptionName,
-        lockDuration: TimeSpan.FromMinutes(1),
+        lockDuration: ExistingLockDuration,
         requiresSession: SessionRequiredSubscriptions.Contains((topicName, subscriptionName)),
         defaultMessageTimeToLive: TimeSpan.FromDays(14),
         autoDeleteOnIdle: TimeSpan.FromDays(30),
