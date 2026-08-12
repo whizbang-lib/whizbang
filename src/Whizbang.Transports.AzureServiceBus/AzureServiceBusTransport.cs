@@ -80,6 +80,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     _jsonOptions = jsonOptions;
     _options = options ?? new AzureServiceBusOptions();
+    _sessionGovernor = new SessionOccupancyGovernor(_options.MaxAutoLockRenewalDuration);
     _receptorRegistry = receptorRegistry;
     _perspectiveRegistry = perspectiveRegistry;
     _rawReceptorRegistry = rawReceptorRegistry;
@@ -768,6 +769,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
       return _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
     };
+    // Occupancy clock: stamped at session ACCEPT (when the renewal window actually starts) and
+    // cleared on natural close, so an idle-closed session's next accept starts a fresh clock
+    // instead of inheriting a stale one and rotating immediately.
+    sessionProcessor.SessionInitializingAsync += args => {
+      OnSessionInitializing(destination, args.SessionId, DateTimeOffset.UtcNow);
+      return Task.CompletedTask;
+    };
+    sessionProcessor.SessionClosingAsync += args => {
+      OnSessionClosing(destination, args.SessionId);
+      return Task.CompletedTask;
+    };
     // CancellationToken.None is deliberate: the throttle pause runs detached and must complete
     // its stop/resume even after the error-handler scope (args.CancellationToken) has ended.
     sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination,
@@ -802,10 +814,57 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       await batchHandler([new TransportMessage(envelope, envelopeTypeName)], args.CancellationToken);
       await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+      _rotateSessionIfPastBudget(args, destination);
     } catch (Exception ex) {
       await _handleSessionMessageProcessingErrorAsync(args, ex, destination);
     }
   }
+
+  /// <summary>
+  /// Voluntary session rotation, called after a successful completion. The SDK renews a
+  /// session's lock only for MaxAutoLockRenewalDuration from ACCEPT; under a deep backlog a
+  /// session never idles out, outlives that window, and loses its lock mid-stream — every
+  /// later completion throws SessionLockLost and the message redelivers until it dead-letters.
+  /// Releasing at the occupancy budget hands the lock back while it is still valid; the
+  /// processor re-accepts under a fresh lock and FIFO resumes where it left off.
+  /// </summary>
+  private string _sessionKey(TransportDestination destination, string sessionId) =>
+    $"{destination.Address}/{destination.RoutingKey ?? _options.DefaultSubscriptionName}/{sessionId}";
+
+  private void _rotateSessionIfPastBudget(ProcessSessionMessageEventArgs args, TransportDestination destination) =>
+    RotateSessionIfPastBudget(args, destination, DateTimeOffset.UtcNow);
+
+  /// <summary>Time-parameterized core of the rotation check — internal so tests drive `now` deterministically.</summary>
+  internal void RotateSessionIfPastBudget(ProcessSessionMessageEventArgs args, TransportDestination destination, DateTimeOffset now) {
+    var sessionKey = _sessionKey(destination, args.SessionId);
+    // Fallback stamp for processors without the SessionInitializing hook — TryAdd is a no-op
+    // when the accept-time stamp already exists.
+    _sessionGovernor.RecordMessage(sessionKey, now);
+    if (!_sessionGovernor.ShouldRelease(sessionKey, now)) {
+      return;
+    }
+    args.ReleaseSession();
+    _sessionGovernor.OnReleased(sessionKey);
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      _logger.LogDebug(
+        "Rotating session {SessionId} on {TopicName}/{SubscriptionName} after {BudgetSeconds}s continuous occupancy — releasing ahead of the lock-renewal window",
+        args.SessionId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        _sessionGovernor.OccupancyBudget.TotalSeconds);
+    }
+  }
+
+  /// <summary>Session-accept hook body: starts the occupancy clock at the moment the renewal window opens.</summary>
+  internal void OnSessionInitializing(TransportDestination destination, string sessionId, DateTimeOffset now) =>
+    _sessionGovernor.RecordMessage(_sessionKey(destination, sessionId), now);
+
+  /// <summary>
+  /// Session-close hook body: clears the occupancy clock so an idle-closed session's next
+  /// accept starts fresh instead of inheriting a stale clock and rotating immediately.
+  /// </summary>
+  internal void OnSessionClosing(TransportDestination destination, string sessionId) =>
+    _sessionGovernor.OnReleased(_sessionKey(destination, sessionId));
 
   /// <summary>
   /// Non-session batch subscription. Per-message callbacks enqueue to the TransportBatchCollector,
@@ -965,6 +1024,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           await _processReceivedMessageAsync(args, handler, destination);
         };
 
+        // Occupancy clock — see the batch session-processor attach site for the rationale.
+        sessionProcessor.SessionInitializingAsync += args => {
+          OnSessionInitializing(destination, args.SessionId, DateTimeOffset.UtcNow);
+          return Task.CompletedTask;
+        };
+        sessionProcessor.SessionClosingAsync += args => {
+          OnSessionClosing(destination, args.SessionId);
+          return Task.CompletedTask;
+        };
+
         // CancellationToken.None is deliberate — see the batch session-processor attach site.
         sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination,
           () => sessionProcessor.StopProcessingAsync(CancellationToken.None),
@@ -1081,6 +1150,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       await handler(envelope, envelopeTypeName, args.CancellationToken);
       await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+      _rotateSessionIfPastBudget(args, destination);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
         _logger.LogDebug(
@@ -1323,6 +1393,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// single-flight pause. Base 2s (the broker's own guidance), capped at 60s, streak resets
   /// after 5 quiet minutes.
   /// </summary>
+  /// <summary>
+  /// One rotation governor per transport: sessions voluntarily release before the SDK's
+  /// lock-renewal window ends, so completion always happens under a still-renewed lock.
+  /// See <see cref="SessionOccupancyGovernor"/> for the live failure this prevents.
+  /// </summary>
+  private readonly SessionOccupancyGovernor _sessionGovernor;
+
   private readonly AsbThrottleBackoffPolicy _throttlePolicy =
     new(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(60), TimeSpan.FromMinutes(5));
 
