@@ -57,13 +57,20 @@ public class WhizbangMetersTests {
   }
 
   [Test]
-  public async Task All_IsStableAndContainsNoBlanksAsync() {
-    var all = WhizbangMeters.All;
+  public async Task All_IsInternallyConsistent_AndGrowsMonotonicallyAsync() {
+    var first = WhizbangMeters.All;
 
-    await Assert.That(all.All(n => !string.IsNullOrWhiteSpace(n))).IsTrue();
-    await Assert.That(all.Distinct().Count()).IsEqualTo(all.Count)
+    await Assert.That(first.All(n => !string.IsNullOrWhiteSpace(n))).IsTrue();
+    await Assert.That(first.Distinct().Count()).IsEqualTo(first.Count)
       .Because("a duplicate meter name would double-subscribe every instrument on it");
-    await Assert.That(all).IsEquivalentTo(WhizbangMeters.All)
-      .Because("two reads must agree — consumers snapshot this into OTel setup at startup");
+
+    // The registry is process-global and sibling tests may Register() concurrently, so two
+    // reads are NOT required to be identical — demanding that raced in CI. The property a
+    // consumer's startup snapshot actually relies on is monotonicity: a name once returned
+    // never disappears.
+    var second = WhizbangMeters.All;
+    await Assert.That(first.All(second.Contains)).IsTrue()
+      .Because("registrations only add — a name vanishing between reads would mean a consumer "
+               + "that snapshotted early subscribed to a meter the registry later disowned");
   }
 }
