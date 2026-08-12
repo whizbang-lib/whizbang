@@ -21,6 +21,9 @@
     <PackageReference Include="TUnit" />
     <PackageReference Include="Bogus" />
     <!-- Container fixtures for integration testing -->
+    <!-- Security pin: SSH.NET flows transitively via Testcontainers; the pinned patched
+         version must win resolution here. See Directory.Packages.props. -->
+    <PackageReference Include="SSH.NET" />
     <PackageReference Include="Testcontainers.RabbitMq" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="Npgsql" />
