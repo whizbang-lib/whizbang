@@ -23,6 +23,7 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Pgvector.EntityFrameworkCore" />
     <PackageReference Include="Rocks" />
+    <PackageReference Include="SSH.NET" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="TUnit.Assertions" />

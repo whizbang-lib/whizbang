@@ -12,6 +12,7 @@
   <ItemGroup>
     <PackageReference Include="Npgsql" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="SSH.NET" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="TUnit.Assertions" />
