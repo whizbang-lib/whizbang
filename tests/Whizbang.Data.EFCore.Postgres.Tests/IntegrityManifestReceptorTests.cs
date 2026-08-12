@@ -815,6 +815,67 @@ public class IntegrityManifestReceptorTests {
       .Because("an escalated type leaves the drill-down list — drilling beside the bulk ask double-ships the window");
   }
 
+  /// <summary>
+  /// An ATTEMPT-EXHAUSTED bulk lane must not shadow-ban its type from the per-stream path. The
+  /// escalation exclusion assumes a denied grant means a backfill is already in flight — but a
+  /// lane that exhausted its attempts (e.g. every ask burned into a broken transport era) is
+  /// denied FOREVER, and excluding the type from drill-down too leaves the largest deficits
+  /// permanently unrepairable by every path. Observed live: the biggest deficit types' synthetic
+  /// bulk keys sat at the attempt cap while their types silently vanished from every audit.
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_ExhaustedBulkLane_StillDrillsDownAsync() {
+    var coordinator = new _auditCoordinator();
+    coordinator.WindowedTypeResult = new WindowedDigestResult {
+      Digests = [],   // the consumer holds nothing — a pure, huge deficit
+      ComputedThrough = 5000,
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    IIntegrityRepairLedger ledger = new IntegrityRepairLedger();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions {
+        PublishReportEvents = false,
+        BulkBackfillThresholdEvents = 1000,
+        MaxRepairAttemptsPerBucket = 2,
+      }, tracker: tracker, ledger: ledger);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+    // Exhaust the synthetic bulk key with the SAME divergence signature the manifest will carry —
+    // a changed signature resets attempts (new incident), an unchanged one preserves exhaustion.
+    // This is the live catch-up shape: a static origin side whose asks all burned into a broken
+    // transport era.
+    var bulkKey = new IntegrityRepairLedger.DivergenceKey(
+      coordinator.OriginId, "tenant-a", "Contracts.BigType", Guid.Empty);
+    var longAgo = DateTimeOffset.UtcNow.AddDays(-1);
+    _ = await ledger.TryBeginReportAsync(bulkKey, 41, 42, 0, 0, longAgo, TimeSpan.FromMinutes(60));
+    for (var i = 0; i < 2; i++) {
+      _ = await ledger.TryBeginRepairBatchAsync([bulkKey], longAgo.AddHours(i), TimeSpan.FromSeconds(1), 2, 1);
+    }
+
+    var manifest = _manifest(coordinator, [
+      _typeDigest("Contracts.BigType", 41, 42, 2500),
+    ], ManifestLevel.Types) with {
+      SinceSequence = 0,
+      ComputedThrough = 5000,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    var bulkAsks = transport.Published
+      .Where(p => p.EnvelopeType?.Contains(nameof(RequestRedeliveryCommand), StringComparison.Ordinal) == true)
+      .ToList();
+    await Assert.That(bulkAsks).IsEmpty()
+      .Because("the exhausted lane stays denied — that part of the contract stands");
+    var drillDowns = transport.Published
+      .Where(p => p.EnvelopeType?.Contains(nameof(RequestIntegrityManifest), StringComparison.Ordinal) == true)
+      .ToList();
+    await Assert.That(drillDowns.Count).IsEqualTo(1)
+      .Because("a lane denied by EXHAUSTION (not in-flight) must fall back to the per-stream " +
+               "drill-down — otherwise the largest deficits are permanently unrepairable by every path");
+  }
+
   [Test]
   public async Task ManifestReceptor_HealedBucket_ForgetsLedgerStateAsync() {
     var coordinator = new _auditCoordinator();

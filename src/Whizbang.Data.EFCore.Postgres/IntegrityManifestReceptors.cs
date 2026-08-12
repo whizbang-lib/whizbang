@@ -716,13 +716,17 @@ public sealed partial class IntegrityManifestReceptor(
       var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
       for (var i = 0; i < bulkCandidates.Count; i++) {
         var (origin, _, deficit) = bulkCandidates[i];
-        // Escalated types leave the drill-down list whether or not THIS cycle's ask was granted:
-        // a denied grant means a bulk backfill is already in flight, and drilling down beside it
-        // would double-ship the same window.
-        bulkEscalated.Add(origin.EventType);
+        // Only a GRANTED ask excludes the type from the drill-down — that bulk backfill is
+        // genuinely in flight and drilling beside it would double-ship the window. A DENIAL must
+        // not exclude: the deny may be attempt EXHAUSTION (every ask burned into a broken
+        // transport era, and a static origin signature never resets it), and shadow-banning the
+        // type from the per-stream path too left the largest deficits permanently unrepairable
+        // by every path (observed live). The per-stream keys carry their own backoff/attempts,
+        // so a backoff-denied lane drilling down is bounded, not a storm.
         if (i >= grants.Count || !grants[i]) {
           continue;
         }
+        bulkEscalated.Add(origin.EventType);
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "bulk"),
           new KeyValuePair<string, object?>("origin", message.OriginServiceName));
