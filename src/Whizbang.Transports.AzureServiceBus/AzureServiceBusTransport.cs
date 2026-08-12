@@ -773,11 +773,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // cleared on natural close, so an idle-closed session's next accept starts a fresh clock
     // instead of inheriting a stale one and rotating immediately.
     sessionProcessor.SessionInitializingAsync += args => {
-      _sessionGovernor.RecordMessage(_sessionKey(destination, args.SessionId), DateTimeOffset.UtcNow);
+      OnSessionInitializing(destination, args.SessionId, DateTimeOffset.UtcNow);
       return Task.CompletedTask;
     };
     sessionProcessor.SessionClosingAsync += args => {
-      _sessionGovernor.OnReleased(_sessionKey(destination, args.SessionId));
+      OnSessionClosing(destination, args.SessionId);
       return Task.CompletedTask;
     };
     // CancellationToken.None is deliberate: the throttle pause runs detached and must complete
@@ -831,12 +831,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private string _sessionKey(TransportDestination destination, string sessionId) =>
     $"{destination.Address}/{destination.RoutingKey ?? _options.DefaultSubscriptionName}/{sessionId}";
 
-  private void _rotateSessionIfPastBudget(ProcessSessionMessageEventArgs args, TransportDestination destination) {
+  private void _rotateSessionIfPastBudget(ProcessSessionMessageEventArgs args, TransportDestination destination) =>
+    RotateSessionIfPastBudget(args, destination, DateTimeOffset.UtcNow);
+
+  /// <summary>Time-parameterized core of the rotation check — internal so tests drive `now` deterministically.</summary>
+  internal void RotateSessionIfPastBudget(ProcessSessionMessageEventArgs args, TransportDestination destination, DateTimeOffset now) {
     var sessionKey = _sessionKey(destination, args.SessionId);
     // Fallback stamp for processors without the SessionInitializing hook — TryAdd is a no-op
     // when the accept-time stamp already exists.
-    _sessionGovernor.RecordMessage(sessionKey, DateTimeOffset.UtcNow);
-    if (!_sessionGovernor.ShouldRelease(sessionKey, DateTimeOffset.UtcNow)) {
+    _sessionGovernor.RecordMessage(sessionKey, now);
+    if (!_sessionGovernor.ShouldRelease(sessionKey, now)) {
       return;
     }
     args.ReleaseSession();
@@ -850,6 +854,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         _sessionGovernor.OccupancyBudget.TotalSeconds);
     }
   }
+
+  /// <summary>Session-accept hook body: starts the occupancy clock at the moment the renewal window opens.</summary>
+  internal void OnSessionInitializing(TransportDestination destination, string sessionId, DateTimeOffset now) =>
+    _sessionGovernor.RecordMessage(_sessionKey(destination, sessionId), now);
+
+  /// <summary>
+  /// Session-close hook body: clears the occupancy clock so an idle-closed session's next
+  /// accept starts fresh instead of inheriting a stale clock and rotating immediately.
+  /// </summary>
+  internal void OnSessionClosing(TransportDestination destination, string sessionId) =>
+    _sessionGovernor.OnReleased(_sessionKey(destination, sessionId));
 
   /// <summary>
   /// Non-session batch subscription. Per-message callbacks enqueue to the TransportBatchCollector,
@@ -1011,11 +1026,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
         // Occupancy clock — see the batch session-processor attach site for the rationale.
         sessionProcessor.SessionInitializingAsync += args => {
-          _sessionGovernor.RecordMessage(_sessionKey(destination, args.SessionId), DateTimeOffset.UtcNow);
+          OnSessionInitializing(destination, args.SessionId, DateTimeOffset.UtcNow);
           return Task.CompletedTask;
         };
         sessionProcessor.SessionClosingAsync += args => {
-          _sessionGovernor.OnReleased(_sessionKey(destination, args.SessionId));
+          OnSessionClosing(destination, args.SessionId);
           return Task.CompletedTask;
         };
 
