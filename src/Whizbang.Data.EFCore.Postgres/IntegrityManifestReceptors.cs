@@ -526,6 +526,13 @@ public sealed partial class IntegrityManifestReceptor(
   /// </summary>
   private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid Origin, long Since, long Until), (int Pages, DateTimeOffset Last)> _pagesFollowed = new();
 
+  /// <summary>
+  /// Per-(origin, type) drill-down recency for the rotation fairness in the type-level handler.
+  /// In-memory and per-process like <see cref="_pagesFollowed"/>: the bound being protected is
+  /// THIS replica's selection fairness, and a restart merely resets the rotation.
+  /// </summary>
+  private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid Origin, string EventType), DateTimeOffset> _lastDrilled = new();
+
   private async Task _followResumeCursorAsync(
       IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message,
       List<string> types, CancellationToken cancellationToken) {
@@ -725,11 +732,21 @@ public sealed partial class IntegrityManifestReceptor(
       }
     }
 
+    // Least-recently-drilled first: taking the manifest's head every cycle starves every type
+    // past the cap forever (deterministic order + deterministic truncation = the same N types
+    // consume the budget while the largest deficits never get a single stream-level compare —
+    // observed live). Per-process recency is enough: a restart merely resets fairness, and the
+    // stable sort keeps manifest order among never-drilled types.
     var drillDown = mismatched
       .Where(t => !bulkEscalated.Contains(t))
+      .OrderBy(t => _lastDrilled.TryGetValue((message.OriginServiceId, t), out var at) ? at : DateTimeOffset.MinValue)
       .Take(Math.Max(0, options.MaxDrillDownTypesPerAudit)).ToList();
     if (drillDown.Count == 0) {
       return;
+    }
+    var drilledAt = DateTimeOffset.UtcNow;
+    foreach (var t in drillDown) {
+      _lastDrilled[(message.OriginServiceId, t)] = drilledAt;
     }
     var envelope = new MessageEnvelope<RequestIntegrityManifest> {
       MessageId = new MessageId(TrackedGuid.NewMedo()),
