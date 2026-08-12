@@ -113,6 +113,27 @@ public class AzureServiceBusOptions {
   public TimeSpan MaxAutoLockRenewalDuration { get; set; } = TimeSpan.FromMinutes(5);
 
   /// <summary>
+  /// The broker-side lock duration provisioned onto subscriptions this transport creates —
+  /// and reconciled (raise-only) onto existing subscriptions on the ensure path.
+  /// Default: <b>5 minutes</b>, the ASB maximum.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// ASB's own default of 1 minute proved a hair-trigger on a live fleet: with many concurrent
+  /// sessions, lock renewals arriving seconds late killed session locks ~90 seconds after
+  /// accept, completions failed, and messages redelivered until they dead-lettered — the
+  /// receive side froze while tens of thousands of messages queued. Every renewal margin
+  /// scales with the lock duration, so the widest lock is the turnkey-safe default.
+  /// </para>
+  /// <para>
+  /// The reconcile only ever RAISES an existing subscription's value, so a deliberate
+  /// broker-side override above this setting is never churned by deploys.
+  /// </para>
+  /// </remarks>
+  /// <docs>messaging/transports/azure-service-bus#lock-renewal</docs>
+  public TimeSpan SubscriptionLockDuration { get; set; } = TimeSpan.FromMinutes(5);
+
+  /// <summary>
   /// How many times a single failing message is redelivered before being moved to the dead-letter queue.
   /// Each time a message handler throws an exception, the broker increments the delivery count
   /// and redelivers the message. Once this limit is reached, the message is dead-lettered instead.

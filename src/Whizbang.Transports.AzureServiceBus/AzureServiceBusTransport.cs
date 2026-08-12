@@ -1825,6 +1825,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
     var properties = await _adminClient!.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken);
     if (properties.RequiresSession) {
+      // Session shape is right; reconcile the lock duration (raise-only — see the option docs).
+      // LockDuration IS updatable in place, so environments provisioned before the safe
+      // default existed self-heal here on their next deploy.
+      if (properties.LockDuration < _options.SubscriptionLockDuration) {
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation(
+            "Raising LockDuration on {TopicName}/{SubscriptionName} from {CurrentSeconds}s to {DesiredSeconds}s — " +
+            "short session locks lose renewals under concurrency and freeze the receive side",
+            topicName, subscriptionName,
+            properties.LockDuration.TotalSeconds, _options.SubscriptionLockDuration.TotalSeconds);
+        }
+        await _adminClient.UpdateSubscriptionLockDurationAsync(
+          topicName, subscriptionName, _options.SubscriptionLockDuration, cancellationToken);
+      }
       return;
     }
     if (_logger.IsEnabled(LogLevel.Information)) {
@@ -1834,7 +1848,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         topicName, subscriptionName);
     }
     await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
-    await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
+    await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
   }
 
   /// <summary>Creates the subscription — honoring EnableSessions for the RequiresSession flag —
@@ -1845,9 +1859,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
     }
     if (_options.EnableSessions) {
-      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
+      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
     } else {
-      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, cancellationToken);
+      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
     }
   }
 

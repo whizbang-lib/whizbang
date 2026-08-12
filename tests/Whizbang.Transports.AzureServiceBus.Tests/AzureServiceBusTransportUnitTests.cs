@@ -711,17 +711,22 @@ public class AzureServiceBusTransportUnitTests {
 
     public int? LastMaxDeliveryCount { get; private set; }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
       ExistingSubscriptions.Add((topicName, subscriptionName));
       LastMaxDeliveryCount = maxDeliveryCount;
       return Task.CompletedTask;
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
       ExistingSubscriptions.Add((topicName, subscriptionName));
       LastMaxDeliveryCount = maxDeliveryCount;
       return Task.CompletedTask;
     }
+
+    public Task UpdateSubscriptionLockDurationAsync(string topicName, string subscriptionName, TimeSpan lockDuration, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+
 
     public Task<SubscriptionProperties> GetSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
       // SubscriptionProperties has no public constructor — create via CreateSubscriptionOptions internal conversion
