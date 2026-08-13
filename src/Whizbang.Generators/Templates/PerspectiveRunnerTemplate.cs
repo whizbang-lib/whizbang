@@ -1063,6 +1063,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;
     PerspectiveScope? lastScope = null;
+    // The replay FRONTIER — max event id / max local commit_sequence across everything
+    // applied. The checkpoint metadata must carry the frontier, not the origin-order-last
+    // event's stamp: after a replay everything at or below the frontier IS applied (that is
+    // the idempotency floor's meaning), and the upsert's cross-pod lost-update guard rightly
+    // refuses a write whose sequence sits below the stored floor — an origin-order replay's
+    // final event can carry a LOWER local stamp than a backfilled straggler it slotted.
+    Guid? frontierEventId = null;
+    long? frontierCommitSequence = null;
 
     // Slice 24c: intermediate-snapshot tracking. When the rewind interval is configured
     // (> 0) we snapshot every N events DURING the replay, not just at the end. Subsequent
@@ -1092,6 +1100,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // append rates; in practice 1-2 iterations cover the bulk-import case.
     // <docs>fundamentals/perspectives/rewind-invariants</docs>
     // <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs</tests>
+    // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ReconcileRewindScenarioTests.cs</tests>
+    // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs</tests>
     const int MAX_REWIND_CATCH_UP_ITERATIONS = 100;
     var rewindCatchUpIterations = 0;
     var anchorEventId = replayFromEventId;
@@ -1123,16 +1133,27 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         break;
       }
 
-      // Ordering invariant: replay in COMMIT order when every event carries its stamp — the
-      // inversion detector is commit-sequence-authoritative (same-millisecond UUIDv7 ids can
-      // disagree with commit order), and an id-ordered replay would re-introduce exactly the
-      // ordering the detector stopped trusting, silently undoing newer writes during the very
-      // rewind that exists to fix ordering. Any unstamped event (stamper lag) falls the whole
-      // batch back to MessageId order — a partial mix would interleave two orderings.
+      // Ordering invariant — one comparator per batch, chosen by what the batch can prove:
+      // 1) SINGLE-ORIGIN stream (every event carries the same non-empty SourceServiceId and a
+      //    positive SourceCommitSequence): replay in ORIGIN order. A reconciled straggler
+      //    keeps its original origin slot but lands with an arrival-fresh LOCAL sequence — a
+      //    local-order replay would apply it last, which is exactly the arrival-order failure
+      //    the rewind exists to correct.
+      // 2) Otherwise, COMMIT order when every event carries its local stamp — the inversion
+      //    detector is commit-sequence-authoritative (same-millisecond UUIDv7 ids can disagree
+      //    with commit order), and an id-ordered replay would silently undo newer writes.
+      // 3) Any unstamped event (stamper lag) falls the whole batch back to MessageId order —
+      //    a partial mix would interleave two orderings.
       if (events.Count > 1) {
-        events = events.All(e => e.LocalCommitSequence.HasValue)
-          ? events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList()
-          : events.OrderByMessageId().ToList();
+        var firstOrigin = events[0].SourceServiceId;
+        if (firstOrigin != Guid.Empty
+            && events.All(e => e.SourceServiceId == firstOrigin && e.SourceCommitSequence > 0)) {
+          events = events.OrderBy(e => e.SourceCommitSequence).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList();
+        } else if (events.All(e => e.LocalCommitSequence.HasValue)) {
+          events = events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList();
+        } else {
+          events = events.OrderByMessageId().ToList();
+        }
       }
 
       // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
@@ -1186,6 +1207,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       lastSuccessfulEventId = envelope.MessageId.Value;
       lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
       eventsProcessed++;
+      if (frontierEventId is null || string.CompareOrdinal(
+            envelope.MessageId.Value.ToString("D"), frontierEventId.Value.ToString("D")) > 0) {
+        frontierEventId = envelope.MessageId.Value;
+      }
+      if (envelope.LocalCommitSequence is long seq
+          && (frontierCommitSequence is null || seq > frontierCommitSequence.Value)) {
+        frontierCommitSequence = seq;
+      }
 
       // Slice 24c: take an intermediate snapshot every N replayed events. Puts a snapshot
       // at THIS point in the stream's history so future rewinds for late events with
@@ -1232,15 +1261,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         .Last();
     } // closes while (true)
 
-    // Single atomic write at the end — lenses see pre-replay data until this point
+    // Single atomic write at the end — lenses see pre-replay data until this point.
+    // Checkpoint at the replay FRONTIER (max id / max local sequence applied): the floor's
+    // meaning is "everything at or below is applied", and a frontier below the stored floor
+    // would be refused by the upsert's cross-pod lost-update guard — discarding the very
+    // correction the rewind computed.
     if (eventsProcessed > 0) {
       if (pendingPurge) {
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
       } else if (updatedModel != null) {
-        var replayCheckpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
-            lastSuccessfulEventId!.Value, cancellationToken);
+        var checkpointEventId = frontierEventId ?? lastSuccessfulEventId!.Value;
+        var replayCheckpointCommitSequence = frontierCommitSequence
+            ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
         await SaveModelAndCheckpointAsync(
-            streamId, updatedModel, lastSuccessfulEventId!.Value, lastSuccessfulEventType ?? string.Empty,
+            streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
       }
 
@@ -1275,7 +1309,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       StreamId = streamId,
       PerspectiveName = perspectiveName,
       PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
-      LastEventId = lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
+      // The cursor tracks the stream FRONTIER — under origin-order replay the last-applied
+      // event need not carry the largest id, and a cursor behind the frontier would re-flag
+      // already-replayed events as stragglers on the next work item.
+      LastEventId = frontierEventId ?? lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
       Status = resultStatus,
       EventsProcessed = eventsProcessed
     };

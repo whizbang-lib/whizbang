@@ -96,13 +96,17 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
 
-  private static MessageEnvelope<IEvent> _envelope(Guid id, IEvent payload, long? localCommitSequence) => new() {
-    MessageId = MessageId.From(id),
-    Payload = payload,
-    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
-    Hops = [],
-    LocalCommitSequence = localCommitSequence,
-  };
+  private static MessageEnvelope<IEvent> _envelope(
+      Guid id, IEvent payload, long? localCommitSequence,
+      Guid? sourceServiceId = null, long sourceCommitSequence = 0) => new() {
+        MessageId = MessageId.From(id),
+        Payload = payload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+        Hops = [],
+        LocalCommitSequence = localCommitSequence,
+        SourceServiceId = sourceServiceId ?? Guid.Empty,
+        SourceCommitSequence = sourceCommitSequence,
+      };
 
   private async Task<ActionTestModel> _modelAsync(Guid streamId) {
     await using var verify = CreateDbContext();
@@ -113,17 +117,18 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// THE CLOBBER LOCK (documenting — current contract). A newer same-field writer is applied,
-  /// then reconciliation backfills an OLDER event of the same field. The backfilled event
-  /// carries its original (old) event id but a FRESH local commit_sequence, so the idempotency
-  /// floor passes it and no inversion fires — it applies in ARRIVAL order and the model shows
-  /// the OLD value. A full-order replay would show 999. When origin-aware inversion lands,
-  /// this test flips to expect 999.
+  /// THE CLOBBER-CORRECTION CONTRACT (end-to-end). A newer same-field writer is applied, then
+  /// reconciliation backfills an OLDER event of the same field. The arrival-order apply
+  /// transiently regresses the model — and then the DECLARED rewind (migration 100 flags the
+  /// cursor the moment the straggler's work item lands below it; the worker routes to
+  /// RewindAndRunAsync) replays the stream in ORIGIN order and restores the newer value. The
+  /// intended order of events wins, exactly as if the event had never been missed.
   /// </summary>
   [Test]
-  public async Task Reconcile_OlderConflictingWriterBackfilled_ArrivalOrderClobbers_CurrentContractAsync() {
+  public async Task Reconcile_OlderConflictingWriterBackfilled_DeclaredRewindRestoresIntendedOrderAsync() {
     var streamId = Guid.NewGuid();
     var eventStore = new InMemoryEventStore();
+    var origin = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-000000000001");
 
     var createdId = Guid.Parse("019e8000-0000-7000-8000-000000000001");
     var newerId = Guid.Parse("019e9000-0000-7000-8000-000000000002");
@@ -134,9 +139,9 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       [backfilledOldId] = 300,
     });
     await eventStore.AppendAsync(streamId, _envelope(createdId,
-      new ActionTestCreatedEvent { StreamId = streamId, Name = "Job", Value = 1 }, 100));
+      new ActionTestCreatedEvent { StreamId = streamId, Name = "Job", Value = 1 }, 100, origin, 100));
     await eventStore.AppendAsync(streamId, _envelope(newerId,
-      new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 200));
+      new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 200, origin, 300));
 
     await using (var ctx = CreateDbContext()) {
       var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, PERSPECTIVE);
@@ -147,11 +152,12 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     await Assert.That((await _modelAsync(streamId)).Value).IsEqualTo(999)
       .Because("precondition: the newer writer is applied");
 
-    // The reconciled straggler: ORIGINAL (older) event id, origin-older payload — but the
-    // local stamper hands it a fresh commit_sequence at landing time, exactly like a real
-    // backfill. It sails past the commit-sequence idempotency floor (300 > 200).
+    // The reconciled straggler: ORIGINAL (older) event id, origin sequence BETWEEN the two
+    // applied events — but the local stamper hands it a fresh commit_sequence at landing
+    // time, exactly like a real backfill. It sails past the idempotency floor (300 > 200)
+    // and applies in arrival order first.
     var straggler = _envelope(backfilledOldId,
-      new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 50 }, 300);
+      new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 50 }, 300, origin, 200);
     await eventStore.AppendAsync(streamId, straggler);
 
     await using (var ctx2 = CreateDbContext()) {
@@ -162,25 +168,39 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       await Assert.That(result.EventsProcessed).IsEqualTo(1)
         .Because("the fresh local commit_sequence passes the idempotency floor — the straggler applies");
     }
-
     await Assert.That((await _modelAsync(streamId)).Value).IsEqualTo(50)
-      .Because("DOCUMENTING LOCK: the cursor-inversion detector compares LOCAL commit_sequence "
-               + "only, and a backfilled event always lands with a fresh, higher one — reconcile "
-               + "is invisible to the rewind, so arrival order wins and the OLDER value clobbers "
-               + "the newer. A full-order replay would end at 999. The origin-aware inversion "
-               + "follow-up flips this expectation to 999.");
+      .Because("the transient arrival-order state — this is what the declared rewind corrects");
+
+    // The declared rewind: migration 100 flags the cursor at work-item creation (the
+    // straggler's id slots below the cursor — proven by ReconcileRewindDeclarationSqlTests);
+    // the worker's RewindRequired routing then invokes exactly this call.
+    await using (var ctx3 = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx3, PERSPECTIVE);
+      var runner = await CreateRunnerAsync(stamped, ps);
+      var rewound = await runner.RewindAndRunAsync(streamId, PERSPECTIVE, backfilledOldId, 300, CancellationToken.None);
+      await Assert.That(rewound.EventsProcessed).IsEqualTo(3)
+        .Because("the rewind replays the WHOLE stream from zero (no snapshot floor exists)");
+    }
+
+    await Assert.That((await _modelAsync(streamId)).Value).IsEqualTo(999)
+      .Because("THE CONTRACT: the declared rewind replays the stream in ORIGIN order "
+               + "(Created oseq 100 → straggler oseq 200 → newer oseq 300), slotting the "
+               + "month-late event at its intended position — the newer writer survives, as if "
+               + "the event had never been missed");
   }
 
   /// <summary>
-  /// The live-verified backfill shape: the stream's row was created by a later event that
-  /// writes a DIFFERENT field; the backfilled initializer populates its own fields. The
-  /// disjoint field lands correctly; the shared field regresses to the initializer's value —
-  /// both halves of the arrival-order contract, pinned per field.
+  /// The live-verified backfill shape, corrected end-to-end: the stream's row was created by a
+  /// later event that writes a DIFFERENT field; the backfilled initializer arrives late. After
+  /// the declared rewind replays origin order, the initializer's disjoint field is populated
+  /// AND the later writer's field survives — full-order semantics for the exact case a
+  /// month-late initializer presents.
   /// </summary>
   [Test]
-  public async Task Reconcile_LateInitializer_DisjointFieldLands_SharedFieldRegresses_CurrentContractAsync() {
+  public async Task Reconcile_LateInitializer_DeclaredRewindMergesBothWritersInOriginOrderAsync() {
     var streamId = Guid.NewGuid();
     var eventStore = new InMemoryEventStore();
+    var origin = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-000000000002");
 
     var newerId = Guid.Parse("019e9000-0000-7000-8000-000000000011");
     var backfilledInitId = Guid.Parse("019e8000-0000-7000-8000-000000000012");
@@ -189,7 +209,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       [backfilledInitId] = 300,
     });
     await eventStore.AppendAsync(streamId, _envelope(newerId,
-      new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 200));
+      new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 200, origin, 200));
 
     await using (var ctx = CreateDbContext()) {
       var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, PERSPECTIVE);
@@ -198,7 +218,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     }
 
     var initializer = _envelope(backfilledInitId,
-      new ActionTestCreatedEvent { StreamId = streamId, Name = "Backfilled", Value = 7 }, 300);
+      new ActionTestCreatedEvent { StreamId = streamId, Name = "Backfilled", Value = 7 }, 300, origin, 100);
     await eventStore.AppendAsync(streamId, initializer);
 
     await using (var ctx2 = CreateDbContext()) {
@@ -209,14 +229,22 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       await Assert.That(result.EventsProcessed).IsEqualTo(1);
     }
 
+    // The declared rewind (migration 100 → worker RewindRequired routing) corrects the
+    // transient arrival-order state by replaying origin order: Init (oseq 100) → Updated
+    // (oseq 200).
+    await using (var ctx3 = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx3, PERSPECTIVE);
+      var runner = await CreateRunnerAsync(stamped, ps);
+      _ = await runner.RewindAndRunAsync(streamId, PERSPECTIVE, backfilledInitId, 300, CancellationToken.None);
+    }
+
     var model = await _modelAsync(streamId);
     await Assert.That(model.Name).IsEqualTo("Backfilled")
-      .Because("the initializer is the ONLY writer of this field — the backfill must populate it "
-               + "(this is the shape live convergence verified: fields with no competing writer land)");
-    await Assert.That(model.Value).IsEqualTo(7)
-      .Because("DOCUMENTING LOCK: the shared field regresses to the initializer's value under "
-               + "arrival-order apply — the same missing-origin-aware-inversion gap as the "
-               + "clobber lock; flips to 999 when it lands");
+      .Because("the initializer is the ONLY writer of this field — the backfill populates it");
+    await Assert.That(model.Value).IsEqualTo(999)
+      .Because("THE CONTRACT: origin-order replay applies the initializer FIRST, so the later "
+               + "writer's value survives — the shared field no longer regresses to the "
+               + "month-old initializer's value");
   }
 
   /// <summary>
@@ -322,5 +350,52 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
                + "though the updated event's UUIDv7 sorts first — an id-ordered replay would "
                + "end at 1, silently undoing the newer write during the very rewind that "
                + "exists to fix ordering");
+  }
+
+  /// <summary>
+  /// THE SLOTTING TEST — the reconcile-rewind end state. A single-origin stream backfills a
+  /// month-old middle event: its ORIGIN sequence sits between the applied events, but its
+  /// LOCAL commit sequence is arrival-fresh (highest). The declared rewind's replay must slot
+  /// it by ORIGIN order — a local-commit-order replay would apply the straggler LAST and end
+  /// at the stale value, achieving nothing the arrival-order clobber didn't already do.
+  /// </summary>
+  [Test]
+  public async Task RewindReplay_BackfilledStraggler_SlotsIntoOriginOrder_NewerWriterWinsAsync() {
+    var streamId = Guid.NewGuid();
+    var eventStore = new InMemoryEventStore();
+    var origin = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+
+    // Origin truth: Created(oseq 100, v=1) → straggler Updated(oseq 150, v=50) → newer
+    // Updated(oseq 200, v=999). The straggler was MISSED and backfilled a month later:
+    // origin-era id, LOCAL commit sequence 300 (freshest).
+    var createdId = Guid.Parse("019e1000-0000-7000-8000-000000000001");
+    var stragglerId = Guid.Parse("019e2000-0000-7000-8000-000000000002");
+    var newerId = Guid.Parse("019f0000-0000-7000-8000-000000000003");
+    var stamped = new _stampingEventStore(eventStore, new Dictionary<Guid, long?> {
+      [createdId] = 100,
+      [newerId] = 200,
+      [stragglerId] = 300,
+    });
+    await eventStore.AppendAsync(streamId, _envelope(createdId,
+      new ActionTestCreatedEvent { StreamId = streamId, Name = "Slot", Value = 1 }, 100, origin, 100));
+    await eventStore.AppendAsync(streamId, _envelope(newerId,
+      new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 200, origin, 200));
+    await eventStore.AppendAsync(streamId, _envelope(stragglerId,
+      new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 50 }, 300, origin, 150));
+
+    await using var ctx = CreateDbContext();
+    var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, PERSPECTIVE);
+    var runner = await CreateRunnerAsync(stamped, ps);
+
+    var result = await runner.RewindAndRunAsync(
+      streamId, PERSPECTIVE, stragglerId, 300, CancellationToken.None);
+    await Assert.That(result.EventsProcessed).IsEqualTo(3);
+
+    await Assert.That((await _modelAsync(streamId)).Value).IsEqualTo(999)
+      .Because("the straggler's ORIGIN sequence (150) slots it BETWEEN Created (100) and the "
+               + "newer writer (200) — the rewind must replay origin order so the newer value "
+               + "survives; a local-commit-order replay applies the straggler last (local 300) "
+               + "and regresses to 50, which is exactly the arrival-order failure the rewind "
+               + "exists to correct");
   }
 }

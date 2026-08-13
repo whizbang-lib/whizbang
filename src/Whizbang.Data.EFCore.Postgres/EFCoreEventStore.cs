@@ -50,6 +50,8 @@ public sealed class EFCoreEventStore<TDbContext>(
     public string EventType { get; init; } = string.Empty;
     public int Version { get; init; }
     public long? CommitSequence { get; init; }
+    public Guid? OriginServiceId { get; init; }
+    public long? OriginCommitSequence { get; init; }
     public JsonElement? EventData { get; init; }
     public EnvelopeMetadata? Metadata { get; init; }
     public PerspectiveScope? Scope { get; init; }
@@ -69,6 +71,8 @@ public sealed class EFCoreEventStore<TDbContext>(
       EventType = e.EventType,
       Version = e.Version,
       CommitSequence = e.CommitSequence,
+      OriginServiceId = e.OriginServiceId,
+      OriginCommitSequence = e.OriginCommitSequence,
       Scope = e.Scope,
       // #13b4-3 (078): the inline columns are dropped — the body table IS the body. A missing body
       // row (reaped ephemeral) surfaces as NULL and the caller skips it.
@@ -345,7 +349,13 @@ public sealed class EFCoreEventStore<TDbContext>(
         Payload = (IEvent)eventData,
         Hops = hops,
         DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
-        LocalCommitSequence = record.CommitSequence
+        LocalCommitSequence = record.CommitSequence,
+        // Origin identity rides the replay read: the rewind's origin-order slotting keys on it
+        // (a reconciled straggler's local sequence is arrival-fresh, but its origin sequence is
+        // its true position in the stream). Dropping it demotes single-origin streams to
+        // local-commit order and re-applies stragglers last.
+        SourceServiceId = record.OriginServiceId ?? Guid.Empty,
+        SourceCommitSequence = record.OriginCommitSequence ?? 0,
       };
 
       yield return envelope;
