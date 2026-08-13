@@ -59,6 +59,28 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
+  public async Task DrainTick_OneFailedGroupSend_StillDispatchesTheRemainingGroupsAsync() {
+    // Observed live: one throttled broker send threw out of the tick and killed every LATER
+    // group's dispatch — their claimed rows had already stamped an attempt, so the failure
+    // burned backoff budget across buckets that never even reached the wire.
+    var origin = TrackedGuid.NewMedo().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    transport.FailFirst = 1;
+    coordinator.Eligible.AddRange([
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.NewMedo().Value, 300, 700),
+    ]);
+
+    await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("the second group still dispatches after the first group's send fails — a per-group " +
+               "failure costs that group's attempt, never the whole tick.");
+  }
+
+  [Test]
   public async Task DrainTick_ReportOnlyMode_NeverClaimsOrDispatchesAsync() {
     // RepairMode.ReportOnly is the operator's explicit opt-DOWN from auto-repair — and the drain
     // is a repair dispatcher. A ReportOnly service whose drain kept claiming and sending
@@ -192,11 +214,17 @@ public class RepairDrainWorkerTests {
 
   private sealed class _captureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
+    public int FailFirst { get; set; }
+    public int Attempts { get; private set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
       lock (Published) {
+        Attempts++;
+        if (Attempts <= FailFirst) {
+          throw new TimeoutException("SendMessageAsync timed out (simulated broker throttle)");
+        }
         Published.Add((envelope, destination, envelopeType));
       }
       return Task.CompletedTask;

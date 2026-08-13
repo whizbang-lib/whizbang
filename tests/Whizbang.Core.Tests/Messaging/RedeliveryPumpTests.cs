@@ -195,6 +195,90 @@ public class RedeliveryPumpTests {
       throw new NotSupportedException();
   }
 
+  [Test]
+  public async Task Publish_RetriesTransientSendFailures_AndCompletesTheServeAsync() {
+    // Observed live: one throttled broker send (a 30s timeout under namespace saturation) threw
+    // out of PublishAsync and aborted the WHOLE serve — every later chunk of a 1,400-event
+    // repair died with it, the requester's attempt burned, and the deficit stayed frozen. A
+    // transient send failure must cost a retry, not the serve.
+    var streamA = TrackedGuid.NewMedo().Value;
+    var streamB = TrackedGuid.NewMedo().Value;
+    var transport = new _flakyTransport { FailFirst = 2 };
+    var pump = new RedeliveryPump(transport, new _captureSerializer(), options: new RedeliveryPumpOptions {
+      PublishRetryAttempts = 5,
+      PublishRetryBaseDelayMs = 0,
+    });
+
+    var published = await pump.PublishAsync(
+      [_evt(streamA, TrackedGuid.NewMedo().Value, 1), _evt(streamB, TrackedGuid.NewMedo().Value, 1)],
+      topic: "repair-topic", target: "svc-x");
+
+    await Assert.That(published).IsEqualTo(2)
+      .Because("the first chunk's two transient failures are retried and the serve completes.");
+    await Assert.That(transport.Published.Count).IsEqualTo(2)
+      .Because("both composites reached the wire despite the flaky sends.");
+    await Assert.That(transport.Attempts).IsEqualTo(4)
+      .Because("chunk one took three attempts (two failures + success), chunk two took one.");
+  }
+
+  [Test]
+  public async Task Publish_ExhaustedRetries_RethrowsAfterTheConfiguredAttemptsAsync() {
+    var transport = new _flakyTransport { FailFirst = int.MaxValue };
+    var pump = new RedeliveryPump(transport, new _captureSerializer(), options: new RedeliveryPumpOptions {
+      PublishRetryAttempts = 3,
+      PublishRetryBaseDelayMs = 0,
+    });
+
+    await Assert.That(async () => await pump.PublishAsync(
+        [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1)],
+        topic: "repair-topic", target: "svc-x"))
+      .Throws<TimeoutException>()
+      .Because("a chunk that fails every attempt surfaces the failure — the requester's ladder owns what happens next.");
+    await Assert.That(transport.Attempts).IsEqualTo(3)
+      .Because("the retry budget is bounded — a dead broker must not be hammered forever.");
+  }
+
+  [Test]
+  public async Task Publish_Cancellation_PropagatesWithoutRetryAsync() {
+    var transport = new _flakyTransport { FailFirst = int.MaxValue, ThrowCancellation = true };
+    var pump = new RedeliveryPump(transport, new _captureSerializer(), options: new RedeliveryPumpOptions {
+      PublishRetryAttempts = 5,
+      PublishRetryBaseDelayMs = 0,
+    });
+
+    await Assert.That(async () => await pump.PublishAsync(
+        [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1)],
+        topic: "repair-topic", target: "svc-x"))
+      .Throws<OperationCanceledException>()
+      .Because("cancellation is a shutdown signal, not a transient fault.");
+    await Assert.That(transport.Attempts).IsEqualTo(1)
+      .Because("a cancelled serve stops immediately — retrying it would fight the host's shutdown.");
+  }
+
+  private sealed class _flakyTransport : ITransport {
+    public int FailFirst { get; set; }
+    public bool ThrowCancellation { get; set; }
+    public int Attempts { get; private set; }
+    public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
+    public bool IsInitialized => true;
+    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
+      Attempts++;
+      if (ThrowCancellation) {
+        throw new OperationCanceledException("shutdown");
+      }
+      if (Attempts <= FailFirst) {
+        throw new TimeoutException("SendMessageAsync timed out (simulated broker throttle)");
+      }
+      Published.Add((envelope, destination, envelopeType));
+      return Task.CompletedTask;
+    }
+    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
+  }
+
   private sealed class _captureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
