@@ -107,6 +107,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IntegrityCheckpointWorker>();
     services.TryAddSingleton<SubscriptionExpansionWorker>();
     services.TryAddSingleton<IntegrityAuditWorker>();
+    services.TryAddSingleton<RepairDrainWorker>();
     // #80-D: the audit worker doubles as the sweep runner (the scheduled occurrence's receptor
     // resolves it); the state object is how the driver's cron scheduler stands the counter down.
     services.TryAddSingleton<IIntegritySweepRunner>(sp => sp.GetRequiredService<IntegrityAuditWorker>());
@@ -235,6 +236,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<IntegrityCheckpointWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<IntegrityAuditWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<RepairDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());

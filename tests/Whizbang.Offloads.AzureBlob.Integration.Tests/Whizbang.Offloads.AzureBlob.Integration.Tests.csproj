@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <PackageReference Include="TUnit" />
+    <PackageReference Include="SSH.NET" />
     <PackageReference Include="Testcontainers.Azurite" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>

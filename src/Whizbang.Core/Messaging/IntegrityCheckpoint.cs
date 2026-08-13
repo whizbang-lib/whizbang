@@ -438,6 +438,30 @@ public sealed class StreamIntegrityOptions {
   public int MaxRepairAttemptsPerBucket { get; set; } = 8;
 
   /// <summary>
+  /// Run the paced repair drain (default true): a continuous worker that dispatches repair
+  /// requests from the durable ledger at a steady rate instead of bursting a whole budget at
+  /// each audit tick. Discovery (audits, checkpoints) records deficits; the drain sends.
+  /// Requires a drain-capable coordinator; inert otherwise.
+  /// </summary>
+  /// <docs>proposals/paced-repair-drain</docs>
+  public bool RepairDrainEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Steady-state repair dispatch rate in ledger rows per second (default 5). The drain's token
+  /// bucket refills at this rate (burst cap 2×), so request traffic is spread over the whole
+  /// interval instead of leaving in one audit-tick burst that saturates the broker.
+  /// </summary>
+  /// <docs>proposals/paced-repair-drain</docs>
+  public double RepairDrainRatePerSecond { get; set; } = 5;
+
+  /// <summary>
+  /// Maximum ledger rows claimed in one drain pass (default 50) — bounds a single pass's claim
+  /// round trip and the burst a freshly-filled token bucket can emit.
+  /// </summary>
+  /// <docs>proposals/paced-repair-drain</docs>
+  public int RepairDrainBatchSize { get; set; } = 50;
+
+  /// <summary>
   /// Advance the digest-epoch closure frontier on the maintenance cadence (default true).
   /// Epochs (migration 092) are what let manifest answers read immutable folds instead of
   /// re-aggregating live history; without closure the frontier never moves and every audit

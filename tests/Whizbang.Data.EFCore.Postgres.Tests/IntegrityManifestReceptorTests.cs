@@ -168,7 +168,7 @@ public class IntegrityManifestReceptorTests {
     var tracker = new IntegrityGapTracker();
     // No PublishReportEvents — the production default.
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
       dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
@@ -226,7 +226,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRepairRequestsPerAudit = 1, PublishReportEvents = true },
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRepairRequestsPerAudit = 1, PublishReportEvents = true },
       dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
@@ -581,7 +581,7 @@ public class IntegrityManifestReceptorTests {
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
-    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: tracker);
+    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -606,7 +606,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var ledger = new IntegrityRepairLedger();
-    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: tracker, ledger: ledger);
+    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker, ledger: ledger);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -714,7 +714,7 @@ public class IntegrityManifestReceptorTests {
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { PublishReportEvents = true }, tracker: tracker);
+      new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = true }, tracker: tracker);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
     var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]);
@@ -767,6 +767,44 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(coordinator.SealAdvancedTo).IsNull()
       .Because("zero origin buckets against non-empty local state verifies nothing — sealing " +
                "the window would certify history that was never compared");
+  }
+
+  /// <summary>
+  /// The paced-drain default: the stream-level compare is DISCOVERY-ONLY. Deficits are recorded
+  /// and their compared window stamped for the drain worker; no repair request leaves the
+  /// compare — even with the origin's topic learned and budget available. Dispatch is the
+  /// drain's job, at its own adaptive pace.
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_DrainMode_RecordsAndStampsWindows_NeverSendsFromTheCompareAsync() {
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.WindowedStreamResult = new WindowedDigestResult {
+      Digests = [],   // nothing local — a pure deficit
+      ComputedThrough = 300,
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { PublishReportEvents = false }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("drain mode: the compare records; the drain worker dispatches at its own pace");
+    await Assert.That(coordinator.StampedWindows.Count).IsEqualTo(1)
+      .Because("the compared window must ride the ledger row so the drain can range-bound its ask");
+    await Assert.That(coordinator.StampedWindows[0].From).IsEqualTo(100L);
+    await Assert.That(coordinator.StampedWindows[0].Until).IsEqualTo(300L);
+    await Assert.That(coordinator.StampedWindows[0].Keys.Any(k => k.StreamId == stream)).IsTrue();
   }
 
   /// <summary>
@@ -957,7 +995,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
       dispatcher, tracker: tracker, ledger: ledger);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
@@ -1028,7 +1066,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
       dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
@@ -1065,7 +1103,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
       dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
@@ -1139,7 +1177,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
       dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
@@ -1222,7 +1260,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
       dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
@@ -1816,6 +1854,14 @@ public class IntegrityManifestReceptorTests {
   private sealed class _auditCoordinator : IWorkCoordinator {
     public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
     public Guid OriginId { get; } = TrackedGuid.NewMedo().Value;
+    public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, long From, long Until)> StampedWindows { get; } = [];
+
+    public Task IntegrityStampRepairWindowsAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+        long windowFrom, long windowUntil, CancellationToken cancellationToken = default) {
+      StampedWindows.Add((originServiceId, keys, windowFrom, windowUntil));
+      return Task.CompletedTask;
+    }
     public IReadOnlyList<StreamDigest> OwnDigests { get; set; } = [];
     public IReadOnlyList<StreamDigest> ReceivedDigests { get; set; } = [];
     public IReadOnlyList<StreamDigest> OwnTableDigests { get; set; } = [];
