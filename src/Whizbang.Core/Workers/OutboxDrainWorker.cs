@@ -420,7 +420,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           _dlqMetrics?.Added.Add(1,
             new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.OUTBOX),
             new KeyValuePair<string, object?>("reason", "ControlPlaneDropped"));
-          continue;   // not published, not stored — the next cycle re-emits a fresh one
+          // The drop is a terminal disposal, so the row completes like a published one and the
+          // flush removes it. Without this the same row is re-fetched and re-"dropped" every
+          // drain cycle forever (observed live: attempts past 470 on rows "dropped" for weeks).
+          await _completionChannel.EnqueueAsync(row.MessageId, ct);
+          continue;   // not published, not stored — the emitter re-issues on its own cadence
         }
         if (_options.MaxOutboxAttempts is int maxAttempts
             && row.Attempts > maxAttempts
