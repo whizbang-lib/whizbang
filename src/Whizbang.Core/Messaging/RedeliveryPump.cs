@@ -43,6 +43,20 @@ public sealed class RedeliveryPumpOptions {
   /// bodies regardless of the request's width. Default 500.
   /// </summary>
   public int SelectPageSize { get; set; } = 500;
+
+  /// <summary>
+  /// Attempts per composite send before the serve surfaces the failure (1 = no retry). A broker
+  /// under throttle fails sends transiently; without a retry ONE failed send aborts the whole
+  /// serve — every later chunk dies with it and the requester's attempt burns for nothing.
+  /// Default 5.
+  /// </summary>
+  public int PublishRetryAttempts { get; set; } = 5;
+
+  /// <summary>
+  /// Base delay before a send retry; attempt n waits base × 2^(n-1), capped at 30 s. Default
+  /// 2000 ms (the common broker throttle guidance is "wait a couple of seconds and try again").
+  /// </summary>
+  public int PublishRetryBaseDelayMs { get; set; } = 2000;
 }
 
 /// <summary>
@@ -70,6 +84,7 @@ public sealed class RedeliveryPump {
   private readonly IEnvelopeSerializer _envelopeSerializer;
   private readonly IServiceInstanceProvider? _instanceProvider;
   private readonly RedeliveryPumpOptions _options;
+  private readonly TimeProvider _time;
 
   /// <summary>
   /// Creates the pump over the transport. The envelope serializer is the same seam the outbox uses
@@ -80,11 +95,13 @@ public sealed class RedeliveryPump {
       ITransport transport,
       IEnvelopeSerializer envelopeSerializer,
       IServiceInstanceProvider? instanceProvider = null,
-      RedeliveryPumpOptions? options = null) {
+      RedeliveryPumpOptions? options = null,
+      TimeProvider? timeProvider = null) {
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     _envelopeSerializer = envelopeSerializer ?? throw new ArgumentNullException(nameof(envelopeSerializer));
     _instanceProvider = instanceProvider;
     _options = options ?? new RedeliveryPumpOptions();
+    _time = timeProvider ?? TimeProvider.System;
   }
 
   /// <summary>
@@ -183,8 +200,25 @@ public sealed class RedeliveryPump {
     // Session-enabled subscriptions dead-letter sessionless deliveries; per-stream chunking makes
     // the chunk's stream id the natural session key — redelivered bundles keep stream FIFO.
     var serialized = _envelopeSerializer.SerializeEnvelope<RedeliveryComposite>(wireEnvelope);
-    await _transport.PublishAsync(serialized.JsonEnvelope,
-      Transports.ControlPlaneDestination.For(topic, chunk[0].StreamId, typeof(RedeliveryComposite)), serialized.EnvelopeType,
-      cancellationToken: cancellationToken).ConfigureAwait(false);
+    var destination = Transports.ControlPlaneDestination.For(topic, chunk[0].StreamId, typeof(RedeliveryComposite));
+
+    // A broker under throttle fails sends transiently; without a bounded retry ONE failed send
+    // aborts the whole serve — every later chunk dies with it and the requester's attempt burns
+    // for nothing. Cancellation is a shutdown signal, never retried.
+    var attempts = Math.Max(1, _options.PublishRetryAttempts);
+    for (var attempt = 1; ; attempt++) {
+      try {
+        await _transport.PublishAsync(serialized.JsonEnvelope, destination, serialized.EnvelopeType,
+          cancellationToken: cancellationToken).ConfigureAwait(false);
+        return;
+      } catch (OperationCanceledException) {
+        throw;
+      } catch when (attempt < attempts) {
+        var delayMs = Math.Min((long)_options.PublishRetryBaseDelayMs << (attempt - 1), 30_000);
+        if (delayMs > 0) {
+          await Task.Delay(TimeSpan.FromMilliseconds(delayMs), _time, cancellationToken).ConfigureAwait(false);
+        }
+      }
+    }
   }
 }
