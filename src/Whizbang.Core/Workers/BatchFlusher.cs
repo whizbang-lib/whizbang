@@ -104,8 +104,19 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
     }
   }
 
+  private int _disposed;
+
   /// <inheritdoc />
+  /// <remarks>
+  /// Idempotent: host teardown reaches the flusher through more than one path (the owning
+  /// worker's StopAsync and container disposal), and a second call must not cancel the
+  /// already-disposed stop CTS.
+  /// </remarks>
   public async ValueTask DisposeAsync() {
+    if (Interlocked.Exchange(ref _disposed, 1) != 0) {
+      await _stoppedSignal.Task.ConfigureAwait(false);
+      return;
+    }
     _channel.Writer.TryComplete();
     await _stop.CancelAsync();
     try { await _loop; } catch (OperationCanceledException) { }

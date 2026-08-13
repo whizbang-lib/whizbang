@@ -88,4 +88,27 @@ public class BatchFlusherTests {
     await flusher.DisposeAsync();
     await Assert.That(flusher.StoppedSignal.IsCompletedSuccessfully).IsTrue();
   }
+
+  /// <summary>
+  /// Host teardown disposes the flusher through more than one path (the owning worker's StopAsync
+  /// AND container disposal). The second call must be a no-op — cancelling the already-disposed
+  /// stop CTS throws ObjectDisposedException and nondeterministically fails whatever test happens
+  /// to tear the host down.
+  /// </summary>
+  [Test]
+  public async Task DisposeAsync_CalledTwice_IsIdempotentAsync() {
+    var flusher = new BatchFlusher<int>(
+      flush: (_, _) => Task.CompletedTask,
+      options: new BatchFlusherOptions {
+        CoalesceWindowMs = 25,
+        MaxBatchSize = 100,
+        ImmediateFlushThreshold = 50
+      },
+      logger: NullLogger.Instance);
+
+    await flusher.DisposeAsync();
+    await flusher.DisposeAsync(); // must not throw ObjectDisposedException
+
+    await Assert.That(flusher.StoppedSignal.IsCompletedSuccessfully).IsTrue();
+  }
 }
