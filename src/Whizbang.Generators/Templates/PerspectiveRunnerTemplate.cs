@@ -1123,10 +1123,16 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         break;
       }
 
-      // Ordering invariant: sort by MessageId before applying. Event-store reads should be
-      // sorted at the source, but this is defensive — replays must be strictly time-ordered.
+      // Ordering invariant: replay in COMMIT order when every event carries its stamp — the
+      // inversion detector is commit-sequence-authoritative (same-millisecond UUIDv7 ids can
+      // disagree with commit order), and an id-ordered replay would re-introduce exactly the
+      // ordering the detector stopped trusting, silently undoing newer writes during the very
+      // rewind that exists to fix ordering. Any unstamped event (stamper lag) falls the whole
+      // batch back to MessageId order — a partial mix would interleave two orderings.
       if (events.Count > 1) {
-        events = events.OrderByMessageId().ToList();
+        events = events.All(e => e.LocalCommitSequence.HasValue)
+          ? events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList()
+          : events.OrderByMessageId().ToList();
       }
 
       // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
@@ -1214,12 +1220,16 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
       } // closes foreach (var envelope in events)
 
-      // v0.688 — advance the catch-up anchor to the last event we applied so
-      // the next iteration's ReadPolymorphicAsync only returns events appended
-      // since. If for some reason lastSuccessfulEventId didn't advance (e.g.
-      // every event errored in apply), use the read-window's tail as the
-      // anchor to prevent re-reading the same set forever.
-      anchorEventId = lastSuccessfulEventId ?? events[events.Count - 1].MessageId.Value;
+      // v0.688 — advance the catch-up anchor past everything this pass READ so the next
+      // iteration's ReadPolymorphicAsync only returns events appended since. The anchor is
+      // the MAX MessageId of the read window, not the last-APPLIED id: the apply order is
+      // commit order, whose final event need not carry the window's largest id — an
+      // id-anchored refetch from a smaller last-applied id would re-serve (and re-apply)
+      // the window's tail every pass.
+      anchorEventId = events
+        .Select(e => e.MessageId.Value)
+        .OrderBy(id => id.ToString("D"), StringComparer.Ordinal)
+        .Last();
     } // closes while (true)
 
     // Single atomic write at the end — lenses see pre-replay data until this point

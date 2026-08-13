@@ -226,6 +226,54 @@ public class CursorInversionDetectorTests {
   }
 
   [Test]
+  public async Task ResolveInversionAnchor_BackfilledEvent_FreshLocalSequence_IsInvisibleToTheDetectorAsync() {
+    // DOCUMENTING LOCK: a reconciled/backfilled event keeps its ORIGINAL event id but lands
+    // with a FRESH local commit_sequence — always HIGHER than the cursor's — so the detector
+    // (local-sequence-only) can never see it, even though the event is origin-older than
+    // everything already applied. Reconcile is therefore invisible to the rewind today; the
+    // origin-aware follow-up makes the reconcile path SELF-DECLARE the rewind instead.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var cursorEventId = (Guid)TrackedGuid.NewMedo();
+    var backfilledOriginalId = Guid.Parse("019e0000-0000-7000-8000-00000000000b");   // origin-era id
+
+    var rawLookup = _lookup(_raw(streamId, backfilledOriginalId, commitSequence: 300));
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(backfilledOriginalId)],
+      rawByEventId: rawLookup,
+      lastProcessedEventId: cursorEventId,
+      lastProcessedCommitSequence: 200L);
+
+    await Assert.That(anchor).IsNull()
+      .Because("the backfilled straggler's fresh local sequence (300) is above the cursor (200), "
+               + "so no inversion fires — the origin-order violation is invisible to a "
+               + "local-sequence detector; this is the gap the origin-aware rewind closes");
+  }
+
+  [Test]
+  public async Task ResolveInversionAnchor_UnstampedPending_StampedCursor_IsSkippedAsync() {
+    // An unstamped pending row (stamper lag) cannot be compared against a stamped cursor —
+    // the commit-sequence detector skips it rather than guessing, and the event-id fallback
+    // never runs when the cursor is stamped. No inversion, no false rewind.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var cursorEventId = (Guid)TrackedGuid.NewMedo();
+    var pendingEventId = (Guid)TrackedGuid.NewMedo();
+
+    var rawLookup = _lookup(_raw(streamId, pendingEventId, commitSequence: null));
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(pendingEventId)],
+      rawByEventId: rawLookup,
+      lastProcessedEventId: cursorEventId,
+      lastProcessedCommitSequence: 200L);
+
+    await Assert.That(anchor).IsNull()
+      .Because("an unstamped pending row is outside the stamped cursor's sequence space — "
+               + "skipping beats guessing, exactly like legacy NULL-origin rows sit outside "
+               + "every origin's sequence space");
+  }
+
+  [Test]
   public async Task ResolveInversionAnchor_NoCommitSequenceCursor_FallsBackToEventIdDetectorAsync() {
     // Pre-slice-26 cursor (no commit_sequence in cache, e.g. legacy row before stamper landed).
     // Must fall back to event_id detector for SOME inversion protection. Imperfect (UUIDv7
