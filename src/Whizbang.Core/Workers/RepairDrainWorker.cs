@@ -159,9 +159,19 @@ public sealed partial class RepairDrainWorker(
         Target = origin.OriginServiceName,
       };
       var serialized = serializer.SerializeEnvelope(envelope);
-      await transport.PublishAsync(serialized.JsonEnvelope,
-        ControlPlaneDestination.For(origin.RequestTopic!, items[0].StreamId, typeof(RequestRedeliveryCommand)),
-        serialized.EnvelopeType, cancellationToken: cancellationToken).ConfigureAwait(false);
+      try {
+        await transport.PublishAsync(serialized.JsonEnvelope,
+          ControlPlaneDestination.For(origin.RequestTopic!, items[0].StreamId, typeof(RequestRedeliveryCommand)),
+          serialized.EnvelopeType, cancellationToken: cancellationToken).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        // A transient broker failure costs THIS group's attempt (already stamped on claim) — it
+        // must never kill the remaining groups in the tick; their rows also burned an attempt
+        // and deserve their shot at the wire. The ladder re-offers this group after backoff.
+        LogGroupDispatchFailed(_logger, group.Key.EventType, origin.OriginServiceName, ex);
+        continue;
+      }
       metrics?.RepairsRequested.Add(items.Count,
         new KeyValuePair<string, object?>("source", "drain"),
         new KeyValuePair<string, object?>("origin", origin.OriginServiceName));
@@ -180,6 +190,10 @@ public sealed partial class RepairDrainWorker(
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Repair drain tick failed; the ledger keeps the backlog and the next tick retries")]
   private static partial void LogTickFailed(ILogger logger, Exception exception);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "DRAIN dispatch of {EventType} to '{OriginServiceName}' failed; the group's attempt is spent and the ladder re-offers it after backoff")]
+  private static partial void LogGroupDispatchFailed(ILogger logger, string eventType, string originServiceName, Exception exception);
 
   [LoggerMessage(Level = LogLevel.Debug,
     Message = "DRAIN dispatched {Count} bucket(s) of {EventType} to '{OriginServiceName}'")]
