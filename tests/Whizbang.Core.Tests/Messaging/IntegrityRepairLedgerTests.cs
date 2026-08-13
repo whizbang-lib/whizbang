@@ -97,17 +97,44 @@ public class IntegrityRepairLedgerTests {
   }
 
   [Test]
-  public async Task RepairAttempts_CapExhausted_StopsRequestingAsync() {
+  public async Task RepairAttempts_CapExhausted_StopsClimbingTheLadderAsync() {
     var ledger = new IntegrityRepairLedger();
     var key = _key();
     var now = DateTimeOffset.UtcNow;
     for (var i = 0; i < MAX_ATTEMPTS; i++) {
       await Assert.That(ledger.TryBeginRepair(key, now + TimeSpan.FromHours(i), _backoff, MAX_ATTEMPTS)).IsTrue();
     }
+    var lastGrant = now + TimeSpan.FromHours(MAX_ATTEMPTS - 1);
+    var terminalWait = _backoff * Math.Pow(2, 6);
 
-    await Assert.That(ledger.TryBeginRepair(key, now + TimeSpan.FromDays(30), _backoff, MAX_ATTEMPTS)).IsFalse()
-      .Because("past the cap the requester stops asking — the divergence still re-reports at the " +
-               "cooldown cadence, but repair needs operator eyes, not an infinite loop.");
+    await Assert.That(ledger.TryBeginRepair(key, lastGrant + terminalWait - TimeSpan.FromSeconds(1), _backoff, MAX_ATTEMPTS)).IsFalse()
+      .Because("past the cap the exponential ladder stops climbing — inside the terminal wait the " +
+               "requester stays quiet instead of hammering a bucket that has already burned its budget.");
+  }
+
+  [Test]
+  public async Task RepairAttempts_PastCap_RetriesAtTerminalCadenceAsync() {
+    // A bucket that burns its whole attempt budget against an unreachable origin has a STATIC
+    // signature — nothing ever changes to reset it — so a permanent deny would shadow-ban a real,
+    // repairable deficit forever. Past the cap the ladder flattens to its terminal cadence
+    // (base × 2^6) instead of going silent: convergence stays eventually-true at bounded cost.
+    var ledger = new IntegrityRepairLedger();
+    var key = _key();
+    var now = DateTimeOffset.UtcNow;
+    for (var i = 0; i < MAX_ATTEMPTS; i++) {
+      ledger.TryBeginRepair(key, now + TimeSpan.FromHours(i), _backoff, MAX_ATTEMPTS);
+    }
+    var lastGrant = now + TimeSpan.FromHours(MAX_ATTEMPTS - 1);
+    var terminalWait = _backoff * Math.Pow(2, 6);
+
+    await Assert.That(ledger.TryBeginRepair(key, lastGrant + terminalWait, _backoff, MAX_ATTEMPTS)).IsTrue()
+      .Because("once the terminal wait has fully elapsed the bucket earns one more ask — an origin " +
+               "that was down while the budget burned is still repairable when it comes back.");
+    await Assert.That(ledger.TryBeginRepair(key, lastGrant + terminalWait + TimeSpan.FromMinutes(1), _backoff, MAX_ATTEMPTS)).IsFalse()
+      .Because("the terminal grant is a cadence, not a reopened floodgate — the next ask waits out " +
+               "another full terminal interval.");
+    await Assert.That(ledger.TryBeginRepair(key, lastGrant + terminalWait + terminalWait, _backoff, MAX_ATTEMPTS)).IsTrue()
+      .Because("each terminal interval earns exactly one more ask, forever.");
   }
 
   [Test]

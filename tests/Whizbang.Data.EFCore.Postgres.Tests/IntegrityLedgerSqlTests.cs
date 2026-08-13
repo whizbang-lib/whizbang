@@ -83,8 +83,9 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     _ = await coordinator.IntegrityTryBeginReportAsync(key, 1, 2, 3, 4, t0, cooldown);
     await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(key, t0, backoff, maxAttempts: 1))
       .IsTrue().Because("the first repair attempt goes immediately");
-    await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(key, t0.AddDays(1), backoff, maxAttempts: 1))
-      .IsFalse().Because("past the attempt cap the requester stops asking, or repair becomes its own storm");
+    await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(key, t0.AddHours(1), backoff, maxAttempts: 1))
+      .IsFalse().Because("past the attempt cap the ladder holds the terminal wait (base x 2^6 = 5.3h "
+                         + "here) — inside it the requester stays quiet, or repair becomes its own storm");
 
     // Either side's digest moving is real movement — progress, or fresh damage.
     await Assert.That(await coordinator.IntegrityTryBeginReportAsync(key, 9, 9, 3, 4, t0.AddMinutes(1), cooldown))
@@ -107,6 +108,34 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
       .IsFalse().Because("a second attempt one minute after the first is inside the 5-minute base wait");
     await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(key, t0.AddMinutes(6), backoff, maxAttempts: 8))
       .IsTrue().Because("past the base wait the next attempt is allowed");
+  }
+
+  [Test]
+  public async Task Repair_PastCap_RetriesAtTerminalCadenceAsync() {
+    // A bucket that burns its budget against an unreachable origin has a STATIC signature —
+    // the origin served nothing, so no digest ever moves and the signature-change reset never
+    // fires. Observed live: a whole-type backfill lane capped out against a scaled-to-zero
+    // origin and stayed shadow-banned after the origin returned, freezing a real deficit until
+    // an operator reset the row by hand. Past the cap the ladder flattens to its terminal
+    // cadence (base x 2^6) instead of going silent.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var key = _key(Guid.Parse("abababab-7777-7777-7777-777777777777"));
+    var t0 = DateTimeOffset.UtcNow;
+    var backoff = TimeSpan.FromSeconds(300);            // terminal wait = 300s x 2^6 = 5h20m
+    var terminal = TimeSpan.FromSeconds(300 * 64);
+
+    await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(key, t0, backoff, maxAttempts: 1)).IsTrue();
+
+    await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(key, t0 + terminal - TimeSpan.FromMinutes(1), backoff, maxAttempts: 1))
+      .IsFalse().Because("inside the terminal wait a capped bucket stays quiet");
+    await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(key, t0 + terminal, backoff, maxAttempts: 1))
+      .IsTrue().Because("a capped bucket earns one more ask per terminal interval — an origin that "
+                        + "was down while the budget burned is still repairable when it comes back");
+    await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(key, t0 + terminal + TimeSpan.FromMinutes(1), backoff, maxAttempts: 1))
+      .IsFalse().Because("the terminal grant is a cadence, not a reopened floodgate");
+    await Assert.That(await coordinator.IntegrityTryBeginRepairAsync(key, t0 + terminal + terminal, backoff, maxAttempts: 1))
+      .IsTrue().Because("each terminal interval earns exactly one more ask, forever");
   }
 
   [Test]

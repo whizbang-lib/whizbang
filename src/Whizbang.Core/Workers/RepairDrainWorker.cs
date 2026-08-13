@@ -75,6 +75,11 @@ public sealed partial class RepairDrainWorker(
   /// deterministic tests; the loop above supplies real elapsed time.
   /// </summary>
   internal async Task DrainTickAsync(double elapsedSeconds, DateTimeOffset now, CancellationToken cancellationToken) {
+    if (_options.RepairMode != IntegrityRepairMode.AutoRepairCapped) {
+      // ReportOnly is the operator's explicit opt-DOWN from auto-repair, and the drain is a
+      // repair dispatcher — it must not claim (a claim stamps an attempt) or send anything.
+      return;
+    }
     var rate = _options.RepairDrainRatePerSecond;
     _tokens = Math.Min(_tokens + (rate * Math.Max(0, elapsedSeconds)), rate * 2);
     if (_tokens < 1) {

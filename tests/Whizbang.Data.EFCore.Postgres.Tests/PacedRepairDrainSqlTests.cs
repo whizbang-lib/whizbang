@@ -89,16 +89,50 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
       unlearned, [_obs(_key(unlearned, Guid.NewGuid()))], now, TimeSpan.FromMinutes(60));
 
     var claimed = await coordinator.IntegrityClaimRepairDrainAsync(
-      [learned], now.AddSeconds(1), TimeSpan.FromSeconds(1), maxAttempts: 1, limit: 2);
+      [learned], now.AddSeconds(1), TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 2);
     await Assert.That(claimed.Count).IsEqualTo(2)
       .Because("the limit bounds one drain pass");
     await Assert.That(claimed.All(c => c.OriginServiceId == learned)).IsTrue()
       .Because("an origin with no learned request topic is never claimed — nothing could be sent");
 
     var exhausted = await coordinator.IntegrityClaimRepairDrainAsync(
-      [learned], now.AddMinutes(10), TimeSpan.FromSeconds(1), maxAttempts: 1, limit: 10);
+      [learned], now.AddMinutes(10), TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
     await Assert.That(exhausted.Count).IsEqualTo(1)
-      .Because("only the never-attempted third row remains under the cap of one attempt");
+      .Because("only the never-attempted third row is eligible — the two capped rows hold the "
+               + "terminal wait (300s x 2^6), far past the ten-minute mark");
+  }
+
+  [Test]
+  public async Task Claim_PastCap_RetriesAtTerminalCadenceAsync() {
+    // The drain twin of the burst-path terminal cadence: a capped row is not shadow-banned
+    // forever — it re-enters the claimable pool once per terminal interval (base x 2^6), so a
+    // deficit whose budget burned against a down origin still converges after the origin returns.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = Guid.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    var terminal = TimeSpan.FromSeconds(300 * 64);
+    _ = await coordinator.IntegrityTryBeginReportBatchAsync(
+      origin, [_obs(_key(origin, Guid.NewGuid()))], now, TimeSpan.FromMinutes(60));
+
+    var first = await coordinator.IntegrityClaimRepairDrainAsync(
+      [origin], now.AddSeconds(1), TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
+    await Assert.That(first.Count).IsEqualTo(1).Because("precondition: the row's budget is now spent");
+
+    var inside = await coordinator.IntegrityClaimRepairDrainAsync(
+      [origin], now.AddSeconds(1) + terminal - TimeSpan.FromMinutes(1), TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
+    await Assert.That(inside.Count).IsEqualTo(0)
+      .Because("inside the terminal wait a capped row stays out of the pool");
+
+    var atCadence = await coordinator.IntegrityClaimRepairDrainAsync(
+      [origin], now.AddSeconds(1) + terminal, TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
+    await Assert.That(atCadence.Count).IsEqualTo(1)
+      .Because("each terminal interval earns the capped row exactly one more claim");
+
+    var rightAfter = await coordinator.IntegrityClaimRepairDrainAsync(
+      [origin], now.AddSeconds(2) + terminal, TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
+    await Assert.That(rightAfter.Count).IsEqualTo(0)
+      .Because("the terminal grant is a cadence, not a reopened floodgate");
   }
 
   [Test]

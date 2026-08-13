@@ -59,6 +59,28 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
+  public async Task DrainTick_ReportOnlyMode_NeverClaimsOrDispatchesAsync() {
+    // RepairMode.ReportOnly is the operator's explicit opt-DOWN from auto-repair — and the drain
+    // is a repair dispatcher. A ReportOnly service whose drain kept claiming and sending
+    // redelivery requests would repair anyway (and burn transport quota doing it), turning the
+    // opt-down into a dead knob at exactly the moment an operator reaches for it.
+    var origin = TrackedGuid.NewMedo().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairDrainRatePerSecond = 10,
+      RepairMode = IntegrityRepairMode.ReportOnly,
+    }, origin, learnTopic: true);
+    coordinator.Eligible.Add(
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10));
+
+    await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
+
+    await Assert.That(coordinator.ClaimCalls.Count).IsEqualTo(0)
+      .Because("ReportOnly must not even claim — a claim stamps an attempt and burns the row's backoff");
+    await Assert.That(transport.Published.Count).IsEqualTo(0)
+      .Because("ReportOnly never dispatches a repair request");
+  }
+
+  [Test]
   public async Task DrainTick_TokensGateTheClaimBudget_AndSpendOnClaimAsync() {
     var origin = TrackedGuid.NewMedo().Value;
     var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions {
