@@ -254,6 +254,45 @@ public class TransportConsumerWorkerTests {
         .Because("Each subscription should be disposed on stop");
     }
   }
+
+  /// <summary>
+  /// Host teardown stops the worker through more than one path (Host.StopAsync AND
+  /// WebApplicationFactory/host disposal). The second StopAsync must be a no-op — cancelling the
+  /// already-disposed linked CTS throws ObjectDisposedException and nondeterministically fails
+  /// whatever test happens to tear the host down.
+  /// </summary>
+  [Test]
+  public async Task StopAsync_CalledTwice_IsIdempotentAsync() {
+    var transport = new FakeTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("topic1"));
+
+    var serviceCollection = new ServiceCollection();
+    serviceCollection.AddSingleton<IDispatcher>(sp => new FakeDispatcher());
+    var serviceProvider = serviceCollection.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    var jsonOptions = new JsonSerializerOptions();
+    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
+
+    var worker = new TransportConsumerWorker(
+      transport,
+      options,
+      new SubscriptionResilienceOptions(),
+      scopeFactory,
+      jsonOptions,
+      orderedProcessor,
+      lifecycleMessageDeserializer: null,
+      metrics: null,
+      NullLogger<TransportConsumerWorker>.Instance
+    );
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await transport.WaitForSubscriptionsAsync(1, TimeSpan.FromSeconds(5));
+
+    await worker.StopAsync(CancellationToken.None);
+    await worker.StopAsync(CancellationToken.None); // must not throw ObjectDisposedException
+  }
 }
 
 // ===== Test Doubles =====

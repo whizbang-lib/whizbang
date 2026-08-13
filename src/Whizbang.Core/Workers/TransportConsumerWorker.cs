@@ -1003,10 +1003,14 @@ public partial class TransportConsumerWorker : BackgroundService {
   public override async Task StopAsync(CancellationToken cancellationToken) {
     _logger.LogInformation("Stopping TransportConsumerWorker");
 
-    if (_linkedCts is not null) {
-      await _linkedCts.CancelAsync();
+    // Idempotent: host teardown calls StopAsync through more than one path (Host.StopAsync and
+    // host disposal); the exchange makes the second call a no-op instead of cancelling an
+    // already-disposed linked CTS. Dispose AFTER base.StopAsync so the base's stopping-token
+    // cancellation never races the linked source's disposal.
+    var linkedCts = Interlocked.Exchange(ref _linkedCts, null);
+    if (linkedCts is not null) {
+      await linkedCts.CancelAsync();
     }
-    _linkedCts?.Dispose();
 
     // Dispose all subscriptions
     foreach (var state in _states.Values) {
@@ -1018,6 +1022,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _logger.LogInformation("TransportConsumerWorker stopped");
 
     await base.StopAsync(cancellationToken);
+    linkedCts?.Dispose();
   }
 
   /// <summary>

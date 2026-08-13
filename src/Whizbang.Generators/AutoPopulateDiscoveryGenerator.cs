@@ -573,10 +573,15 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     var isStringTarget = info.PropertyTypeFullName is "string" or "string?";
     return info.PopulateKind switch {
       POPULATE_KIND_TIMESTAMP when info.SpecificKind == "TimestampKind.SentAt" => "hop.Timestamp",
+      // Context kinds FILL, never CLOBBER: an explicitly-stamped identity (e.g. an
+      // anonymous-request endpoint attributing the action to a resolved account) must survive —
+      // the ambient context on such a dispatch is null and would silently erase the attribution.
+      // Dispatch-authority stamps (timestamps, service identity, correlation flow) below stay
+      // unconditional: the hop is the source of truth for those.
       POPULATE_KIND_CONTEXT when info.SpecificKind == "ContextKind.UserId" =>
-          _coerceStringSource("_extractUserId(hop)", info),
+          _fillIfEmpty($"m.{info.PropertyName}", _coerceStringSource("_extractUserId(hop)", info), info),
       POPULATE_KIND_CONTEXT when info.SpecificKind == "ContextKind.TenantId" =>
-          _coerceStringSource("_extractTenantId(hop)", info),
+          _fillIfEmpty($"m.{info.PropertyName}", _coerceStringSource("_extractTenantId(hop)", info), info),
       POPULATE_KIND_SERVICE when info.SpecificKind == "ServiceKind.ServiceName" => "hop.ServiceInstance.ServiceName",
       POPULATE_KIND_SERVICE when info.SpecificKind == "ServiceKind.InstanceId" =>
           isStringTarget ? "hop.ServiceInstance.InstanceId.ToString()" : "hop.ServiceInstance.InstanceId",
@@ -605,6 +610,21 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       "global::System.Guid?" => $"_parseGuid({stringExpr})",
       "global::System.Guid" => $"(_parseGuid({stringExpr}) ?? System.Guid.Empty)",
       _ => stringExpr
+    };
+  }
+
+  /// <summary>
+  /// Wraps a populate source so it only applies when the property's CURRENT value is absent
+  /// (null / Guid.Empty / null-or-empty string). Works in both populate arms — the class arm
+  /// (<c>m.X = …</c>) and the record arm (<c>m with { X = … }</c>) — since <c>m</c> is the
+  /// pre-populate instance in both.
+  /// </summary>
+  private static string _fillIfEmpty(string currentExpr, string sourceExpr, AutoPopulateInfo info) {
+    return info.PropertyTypeFullName switch {
+      "global::System.Guid?" => $"({currentExpr} ?? {sourceExpr})",
+      "global::System.Guid" => $"({currentExpr} == System.Guid.Empty ? {sourceExpr} : {currentExpr})",
+      "string" or "string?" => $"(string.IsNullOrEmpty({currentExpr}) ? {sourceExpr} : {currentExpr})",
+      _ => sourceExpr
     };
   }
 
