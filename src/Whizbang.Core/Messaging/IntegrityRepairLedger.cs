@@ -85,18 +85,20 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
   /// <summary>
   /// True when a repair request should be SENT now: the first attempt goes immediately, each
   /// later attempt waits base × 2^(n-1) since the previous one, and past
-  /// <paramref name="maxAttempts"/> the requester stops asking until the bucket's signature
-  /// changes (see <see cref="TryBeginReport"/>). Records the attempt when true.
+  /// <paramref name="maxAttempts"/> the ladder stops climbing and flattens to its terminal
+  /// cadence (base × 2^6). A bucket whose budget burned against an unreachable origin has a
+  /// static signature — nothing resets it (see <see cref="TryBeginReport"/>) — so a permanent
+  /// deny would shadow-ban a repairable deficit forever; the terminal cadence keeps convergence
+  /// eventually-true at bounded cost. Records the attempt when true.
   /// </summary>
   public bool TryBeginRepair(DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts) {
     lock (_lock) {
       var entry = _getOrAdd(key, now);
       entry.LastTouched = now;
-      if (entry.RepairAttempts >= maxAttempts) {
-        return false;
-      }
       if (entry.LastRepairAt is { } last) {
-        var doublings = Math.Min(entry.RepairAttempts - 1, MAX_BACKOFF_DOUBLINGS);
+        var doublings = entry.RepairAttempts >= maxAttempts
+          ? MAX_BACKOFF_DOUBLINGS
+          : Math.Min(entry.RepairAttempts - 1, MAX_BACKOFF_DOUBLINGS);
         var wait = baseBackoff * Math.Pow(2, Math.Max(0, doublings));
         if (now - last < wait) {
           return false;

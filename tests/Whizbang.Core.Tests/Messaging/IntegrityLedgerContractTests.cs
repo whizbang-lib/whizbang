@@ -62,8 +62,9 @@ public class IntegrityLedgerContractTests {
       }
     }
     await Assert.That(recorded).IsEqualTo(8).Because("the budget must actually be spent for the next assertion to mean anything");
-    await Assert.That(await ledger.TryBeginRepairAsync(_key(), t0.AddDays(30), backoff, maxAttempts: 8)).IsFalse()
-      .Because("a bucket that has exhausted its attempts must stop asking, or repair becomes its own storm");
+    await Assert.That(await ledger.TryBeginRepairAsync(_key(), t0.AddDays(7).AddHours(5), backoff, maxAttempts: 8)).IsFalse()
+      .Because("a bucket that has exhausted its attempts holds the terminal wait (base x 2^6, ~5.3h "
+               + "here) — inside it the requester stays quiet, or repair becomes its own storm");
 
     // Either side's digest moving means real movement — progress or fresh damage.
     await Assert.That(await ledger.TryBeginReportAsync(_key(), 9, 9, 3, 4, t0.AddDays(30), cooldown)).IsTrue()
