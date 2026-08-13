@@ -883,13 +883,15 @@ public class IntegrityManifestReceptorTests {
     // Exhaust the synthetic bulk key with the SAME divergence signature the manifest will carry —
     // a changed signature resets attempts (new incident), an unchanged one preserves exhaustion.
     // This is the live catch-up shape: a static origin side whose asks all burned into a broken
-    // transport era.
+    // transport era. RECENT attempts with a real backoff keep the capped lane inside its
+    // terminal wait (base × 2⁶ ≈ 5.3 h) at compare time — a lane past the terminal wait now
+    // correctly earns one more ask instead of staying shadow-banned.
     var bulkKey = new IntegrityRepairLedger.DivergenceKey(
       coordinator.OriginId, "tenant-a", "Contracts.BigType", Guid.Empty);
-    var longAgo = DateTimeOffset.UtcNow.AddDays(-1);
-    _ = await ledger.TryBeginReportAsync(bulkKey, 41, 42, 0, 0, longAgo, TimeSpan.FromMinutes(60));
+    var recent = DateTimeOffset.UtcNow.AddMinutes(-15);
+    _ = await ledger.TryBeginReportAsync(bulkKey, 41, 42, 0, 0, recent, TimeSpan.FromMinutes(60));
     for (var i = 0; i < 2; i++) {
-      _ = await ledger.TryBeginRepairBatchAsync([bulkKey], longAgo.AddHours(i), TimeSpan.FromSeconds(1), 2, 1);
+      _ = await ledger.TryBeginRepairBatchAsync([bulkKey], recent.AddMinutes(i * 6), TimeSpan.FromSeconds(300), 2, 1);
     }
 
     var manifest = _manifest(coordinator, [
