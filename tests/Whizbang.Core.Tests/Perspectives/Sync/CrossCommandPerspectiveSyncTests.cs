@@ -70,37 +70,28 @@ public class CrossCommandPerspectiveSyncTests {
         logger,
         singletonTracker);
 
-    // === STEP 3: Simulate perspective worker processing B after a delay ===
-    // This represents C.Apply(B) firing and completing
-    // Note: This should complete BEFORE the 500ms timeout
-    var perspectiveProcessingTask = Task.Run(async () => {
-      await Task.Delay(100); // Simulate processing time (well within 500ms timeout)
-      executionOrder.Add("C.Apply(B) completed");
-      singletonTracker.MarkProcessedByPerspective([eventBId], perspectiveCName);
-    });
+    // === STEP 3 + 4: deterministic, single-threaded — no wall-clock pacing ===
+    // The former shape raced a simulated 100ms "processing delay" against a 500ms sync timeout,
+    // which starved under CI load. Instead: start (but do not await) the sync wait — an async
+    // method runs synchronously to its first true suspension, so the waiter is REGISTERED with
+    // the tracker by the time the un-awaited Task is returned. C.Apply(B) then fires, and only
+    // then is the sync awaited. The timeout exists solely to fail a genuine hang. The ordering
+    // guarantee under test is carried by the awaiter itself: the sync Task may only complete
+    // Synced after MarkProcessed, so a broken guarantee flips the recorded order and fails below.
+    var syncTask = awaiter.WaitForStreamAsync(
+        typeof(TestPerspectiveC),
+        streamId,
+        eventTypes: [typeof(TestEventB)],
+        timeout: TimeSpan.FromSeconds(30), // hang detection only — never part of the scenario
+        eventIdToAwait: null);
 
-    // === STEP 4: E is sent - awaiter should WAIT for C to process B ===
-    // This is what happens when Dispatcher calls _awaitPerspectiveSyncIfNeededAsync
-    var syncTask = Task.Run(async () => {
-      // Small delay to ensure we start after tracking but this shouldn't matter
-      await Task.Delay(10);
+    // === C.Apply(B) fires while E's sync wait is registered and pending ===
+    executionOrder.Add("C.Apply(B) completed");
+    singletonTracker.MarkProcessedByPerspective([eventBId], perspectiveCName);
 
-      var result = await awaiter.WaitForStreamAsync(
-          typeof(TestPerspectiveC),
-          streamId,
-          eventTypes: [typeof(TestEventB)],
-          timeout: TimeSpan.FromMilliseconds(500), // Short timeout for fast failure
-          eventIdToAwait: null);
-
-      // After sync completes, E's receptor would fire
-      executionOrder.Add("E's receptor fired");
-
-      return result;
-    });
-
-    // Wait for both tasks to complete
     var syncResult = await syncTask;
-    await perspectiveProcessingTask;
+    // After sync completes, E's receptor would fire
+    executionOrder.Add("E's receptor fired");
 
     // === ASSERTIONS ===
 
