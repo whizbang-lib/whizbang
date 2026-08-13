@@ -145,6 +145,10 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
       AuditSettleWindowMinutes = 0,
       MaxDigestsPerManifest = 2,    // 3 streams → 2 pages: cursor-following must fire
       PublishReportEvents = false,
+      // This E2E drives the LEGACY burst loop end-to-end (compare dispatches repairs inline).
+      // The paced-drain default makes the compare discovery-only; a drain-driven twin of this
+      // E2E lands with the drain's AIMD increment.
+      RepairDrainEnabled = false,
     };
     var originOptions = new StreamIntegrityOptions { AuditSettleWindowMinutes = 0, MaxDigestsPerManifest = 2 };
 
