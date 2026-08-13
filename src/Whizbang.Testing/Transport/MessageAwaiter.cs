@@ -209,3 +209,87 @@ public sealed class CountingMessageAwaiter : IAwaiterIdentity {
         cancellationToken);
   }
 }
+
+/// <summary>
+/// Waits for a specific SET of messages, identified by message id, to each arrive at least once.
+/// Use this instead of <see cref="CountingMessageAwaiter"/> when asserting delivery over an
+/// at-least-once transport: a redelivered duplicate counts once, and a stale straggler (e.g. a
+/// message an earlier test's drain missed) neither counts nor completes the awaiter — so
+/// "all N messages delivered" cannot be failed by an extra receive callback.
+/// </summary>
+public sealed class DistinctMessageIdAwaiter : IAwaiterIdentity {
+  private readonly TaskCompletionSource<bool> _tcs =
+    new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private readonly HashSet<string> _expected;
+  private readonly HashSet<string> _received = [];
+  private readonly Lock _gate = new();
+
+  /// <summary>
+  /// Creates a distinct-message-id awaiter that completes once every id in
+  /// <paramref name="expectedMessageIds"/> has been received at least once.
+  /// </summary>
+  /// <param name="expectedMessageIds">The message ids to await; must be non-empty.</param>
+  public DistinctMessageIdAwaiter(IReadOnlyCollection<string> expectedMessageIds) {
+    ArgumentNullException.ThrowIfNull(expectedMessageIds);
+    _expected = new HashSet<string>(expectedMessageIds, StringComparer.Ordinal);
+    if (_expected.Count == 0) {
+      throw new ArgumentException("At least one expected message id is required.", nameof(expectedMessageIds));
+    }
+  }
+
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+
+  /// <summary>
+  /// Gets the number of DISTINCT expected messages received so far (duplicates and unexpected
+  /// messages are not counted).
+  /// </summary>
+  public int DistinctReceivedCount {
+    get {
+      lock (_gate) {
+        return _received.Count;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Gets the number of distinct messages being awaited.
+  /// </summary>
+  public int ExpectedCount => _expected.Count;
+
+  /// <summary>
+  /// Gets whether every expected message has been received.
+  /// </summary>
+  public bool IsCompleted => _tcs.Task.IsCompleted;
+
+  /// <summary>
+  /// Gets the handler delegate to pass to ITransport.SubscribeAsync.
+  /// </summary>
+  public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
+    async (envelope, _, _) => {
+      var messageId = envelope.MessageId.ToString();
+      bool complete;
+      lock (_gate) {
+        // Only an awaited id counts, and only once — duplicates/stragglers can't skew the tally.
+        complete = _expected.Contains(messageId)
+          && _received.Add(messageId)
+          && _received.Count == _expected.Count;
+      }
+      if (complete) {
+        _tcs.TrySetResult(true);
+      }
+      await Task.CompletedTask;
+    };
+
+  /// <summary>
+  /// Waits for every expected message to be received.
+  /// </summary>
+  /// <param name="timeout">Maximum time to wait.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <exception cref="TimeoutException">Thrown if the expected set is not completed within the timeout.</exception>
+  public async Task WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
+    await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+        _tcs.Task, timeout,
+        $"Expected {ExpectedCount} distinct messages but only received {DistinctReceivedCount} within {timeout}",
+        cancellationToken);
+  }
+}
