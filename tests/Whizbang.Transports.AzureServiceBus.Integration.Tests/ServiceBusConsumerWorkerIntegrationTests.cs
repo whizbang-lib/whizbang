@@ -83,17 +83,19 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       var destination = new TransportDestination("topic-00");
       await transport.PublishAsync(envelope, destination);
 
-      // Wait for message to be processed
+      // Wait for OUR message specifically. The shared emulator subscription is at-least-once
+      // and the pre-test drain is best-effort, so a straggler from a prior test can land
+      // first — asserting on .First() flaked exactly that way in CI. Correlate by own id
+      // (the DistinctMessageIdAwaiter lesson applied at this seam). Snapshot before
+      // enumerating: the worker appends concurrently.
       var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.Count > 0,
+        () => capturedInboxMessages.ToArray().Any(m => m.MessageId == envelope.MessageId.Value),
         TimeSpan.FromSeconds(30));
 
       // Assert
       await Assert.That(processed).IsTrue();
-      await Assert.That(capturedInboxMessages.Count).IsGreaterThanOrEqualTo(1);
 
-      var inbox = capturedInboxMessages.First();
-      await Assert.That(inbox.MessageId).IsEqualTo(envelope.MessageId.Value);
+      var inbox = capturedInboxMessages.ToArray().First(m => m.MessageId == envelope.MessageId.Value);
       // TestMessage does not implement IEvent, so isEvent is false
       await Assert.That(inbox.IsEvent).IsFalse();
     } finally {
