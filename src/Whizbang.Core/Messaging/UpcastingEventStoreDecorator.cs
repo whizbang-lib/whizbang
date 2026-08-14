@@ -39,15 +39,13 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/UpcastingEventStoreDecoratorTests.cs</tests>
-public sealed class UpcastingEventStoreDecorator : IEventStore {
-  private readonly IEventStore _inner;
+public sealed class UpcastingEventStoreDecorator : ForwardingEventStoreDecorator {
   private readonly EventUpcasterPipeline _pipeline;
 
   /// <summary>Initializes the decorator.</summary>
   /// <param name="inner">The underlying event store.</param>
   /// <param name="pipeline">The upcaster pipeline applied to polymorphic reads.</param>
-  public UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline) {
-    _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+  public UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline) : base(inner) {
     _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
   }
 
@@ -62,7 +60,7 @@ public sealed class UpcastingEventStoreDecorator : IEventStore {
   // ── transformed: polymorphic read paths ──
 
   /// <inheritdoc />
-  public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+  public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
       Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     // Type-change upcasters consume foreign inputs (LegacyA → GenericB) that the caller's
@@ -72,7 +70,7 @@ public sealed class UpcastingEventStoreDecorator : IEventStore {
     // upcasters declare no source types, so this is a no-op for them (the common case).
     var extra = _pipeline.ExtraInputTypesFor(eventTypes);
     if (extra.Count == 0) {
-      await foreach (var envelope in _inner
+      await foreach (var envelope in Inner
           .ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)
           .WithCancellation(cancellationToken)) {
         yield return _upcast(envelope);
@@ -83,7 +81,7 @@ public sealed class UpcastingEventStoreDecorator : IEventStore {
     var requested = new HashSet<Type>(eventTypes);
     var readTypes = new List<Type>(eventTypes);
     readTypes.AddRange(extra);
-    await foreach (var envelope in _inner
+    await foreach (var envelope in Inner
         .ReadPolymorphicAsync(streamId, fromEventId, readTypes, cancellationToken)
         .WithCancellation(cancellationToken)) {
       var upcasted = _upcast(envelope);
@@ -94,10 +92,10 @@ public sealed class UpcastingEventStoreDecorator : IEventStore {
   }
 
   /// <inheritdoc />
-  public async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+  public override async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken = default) {
-    var events = await _inner.GetEventsBetweenPolymorphicAsync(
+    var events = await Inner.GetEventsBetweenPolymorphicAsync(
         streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
     for (var i = 0; i < events.Count; i++) {
       events[i] = _upcast(events[i]);
@@ -106,42 +104,13 @@ public sealed class UpcastingEventStoreDecorator : IEventStore {
   }
 
   /// <inheritdoc />
-  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
+  public override List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
       IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
-    var events = _inner.DeserializeStreamEvents(streamEvents, eventTypes);
+    var events = Inner.DeserializeStreamEvents(streamEvents, eventTypes);
     for (var i = 0; i < events.Count; i++) {
       events[i] = _upcast(events[i]);
     }
     return events;
   }
 
-  // ── delegated: typed reads, appends, metadata ──
-
-  /// <inheritdoc />
-  public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>
-    _inner.AppendAsync(streamId, envelope, cancellationToken);
-
-  /// <inheritdoc />
-  public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull =>
-    _inner.AppendAsync(streamId, message, cancellationToken);
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
-    _inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
-    _inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
-
-  /// <inheritdoc />
-  public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
-    _inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);
-
-  /// <inheritdoc />
-  public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
-    _inner.GetLastSequenceAsync(streamId, cancellationToken);
-
-  /// <inheritdoc />
-  public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
-    _inner.GetCommitSequenceAsync(eventId, cancellationToken);
 }

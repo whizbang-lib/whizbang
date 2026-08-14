@@ -39,16 +39,15 @@ public sealed class SyncTrackingEventStoreDecorator(
     IScopedEventTracker? tracker = null,
     IEnvelopeRegistry? envelopeRegistry = null,
     ISyncEventTracker? syncEventTracker = null,
-    ITrackedEventTypeRegistry? typeRegistry = null) : IEventStore {
-  private readonly IEventStore _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+    ITrackedEventTypeRegistry? typeRegistry = null) : ForwardingEventStoreDecorator(inner) {
   private readonly IScopedEventTracker? _tracker = tracker;
   private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
   private readonly ITrackedEventTypeRegistry? _typeRegistry = typeRegistry;
   private readonly IEnvelopeRegistry? _envelopeRegistry = envelopeRegistry;
 
   /// <inheritdoc />
-  public async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
-    await _inner.AppendAsync(streamId, envelope, cancellationToken);
+  public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
+    await Inner.AppendAsync(streamId, envelope, cancellationToken);
 
     var eventType = typeof(TMessage);
     var messageId = envelope.MessageId;
@@ -61,12 +60,12 @@ public sealed class SyncTrackingEventStoreDecorator(
   }
 
   /// <inheritdoc />
-  public async Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
+  public override async Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) {
     // Try to get the envelope from the registry to get the actual MessageId
     var envelope = _envelopeRegistry?.TryGetEnvelope(message);
     var messageId = envelope?.MessageId ?? MessageId.New();
 
-    await _inner.AppendAsync(streamId, message, cancellationToken);
+    await Inner.AppendAsync(streamId, message, cancellationToken);
 
     var eventType = typeof(TMessage);
 
@@ -92,38 +91,4 @@ public sealed class SyncTrackingEventStoreDecorator(
     }
   }
 
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) {
-    return _inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) {
-    return _inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
-    return _inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) {
-    return _inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
-    return _inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
-    return _inner.GetLastSequenceAsync(streamId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
-    return _inner.DeserializeStreamEvents(streamEvents, eventTypes);
-  }
 }
