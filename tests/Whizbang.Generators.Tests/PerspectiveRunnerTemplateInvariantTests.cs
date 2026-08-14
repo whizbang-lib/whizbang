@@ -111,4 +111,24 @@ public class PerspectiveRunnerTemplateInvariantTests {
     await Assert.That(lastLogDebug).IsGreaterThan(lastLogInformation)
       .Because("partial-skip is benign cursor-flush race; must stay at Debug");
   }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task CheckpointMetadata_StampsAppliedEventTime_NotApplyWallClockAsync() {
+    // Perspective-row-retention increment 1b: checkpoint metadata's Timestamp is the row-TTL
+    // expiry anchor (BaseUpsertStrategy: expires_at = metadata.Timestamp + ttl). Stamping the
+    // APPLY wall clock there makes every rebuild re-stamp fresh windows — thousands of
+    // expired rows resurrecting per rebuild. The template must thread the checkpoint EVENT's
+    // own time (from the envelope's stored hops — deterministic under replay) instead.
+    var template = _loadTemplate();
+
+    await Assert.That(template).Contains("EventId = checkpointEventId.ToString(\"D\")")
+      .Because("the checkpoint-metadata block is the anchor being pinned");
+    await Assert.That(template).Contains("Timestamp = checkpointEventAt")
+      .Because("metadata.Timestamp must carry the checkpoint event's time, threaded from the apply loop");
+    await Assert.That(template).DoesNotContain("Timestamp = DateTime.UtcNow")
+      .Because("apply-time wall clock in checkpoint metadata breaks replay determinism for row TTLs");
+    await Assert.That(template).Contains("lastSuccessfulEventAt = ")
+      .Because("the apply loops must track the applied envelope's event time alongside its id/type");
+  }
 }
