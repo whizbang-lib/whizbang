@@ -43,7 +43,7 @@ public sealed class AuditingEventStoreDecorator(
     IEventStore inner,
     IDeferredOutboxChannel outboxChannel,
     IOptions<SystemEventOptions> options,
-    ILogger<AuditingEventStoreDecorator>? logger = null) : IEventStore {
+    ILogger<AuditingEventStoreDecorator>? logger = null) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -51,32 +51,30 @@ public sealed class AuditingEventStoreDecorator(
   public const string AUDIT_TOPIC_DESTINATION = "whizbang.core.auditevents";
 #pragma warning restore CA1707
 
-  private readonly IEventStore _inner = inner ?? throw new ArgumentNullException(nameof(inner));
   private readonly IDeferredOutboxChannel _outboxChannel = outboxChannel ?? throw new ArgumentNullException(nameof(outboxChannel));
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
   private readonly ILogger<AuditingEventStoreDecorator> _logger = logger ?? NullLogger<AuditingEventStoreDecorator>.Instance;
 
   /// <inheritdoc />
-  public async Task AppendAsync<TMessage>(
+  public override async Task AppendAsync<TMessage>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
       CancellationToken cancellationToken = default) {
     // First, append to the inner store
-    await _inner.AppendAsync(streamId, envelope, cancellationToken);
+    await Inner.AppendAsync(streamId, envelope, cancellationToken);
 
     // Emit audit event if eligible
     await _emitAuditIfEligibleAsync(streamId, envelope, cancellationToken);
   }
 
   /// <inheritdoc />
-  public async Task AppendAsync<TMessage>(
+  public override async Task AppendAsync<TMessage>(
       Guid streamId,
       TMessage message,
-      CancellationToken cancellationToken = default)
-      where TMessage : notnull {
+      CancellationToken cancellationToken = default) {
     // Delegate to inner store for persistence
-    await _inner.AppendAsync(streamId, message, cancellationToken);
+    await Inner.AppendAsync(streamId, message, cancellationToken);
 
     // Create a minimal envelope for audit purposes
     var envelope = new MessageEnvelope<TMessage> {
@@ -96,51 +94,6 @@ public sealed class AuditingEventStoreDecorator(
     await _emitAuditIfEligibleAsync(streamId, envelope, cancellationToken);
   }
 
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
-      Guid streamId,
-      long fromSequence,
-      CancellationToken cancellationToken = default) =>
-      _inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
-      Guid streamId,
-      Guid? fromEventId,
-      CancellationToken cancellationToken = default) =>
-      _inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
-      Guid streamId,
-      Guid? fromEventId,
-      IReadOnlyList<Type> eventTypes,
-      CancellationToken cancellationToken = default) =>
-      _inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);
-
-  /// <inheritdoc />
-  public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
-      Guid streamId,
-      Guid? afterEventId,
-      Guid upToEventId,
-      CancellationToken cancellationToken = default) =>
-      _inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);
-
-  /// <inheritdoc />
-  public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
-      Guid streamId,
-      Guid? afterEventId,
-      Guid upToEventId,
-      IReadOnlyList<Type> eventTypes,
-      CancellationToken cancellationToken = default) =>
-      _inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
-
-  /// <inheritdoc />
-  public Task<long> GetLastSequenceAsync(
-      Guid streamId,
-      CancellationToken cancellationToken = default) =>
-      _inner.GetLastSequenceAsync(streamId, cancellationToken);
-
   private async Task _emitAuditIfEligibleAsync<TMessage>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
@@ -155,7 +108,7 @@ public sealed class AuditingEventStoreDecorator(
       return;
     }
 
-    var streamPosition = await _inner.GetLastSequenceAsync(streamId, cancellationToken);
+    var streamPosition = await Inner.GetLastSequenceAsync(streamId, cancellationToken);
     var auditEvent = _buildEventAudited(streamId, streamPosition, envelope);
     var outboxMsg = _buildOutboxMessage(auditEvent);
     await _outboxChannel.QueueAsync(outboxMsg, cancellationToken);
@@ -259,24 +212,6 @@ public sealed class AuditingEventStoreDecorator(
       IsEvent = true,
       MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
     };
-  }
-
-  /// <inheritdoc />
-  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
-    return _inner.DeserializeStreamEvents(streamEvents, eventTypes);
-  }
-
-  // Default interface methods don't dispatch through composition — without these explicit
-  // forwards the decorator serves the interface default instead of the inner store's override.
-
-  /// <inheritdoc />
-  public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) {
-    return _inner.GetCommitSequenceAsync(eventId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
-    return _inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken);
   }
 
 }

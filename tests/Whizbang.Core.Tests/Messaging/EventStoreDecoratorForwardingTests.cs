@@ -25,7 +25,51 @@ public class EventStoreDecoratorForwardingTests {
     () => new SecurityContextEventStoreDecorator(new ProbeAwareStore()),
     () => new AppendAndWaitEventStoreDecorator(new ProbeAwareStore(), new NoopSyncAwaiter()),
     () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions())),
+    () => new SyncTrackingEventStoreDecorator(new ProbeAwareStore()),
+    () => new UpcastingEventStoreDecorator(new ProbeAwareStore(), new EventUpcasterPipeline([])),
   ];
+
+  /// <summary>
+  /// Interface members whose default implementation is DELIBERATELY served by decorators:
+  /// <c>AppendBatchAsync</c>'s default loops over <c>this.AppendAsync</c>, so interceptors
+  /// (audit, sync-tracking, security-context) see every entry — forwarding it to the inner
+  /// store would bypass them. <c>AppendAndWaitAsync</c> is only meaningful on the outermost
+  /// decorator; inner layers keep the interface default. Every OTHER default member must be
+  /// explicitly forwarded, or the decorator swallows the inner store's override.
+  /// </summary>
+  private static readonly HashSet<string> _deliberateInterfaceDefaults = [
+    nameof(IEventStore.AppendBatchAsync),
+    nameof(IEventStore.AppendAndWaitAsync),
+  ];
+
+  public static IEnumerable<Func<Type>> DecoratorTypes() => [
+    () => typeof(SecurityContextEventStoreDecorator),
+    () => typeof(AppendAndWaitEventStoreDecorator),
+    () => typeof(AuditingEventStoreDecorator),
+    () => typeof(SyncTrackingEventStoreDecorator),
+    () => typeof(UpcastingEventStoreDecorator),
+  ];
+
+  /// <summary>
+  /// Drift-lock for FUTURE default interface methods: any <see cref="IEventStore"/> member a
+  /// decorator leaves to the interface default (instead of a class-declared forward) must be on
+  /// the deliberate allow-list. When a new default member is added to the interface, this fails
+  /// for every decorator until the author either forwards it or consciously allow-lists it.
+  /// </summary>
+  [Test]
+  [MethodDataSource(nameof(DecoratorTypes))]
+  public async Task Decorator_LeavesNoDefaultInterfaceMethod_UnforwardedAsync(Type decoratorType) {
+    var map = decoratorType.GetInterfaceMap(typeof(IEventStore));
+    var swallowed = map.TargetMethods
+      .Where(m => m.DeclaringType?.IsInterface == true)
+      .Select(m => m.Name.Split('.')[^1])
+      .Where(name => !_deliberateInterfaceDefaults.Contains(name))
+      .Distinct()
+      .ToList();
+
+    await Assert.That(swallowed).IsEmpty()
+      .Because($"{decoratorType.Name} serves the interface default for [{string.Join(", ", swallowed)}] — forward to the inner store or add to the deliberate allow-list");
+  }
 
   [Test]
   [MethodDataSource(nameof(Decorators))]

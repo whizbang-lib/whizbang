@@ -34,10 +34,13 @@ public sealed class AppendAndWaitEventStoreDecorator(
     IEventStore inner,
     IPerspectiveSyncAwaiter syncAwaiter,
     IEventCompletionAwaiter? eventCompletionAwaiter = null,
-    IScopedEventTracker? scopedEventTracker = null) : IEventStore {
+    IScopedEventTracker? scopedEventTracker = null)
+    // IEventStore is re-listed so the AppendAndWaitAsync implementations below re-map onto the
+    // interface — without it the base class's interface map wins and callers would get the
+    // interface's no-wait default instead.
+    : ForwardingEventStoreDecorator(inner), IEventStore {
   private static readonly TimeSpan _defaultTimeout = TimeSpan.FromSeconds(30);
 
-  private readonly IEventStore _inner = inner ?? throw new ArgumentNullException(nameof(inner));
   private readonly IPerspectiveSyncAwaiter _syncAwaiter = syncAwaiter ?? throw new ArgumentNullException(nameof(syncAwaiter));
   private readonly IEventCompletionAwaiter? _eventCompletionAwaiter = eventCompletionAwaiter;
   private readonly IScopedEventTracker? _scopedEventTracker = scopedEventTracker;
@@ -58,7 +61,7 @@ public sealed class AppendAndWaitEventStoreDecorator(
     var effectiveTimeout = timeout ?? _defaultTimeout;
 
     // Append the event to the store
-    await _inner.AppendAsync(streamId, message, cancellationToken);
+    await Inner.AppendAsync(streamId, message, cancellationToken);
 
     // Invoke onWaiting before starting the wait
     _invokeOnWaiting(onWaiting, perspectiveType, eventCount: 1, [streamId], effectiveTimeout, startedAt);
@@ -92,7 +95,7 @@ public sealed class AppendAndWaitEventStoreDecorator(
     var effectiveTimeout = timeout ?? _defaultTimeout;
 
     // Append the event to the store
-    await _inner.AppendAsync(streamId, message, cancellationToken);
+    await Inner.AppendAsync(streamId, message, cancellationToken);
 
     // Get tracked events from scoped tracker
     var scopedTracker = _scopedEventTracker ?? ScopedEventTrackerAccessor.CurrentTracker;
@@ -184,61 +187,4 @@ public sealed class AppendAndWaitEventStoreDecorator(
     }
   }
 
-  /// <inheritdoc />
-  public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
-    return _inner.AppendAsync(streamId, envelope, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
-    return _inner.AppendAsync(streamId, message, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) {
-    return _inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) {
-    return _inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
-    return _inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) {
-    return _inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
-    return _inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
-    return _inner.GetLastSequenceAsync(streamId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
-    return _inner.DeserializeStreamEvents(streamEvents, eventTypes);
-  }
-
-  // Default interface methods don't dispatch through composition — without these explicit
-  // forwards the decorator serves the interface default instead of the inner store's override.
-
-  /// <inheritdoc />
-  public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) {
-    return _inner.GetCommitSequenceAsync(eventId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
-    return _inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken);
-  }
 }

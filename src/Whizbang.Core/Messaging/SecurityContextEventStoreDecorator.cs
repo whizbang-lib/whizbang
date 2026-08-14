@@ -40,24 +40,13 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <param name="inner">The underlying event store implementation.</param>
 /// <exception cref="ArgumentNullException">Thrown when <paramref name="inner"/> is null.</exception>
-public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEventStore {
-  private readonly IEventStore _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-
-  /// <inheritdoc />
-  /// <remarks>
-  /// Delegates directly to the inner store - the envelope already contains security context.
-  /// </remarks>
-  public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
-    return _inner.AppendAsync(streamId, envelope, cancellationToken);
-  }
-
+public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : ForwardingEventStoreDecorator(inner) {
   /// <inheritdoc />
   /// <remarks>
   /// Creates an envelope with security context from the ambient scope and delegates to the inner store.
   /// Uses <see cref="CascadeContext.GetSecurityFromAmbient()"/> for consistent security extraction.
   /// </remarks>
-  public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default)
-      where TMessage : notnull {
+  public override Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
 
     // Top-level event-store append (no source hop) — resolve scope + identity through the SAME shared hop-first
@@ -81,54 +70,6 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEve
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
-    return _inner.AppendAsync(streamId, envelope, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) {
-    return _inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) {
-    return _inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
-    return _inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) {
-    return _inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
-    return _inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
-    return _inner.GetLastSequenceAsync(streamId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
-    return _inner.DeserializeStreamEvents(streamEvents, eventTypes);
-  }
-
-  // Default interface methods don't dispatch through composition — without these explicit
-  // forwards the decorator serves the interface default instead of the inner store's override.
-
-  /// <inheritdoc />
-  public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) {
-    return _inner.GetCommitSequenceAsync(eventId, cancellationToken);
-  }
-
-  /// <inheritdoc />
-  public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
-    return _inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken);
+    return Inner.AppendAsync(streamId, envelope, cancellationToken);
   }
 }
