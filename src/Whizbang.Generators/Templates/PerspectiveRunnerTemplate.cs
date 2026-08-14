@@ -234,6 +234,28 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Create new model if none exists (null from DB)
     if (currentModel == null) {
+      // Resurrection-on-wake (perspective row retention): for a row-TTL SOURCED perspective a
+      // missing row is ambiguous — a brand-new stream OR a reaped row whose stream just woke.
+      // A Sourced row is the fold of ALL its events, so applying only this batch onto a fresh
+      // model would silently build a corrupt partial row. Probe the log: pre-batch history
+      // means reaped-and-woken — re-fold via the rewind CORE (snapshot floor + tail; the
+      // incoming events are already stored, so the replay includes them). The core variant is
+      // required because RunAsync already holds the apply lock the public RewindAndRunAsync
+      // acquires. Ephemeral perspectives are excluded (rebuild refused; snapshot-floor
+      // semantics govern them) and non-TTL perspectives never reap, so neither ever probes.
+      if (!_isEphemeralPerspective
+          && global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(__MODEL_TYPE_NAME__)) >= 0
+          && events.Count > 0
+          && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, cancellationToken)) {
+        _logger.LogInformation(
+            "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history — resurrecting via re-fold",
+            streamId,
+            perspectiveName
+        );
+        return await _rewindAndRunCoreAsync(
+            streamId, perspectiveName, events[0].MessageId.Value, null, cancellationToken);
+      }
+
       _logger.LogDebug(
           "No existing model found for stream {StreamId} in {PerspectiveName}, creating new model",
           streamId,
@@ -926,6 +948,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     await using IAsyncDisposable? __applyLock = _applyCoordinator is null
         ? null
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
+
+    return await _rewindAndRunCoreAsync(
+        streamId, perspectiveName, triggeringEventId, triggeringCommitSequence, cancellationToken);
+  }
+
+  /// <summary>
+  /// The rewind body, ASSUMING the apply lock is already held. Two callers: the public
+  /// RewindAndRunAsync (acquires the lock above) and RunAsync's resurrection-on-wake branch
+  /// (which runs under the lock RunAsync itself acquired — re-acquiring here would deadlock).
+  /// </summary>
+  private async Task<PerspectiveCursorCompletion> _rewindAndRunCoreAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid triggeringEventId,
+      long? triggeringCommitSequence,
+      CancellationToken cancellationToken = default) {
 
     Guid? replayFromEventId = null;
     __MODEL_TYPE_NAME__? snapshotModel = null;
