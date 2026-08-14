@@ -118,4 +118,17 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEve
   public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
     return _inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
+
+  // Default interface methods don't dispatch through composition — without these explicit
+  // forwards the decorator serves the interface default instead of the inner store's override.
+
+  /// <inheritdoc />
+  public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) {
+    return _inner.GetCommitSequenceAsync(eventId, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
+    return _inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken);
+  }
 }
