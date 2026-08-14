@@ -111,4 +111,55 @@ public class PerspectiveRunnerTemplateInvariantTests {
     await Assert.That(lastLogDebug).IsGreaterThan(lastLogInformation)
       .Because("partial-skip is benign cursor-flush race; must stay at Debug");
   }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task CheckpointMetadata_StampsAppliedEventTime_NotApplyWallClockAsync() {
+    // Perspective-row-retention increment 1b: checkpoint metadata's Timestamp is the row-TTL
+    // expiry anchor (BaseUpsertStrategy: expires_at = metadata.Timestamp + ttl). Stamping the
+    // APPLY wall clock there makes every rebuild re-stamp fresh windows — thousands of
+    // expired rows resurrecting per rebuild. The template must thread the checkpoint EVENT's
+    // own time (from the envelope's stored hops — deterministic under replay) instead.
+    var template = _loadTemplate();
+
+    await Assert.That(template).Contains("EventId = checkpointEventId.ToString(\"D\")")
+      .Because("the checkpoint-metadata block is the anchor being pinned");
+    await Assert.That(template).Contains("Timestamp = checkpointEventAt")
+      .Because("metadata.Timestamp must carry the checkpoint event's time, threaded from the apply loop");
+    await Assert.That(template).DoesNotContain("Timestamp = DateTime.UtcNow")
+      .Because("apply-time wall clock in checkpoint metadata breaks replay determinism for row TTLs");
+    await Assert.That(template).Contains("lastSuccessfulEventAt = ")
+      .Because("the apply loops must track the applied envelope's event time alongside its id/type");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task RowNullBranch_ResurrectsSourcedRowTtlStreams_ViaRewindCoreAsync() {
+    // Perspective-row-retention increment 4 (resurrection-on-wake): for a row-TTL SOURCED
+    // perspective, a missing row is ambiguous — brand-new stream OR a reaped row whose stream
+    // just woke. A Sourced row is the fold of ALL its events; applying only the incoming batch
+    // onto a fresh model would silently build a corrupt partial row. The row-null branch must
+    // probe the log (events before this batch?) and, when history exists, re-fold via the
+    // rewind CORE — not the public RewindAndRunAsync, which re-acquires the apply lock RunAsync
+    // already holds (deadlock).
+    var template = _loadTemplate();
+
+    await Assert.That(template).Contains("HasStreamEventsBeforeAsync")
+      .Because("the row-null branch probes the event store for pre-batch history");
+    await Assert.That(template).Contains("!_isEphemeralPerspective")
+      .Because("resurrection is Sourced-only — ephemeral streams keep snapshot-floor semantics");
+    await Assert.That(template).Contains("_rewindAndRunCoreAsync")
+      .Because("resurrection delegates to the lock-free rewind core");
+
+    // Deadlock guard: exactly ONE _applyCoordinator acquisition may exist in each public entry
+    // (RunAsync + RewindAndRunAsync); the rewind CORE itself must not acquire it.
+    var acquisitions = 0;
+    var idx = 0;
+    while ((idx = template.IndexOf("_applyCoordinator.AcquireAsync", idx, StringComparison.Ordinal)) >= 0) {
+      acquisitions++;
+      idx += 1;
+    }
+    await Assert.That(acquisitions).IsEqualTo(2)
+      .Because("only the two public entry points acquire the apply lock; the shared core assumes it is held");
+  }
 }

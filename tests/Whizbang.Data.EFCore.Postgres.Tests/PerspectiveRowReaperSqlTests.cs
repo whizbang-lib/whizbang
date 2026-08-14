@@ -83,6 +83,46 @@ public class PerspectiveRowReaperSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Task9_RowReap_RetainsLatestSnapshot_TheResurrectionAnchorAsync() {
+    // Perspective-row-retention increment 3: reaping an expired row must leave the stream's
+    // latest snapshot intact — it is the resurrection anchor. When a reaped Sourced stream
+    // wakes up (a new event arrives), the writer path re-folds from snapshot + tail instead
+    // of replaying from zero; deleting snapshots here would silently make every resurrection
+    // a full replay. Task 9 touches ONLY wh_per_* rows by construction — this locks that.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    const string table = "wh_per_ttlreapsnap";
+    const string perspective = "SnapshotAnchorPerspective";
+    await _execAsync(connection, $@"CREATE TABLE IF NOT EXISTS {table} (
+      id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL, scope JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, version INTEGER NOT NULL)");
+
+    var streamId = Guid.NewGuid();
+    var snapshotEventId = Guid.NewGuid();
+    await _seedRowAsync(connection, table, streamId, "NOW() - INTERVAL '5 minutes'");
+    await using (var cmd = connection.CreateCommand()) {
+      cmd.CommandText =
+        "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence) " +
+        "VALUES (@sid, @p, @eid, '{}'::jsonb, 1, 5)";
+      cmd.Parameters.AddWithValue("sid", streamId);
+      cmd.Parameters.AddWithValue("p", perspective);
+      cmd.Parameters.AddWithValue("eid", snapshotEventId);
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    await _runMaintenanceAsync(connection);
+
+    await Assert.That(await _existsAsync(connection, table, streamId)).IsEqualTo(0L)
+      .Because("the expired row itself is reaped");
+    await using var check = connection.CreateCommand();
+    check.CommandText = "SELECT count(*) FROM wh_perspective_snapshots WHERE stream_id = @sid AND perspective_name = @p";
+    check.Parameters.AddWithValue("sid", streamId);
+    check.Parameters.AddWithValue("p", perspective);
+    await Assert.That((long)(await check.ExecuteScalarAsync())!).IsEqualTo(1L)
+      .Because("the stream's snapshot survives the row reap — resurrection re-folds from it plus the tail.");
+  }
+
+  [Test]
   public async Task Task9_DebugMode_RetainsExpiredRowsAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

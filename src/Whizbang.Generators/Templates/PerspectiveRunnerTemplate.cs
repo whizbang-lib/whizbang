@@ -234,6 +234,28 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Create new model if none exists (null from DB)
     if (currentModel == null) {
+      // Resurrection-on-wake (perspective row retention): for a row-TTL SOURCED perspective a
+      // missing row is ambiguous — a brand-new stream OR a reaped row whose stream just woke.
+      // A Sourced row is the fold of ALL its events, so applying only this batch onto a fresh
+      // model would silently build a corrupt partial row. Probe the log: pre-batch history
+      // means reaped-and-woken — re-fold via the rewind CORE (snapshot floor + tail; the
+      // incoming events are already stored, so the replay includes them). The core variant is
+      // required because RunAsync already holds the apply lock the public RewindAndRunAsync
+      // acquires. Ephemeral perspectives are excluded (rebuild refused; snapshot-floor
+      // semantics govern them) and non-TTL perspectives never reap, so neither ever probes.
+      if (!_isEphemeralPerspective
+          && global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(__MODEL_TYPE_NAME__)) >= 0
+          && events.Count > 0
+          && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, cancellationToken)) {
+        _logger.LogInformation(
+            "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history — resurrecting via re-fold",
+            streamId,
+            perspectiveName
+        );
+        return await _rewindAndRunCoreAsync(
+            streamId, perspectiveName, events[0].MessageId.Value, null, cancellationToken);
+      }
+
       _logger.LogDebug(
           "No existing model found for stream {StreamId} in {PerspectiveName}, creating new model",
           streamId,
@@ -354,6 +376,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var eventsProcessed = 0;
     var lastSuccessfulEventId = lastProcessedEventId;
     string? lastSuccessfulEventType = existingMetadata?.EventType;
+    DateTime? lastSuccessfulEventAt = null;
     var processedEvents = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
@@ -483,6 +506,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         if (pendingPurge) {
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
+          lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
           eventsProcessed++;
           continue;
         }
@@ -498,6 +522,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           }
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
+          lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
           eventsProcessed++;
           continue;
         }
@@ -519,6 +544,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // Advance checkpoint past the failed event so it isn't retried indefinitely
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
+          lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
           eventsProcessed++;
           continue;
         }
@@ -562,6 +588,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
         // Track success
         lastSuccessfulEventId = envelope.MessageId.Value;
+        lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         lastSuccessfulEventType = @event.GetType().FullName ?? eventTypeName;
         eventsProcessed++;
       }
@@ -605,6 +632,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               lastSuccessfulEventId!.Value,
               lastSuccessfulEventType ?? string.Empty,
               checkpointCommitSequence,
+              lastSuccessfulEventAt ?? DateTime.UtcNow,
               cancellationToken,
               lastScope?.FilterByFields(_inheritScopeOnCreate),
               scopeChanged
@@ -756,6 +784,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 lastSuccessfulEventId.Value,
                 lastSuccessfulEventType ?? string.Empty,
                 partialCheckpointCommitSequence,
+                lastSuccessfulEventAt ?? DateTime.UtcNow,
                 cancellationToken,
                 lastScope?.FilterByFields(_inheritScopeOnCreate),
                 scopeChanged
@@ -855,6 +884,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid checkpointEventId,
       string checkpointEventType,
       long? checkpointCommitSequence,
+      DateTime checkpointEventAt,
       CancellationToken cancellationToken,
       PerspectiveScope? scope = null,
       bool forceUpdateScope = false) {
@@ -869,7 +899,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
       EventId = checkpointEventId.ToString("D"),
       EventType = checkpointEventType,
-      Timestamp = DateTime.UtcNow,
+      Timestamp = checkpointEventAt,
       CommitSequence = checkpointCommitSequence
     };
 
@@ -918,6 +948,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     await using IAsyncDisposable? __applyLock = _applyCoordinator is null
         ? null
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
+
+    return await _rewindAndRunCoreAsync(
+        streamId, perspectiveName, triggeringEventId, triggeringCommitSequence, cancellationToken);
+  }
+
+  /// <summary>
+  /// The rewind body, ASSUMING the apply lock is already held. Two callers: the public
+  /// RewindAndRunAsync (acquires the lock above) and RunAsync's resurrection-on-wake branch
+  /// (which runs under the lock RunAsync itself acquired — re-acquiring here would deadlock).
+  /// </summary>
+  private async Task<PerspectiveCursorCompletion> _rewindAndRunCoreAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid triggeringEventId,
+      long? triggeringCommitSequence,
+      CancellationToken cancellationToken = default) {
 
     Guid? replayFromEventId = null;
     __MODEL_TYPE_NAME__? snapshotModel = null;
@@ -1060,6 +1106,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var eventsProcessed = 0;
     Guid? lastSuccessfulEventId = replayFromEventId;
     string? lastSuccessfulEventType = null;
+    DateTime? lastSuccessfulEventAt = null;
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;
     PerspectiveScope? lastScope = null;
@@ -1167,6 +1214,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Once purge is set, skip applying further events — the model is null
       if (pendingPurge) {
         lastSuccessfulEventId = envelope.MessageId.Value;
+        lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         eventsProcessed++;
         continue;
       }
@@ -1185,6 +1233,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             envelope.MessageId.Value
         );
         lastSuccessfulEventId = envelope.MessageId.Value;
+        lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         eventsProcessed++;
         continue;
       }
@@ -1205,6 +1254,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
 
       lastSuccessfulEventId = envelope.MessageId.Value;
+
+      lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
       lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
       eventsProcessed++;
       if (frontierEventId is null || string.CompareOrdinal(
@@ -1275,7 +1326,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
         await SaveModelAndCheckpointAsync(
             streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
-            replayCheckpointCommitSequence, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
+            replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
       }
 
       await _perspectiveStore.FlushAsync(cancellationToken);

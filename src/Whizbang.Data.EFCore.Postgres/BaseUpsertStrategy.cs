@@ -175,12 +175,18 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerEventApplyHooks.ApplyModelSetters(args.Model, hookPlan.ModelFieldSetters);
     }
 
-    // TtlRow perspective-row expiry (E2-4d): a perspective whose [Ephemeral] events chose TransientStorage.TtlRow
-    // gets a sliding row TTL — stamp expires_at = now + ttl on every upsert (last-activity window). The generator
-    // registers the model's TTL virally; an unregistered model (PersistedRow/InMemory/Sourced) resolves to -1 and
-    // its rows never expire (expires_at stays NULL).
+    // Row TTL expiry: a perspective registered in PerspectiveTtlRegistry gets a sliding row TTL. The
+    // window ANCHORS TO EVENT TIME — expires_at = the applied event's timestamp (metadata.Timestamp,
+    // threaded by the runner) + ttl — never the wall clock at apply time. Event-time anchoring is what
+    // makes the stamp replay-safe: re-applying old history (rebuild/rewind) reproduces the original
+    // window, so an idle-past-TTL stream rebuilds BORN-EXPIRED instead of resurrecting with a fresh
+    // window. Direct callers with no event metadata (fixtures/seeds pass default Timestamp) fall back
+    // to now + ttl. An unregistered model resolves to -1 and its rows never expire (expires_at NULL).
     var ttlSeconds = Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(TModel));
-    DateTimeOffset? expiresAt = ttlSeconds >= 0 ? DateTimeOffset.UtcNow.AddSeconds(ttlSeconds) : null;
+    var expiryAnchor = args.Metadata.Timestamp == default
+      ? DateTimeOffset.UtcNow
+      : new DateTimeOffset(DateTime.SpecifyKind(args.Metadata.Timestamp, DateTimeKind.Utc));
+    DateTimeOffset? expiresAt = ttlSeconds >= 0 ? expiryAnchor.AddSeconds(ttlSeconds) : null;
 
     // Path 1 atomic upsert. When configured (see PathOnePersistenceOptionsProvider) and
     // applicable (no physical fields, table name supplied), this single round-trip replaces

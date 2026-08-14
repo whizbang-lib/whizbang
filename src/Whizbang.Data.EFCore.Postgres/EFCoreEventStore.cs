@@ -290,6 +290,20 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <summary>
+  /// Perspective row retention — the resurrection-on-wake history probe: does this stream hold
+  /// any event ordered before the given id? An indexed EXISTS over the stream's pointer rows;
+  /// UUIDv7 ordering is safe at this granularity (a reaped row's history predates the waking
+  /// batch by at least the row TTL — days, far beyond any concurrent-emission id inversion).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  public async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
+    return await _context.Set<EventStoreRecord>()
+      .AsNoTracking()
+      .AnyAsync(e => e.StreamId == streamId && e.Id.CompareTo(beforeEventId) < 0, cancellationToken);
+  }
+
+  /// <summary>
   /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
   /// Uses the EventType column to determine which concrete type to deserialize to.
   /// </summary>
