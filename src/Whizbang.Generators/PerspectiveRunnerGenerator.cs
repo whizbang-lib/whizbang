@@ -132,6 +132,32 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
+    // Perspective row retention: an explicit [RowTtl] on the perspective class OUTRANKS the
+    // ephemeral-derived TTL (the override ladder — the read model's own declaration is more
+    // specific than what its events imply). This is also what opens row expiry to Sourced
+    // perspectives, which have no [Ephemeral] events to derive from: their rows can age out
+    // while the log stays durable, because the event-time expiry anchor keeps rebuilds
+    // deterministic and a reaped row re-folds from the log on wake.
+    var rowTtlAttribute = classSymbol.GetAttributes().FirstOrDefault(
+        static a => a.AttributeClass?.Name is "RowTtlAttribute" or "RowTtl");
+    if (rowTtlAttribute is not null) {
+      var explicitDays = -1;
+      var explicitSeconds = -1;
+      foreach (var namedArg in rowTtlAttribute.NamedArguments) {
+        if (namedArg.Key == "Days" && namedArg.Value.Value is int d) {
+          explicitDays = d;
+        } else if (namedArg.Key == "Seconds" && namedArg.Value.Value is int sec) {
+          explicitSeconds = sec;
+        }
+      }
+      var explicitTtl = explicitSeconds >= 0 ? explicitSeconds
+          : explicitDays >= 0 ? explicitDays * 86400
+          : -1;
+      if (explicitTtl >= 0) {
+        ttlRowSeconds = explicitTtl;
+      }
+    }
+
     // A1-6b: a perspective marked [FullHistory] needs every event and cannot resume from a carry-forward /
     // closing event — the A1 close guard refuses a discard-close of any stream it consumes. Resolved at compile
     // time; the generator registers the perspective's name so the runtime guard can key off it.

@@ -257,6 +257,83 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_RowTtlOnSourcedPerspective_RegistersRowTtlAsync() {
+    // Perspective-row-retention increment 2: [RowTtl] declares a row TTL directly on the
+    // perspective class — no [Ephemeral] events required. Row lifecycle is a read-model
+    // property; a Sourced perspective's rows can age out while its event log stays durable
+    // (safe since the event-time anchor makes rebuild deterministic and the sourced log can
+    // re-fold a reaped row on wake).
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ThreadArchived : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record SourcedThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  [RowTtl(Days = 60)]
+  public class SourcedThreadPerspective : IPerspectiveFor<SourcedThreadModel, ThreadArchived> {
+    public SourcedThreadModel Apply(SourcedThreadModel currentData, ThreadArchived @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SourcedThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.SourcedThreadModel), 5184000)")
+      .Because("[RowTtl(Days = 60)] registers 60 days in seconds with no ephemeral involvement.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_RowTtl_OverridesEphemeralDerivedTtlAsync() {
+    // Ladder precedence: an explicit [RowTtl] on the perspective wins over the TTL derived
+    // virally from its [Ephemeral(TtlRow)] events (most-specific wins — the read model's own
+    // declaration outranks what its events imply).
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.AfterTtl, Storage = TransientStorage.TtlRow, TtlSeconds = 7776000)]
+  public record ChatMessage : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record OverriddenThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  [RowTtl(Seconds = 42)]
+  public class OverriddenThreadPerspective : IPerspectiveFor<OverriddenThreadModel, ChatMessage> {
+    public OverriddenThreadModel Apply(OverriddenThreadModel currentData, ChatMessage @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OverriddenThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.OverriddenThreadModel), 42)")
+      .Because("the explicit [RowTtl] outranks the ephemeral-derived TTL on the override ladder.");
+    await Assert.That(runnerSource!).DoesNotContain(", 7776000)")
+      .Because("the derived value must not leak through when an explicit declaration exists.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_FullHistoryPerspective_RegistersNameAsync() {
     // A1-6b: a [FullHistory] perspective emits a [ModuleInitializer] registering its name so the close guard
     // refuses a discard-close of any stream it consumes.
