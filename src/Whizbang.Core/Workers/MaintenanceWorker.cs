@@ -21,7 +21,8 @@ public sealed partial class MaintenanceWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
   IOptions<MaintenanceWorkerOptions> options,
-  ILogger<MaintenanceWorker> logger) : BackgroundService {
+  ILogger<MaintenanceWorker> logger,
+  Whizbang.Core.Observability.MaintenanceMetrics? metrics = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly MaintenanceWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -119,6 +120,9 @@ public sealed partial class MaintenanceWorker(
     var results = await coordinator.PerformMaintenanceAsync(ct);
     foreach (var r in results) {
       LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
+      // Fleet-visible per-task outcomes (row retention's "is it working" signal rides
+      // task=reap_expired_perspective_rows). Optional — null when metrics aren't registered.
+      metrics?.Record(r.TaskName, r.RowsAffected, r.DurationMs);
     }
 
     // E2 PostDestruction hooks — detached, after the reap committed.

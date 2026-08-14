@@ -43,6 +43,7 @@ public static class WhizbangMeters {
     EventCategoryMetrics.METER_NAME,
     LifecycleCoordinatorMetrics.METER_NAME,
     LifecycleMetrics.METER_NAME,
+    MaintenanceMetrics.METER_NAME,
     MessageDiscardPolicy.METER_NAME,
     PerspectiveMetrics.METER_NAME,
     PinnedPoolMetrics.METER_NAME,

@@ -104,6 +104,7 @@ public static class WorkerPipelineExtensions {
     // registration constructable (the F2-era lesson: extensions must be self-contained).
     services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
     services.TryAddSingleton<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    services.TryAddSingleton<Whizbang.Core.Observability.MaintenanceMetrics>();
     services.TryAddSingleton<IntegrityCheckpointWorker>();
     services.TryAddSingleton<SubscriptionExpansionWorker>();
     services.TryAddSingleton<IntegrityAuditWorker>();
@@ -123,6 +124,13 @@ public static class WorkerPipelineExtensions {
     // Type-definition fingerprint reconciler (F-4): detect-by-default, act-by-opt-in. Inert without a
     // catalog (GetService returns null) or without the fingerprint tables (coordinator defaults no-op).
     services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>();
+    // Perspective row retention (operator rung of the override ladder): the options are applied
+    // to the TTL registry at startup so a TTL can be retuned — or retention switched off — per
+    // environment without a redeploy. Registered as a hosted configurator; inert on defaults.
+    services.AddOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>();
+    services.TryAddSingleton<Whizbang.Core.Perspectives.PerspectiveRowRetentionConfigurator>();
+    services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(
+      sp => sp.GetRequiredService<Whizbang.Core.Perspectives.PerspectiveRowRetentionConfigurator>());
     // Schema-init behavior (blocking by default; opt-in non-blocking + optional migration timeout).
     services.AddOptions<SchemaInitializationOptions>();
     services.TryAddSingleton(TimeProvider.System);
