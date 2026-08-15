@@ -4,19 +4,21 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
 /// Unit coverage for <c>MessageTypeRegistryReconciliationHostedService</c> — the
-/// IHostedService that replaced the prior <c>using var populatorProvider =
-/// services.BuildServiceProvider();</c> pattern at startup (see Bijan Camp's
-/// 2026-06-12 report). Locks the four branches of the contract:
+/// hosted service that replaced the prior <c>using var populatorProvider =
+/// services.BuildServiceProvider();</c> pattern at startup (reported by a consumer
+/// whose configuration change-tokens it silently killed). Locks the contract:
 ///
 /// <list type="bullet">
-///   <item><description>Both catalog + populator present → <c>PopulateAsync</c> runs once with the host's <c>CancellationToken</c>.</description></item>
+///   <item><description>Both catalog + populator present → <c>PopulateAsync</c> runs once with a token that cooperates with shutdown.</description></item>
 ///   <item><description>Catalog null → log-and-skip; <c>PopulateAsync</c> NOT called.</description></item>
 ///   <item><description>Populator null → log-and-skip; <c>PopulateAsync</c> NOT called.</description></item>
+///   <item><description>Schema gate registered → reconciliation waits for migrations, without blocking host startup.</description></item>
 ///   <item><description><c>StopAsync</c> returns a completed task (the populator owns no shutdown state).</description></item>
 /// </list>
 /// </summary>
@@ -33,11 +35,48 @@ public class MessageTypeRegistryReconciliationHostedServiceTests {
 
     using var cts = new CancellationTokenSource();
     await sut.StartAsync(cts.Token);
+    await sut.ExecuteTask!;   // one-shot service: ExecuteAsync completes once populate has run
 
     await Assert.That(populator.PopulateAsyncCallCount).IsEqualTo(1)
       .Because("Happy path — the hosted service MUST call PopulateAsync exactly once when both the catalog and populator are registered.");
-    await Assert.That(populator.LastCancellationToken).IsEqualTo(cts.Token)
-      .Because("The hosted service must forward the host's CancellationToken so PopulateAsync can cooperate with shutdown.");
+
+    await cts.CancelAsync();
+    await Assert.That(populator.LastCancellationToken.IsCancellationRequested).IsTrue()
+      .Because("The token forwarded to PopulateAsync must cooperate with shutdown — cancelling the host's startup token must cancel it.");
+  }
+
+  [Test]
+  public async Task ExecuteAsync_WithClosedSchemaGate_WaitsForMigrationsWithoutBlockingStartupAsync() {
+    var catalog = new StubMessageTypeCatalog();
+    var populator = new SpyPopulator();
+    var gate = new SchemaReadyGate();
+    var sut = new MessageTypeRegistryReconciliationHostedService(
+      NullLogger<MessageTypeRegistryReconciliationHostedService>.Instance,
+      catalog,
+      populator,
+      schemaReadyGate: gate);
+
+    using var cts = new CancellationTokenSource();
+    // The defect this locks out: the service used to populate inline in StartAsync — DB work
+    // against tables the migration may not have created yet, sequentially blocking every
+    // later hosted service on it. StartAsync must return while the gate is still closed…
+    await sut.StartAsync(cts.Token);
+    await Task.Delay(300);
+    await Assert.That(populator.PopulateAsyncCallCount).IsEqualTo(0)
+      .Because("the registry the populator reconciles lives in tables the migration creates — "
+             + "nothing may be populated before the schema gate opens");
+
+    // …and reconciliation must actually run once migrations complete.
+    gate.MarkReady();
+    var deadline = DateTime.UtcNow.AddSeconds(5);
+    while (populator.PopulateAsyncCallCount == 0 && DateTime.UtcNow < deadline) {
+      await Task.Delay(10);
+    }
+    await Assert.That(populator.PopulateAsyncCallCount).IsEqualTo(1)
+      .Because("once migrations complete the reconcile must actually run — waiting is not skipping");
+
+    await cts.CancelAsync();
+    await sut.StopAsync(CancellationToken.None);
   }
 
   [Test]
@@ -50,6 +89,7 @@ public class MessageTypeRegistryReconciliationHostedServiceTests {
       populator: populator);
 
     await sut.StartAsync(CancellationToken.None);
+    await sut.ExecuteTask!;
 
     await Assert.That(populator.PopulateAsyncCallCount).IsEqualTo(0)
       .Because("Null catalog means AddWhizbang() wasn't called before AddWhizbangPostgres(). The hosted service must NOT call PopulateAsync — there's nothing to reconcile against.");
@@ -67,6 +107,7 @@ public class MessageTypeRegistryReconciliationHostedServiceTests {
       populator: null);
 
     await sut.StartAsync(CancellationToken.None);
+    await sut.ExecuteTask!;
 
     await Assert.That(logger.Entries).Contains(e => e.Level == LogLevel.Information && e.Message.Contains("Skipping message type registry reconciliation", StringComparison.Ordinal))
       .Because("Symmetric to the null-catalog case — if the populator isn't registered there's nothing for the hosted service to do, and it must log so the operator can diagnose the missing registration.");
@@ -80,7 +121,7 @@ public class MessageTypeRegistryReconciliationHostedServiceTests {
     var stopTask = sut.StopAsync(CancellationToken.None);
 
     await Assert.That(stopTask.IsCompleted).IsTrue()
-      .Because("StopAsync owns no state, so it must return immediately — the populator's work is one-shot at StartAsync.");
+      .Because("StopAsync owns no state, so it must return immediately — the populator's work is one-shot at startup.");
   }
 
   // The next two tests exercise the test-helper class members the four StartAsync/StopAsync
