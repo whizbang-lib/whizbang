@@ -20,7 +20,7 @@
 --
 -- Dependencies: 092 (epochs, refold, wh_integrity_seals), 087 (the functions re-created here)
 
-INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
 VALUES ('integrity_origin_generation', '0', 'integer',
         'Bumped whenever folded history legitimately mutates (close_stream truncation, reclassification). Carried on manifests so consumers reset seals instead of alarming.')
 ON CONFLICT (setting_key) DO NOTHING;
@@ -33,7 +33,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._wh_bump_origin_generation() RETURNS VOID
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  UPDATE wh_settings
+  UPDATE __SCHEMA__.wh_settings
   SET setting_value = ((setting_value)::bigint + 1)::text
   WHERE setting_key = 'integrity_origin_generation';
 END;
@@ -122,7 +122,7 @@ DECLARE
 BEGIN
   -- debug_mode retains forensic history — a close is a truncation, so skip it entirely (like the reaper).
   -- (bare wh_settings — public allow-list object; 087's copy carried baselined debt here)
-  SELECT (setting_value = 'true') INTO v_debug FROM wh_settings WHERE setting_key = 'debug_mode';
+  SELECT (setting_value = 'true') INTO v_debug FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode';
   IF COALESCE(v_debug, FALSE) THEN
     RETURN QUERY SELECT 'debug_skipped'::TEXT, 0::BIGINT;
     RETURN;

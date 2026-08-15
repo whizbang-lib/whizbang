@@ -22,7 +22,7 @@
 --
 -- Dependencies: 032 (wh_settings)
 
-INSERT INTO wh_settings (setting_key, setting_value, value_type, description) VALUES
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description) VALUES
   ('table_rewrite_policy', 'off', 'string',
    'off = detect and report only (default); immediate = maintenance may VACUUM FULL a qualifying table, which takes an ACCESS EXCLUSIVE lock for the duration of the rewrite'),
   ('table_rewrite_bloat_threshold', '3.0', 'string',
@@ -43,7 +43,7 @@ DECLARE
   v_current TEXT;
 BEGIN
   SELECT COALESCE(setting_value, '') INTO v_current
-  FROM wh_settings WHERE setting_key = 'pending_table_rewrites';
+  FROM __SCHEMA__.wh_settings WHERE setting_key = 'pending_table_rewrites';
 
   IF v_current IS NULL THEN
     v_current := '';
@@ -59,7 +59,7 @@ BEGIN
   -- length() rather than `= ''`: in Oracle an empty string IS NULL, so `x = ''` never holds, and
   -- static analysis flags the comparison on that basis. Postgres treats '' as a real empty string
   -- so the original was correct here, but length() = 0 says exactly what is meant in any dialect.
-  UPDATE wh_settings
+  UPDATE __SCHEMA__.wh_settings
   SET setting_value = CASE WHEN length(v_current) = 0 THEN p_table ELSE v_current || ',' || p_table END,
       updated_at = NOW()
   WHERE setting_key = 'pending_table_rewrites';
@@ -90,11 +90,11 @@ DECLARE
   v_min_rows  BIGINT;
   v_requested TEXT[];
 BEGIN
-  SELECT COALESCE((SELECT setting_value FROM wh_settings WHERE setting_key = 'table_rewrite_bloat_threshold'), '3.0')::NUMERIC
+  SELECT COALESCE((SELECT setting_value FROM __SCHEMA__.wh_settings WHERE setting_key = 'table_rewrite_bloat_threshold'), '3.0')::NUMERIC
     INTO v_threshold;
-  SELECT COALESCE((SELECT setting_value FROM wh_settings WHERE setting_key = 'table_rewrite_min_rows'), '1000')::BIGINT
+  SELECT COALESCE((SELECT setting_value FROM __SCHEMA__.wh_settings WHERE setting_key = 'table_rewrite_min_rows'), '1000')::BIGINT
     INTO v_min_rows;
-  SELECT string_to_array(NULLIF(COALESCE((SELECT setting_value FROM wh_settings WHERE setting_key = 'pending_table_rewrites'), ''), ''), ',')
+  SELECT string_to_array(NULLIF(COALESCE((SELECT setting_value FROM __SCHEMA__.wh_settings WHERE setting_key = 'pending_table_rewrites'), ''), ''), ',')
     INTO v_requested;
 
   RETURN QUERY
@@ -130,9 +130,9 @@ BEGIN
   SELECT COALESCE(array_to_string(array_remove(
            string_to_array(NULLIF(COALESCE(setting_value, ''), ''), ','), p_table), ','), '')
     INTO v_remaining
-  FROM wh_settings WHERE setting_key = 'pending_table_rewrites';
+  FROM __SCHEMA__.wh_settings WHERE setting_key = 'pending_table_rewrites';
 
-  UPDATE wh_settings
+  UPDATE __SCHEMA__.wh_settings
   SET setting_value = COALESCE(v_remaining, ''), updated_at = NOW()
   WHERE setting_key = 'pending_table_rewrites';
 END;

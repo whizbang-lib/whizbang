@@ -492,7 +492,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var cursors = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
     var snaps = BuildSchemaQualifiedName(schema, "wh_perspective_snapshots");
     var perspEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
-    var settings = "wh_settings"; // public (created bare, mig 028) — NOT the service schema; see a6ca8dd4
+    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -1055,8 +1055,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public Task<long> GetIntegrityOriginGenerationAsync(CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var settings = BuildSchemaQualifiedName(schema, "wh_settings");
       cmd.CommandText =
-        "SELECT COALESCE((SELECT setting_value::bigint FROM wh_settings WHERE setting_key = 'integrity_origin_generation'), 0)";
+        $"SELECT COALESCE((SELECT setting_value::bigint FROM {settings} WHERE setting_key = 'integrity_origin_generation'), 0)";
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
       return result is long generation ? generation : 0L;
     }, cancellationToken);
@@ -1440,7 +1441,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var assoc = BuildSchemaQualifiedName(schema, "wh_message_associations");
     var snaps = BuildSchemaQualifiedName(schema, "wh_perspective_snapshots");
     var perspEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
-    var settings = "wh_settings"; // public (created bare, mig 028) — NOT the service schema; see a6ca8dd4
+    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
     var hold = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2094,17 +2095,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
       CancellationToken cancellationToken) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
+
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand();
-    // wh_settings is public (created bare, mig 028) — NOT the service schema; see a6ca8dd4.
-    cmd.CommandText = """
-      INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+    cmd.CommandText = $"""
+      INSERT INTO {settings} (setting_key, setting_value, value_type, description)
       VALUES (@p_key, NOW()::text, 'timestamptz', @p_description)
       ON CONFLICT (setting_key) DO UPDATE
         SET setting_value = NOW()::text, updated_at = NOW()
-        WHERE (wh_settings.setting_value)::timestamptz <= NOW() - @p_window
+        WHERE ({settings}.setting_value)::timestamptz <= NOW() - @p_window
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_key", settingKey));
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_description", description));
@@ -2126,7 +2132,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     const string WATERMARK_KEY = "integrity_checkpoint_watermark";
-    var settings = "wh_settings"; // public (created bare, mig 028) — NOT the service schema; see a6ca8dd4
+    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);

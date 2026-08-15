@@ -35,7 +35,7 @@ BEGIN
   WHERE assigned_instance_id = p_instance_id;
 
   -- Log shutdown to wh_log for audit trail (guaranteed persistence)
-  INSERT INTO wh_log (log_level, source, message_id, error_message, metadata)
+  INSERT INTO __SCHEMA__.wh_log (log_level, source, message_id, error_message, metadata)
   VALUES (
     1,  -- Information
     'shutdown',

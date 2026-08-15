@@ -19,7 +19,7 @@
 -- Log levels: 0=Debug, 1=Info, 2=Warning, 3=Error
 -- =====================================================================================
 
-CREATE TABLE IF NOT EXISTS wh_log (
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_log (
   log_id BIGSERIAL PRIMARY KEY,
   logged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   log_level INTEGER NOT NULL,
@@ -31,15 +31,15 @@ CREATE TABLE IF NOT EXISTS wh_log (
   metadata JSONB NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_wh_log_logged_at ON wh_log (logged_at DESC);
-CREATE INDEX IF NOT EXISTS idx_wh_log_level ON wh_log (log_level);
-CREATE INDEX IF NOT EXISTS idx_wh_log_event_id ON wh_log (event_id) WHERE event_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_wh_log_message_id ON wh_log (message_id) WHERE message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_wh_log_logged_at ON __SCHEMA__.wh_log (logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wh_log_level ON __SCHEMA__.wh_log (log_level);
+CREATE INDEX IF NOT EXISTS idx_wh_log_event_id ON __SCHEMA__.wh_log (event_id) WHERE event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_wh_log_message_id ON __SCHEMA__.wh_log (message_id) WHERE message_id IS NOT NULL;
 
-COMMENT ON TABLE wh_log IS 'Stores log entries from SQL functions for debugging and monitoring';
-COMMENT ON COLUMN wh_log.log_level IS '0=Debug, 1=Info, 2=Warning, 3=Error';
-COMMENT ON COLUMN wh_log.source IS 'Function or component that generated the log entry';
-COMMENT ON COLUMN wh_log.metadata IS 'Additional context (phase, counts, types, etc.)';
+COMMENT ON TABLE __SCHEMA__.wh_log IS 'Stores log entries from SQL functions for debugging and monitoring';
+COMMENT ON COLUMN __SCHEMA__.wh_log.log_level IS '0=Debug, 1=Info, 2=Warning, 3=Error';
+COMMENT ON COLUMN __SCHEMA__.wh_log.source IS 'Function or component that generated the log entry';
+COMMENT ON COLUMN __SCHEMA__.wh_log.metadata IS 'Additional context (phase, counts, types, etc.)';
 
 -- =====================================================================================
 -- Part 2: Create wh_settings Table
@@ -47,7 +47,7 @@ COMMENT ON COLUMN wh_log.metadata IS 'Additional context (phase, counts, types, 
 -- Stores configuration settings that can be managed by C# application
 -- =====================================================================================
 
-CREATE TABLE IF NOT EXISTS wh_settings (
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_settings (
   setting_key VARCHAR(200) PRIMARY KEY,
   setting_value TEXT NOT NULL,
   value_type VARCHAR(50) NOT NULL,
@@ -56,11 +56,11 @@ CREATE TABLE IF NOT EXISTS wh_settings (
   updated_by VARCHAR(200) NULL
 );
 
-COMMENT ON TABLE wh_settings IS 'Application settings managed via C# API';
-COMMENT ON COLUMN wh_settings.value_type IS 'Data type: string, integer, boolean, json';
+COMMENT ON TABLE __SCHEMA__.wh_settings IS 'Application settings managed via C# API';
+COMMENT ON COLUMN __SCHEMA__.wh_settings.value_type IS 'Data type: string, integer, boolean, json';
 
 -- Insert default log level (Warning and above)
-INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
 VALUES ('sql_log_level', '2', 'integer', 'Minimum log level for wh_log table (0=Debug, 1=Info, 2=Warning, 3=Error)')
 ON CONFLICT (setting_key) DO NOTHING;
 
@@ -87,7 +87,7 @@ DECLARE
 BEGIN
   -- Get configured minimum log level from settings
   SELECT setting_value::INTEGER INTO v_min_log_level
-  FROM wh_settings
+  FROM __SCHEMA__.wh_settings
   WHERE setting_key = 'sql_log_level';
 
   -- Default to Warning (2) if not configured
@@ -95,7 +95,7 @@ BEGIN
 
   -- Only log if level >= configured minimum
   IF p_log_level >= v_min_log_level THEN
-    INSERT INTO wh_log (
+    INSERT INTO __SCHEMA__.wh_log (
       log_level,
       source,
       error_message,

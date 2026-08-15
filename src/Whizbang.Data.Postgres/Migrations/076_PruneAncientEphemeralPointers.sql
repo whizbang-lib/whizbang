@@ -17,7 +17,7 @@
 -- Dependencies: 073 (tier-1 reaper + wh_event_body), 046 (wh_event_store.version), 032 (wh_settings + dedup_retention_days)
 
 -- Settings (all defaulted; the enable flag is FALSE so this migration is inert until an operator opts in).
-INSERT INTO wh_settings (setting_key, setting_value, value_type, description) VALUES
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description) VALUES
   ('ephemeral_deep_maintenance_enabled', 'false', 'boolean',
    'Opt-in killswitch for the tier-2 ephemeral pointer prune (#13b3). FALSE = never prune append-only ephemeral pointers.'),
   ('ephemeral_pointer_retention_days', '90', 'integer',
@@ -45,7 +45,7 @@ DECLARE
 BEGIN
   -- Opt-in gate. Pruning append-only pointers is a deliberate storage-economy choice; off by default.
   SELECT COALESCE(
-    (SELECT setting_value::BOOLEAN FROM wh_settings WHERE setting_key = 'ephemeral_deep_maintenance_enabled'),
+    (SELECT setting_value::BOOLEAN FROM __SCHEMA__.wh_settings WHERE setting_key = 'ephemeral_deep_maintenance_enabled'),
     FALSE) INTO v_enabled;
   IF NOT v_enabled THEN
     RETURN QUERY SELECT 0::BIGINT, 'disabled'::TEXT;
@@ -54,7 +54,7 @@ BEGIN
 
   -- debug_mode retains forensic rows — the reaper (073) and completed-message purges honor it, so must this.
   SELECT COALESCE(
-    (SELECT setting_value::BOOLEAN FROM wh_settings WHERE setting_key = 'debug_mode'),
+    (SELECT setting_value::BOOLEAN FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode'),
     FALSE) INTO v_debug;
   IF v_debug THEN
     RETURN QUERY SELECT 0::BIGINT, 'skipped (debug_mode=true)'::TEXT;
@@ -62,13 +62,13 @@ BEGIN
   END IF;
 
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'ephemeral_pointer_prune_interval_days'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'ephemeral_pointer_prune_interval_days'),
     30) INTO v_interval_days;
 
   -- Self-gate (multi-pod safe): atomically claim this tick by advancing the watermark ONLY if the interval
   -- has elapsed. If no row is updated, another pod already claimed it this interval (or it is not yet due) —
   -- return without pruning. The conditional UPDATE is the atomic CAS; no advisory lock needed.
-  UPDATE wh_settings
+  UPDATE __SCHEMA__.wh_settings
     SET setting_value = NOW()::TEXT
     WHERE setting_key = 'ephemeral_pointer_prune_last_run'
       AND setting_value::TIMESTAMPTZ < NOW() - (v_interval_days * INTERVAL '1 day');
@@ -79,10 +79,10 @@ BEGIN
   END IF;
 
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'ephemeral_pointer_retention_days'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'ephemeral_pointer_retention_days'),
     90) INTO v_retention_days;
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'dedup_retention_days'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'dedup_retention_days'),
     30) INTO v_dedup_days;
   -- Safety floor: the horizon can NEVER be shorter than the dedup window — a still-deduped redelivery must
   -- never find its pointer already gone. Operators widen ephemeral_pointer_retention_days for longer

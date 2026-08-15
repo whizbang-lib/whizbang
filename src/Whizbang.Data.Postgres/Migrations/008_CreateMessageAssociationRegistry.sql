@@ -10,11 +10,11 @@
 
 -- Ensure normalized_message_type column exists BEFORE function definition (idempotent)
 -- Must precede CREATE FUNCTION because PL/pgSQL validates column references at creation time
-ALTER TABLE wh_message_associations ADD COLUMN IF NOT EXISTS normalized_message_type VARCHAR(500);
+ALTER TABLE __SCHEMA__.wh_message_associations ADD COLUMN IF NOT EXISTS normalized_message_type VARCHAR(500);
 
 -- Index for JOIN performance in Phase 4.6/4.7 (uses normalized_message_type instead of function calls)
 CREATE INDEX IF NOT EXISTS idx_message_associations_normalized_type
-ON wh_message_associations (normalized_message_type, association_type);
+ON __SCHEMA__.wh_message_associations (normalized_message_type, association_type);
 
 -- ============================================================================
 -- register_message_associations Function

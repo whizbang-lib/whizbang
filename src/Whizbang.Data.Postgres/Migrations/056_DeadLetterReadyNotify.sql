@@ -26,8 +26,8 @@ COMMENT ON FUNCTION __SCHEMA__._notify_dead_letter_ready IS
   'active instance''s wh_work_i_<id> channel so DeadLetterRecoveryWorker wakes within ms '
   'of the row insert (vs. up to 10 min on the polling-only path).';
 
-DROP TRIGGER IF EXISTS trg_wh_dead_letters_notify ON wh_dead_letters;
+DROP TRIGGER IF EXISTS trg_wh_dead_letters_notify ON __SCHEMA__.wh_dead_letters;
 CREATE TRIGGER trg_wh_dead_letters_notify
-  AFTER INSERT ON wh_dead_letters
+  AFTER INSERT ON __SCHEMA__.wh_dead_letters
   FOR EACH ROW
   EXECUTE FUNCTION __SCHEMA__._notify_dead_letter_ready();
