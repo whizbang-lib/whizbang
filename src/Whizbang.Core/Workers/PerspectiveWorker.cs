@@ -74,7 +74,12 @@ public partial class PerspectiveWorker(
   // Renewal enqueues (ILeaseRenewalChannel) are filtered by the flush against this registry —
   // an id with no registered LeaseHandle is silently skipped. The collective sink registers its
   // leased work rows here so per-batch renewals actually land (mirrors OutboxPublishWorker).
-  LeaseRegistry? leaseRegistry = null
+  LeaseRegistry? leaseRegistry = null,
+  // Startup barrier. Optional ONLY so existing test fixtures construct unchanged; DI always
+  // supplies it, and without it the startup work below would run against a database that may
+  // not have been migrated yet — the exact ungated-repair defect the startup pipeline exists
+  // to close.
+  ISchemaReadyGate? schemaReadyGate = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -370,6 +375,18 @@ public partial class PerspectiveWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
+    // EVERYTHING below touches the database — registry initialization, orphan-lifecycle
+    // reconcile, rewind repair, the drain loop. None of it may begin before migrations have
+    // completed. A comment here used to claim the gate "has already been awaited"; it had not
+    // been, and on a cold database the startup repair silently no-op'd inside its catch-alls.
+    if (schemaReadyGate is not null) {
+      try {
+        await schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
+      }
+    }
+
     // Slice 7a — hook the perspective NOTIFY signal so we wake on every new
     // wh_perspective_events insert instead of polling at PollingIntervalMilliseconds.
     if (_perspectiveNotificationListener is not null && !_perspectiveSignalSubscribed) {
@@ -627,7 +644,8 @@ public partial class PerspectiveWorker(
 
   private void _processInitialCheckpoints() {
     LogCheckingPendingCheckpoints(_logger);
-    // Schema-ready gate has already been awaited in ExecuteAsync before this point.
+    // Schema-ready gate is awaited at the top of ExecuteAsync (when DI supplies it), so by
+    // this point migrations have completed.
     // ClaimWorker feeds work to the channel reader; the main loop picks up any
     // leftover work as soon as it starts.
     LogInitialCheckpointProcessingComplete(_logger);

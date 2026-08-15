@@ -87,6 +87,33 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangRunControl();
     services.AddHostedService<LifecyclePhaseWorker>();
 
+    // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
+    // resolved from their dependencies, and per-step outcome/duration/reason. The state is
+    // registered as BOTH the queryable surface (IStartupPipelineState) and an observer — it
+    // derives its answers from the same notifications every other observer gets, never
+    // privileged. Migrate is the first framework behaviour to become a declared step: the
+    // schema-ready gate is demoted from THE global barrier to that one step's completion
+    // signal, and workers adopt WaitForAsync("Migrate") one declared dependency at a time.
+    services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineState>();
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupPipelineState>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
+    services.TryAddSingleton<Whizbang.Core.Observability.StartupPipelineMetrics>();
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+      new Whizbang.Core.Startup.LoggingStartupStepObserver(
+        (Microsoft.Extensions.Logging.ILogger?)sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance));
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+      new Whizbang.Core.Startup.MetricsStartupStepObserver(
+        sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>()));
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>();
+    services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupPipelineRunner(
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupStep>()],
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupStepObserver>()]));
+    services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineWorker>());
+
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
     // This avoids a circular DI deadlock: if we resolved the channel via
