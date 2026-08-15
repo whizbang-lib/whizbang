@@ -17,22 +17,22 @@ public static partial class SchemaInitializationLog {
   [LoggerMessage(
       Level = LogLevel.Debug,
       Message = "Acquiring advisory lock {LockId} for schema '{Schema}'...")]
-  public static partial void AcquiringAdvisoryLock(ILogger logger, int lockId, string schema);
+  public static partial void AcquiringAdvisoryLock(ILogger logger, long lockId, string schema);
 
   [LoggerMessage(
       Level = LogLevel.Debug,
       Message = "Advisory lock {LockId} held by another instance, retrying (attempt {Attempt}, delay {DelayMs}ms)...")]
-  public static partial void AdvisoryLockRetry(ILogger logger, int lockId, int attempt, int delayMs);
+  public static partial void AdvisoryLockRetry(ILogger logger, long lockId, int attempt, int delayMs);
 
   [LoggerMessage(
       Level = LogLevel.Debug,
       Message = "Acquired advisory lock {LockId} for schema '{Schema}'")]
-  public static partial void AcquiredAdvisoryLock(ILogger logger, int lockId, string schema);
+  public static partial void AcquiredAdvisoryLock(ILogger logger, long lockId, string schema);
 
   [LoggerMessage(
       Level = LogLevel.Debug,
       Message = "Transaction committed, advisory lock {LockId} released for schema '{Schema}'")]
-  public static partial void TransactionCommitted(ILogger logger, int lockId, string schema);
+  public static partial void TransactionCommitted(ILogger logger, long lockId, string schema);
 
   [LoggerMessage(
       Level = LogLevel.Warning,

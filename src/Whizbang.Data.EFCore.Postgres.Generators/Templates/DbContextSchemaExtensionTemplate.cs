@@ -67,7 +67,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var migrationsApplied = 0;
     var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();
     var phaseSw = new System.Diagnostics.Stopwatch();
-    var lockId = Math.Abs("__SCHEMA__".GetHashCode()) % int.MaxValue;
+    // Process-stable, so every instance initializing this schema computes the SAME key and the
+    // lock actually excludes. Deriving it from string.GetHashCode would not: .NET randomizes the
+    // string hash seed per process, so each instance would take its own private lock and all of
+    // them would run DDL together.
+    var lockId = Whizbang.Data.Postgres.SchemaInitializationLockKey.Compute("__SCHEMA__");
     var rng = new Random();
 
     // Outer retry loop: retries on transient failures (connection drops, timeouts, deadlocks).

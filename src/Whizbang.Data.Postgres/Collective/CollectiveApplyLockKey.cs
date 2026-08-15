@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace Whizbang.Data.Postgres.Collective;
 
 /// <summary>
@@ -25,18 +23,6 @@ public static class CollectiveApplyLockKey {
   public static long Compute(string table, string scopeKey) {
     ArgumentNullException.ThrowIfNull(table);
     ArgumentNullException.ThrowIfNull(scopeKey);
-    return _fnv1a64(table + "|" + scopeKey);
-  }
-
-  private static long _fnv1a64(string s) {
-    const ulong offset = 14695981039346656037UL;
-    const ulong prime = 1099511628211UL;
-    var hash = offset;
-    var bytes = Encoding.UTF8.GetBytes(s);
-    foreach (var b in bytes) {
-      hash ^= b;
-      hash *= prime;
-    }
-    return unchecked((long)hash);
+    return Fnv1a64.Compute(table + "|" + scopeKey);
   }
 }
