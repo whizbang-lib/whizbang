@@ -24,6 +24,15 @@ public class SchemaLedgerVersionTests : EFCoreTestBase {
   /// <summary>A version that outranks whatever this build stamps, so the ledger looks "newer".</summary>
   private const string FUTURE_VERSION = "999.0.0";
 
+  /// <summary>
+  /// The SemVer floor — the lowest version that exists (numeric pre-release identifiers rank
+  /// below alphanumeric ones). Every stampable build outranks it, INCLUDING CI's PR placeholder
+  /// (<c>0.0.0-prNNN.N</c>, used when the version job is skipped on pull requests), which is why
+  /// this can't be a small-but-real version like <c>0.0.1</c>: <c>0.0.0-pr478.13 &lt; 0.0.1</c>,
+  /// and the guard would (correctly) refuse the re-apply this test needs to see.
+  /// </summary>
+  private const string ANCIENT_VERSION = "0.0.0-0";
+
   private async Task<(string FileName, string Hash)> _pickTrackedMigrationAsync(
       NpgsqlConnection conn, CancellationToken ct) {
     await using var cmd = conn.CreateCommand();
@@ -88,7 +97,7 @@ public class SchemaLedgerVersionTests : EFCoreTestBase {
     // Arrange — the same drift, but recorded against a build this one outranks. The ordinary
     // upgrade path must stay open, or the guard would simply freeze every schema forever.
     await _execAsync(conn, $@"
-      UPDATE wh_schema_versions SET library_version = '0.0.1'
+      UPDATE wh_schema_versions SET library_version = '{ANCIENT_VERSION}'
       WHERE id = (SELECT version_id FROM wh_schema_migrations WHERE file_name = '{fileName}')",
       cancellationToken);
     await _execAsync(conn, $@"

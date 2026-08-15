@@ -42,6 +42,21 @@ public class MigrationVersionGuardTests {
     await Assert.That(MigrationVersionGuard.MayApply(mine, recorded, out _)).IsTrue();
   }
 
+  // CI's pull-request builds stamp the placeholder 0.0.0-prNNN.N when the version job is
+  // skipped. That build outranks only the SemVer floor (numeric pre-release identifiers rank
+  // below alphanumeric ones) — it does NOT outrank 0.0.1, and the guard must refuse there
+  // exactly as it would for any older build. Caught live: an integration test seeded 0.0.1 as
+  // "ancient" and the guard correctly froze the re-apply under a PR build.
+  [Test]
+  public async Task MayApply_PlaceholderPrBuild_OutranksOnlyTheSemVerFloorAsync() {
+    await Assert.That(MigrationVersionGuard.MayApply("0.0.0-pr478.13", "0.0.0-0", out _)).IsTrue()
+      .Because("every stampable build outranks the floor — the ordinary upgrade path stays open");
+    await Assert.That(MigrationVersionGuard.MayApply("0.0.0-pr478.13", "0.0.1", out var reason)).IsFalse()
+      .Because("0.0.0-pr478.13 is a pre-release of 0.0.0, which is older than 0.0.1 — a "
+             + "placeholder-version build must never downgrade a schema written by a real one");
+    await Assert.That(reason).IsNotEmpty();
+  }
+
   // Re-applying at the same version is how a hash-drifted file gets corrected, and how the
   // redefinition closure re-runs a later definition. It must stay allowed.
   [Test]
