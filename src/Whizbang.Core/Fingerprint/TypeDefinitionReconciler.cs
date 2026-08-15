@@ -77,6 +77,34 @@ public sealed partial class TypeDefinitionReconciler {
     }
     await coordinator.SyncEphemeralTypeGraceAsync(graceOverrides, cancellationToken).ConfigureAwait(false);
 
+    // Carry each perspective's row-retention declaration into the perspective registry, so the reaper
+    // resolves enrolment and windows from SQL instead of having them threaded in every cycle.
+    //
+    // The source is what module initializers REGISTERED across the loaded assemblies — the only
+    // AOT-legal discovery route, since assembly scanning needs the reflection that source-generated
+    // self-registration exists to avoid.
+    var registered = Whizbang.Core.Perspectives.PerspectiveTtlRegistry.RegisteredModels();
+    if (registered.Count > 0) {
+      var retention = new List<PerspectiveRetentionDeclaration>(registered.Count);
+      foreach (var (modelType, ttlSeconds) in registered) {
+        var clrTypeName = modelType.FullName;
+        if (clrTypeName is null) {
+          continue;
+        }
+        // A registered perspective is enrolled by construction — the declaration IS the enrolment.
+        // A negative window means enrolled with no default rule, which is distinct from zero.
+        var cap = Whizbang.Core.Perspectives.PerspectiveRowCapRegistry.Resolve(modelType);
+        retention.Add(new PerspectiveRetentionDeclaration(
+          clrTypeName,
+          Enrolled: true,
+          TtlSeconds: ttlSeconds >= 0 ? ttlSeconds : null,
+          MaxAgeSeconds: null,
+          CapPerScope: cap?.Cap,
+          CapScopeKey: cap?.ScopeKey));
+      }
+      await coordinator.SyncPerspectiveRetentionAsync(retention, cancellationToken).ConfigureAwait(false);
+    }
+
     // Pre-register snapshot of stored definitions, so a genuinely-new registration's previous_definition_id
     // resolves to the prior hashes (to tell settings-drift from schema-drift).
     var snapshot = await coordinator.GetTypeDefinitionsAsync(cancellationToken).ConfigureAwait(false);

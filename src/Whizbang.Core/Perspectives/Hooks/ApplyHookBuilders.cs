@@ -46,6 +46,11 @@ internal class ApplyHookBuilder<TMarker> : IApplyHookBuilder<TMarker> {
     return this;
   }
 
+  public IApplyHookBuilder<TMarker> SuppressActivity() {
+    Ops.Add(new SuppressActivityOp());
+    return this;
+  }
+
   public IApplyHookBuilder<TMarker> RemoveSetter<TProp>(Expression<Func<TMarker, TProp>> selector) {
     ArgumentNullException.ThrowIfNull(selector);
     Ops.Add(new RemoveSetterOp(ApplyHookSelector.PropertyName(selector)));

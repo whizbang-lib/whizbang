@@ -21,7 +21,8 @@ namespace Whizbang.Data.Postgres;
 public sealed record PerEventApplyHookPlan(
   DateTimeOffset? UpdatedAt,
   bool BumpVersion,
-  IReadOnlyList<SetPropertyOp> ModelFieldSetters);
+  IReadOnlyList<SetPropertyOp> ModelFieldSetters,
+  bool SuppressActivity = false);
 
 /// <summary>
 /// Process-wide accessor + interpreter for the per-event (loaded-row object mutation) apply hooks, used by the
@@ -63,6 +64,7 @@ public static class PerEventApplyHooks {
     ArgumentNullException.ThrowIfNull(context);
     DateTimeOffset? updatedAt = null;
     var bump = false;
+    var suppressActivity = false;
     var setters = new List<SetPropertyOp>();
 
     foreach (var produce in registry.ResolveFor(context.ModelType)) {
@@ -79,6 +81,9 @@ public static class PerEventApplyHooks {
           case BumpVersionOp:
             bump = true;
             break;
+          case SuppressActivityOp:
+            suppressActivity = true;
+            break;
           case SetPropertyOp setProperty:
             setters.Add(setProperty);
             break;
@@ -88,7 +93,7 @@ public static class PerEventApplyHooks {
         }
       }
     }
-    return new PerEventApplyHookPlan(updatedAt, bump, setters);
+    return new PerEventApplyHookPlan(updatedAt, bump, setters, suppressActivity);
   }
 
   /// <summary>Apply the plan's <c>SetProperty</c> model-field setters to <paramref name="model"/> in place.</summary>

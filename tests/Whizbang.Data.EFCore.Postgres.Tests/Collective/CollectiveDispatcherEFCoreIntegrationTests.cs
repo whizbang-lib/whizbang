@@ -528,6 +528,8 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
         version INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS wh_per_collective_job_status (
@@ -537,6 +539,8 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
         version INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS wh_per_collective_cells (
@@ -546,6 +550,8 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
         version INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS wh_per_collective_overlay (
@@ -555,6 +561,8 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
         version INTEGER NOT NULL
       );
       """);

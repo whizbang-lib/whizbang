@@ -26,6 +26,19 @@ public static class PerspectiveTtlRegistry {
     _ttlSecondsByModel[modelType] = ttlSeconds;
   }
 
+  /// <summary>
+  /// A snapshot of every model registered across the loaded assemblies, with its declared TTL in
+  /// seconds. The startup sync reads this to carry each declaration into SQL.
+  /// </summary>
+  /// <remarks>
+  /// Enumerating what module initializers REGISTERED is the only AOT-legal way to discover
+  /// perspectives: assembly scanning needs reflection, which is exactly what the source-generated
+  /// self-registration pattern exists to avoid. Returns a snapshot, so it is safe to enumerate
+  /// while further assemblies initialize.
+  /// </remarks>
+  public static IReadOnlyList<KeyValuePair<Type, int>> RegisteredModels() =>
+    [.. _ttlSecondsByModel];
+
   private static volatile bool _enabled = true;
   private static volatile Dictionary<string, int?>? _runtimeOverrides;
 
