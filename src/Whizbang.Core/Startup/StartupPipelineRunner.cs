@@ -86,13 +86,21 @@ public interface IStartupStep {
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineRunnerTests.cs</tests>
 public sealed class StartupPipelineRunner {
   private readonly IReadOnlyList<IStartupStep> _steps;
+  private readonly IReadOnlyList<IStartupStepObserver> _observers;
 
   /// <summary>Creates a runner over the registered steps.</summary>
   /// <param name="steps">The registered steps, in any order — the resolver decides the real one.</param>
+  /// <param name="observers">
+  /// The observers to notify around each step and at run completion. Advisory: an observer that
+  /// throws is skipped for that notification and never fails the step, the run, or its peers.
+  /// </param>
   /// <exception cref="ArgumentNullException"><paramref name="steps"/> is <see langword="null"/>.</exception>
-  public StartupPipelineRunner(IReadOnlyList<IStartupStep> steps) {
+  public StartupPipelineRunner(
+      IReadOnlyList<IStartupStep> steps,
+      IReadOnlyList<IStartupStepObserver>? observers = null) {
     ArgumentNullException.ThrowIfNull(steps);
     _steps = steps;
+    _observers = observers ?? [];
   }
 
   /// <summary>
@@ -119,6 +127,9 @@ public sealed class StartupPipelineRunner {
     foreach (var descriptor in ordered) {
       cancellationToken.ThrowIfCancellationRequested();
 
+      await _notifyAsync(o => o.OnStepStartingAsync(new StartupStepContext(descriptor), cancellationToken))
+        .ConfigureAwait(false);
+
       var step = byName[descriptor.Name];
       var watch = Stopwatch.StartNew();
       StartupStepReport report;
@@ -131,10 +142,33 @@ public sealed class StartupPipelineRunner {
       }
       watch.Stop();
 
-      results.Add(new StartupStepResult(
-        descriptor.Name, report.Outcome, watch.Elapsed, report.Reason));
+      var result = new StartupStepResult(descriptor.Name, report.Outcome, watch.Elapsed, report.Reason);
+      results.Add(result);
+
+      await _notifyAsync(o => o.OnStepCompletedAsync(result, cancellationToken)).ConfigureAwait(false);
     }
 
+    var summary = new StartupSummary(results);
+    await _notifyAsync(o => o.OnPipelineCompletedAsync(summary, cancellationToken)).ConfigureAwait(false);
+
     return results;
+  }
+
+  /// <summary>
+  /// Notifies every observer, swallowing what any one of them throws: a diagnostic must not be
+  /// able to break a boot, and one broken diagnostic must not silence the rest.
+  /// </summary>
+  private async ValueTask _notifyAsync(Func<IStartupStepObserver, ValueTask> notification) {
+    foreach (var observer in _observers) {
+#pragma warning disable CA1031, RCS1075 // deliberately swallowed: the observer contract is advisory,
+      // and the framework's logging observer is itself an observer — there is no lower layer to
+      // report to without creating the recursion this guard exists to prevent.
+      try {
+        await notification(observer).ConfigureAwait(false);
+      } catch (Exception) {
+        // advisory — see pragma justification above
+      }
+#pragma warning restore CA1031, RCS1075
+    }
   }
 }
