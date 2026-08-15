@@ -93,8 +93,14 @@ public sealed partial class TypeDefinitionReconciler {
         }
         // A registered perspective is enrolled by construction — the declaration IS the enrolment.
         // A negative window means enrolled with no default rule, which is distinct from zero.
+        var cap = Whizbang.Core.Perspectives.PerspectiveRowCapRegistry.Resolve(modelType);
         retention.Add(new PerspectiveRetentionDeclaration(
-          clrTypeName, Enrolled: true, TtlSeconds: ttlSeconds >= 0 ? ttlSeconds : null, MaxAgeSeconds: null));
+          clrTypeName,
+          Enrolled: true,
+          TtlSeconds: ttlSeconds >= 0 ? ttlSeconds : null,
+          MaxAgeSeconds: null,
+          CapPerScope: cap?.Cap,
+          CapScopeKey: cap?.ScopeKey));
       }
       await coordinator.SyncPerspectiveRetentionAsync(retention, cancellationToken).ConfigureAwait(false);
     }

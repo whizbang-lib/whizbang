@@ -1613,7 +1613,9 @@ public sealed record PerspectiveRetentionDeclaration(
   string ClrTypeName,
   bool Enrolled,
   int? TtlSeconds,
-  int? MaxAgeSeconds);
+  int? MaxAgeSeconds,
+  int? CapPerScope = null,
+  string? CapScopeKey = null);
 
 /// <summary>
 /// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,
