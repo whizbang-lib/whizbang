@@ -434,6 +434,51 @@ public class IntegrityAuditWorkerTests {
       .Because("opting out restores the original interval-first behavior.");
   }
 
+  // ── re-arming after a cycle that asked nobody ───────────────────────────
+
+  // The cross-service half draws its origin set from an in-memory tracker that is empty at boot
+  // and filled only by inbound checkpoints. On a cold fleet start the first audit can fire before
+  // any peer has checkpointed, iterate an empty collection, ask nothing, and report success — then
+  // fall through to the full interval, which defaults to a day. A cycle that had nobody to ask has
+  // not audited anything, and must retry on the startup window instead.
+
+  [Test]
+  public async Task NextAuditDelay_AfterACycleThatAskedNobody_ReArmsTheStartupWindowAsync() {
+    var options = new StreamIntegrityOptions();   // AuditOnStartup default true
+
+    var atFloor = IntegrityAuditWorker.ComputeNextAuditDelay(options, () => 0.0, askedNobody: true);
+    var atCeiling = IntegrityAuditWorker.ComputeNextAuditDelay(options, () => 1.0, askedNobody: true);
+
+    await Assert.That(atFloor).IsEqualTo(TimeSpan.FromSeconds(30))
+      .Because("a cycle with no origins to ask has audited nothing — waiting a full day to try again "
+               + "is indistinguishable from never noticing the fleet exists.");
+    await Assert.That(atCeiling).IsEqualTo(TimeSpan.FromSeconds(30 + 300))
+      .Because("the retry keeps the same jitter, so a fleet that all asked nobody does not then all "
+               + "retry in unison.");
+  }
+
+  [Test]
+  public async Task NextAuditDelay_AfterACycleThatAskedSomeone_UsesTheFullIntervalAsync() {
+    var options = new StreamIntegrityOptions();
+
+    var delay = IntegrityAuditWorker.ComputeNextAuditDelay(options, () => 0.5, askedNobody: false);
+
+    await Assert.That(delay).IsEqualTo(TimeSpan.FromMinutes(options.AuditIntervalMinutes))
+      .Because("a cycle that actually reached its origins is a real audit, and the steady cadence applies.");
+  }
+
+  // Opting out of the startup window must not be quietly re-enabled by the re-arm path — a host
+  // that asked for interval-first scheduling gets it in every case.
+  [Test]
+  public async Task NextAuditDelay_WhenStartupAuditDisabled_UsesIntervalEvenAfterAskingNobodyAsync() {
+    var options = new StreamIntegrityOptions { AuditOnStartup = false };
+
+    var delay = IntegrityAuditWorker.ComputeNextAuditDelay(options, () => 0.5, askedNobody: true);
+
+    await Assert.That(delay).IsEqualTo(TimeSpan.FromMinutes(options.AuditIntervalMinutes))
+      .Because("AuditOnStartup=false is a scheduling preference, not a thing the retry path may override.");
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static IntegrityAuditWorker _buildWorker(
