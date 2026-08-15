@@ -15,13 +15,21 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Blocking (default, <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/> = false):</b>
-/// migrations run inline in <c>StartAsync</c>, so the host does not finish starting (no HTTP port,
-/// no workers) until they complete, and a failure throws — aborting startup and keeping the system
-/// in a safe halted state. The long-standing behavior; unchanged for every existing consumer.
+/// <b>Non-blocking (default, <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/> = true):</b>
+/// initialization runs in the background and <c>StartAsync</c> returns immediately, so the host
+/// binds its port and begins serving <em>while migrations are still running</em>. That is the most
+/// consequential fact about startup here, and it is why the availability gate and the readiness
+/// check exist: the gate stays closed until migrations succeed, so nothing reaches an unmigrated
+/// schema through them.
 /// </para>
 /// <para>
-/// <b>Non-blocking (opt-in):</b> initialization runs in the background; <c>StartAsync</c> returns
+/// <b>Blocking (opt in with <c>NonBlockingSchemaInit = false</c>):</b>
+/// migrations run inline in <c>StartAsync</c>, so the host does not finish starting (no HTTP port,
+/// no workers) until they complete, and a failure throws — aborting startup and keeping the system
+/// in a safe halted state.
+/// </para>
+/// <para>
+/// <b>In the non-blocking default:</b> initialization runs in the background; <c>StartAsync</c> returns
 /// immediately so the host binds and can answer a liveness probe, while the gate stays closed until
 /// migrations succeed. Workers — and a readiness check that reads the gate — hold off until then, so
 /// nothing touches an unmigrated schema. On failure (including a
