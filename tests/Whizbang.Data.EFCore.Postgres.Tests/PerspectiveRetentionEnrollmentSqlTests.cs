@@ -71,7 +71,7 @@ public class PerspectiveRetentionEnrollmentSqlTests : EFCoreTestBase {
     }
 
     await using (var sync = new NpgsqlCommand(
-      "SELECT sync_perspective_retention(@t, TRUE, 5184000, NULL)", conn)) {
+      "SELECT sync_perspective_retention(@t, TRUE, 5184000, NULL, NULL, NULL)", conn)) {
       sync.Parameters.AddWithValue("t", clrType);
       await sync.ExecuteNonQueryAsync();
     }
@@ -109,7 +109,7 @@ public class PerspectiveRetentionEnrollmentSqlTests : EFCoreTestBase {
 
     for (var i = 0; i < 2; i++) {
       await using var sync = new NpgsqlCommand(
-        "SELECT sync_perspective_retention(@t, TRUE, 60, 3600)", conn);
+        "SELECT sync_perspective_retention(@t, TRUE, 60, 3600, NULL, NULL)", conn);
       sync.Parameters.AddWithValue("t", clrType);
       await sync.ExecuteNonQueryAsync();
     }
@@ -117,7 +117,7 @@ public class PerspectiveRetentionEnrollmentSqlTests : EFCoreTestBase {
     // Removing the attribute must un-enrol, or the reaper keeps sweeping a perspective whose
     // declaration is gone.
     await using (var unenroll = new NpgsqlCommand(
-      "SELECT sync_perspective_retention(@t, FALSE, NULL, NULL)", conn)) {
+      "SELECT sync_perspective_retention(@t, FALSE, NULL, NULL, NULL, NULL)", conn)) {
       unenroll.Parameters.AddWithValue("t", clrType);
       await unenroll.ExecuteNonQueryAsync();
     }

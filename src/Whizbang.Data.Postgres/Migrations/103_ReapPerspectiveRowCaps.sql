@@ -27,6 +27,41 @@ COMMENT ON COLUMN __SCHEMA__.wh_perspective_registry.row_cap_per_scope IS
 COMMENT ON COLUMN __SCHEMA__.wh_perspective_registry.row_cap_scope_key IS
   'Scope JSON key partitioning the cap ranking: u (per user), t (per tenant), or NULL for whole-table.';
 
+-- Re-created from 101 with the cap carried through. It cannot live in 101: the columns it writes are
+-- added by THIS file, so a 101-era definition referencing them would fail to validate. The signature
+-- changes, so the old overload is dropped first — a defaulted parameter would sit BESIDE the 4-arg form
+-- rather than replace it, and a 4-arg call would then resolve to neither (42725 "function is not unique").
+--
+-- Without this the declaration never reaches the database: [RowCap] registers into
+-- PerspectiveRowCapRegistry, the startup reconciler reads it into the declaration, and the value was
+-- then dropped on the floor here because the function had nowhere to put it. The cap sweep in this same
+-- file reads row_cap_per_scope and was correct all along; it was simply never told.
+SELECT __SCHEMA__.drop_all_overloads('sync_perspective_retention');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.sync_perspective_retention(
+  p_clr_type_name TEXT,
+  p_enrolled BOOLEAN,
+  p_ttl_seconds INTEGER,
+  p_max_age_seconds INTEGER,
+  p_cap_per_scope INTEGER,
+  p_cap_scope_key TEXT
+) RETURNS INTEGER AS $$
+DECLARE
+  v_updated INTEGER;
+BEGIN
+  UPDATE __SCHEMA__.wh_perspective_registry
+     SET row_retention_enrolled = p_enrolled,
+         row_ttl_seconds        = CASE WHEN p_enrolled THEN p_ttl_seconds ELSE NULL END,
+         row_max_age_seconds    = CASE WHEN p_enrolled THEN p_max_age_seconds ELSE NULL END,
+         row_cap_per_scope      = CASE WHEN p_enrolled THEN p_cap_per_scope ELSE NULL END,
+         row_cap_scope_key      = CASE WHEN p_enrolled THEN p_cap_scope_key ELSE NULL END
+   WHERE clr_type_name = p_clr_type_name;
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  RETURN v_updated;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.reap_perspective_row_caps()
 RETURNS TABLE(task TEXT, rows_affected INTEGER, duration_ms DOUBLE PRECISION, status TEXT) AS $$
 DECLARE

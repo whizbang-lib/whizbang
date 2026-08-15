@@ -65,6 +65,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // EF Core upsert stamps expires_at = now + ttl. Empty for non-TtlRow perspectives (their rows never expire).
   #endregion
 
+  #region ROW_CAP_REGISTRATION
+  // Generated: a [RowCap] perspective registers its per-scope cap via a [ModuleInitializer], the same
+  // turnkey path as the row TTL above, so the startup reconciler can sync it into
+  // wh_perspective_registry and the cap sweep can see the declaration. Empty when no cap is declared —
+  // absent must stay distinct from a cap of zero, which would evict everything.
+  #endregion
+
   #region FULL_HISTORY_REGISTRATION
   // Generated: a [FullHistory] perspective registers its name via a [ModuleInitializer] so the A1 close guard
   // refuses a discard-close of any stream it consumes. Empty for resumable (unmarked) perspectives.
