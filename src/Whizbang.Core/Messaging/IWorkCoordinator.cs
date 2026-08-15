@@ -557,6 +557,18 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// Carries each perspective's row-retention declaration into the perspective registry, so the
+  /// reaper resolves enrollment and windows from SQL rather than needing them threaded in per cycle.
+  /// Called once at startup. No-op on engines without the registry columns.
+  /// </summary>
+  /// <param name="declarations">Every perspective's declaration; drives enrolment and un-enrolment.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  Task SyncPerspectiveRetentionAsync(
+    IReadOnlyList<PerspectiveRetentionDeclaration> declarations,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Finds the <c>(stream, perspective)</c> pairs the maintenance cycle must snapshot BEFORE it reaps: an
   /// ephemeral body that is consumed and aged past its grace window, whose consuming perspective has NO
   /// snapshot at/past the event's <c>commit_sequence</c>. Snapshotting these (via the runner's bootstrap
@@ -1586,6 +1598,22 @@ public sealed record EphemeralReclassificationResult(
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record EphemeralTypeGrace(string EventTypeName, int GraceSeconds);
+
+/// <summary>
+/// One perspective's row-retention declaration, carried from the C# registry into the perspective
+/// registry so the reaper can sweep only enrolled perspectives.
+/// </summary>
+/// <remarks>
+/// Enrollment and duration are separate: an enrolled perspective with both windows null is swept
+/// but has no default rule, so its rows expire only by an explicitly assigned expiry. Null stays
+/// distinct from zero, which would mean expire-immediately.
+/// </remarks>
+/// <docs>fundamentals/perspectives/row-retention</docs>
+public sealed record PerspectiveRetentionDeclaration(
+  string ClrTypeName,
+  bool Enrolled,
+  int? TtlSeconds,
+  int? MaxAgeSeconds);
 
 /// <summary>
 /// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,
