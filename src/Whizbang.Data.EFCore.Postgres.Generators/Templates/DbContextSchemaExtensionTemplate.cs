@@ -98,16 +98,31 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         bool infraChanged;
         bool perspChanged;
         bool associationsChanged;
+        // Set when the fast path found stale duplicate overloads: the in-lock hash RE-CHECK must
+        // not early-out on "hashes match", because hashes cannot see the duplicates.
+        var duplicateSweepPending = false;
 
         try {
           var existingHashes = await _bulkGetHashesAsync(connection, cancellationToken);
           (infraChanged, perspChanged, associationsChanged) = _compareHashes(existingHashes);
 
           if (!infraChanged && !perspChanged && !associationsChanged) {
-            if (logger is not null) {
-              Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
+            // Hashes say nothing changed — but hashes cannot see stale duplicate overloads left
+            // behind by the pre-fix drop_all_overloads in multi-schema deployments. One cheap
+            // catalog query decides; only an actual duplicate pays the extractor cost inside.
+            var fastPathDuplicates = await _getDuplicateFrameworkOverloadNamesAsync(connection, cancellationToken);
+            if (fastPathDuplicates.Count > 0) {
+              duplicateSweepPending = true;
+              logger?.LogWarning(
+                "Schema '{Schema}' is hash-clean but carries stale duplicate overload(s) of: {Names} — taking the slow path to sweep them.",
+                "__SCHEMA__", string.Join(", ", fastPathDuplicates));
+              infraChanged = true;
+            } else {
+              if (logger is not null) {
+                Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
+              }
+              break; // Exit retry loop — no changes, no lock needed
             }
-            break; // Exit retry loop — no changes, no lock needed
           }
 
           if (logger is not null) {
@@ -200,6 +215,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               await spCmd.ExecuteNonQueryAsync(cancellationToken);
             }
             (infraChanged, perspChanged, associationsChanged) = _compareHashes(existingHashes);
+            if (duplicateSweepPending) {
+              // Another instance completing initialization does not clear stale duplicate
+              // overloads — only the sweep does, and it runs through ExecuteMigrationsAsync.
+              infraChanged = true;
+            }
 
             if (!infraChanged && !perspChanged && !associationsChanged) {
               await dbTransaction!.CommitAsync(cancellationToken);
@@ -415,6 +435,46 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     if (ex is TimeoutException) return true;
     if (ex is System.IO.IOException) return true;
     return false;
+  }
+
+  /// <summary>
+  /// Names of framework-defined functions that currently have MORE THAN ONE overload in the
+  /// schema. Before drop_all_overloads resolved its own schema (it filtered by current_schema(),
+  /// which pooled EF connections reduce to 'public'), every signature change in a multi-schema
+  /// deployment silently left the old overload behind. Duplicates make unqualified calls ambiguous
+  /// and the next return-type change fail with 42P13, so the initializer sweeps them by forcing
+  /// the defining migrations to re-run — their (fixed) drop_all_overloads clears every overload
+  /// and the file recreates the single canonical one. The intersection with extracted migration
+  /// object names keeps a consumer's own intentional overloads from ever triggering this.
+  /// </summary>
+  private static async Task<System.Collections.Generic.HashSet<string>> _getDuplicateFrameworkOverloadNamesAsync(
+      Npgsql.NpgsqlConnection connection, CancellationToken ct) {
+    var duplicates = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+    await using (var cmd = connection.CreateCommand()) {
+      cmd.CommandText = @"
+        SELECT p.proname FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = @schema
+        GROUP BY p.proname HAVING COUNT(*) > 1";
+      var schemaName = "__SCHEMA__";
+      cmd.Parameters.AddWithValue("schema", string.IsNullOrEmpty(schemaName) ? "public" : schemaName);
+      cmd.CommandTimeout = 30;
+      await using var reader = await cmd.ExecuteReaderAsync(ct);
+      while (await reader.ReadAsync(ct)) {
+        duplicates.Add(reader.GetString(0));
+      }
+    }
+    if (duplicates.Count == 0) {
+      return duplicates;
+    }
+    var frameworkNames = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+    foreach (var (name, sql) in GetMigrationScripts()) {
+      foreach (var obj in Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(_transformMigrationSql(sql, "__SCHEMA__")).Objects) {
+        frameworkNames.Add(obj);
+      }
+    }
+    duplicates.IntersectWith(frameworkNames);
+    return duplicates;
   }
 
   /// <summary>
@@ -810,6 +870,22 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
         }
         orderedObjects.Add((name, Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(transformedSql).Objects));
       }
+      // Duplicate-overload sweep: force the files defining a duplicated framework function back
+      // into the run. Their drop_all_overloads clears every overload; the closure below then
+      // re-runs any LATER file defining the same object, so the database ends on each object's
+      // last-word definition — the same guarantee ordinary replays get.
+      var duplicateOverloadNames = await _getDuplicateFrameworkOverloadNamesAsync(connection, cancellationToken);
+      if (duplicateOverloadNames.Count > 0) {
+        foreach (var (name, objects) in orderedObjects) {
+          if (!toRun.Contains(name) && objects.Any(duplicateOverloadNames.Contains)) {
+            toRun.Add(name);
+            logger?.LogWarning(
+              "Migration {Migration}: re-running to sweep stale duplicate overload(s) of {Objects} — left behind by a pre-fix drop_all_overloads in a multi-schema deployment.",
+              name, string.Join(", ", objects.Where(duplicateOverloadNames.Contains)));
+          }
+        }
+      }
+
       closureNames = Whizbang.Data.Postgres.MigrationRedefinitionClosure.Expand(orderedObjects, toRun);
       foreach (var pulledIn in closureNames) {
         if (!toRun.Contains(pulledIn)) {
