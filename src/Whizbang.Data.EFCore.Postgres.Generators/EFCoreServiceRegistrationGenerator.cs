@@ -2302,8 +2302,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("  data JSONB NOT NULL,");
     sb.AppendLine("  metadata JSONB NOT NULL,");
     sb.AppendLine("  scope JSONB NOT NULL,");
+    // Business time (replay-invariant, derived from the applied event) — the axis domain logic,
+    // recency ordering and retention read.
     sb.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
     sb.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
+    // System time (wall clock at write, changes on rebuild) — the operational axis. Nullable so the
+    // additive ALTER below can land on pre-existing tables before the backfill fills them.
+    sb.AppendLine("  sys_created_at TIMESTAMPTZ,");
+    sb.AppendLine("  sys_updated_at TIMESTAMPTZ,");
     // Nullable TTL-row expiry (E2-4d): NULL = never expires (PersistedRow/InMemory). Stamped on upsert for
     // TtlRow perspectives; lens queries hide expired rows and a maintenance task reaps them.
     sb.AppendLine("  expires_at TIMESTAMPTZ,");
@@ -2322,6 +2328,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine(");");
     // Additive for tables created before E2-4d — CREATE ... IF NOT EXISTS above skips existing tables.
     sb.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
+    _appendSystemTimeMigrationSql(sb, perspective, quotedSchema);
     sb.AppendLine();
   }
 
@@ -2337,6 +2344,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Add B-tree index on created_at for time-based queries (matches EF Core configuration)
     sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_created_at");
     sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} (created_at);");
+    sb.AppendLine();
+    // updated_at carries the sliding retention predicate (updated_at < NOW() - interval). Written with
+    // the arithmetic on the NOW() side it is sargable; unindexed the reaper degrades to a sequential
+    // scan of every enrolled table on every maintenance cycle.
+    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_updated_at");
+    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} (updated_at);");
     sb.AppendLine();
 
     // Add GIN indexes on JSONB columns for full LINQ query support
@@ -2466,6 +2479,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     perspSql.AppendLine("  scope JSONB NOT NULL,");
     perspSql.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
     perspSql.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
+    // System time — see _appendCreateTableSql for the two-axis rationale.
+    perspSql.AppendLine("  sys_created_at TIMESTAMPTZ,");
+    perspSql.AppendLine("  sys_updated_at TIMESTAMPTZ,");
     // Nullable TTL-row expiry (E2-4d): NULL = never expires. See _appendCreateTableSql for the rationale.
     perspSql.AppendLine("  expires_at TIMESTAMPTZ,");
 
@@ -2483,12 +2499,35 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     perspSql.AppendLine(");");
     // Additive for tables created before E2-4d (CREATE ... IF NOT EXISTS skips existing tables).
     perspSql.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
+    _appendSystemTimeMigrationSql(perspSql, perspective, quotedSchema);
+  }
+
+  /// <summary>
+  /// Emits the additive migration for the system-time axis: add the columns to tables that already
+  /// exist, then backfill them by COPYING their business-time siblings.
+  /// </summary>
+  /// <remarks>
+  /// Copying is what preserves meaning. Before this split, <c>created_at</c> / <c>updated_at</c>
+  /// held wall-clock write times — precisely what the system axis means — so the copy is exact for
+  /// the operational side. Defaulting to <c>NOW()</c> instead would assert that every historical
+  /// row was written at upgrade time. The <c>IS NULL</c> guard makes the backfill idempotent, so
+  /// schema init re-running on every startup cannot clobber a row whose write stamp has advanced.
+  /// </remarks>
+  private static void _appendSystemTimeMigrationSql(
+      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    var table = $"{quotedSchema}.{perspective.TableName}";
+    sb.AppendLine($"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS sys_created_at TIMESTAMPTZ;");
+    sb.AppendLine($"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS sys_updated_at TIMESTAMPTZ;");
+    sb.AppendLine($"UPDATE {table} SET sys_created_at = created_at, sys_updated_at = updated_at");
+    sb.AppendLine("  WHERE sys_created_at IS NULL OR sys_updated_at IS NULL;");
   }
 
   private static void _generatePerspectiveIndexSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_created_at ON {quotedSchema}.{perspective.TableName} (created_at);");
+    // See _appendStandardIndexes: updated_at serves the sliding retention predicate.
+    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_updated_at ON {quotedSchema}.{perspective.TableName} (updated_at);");
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin ON {quotedSchema}.{perspective.TableName} USING gin (data);");
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
@@ -2566,6 +2605,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       new("scope", "jsonb", false, false, false, null),
       new("created_at", "timestamptz", false, false, false, null),
       new("updated_at", "timestamptz", false, false, false, null),
+      new("sys_created_at", "timestamptz", true, false, false, null),
+      new("sys_updated_at", "timestamptz", true, false, false, null),
       new("expires_at", "timestamptz", true, false, false, null),
       new("version", "integer", false, false, false, null)
     };
@@ -2589,6 +2630,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
     var schemaIndexes = new List<IndexSchema> {
       new($"idx_{shortName}_created_at", ["created_at"], "btree", false),
+      new($"idx_{shortName}_updated_at", ["updated_at"], "btree", false),
       new($"idx_{shortName}_data_gin", ["data"], "gin", false),
       new($"idx_{shortName}_metadata_gin", ["metadata"], "gin", false),
       new($"idx_{shortName}_scope_gin", ["scope"], "gin", false)

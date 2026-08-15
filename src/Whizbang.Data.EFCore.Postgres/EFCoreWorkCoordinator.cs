@@ -442,6 +442,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task SyncPerspectiveRetentionAsync(
+    IReadOnlyList<PerspectiveRetentionDeclaration> declarations, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(declarations);
+    if (declarations.Count == 0) {
+      return;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "sync_perspective_retention");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    foreach (var declaration in declarations) {
+      await using var cmd = conn.CreateCommand();
+      cmd.CommandText =
+        $"SELECT {fn}(@clr, @enrolled, @ttl, @maxage); " +
+        "UPDATE " + BuildSchemaQualifiedName(schema, "wh_perspective_registry") +
+        " SET row_cap_per_scope = @cap, row_cap_scope_key = @capkey WHERE clr_type_name = @clr";
+      cmd.Parameters.Add(new NpgsqlParameter("clr", declaration.ClrTypeName));
+      cmd.Parameters.Add(new NpgsqlParameter("enrolled", declaration.Enrolled));
+      cmd.Parameters.Add(new NpgsqlParameter("ttl", NpgsqlTypes.NpgsqlDbType.Integer) {
+        Value = (object?)declaration.TtlSeconds ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new NpgsqlParameter("maxage", NpgsqlTypes.NpgsqlDbType.Integer) {
+        Value = (object?)declaration.MaxAgeSeconds ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new NpgsqlParameter("cap", NpgsqlTypes.NpgsqlDbType.Integer) {
+        Value = (object?)declaration.CapPerScope ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new NpgsqlParameter("capkey", NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = (object?)declaration.CapScopeKey ?? DBNull.Value
+      });
+      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<EphemeralSnapshotTarget>> GetEphemeralPairsNeedingSnapshotAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

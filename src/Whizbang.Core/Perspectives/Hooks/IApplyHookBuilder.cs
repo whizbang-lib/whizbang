@@ -35,6 +35,13 @@ public interface IApplyHookBuilder<TMarker> {
   /// <returns>The same builder for chaining.</returns>
   IApplyHookBuilder<TMarker> BumpVersion();
 
+  /// <summary>
+  /// Declares the applied event NOT to be business activity: the row is written, but its business
+  /// time is left where it was. For integrity repairs, backfills and other maintenance-generated
+  /// events that would otherwise extend retention and lift the record up a recency ordering.
+  /// </summary>
+  IApplyHookBuilder<TMarker> SuppressActivity();
+
   /// <summary>Drop a model-field setter added earlier in the apply, by property. Collective-focused.</summary>
   /// <typeparam name="TProp">The property type.</typeparam>
   /// <param name="selector">A top-level property selector for the setter to remove.</param>

@@ -125,6 +125,8 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
         version INTEGER NOT NULL,
         name VARCHAR(200),
         price DECIMAL NOT NULL DEFAULT 0
