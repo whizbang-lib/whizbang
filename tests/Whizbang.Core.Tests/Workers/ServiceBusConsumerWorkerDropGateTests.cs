@@ -201,6 +201,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       await Assert.That(transport.BatchHandler).IsNotNull()
         .Because("Worker must register a batch handler with the transport during StartAsync.");
@@ -226,6 +227,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       var claimEnvelopeType = typeof(MessageEnvelope<BodyClaimEnvelopePayload>).AssemblyQualifiedName!;
       await transport.BatchHandler!.Invoke(
@@ -283,6 +285,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       await Assert.That(transport.BatchHandler).IsNotNull()
         .Because("Worker must register a batch handler with the transport during StartAsync.");
@@ -314,6 +317,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       await transport.BatchHandler!.Invoke(
         [new TransportMessage(_makeEnvelope(), _makeWrapperEnvelopeType())],

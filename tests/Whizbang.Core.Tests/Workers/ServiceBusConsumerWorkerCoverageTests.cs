@@ -48,9 +48,13 @@ public class ServiceBusConsumerWorkerCoverageTests {
       workerOptions
     );
 
-    // Act & Assert - StartAsync should throw because transport.SubscribeAsync fails
-    await Assert.That(async () => await worker.StartAsync(CancellationToken.None))
+    // Act & Assert — subscribing happens in the background now (behind the schema gate), so the
+    // failure surfaces through SubscriptionsReady rather than StartAsync. A waiter must fault,
+    // never hang, when the subscriptions will not arrive.
+    await worker.StartAsync(CancellationToken.None);
+    await Assert.That(async () => await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5)))
       .Throws<InvalidOperationException>();
+    await worker.StopAsync(CancellationToken.None);
   }
 
   [Test]
@@ -83,6 +87,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
     // Act - Start then stop (triggers OperationCanceledException in ExecuteAsync)
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Cancel to stop ExecuteAsync — StopAsync will also cancel and await the task
     await cts.CancelAsync();

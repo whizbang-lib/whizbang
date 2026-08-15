@@ -140,6 +140,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Should start successfully with no subscriptions
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
     await worker.StopAsync(CancellationToken.None);
     // No assertion needed — test verifies no exception is thrown
   }
@@ -161,6 +162,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     var worker = _createWorker(transport, options);
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Act
     await worker.PauseAllSubscriptionsAsync();
@@ -186,6 +188,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     var worker = _createWorker(transport, options);
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
     await worker.PauseAllSubscriptionsAsync();
 
     // Act
@@ -202,6 +205,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     // Arrange - no subscriptions configured
     var worker = _createWorker(new DeepCoverageTransport(), new ServiceBusConsumerOptions());
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Act & Assert - should not throw
     await worker.PauseAllSubscriptionsAsync();
@@ -213,6 +217,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   public async Task ResumeAllSubscriptionsAsync_NoSubscriptions_DoesNotThrowAsync() {
     var worker = _createWorker(new DeepCoverageTransport(), new ServiceBusConsumerOptions());
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     await worker.ResumeAllSubscriptionsAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -237,6 +242,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Assert
     await Assert.That(transport.LastDestination).IsNotNull();
@@ -262,6 +268,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Assert - no metadata when no DestinationFilter
     await Assert.That(transport.LastDestination).IsNotNull();
@@ -286,6 +293,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(3);
@@ -334,6 +342,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Act - invoke the captured handler with a JsonElement envelope
     var envelope = _createJsonEnvelope(messageId, streamId);
@@ -374,6 +383,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Act - handler should return without invoking further processing
     var envelope = _createJsonEnvelope(messageId, Guid.NewGuid());
@@ -420,6 +430,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, Guid.NewGuid());
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
@@ -473,6 +484,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
@@ -557,6 +569,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
@@ -632,6 +645,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
@@ -712,6 +726,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
@@ -789,6 +804,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
@@ -875,6 +891,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
@@ -916,6 +933,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, Guid.NewGuid());
 
@@ -950,6 +968,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, Guid.NewGuid());
 
@@ -984,6 +1003,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, Guid.NewGuid());
 
@@ -1025,6 +1045,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Create envelope with AggregateId in hop metadata
     var envelope = _createJsonEnvelopeWithAggregateId(messageId, expectedStreamId);
@@ -1064,6 +1085,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Create envelope WITHOUT AggregateId metadata
     var envelope = _createJsonEnvelopeWithoutMetadata(messageId);
@@ -1095,6 +1117,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     var worker = _createWorker(transport, options);
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Act
     await worker.StopAsync(CancellationToken.None);
@@ -1155,6 +1178,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Create envelope with TraceParent
     var envelope = _createJsonEnvelopeWithTraceParent(messageId, streamId);
@@ -1195,6 +1219,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelopeWithTraceParent(messageId, Guid.NewGuid());
 

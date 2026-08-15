@@ -49,21 +49,37 @@ public sealed class OrphanInboxJanitor : BackgroundService {
   private readonly IServiceProvider _services;
   private readonly HandledReceptorTypeSnapshot _receptorSnapshot;
   private readonly ILogger<OrphanInboxJanitor>? _logger;
+  private readonly ISchemaReadyGate? _schemaReadyGate;
 
   /// <summary>Constructs the janitor with required services and snapshot.</summary>
   public OrphanInboxJanitor(
       IServiceProvider services,
       HandledReceptorTypeSnapshot receptorSnapshot,
-      ILogger<OrphanInboxJanitor>? logger = null) {
+      ILogger<OrphanInboxJanitor>? logger = null,
+      ISchemaReadyGate? schemaReadyGate = null) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(receptorSnapshot);
     _services = services;
     _receptorSnapshot = receptorSnapshot;
     _logger = logger;
+    _schemaReadyGate = schemaReadyGate;
   }
 
   /// <inheritdoc />
-  public override async Task StartAsync(CancellationToken cancellationToken) {
+  /// <remarks>
+  /// The sweep used to run inline in <c>StartAsync</c>, which both BLOCKED host startup (every
+  /// later hosted service waited on the purge) and skipped the schema gate (a DELETE issued
+  /// against a possibly-unmigrated schema). It now runs here — in the background, after the gate.
+  /// </remarks>
+  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    if (_schemaReadyGate is not null) {
+      try {
+        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
+      }
+    }
+
     try {
       using var scope = _services.CreateScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
@@ -78,7 +94,7 @@ public sealed class OrphanInboxJanitor : BackgroundService {
         return;
       }
 
-      var purged = await coordinator.PurgeOrphanInboxAsync(handledTypeNames, cancellationToken);
+      var purged = await coordinator.PurgeOrphanInboxAsync(handledTypeNames, stoppingToken);
       if (purged.Count == 0) {
         _logger?.LogInformation("OrphanInboxJanitor: no orphan inbox rows to purge ({HandledTypeCount} handled types)", handledTypeNames.Count);
       } else {
@@ -88,15 +104,10 @@ public sealed class OrphanInboxJanitor : BackgroundService {
           _logger?.LogInformation("  → {Count}× {MessageType}", group.Count(), group.Key);
         }
       }
-    } catch (Exception ex) {
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
       _logger?.LogError(ex, "OrphanInboxJanitor startup sweep failed; service continues");
     }
-
-    await base.StartAsync(cancellationToken);
   }
-
-  /// <inheritdoc />
-  protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.CompletedTask;
 
   private List<string> _collectHandledTypeNames(IServiceProvider scopedProvider) {
     var names = new HashSet<string>(StringComparer.Ordinal);
