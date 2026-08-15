@@ -49,11 +49,18 @@ RETURNS VOID AS $$
 DECLARE
   _oid oid;
 BEGIN
+  -- The schema comes from the __SCHEMA__ substitution baked into this body — NEVER from
+  -- current_schema(). Pooled EF connections strip search_path (README rule 10), so
+  -- current_schema() answers 'public' regardless of the schema actually being migrated, and the
+  -- drop silently no-oped for every multi-schema deployment: a signature-changing migration then
+  -- hit 42P13 (cannot change return type) because the old overload it "dropped" was still there.
+  -- The replace() tolerates both runners' substitutions — the EFCore generator injects the
+  -- QUOTED form ("myschema"), Dapper the raw name (same both-forms rule as migration 105).
   FOR _oid IN
     SELECT p.oid FROM pg_proc p
     JOIN pg_namespace n ON p.pronamespace = n.oid
     WHERE p.proname = p_function_name
-      AND n.nspname = current_schema()
+      AND n.nspname = replace('__SCHEMA__', '"', '')
   LOOP
     EXECUTE format('DROP FUNCTION IF EXISTS %s CASCADE', _oid::regprocedure);
   END LOOP;
