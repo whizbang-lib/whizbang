@@ -86,25 +86,59 @@ public class PublicFrameworkTableRepairSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Repair_NeverOverwritesAValueAlreadySetServiceLocallyAsync() {
+  public async Task Repair_OverwritesTheSeededDefaultOnFirstRunAsync() {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await _arrangeAsync(conn);
 
     try {
-      await using (var local = new NpgsqlCommand($@"
+      // Stand in for what migrations 028/032/073/076/089/092/093 do: they seed defaults into the
+      // freshly-created service table, and every one of them runs BEFORE this repair.
+      await using (var seeded = new NpgsqlCommand($@"
         INSERT INTO {SCHEMA}.wh_settings (setting_key, setting_value, value_type)
-        VALUES ('{PROBE_KEY}', 'set-locally', 'string')", conn)) {
-        await local.ExecuteNonQueryAsync();
+        VALUES ('{PROBE_KEY}', 'seeded-default', 'string')", conn)) {
+        await seeded.ExecuteNonQueryAsync();
       }
 
       await using (var repair = new NpgsqlCommand(_repairSqlFor(SCHEMA), conn)) {
         await repair.ExecuteNonQueryAsync();
       }
 
-      await Assert.That(await _settingInAsync(conn, SCHEMA)).IsEqualTo("set-locally")
-        .Because("the inherited value is a fallback, not an authority — once a service has set its "
-          + "own it must never be clobbered by the shared one it is migrating away from");
+      await Assert.That(await _settingInAsync(conn, SCHEMA)).IsEqualTo("from-public")
+        .Because("on first run the service table holds nothing but defaults this same migration run "
+          + "just seeded, so the operator's value in public is the one that must survive — a "
+          + "conflict-skipping copy would quietly reset debug_mode and every retention knob");
+    } finally {
+      await _cleanupAsync(conn);
+    }
+  }
+
+  [Test]
+  public async Task Repair_NeverTouchesTheSchemaAgainOnceTheBoundaryIsClosedAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await _arrangeAsync(conn);
+
+    try {
+      await using (var repair = new NpgsqlCommand(_repairSqlFor(SCHEMA), conn)) {
+        await repair.ExecuteNonQueryAsync();
+      }
+
+      // After adoption the service owns its configuration; public is stale by definition.
+      await using (var local = new NpgsqlCommand($@"
+        UPDATE {SCHEMA}.wh_settings SET setting_value = 'set-after-adoption'
+         WHERE setting_key = '{PROBE_KEY}'", conn)) {
+        await local.ExecuteNonQueryAsync();
+      }
+
+      await using (var again = new NpgsqlCommand(_repairSqlFor(SCHEMA), conn)) {
+        await again.ExecuteNonQueryAsync();
+      }
+
+      await Assert.That(await _settingInAsync(conn, SCHEMA)).IsEqualTo("set-after-adoption")
+        .Because("the marker row is a one-time boundary: 'public wins' holds only while the service "
+          + "table is still nothing but seeded defaults, and 'service wins' from then on. Without "
+          + "the gate the two rules would contradict each other on every later run");
     } finally {
       await _cleanupAsync(conn);
     }
