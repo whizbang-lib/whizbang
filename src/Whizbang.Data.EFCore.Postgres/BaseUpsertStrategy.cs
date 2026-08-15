@@ -383,7 +383,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         ON CONFLICT (id) DO UPDATE SET
           data = EXCLUDED.data,
           metadata = EXCLUDED.metadata,
-          updated_at = EXCLUDED.updated_at,
+          updated_at = CASE WHEN @wb_suppressactivity THEN {qualifiedTable}.updated_at ELSE EXCLUDED.updated_at END,
           sys_updated_at = EXCLUDED.sys_updated_at,{expiresUpdate}
           version = {qualifiedTable}.version + @wb_versionbump{scopeUpdateClause}{pfUpdateClause}{whereClause}";
 
@@ -410,6 +410,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       // The timestamps hook may override business time explicitly; its default now yields the
       // applied event's own timestamp rather than the clock.
       cmd.Parameters.Add(new NpgsqlParameter("wb_updated", hookPlan.UpdatedAt?.UtcDateTime ?? businessTime));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_suppressactivity", hookPlan.SuppressActivity));
       cmd.Parameters.Add(new NpgsqlParameter("wb_syscreated", writeClock));
       cmd.Parameters.Add(new NpgsqlParameter("wb_sysupdated", writeClock));
       if (expiresAt.HasValue) {
@@ -556,7 +557,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         Metadata = CloneMetadata(metadata),
         Scope = forceUpdateScope ? CloneScope(scope) : CloneScope(existingRow.Scope),
         CreatedAt = existingRow.CreatedAt,
-        UpdatedAt = updatedAt,
+        // A hook may declare the event non-activity (integrity repair, backfill, reclassification):
+        // the row is still written, but business time stays where it was.
+        UpdatedAt = hookPlan.SuppressActivity ? existingRow.UpdatedAt : updatedAt,
         Version = hookPlan.BumpVersion ? existingRow.Version + 1 : existingRow.Version
       };
       context.Set<PerspectiveRow<TModel>>().Update(row);

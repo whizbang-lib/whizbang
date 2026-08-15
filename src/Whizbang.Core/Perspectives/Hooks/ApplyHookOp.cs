@@ -62,6 +62,20 @@ public sealed record SetColumnOp(string Column, object? Value) : ApplyHookOp;
 public sealed record BumpVersionOp : ApplyHookOp;
 
 /// <summary>
+/// Declares that the applied event is NOT business activity: the row is written, but its business
+/// time (<c>updated_at</c>) is left where it was.
+/// </summary>
+/// <remarks>
+/// For integrity repairs, system backfills, reclassification passes and other maintenance-generated
+/// events, which touch a row without a user or business process having acted on it. Advancing
+/// business time for those would extend retention windows and lift the record to the top of recency
+/// ordering. The default is opt-out — an event counts as activity unless a hook says otherwise —
+/// because forgetting to declare should keep a record alive rather than silently expire it.
+/// </remarks>
+/// <docs>fundamentals/messaging/apply-hooks</docs>
+public sealed record SuppressActivityOp : ApplyHookOp;
+
+/// <summary>
 /// Drop a model-field setter that an earlier stage (the perspective's <c>Apply</c> or a prior hook) added, by
 /// property name. Collective-focused: the per-event path mutates the loaded row directly, so there is no setter
 /// list to remove from and this op is a no-op there.
