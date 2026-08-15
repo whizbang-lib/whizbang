@@ -75,6 +75,10 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         entity.Property(e => e.Id).HasColumnName("id");
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+        // System-time axis + row expiry as shadow properties, mirroring the generated
+        // configuration so this fixture matches the schema the upsert writes.
+        entity.Property<DateTime?>("sys_created_at").HasColumnName("sys_created_at");
+        entity.Property<DateTime?>("sys_updated_at").HasColumnName("sys_updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
         entity.OwnsOne(e => e.Data, data => data.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata).ToJson("metadata");
@@ -99,6 +103,10 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         entity.Property(e => e.Id).HasColumnName("id");
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+        // System-time axis + row expiry as shadow properties, mirroring the generated
+        // configuration so this fixture matches the schema the upsert writes.
+        entity.Property<DateTime?>("sys_created_at").HasColumnName("sys_created_at");
+        entity.Property<DateTime?>("sys_updated_at").HasColumnName("sys_updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
         entity.OwnsOne(e => e.Data, data => data.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata).ToJson("metadata");
@@ -196,6 +204,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
         version INTEGER NOT NULL DEFAULT 1,
         embedding VECTOR(3),
         reference_embedding VECTOR(3)
@@ -210,6 +220,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
         version INTEGER NOT NULL DEFAULT 1,
         target_embedding VECTOR(3)
       )");

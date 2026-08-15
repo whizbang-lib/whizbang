@@ -211,6 +211,8 @@ public class SplitModeProductionTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
         version INTEGER NOT NULL,
         tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
         category VARCHAR(200),
@@ -225,6 +227,8 @@ public class SplitModeProductionTests : IAsyncDisposable {
         scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
         version INTEGER NOT NULL
       );
       """);
