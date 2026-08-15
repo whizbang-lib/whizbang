@@ -18,11 +18,33 @@ new file for a fix.
    `ADD COLUMN IF NOT EXISTS`, `DROP ... IF EXISTS`, `INSERT ... ON CONFLICT`. Never a bare
    `CREATE TABLE`/`CREATE FUNCTION`/`ADD COLUMN`/`CREATE INDEX`.
 2. **ORM-agnostic** — plain PostgreSQL + the `__SCHEMA__` placeholder only. No EF/ORM DDL.
-3. **Schema-qualify (the one that bites)** — service-schema objects: `__SCHEMA__.wh_*`. Shared
-   **public** objects (`wh_settings`, `wh_dead_letter_summary`): leave **bare**. **Qualify inside
-   function bodies too** — the runner does *not* qualify inside `$$…$$` bodies, so a bare ref there
-   resolves via the caller's `search_path` at runtime and silently reads `public` on a
-   service-schema connection. This is the #1 latent multi-schema bug.
+3. **Schema-qualify — always, everywhere (the one that bites)** — every framework object is
+   `__SCHEMA__.wh_*`. There are **no shared public objects**; a bare reference is always a bug.
+   **This includes inside `$$…$$` function bodies**, top-level DDL, index targets and
+   `COMMENT ON`. Never rely on a runner to qualify a bare name for you:
+   - the **Dapper** runner does exactly one thing, `sql.Replace("__SCHEMA__", schema)` — it never
+     auto-qualifies anything, in bodies or at top level;
+   - the **EF Core** runner additionally regex-qualifies a *hard-coded 16-name list* of legacy
+     tables, with **no `$$`-body awareness at all** — so it rewrites those names everywhere, and
+     every other name nowhere.
+
+   A bare ref therefore resolves through the connection's `search_path`, which defaults to
+   `"$user", public`. At migration time the object is *created* in `public`; at runtime a bare ref
+   inside a function body silently *reads* `public`. Both are invisible on a single-schema
+   deployment, where `__SCHEMA__` **is** `public` and the two forms are indistinguishable — which
+   is why this survives local testing and CI and breaks only for consumers who partition by schema.
+
+   `wh_settings`, `wh_log`, `wh_dead_letters` and `wh_dead_letter_summary` were bare until migration
+   105 and were long described here as "shared public objects". They were not a design: they were
+   written without the prefix that migration 000 had already established, and the rule was authored
+   afterwards to describe the result. Sharing them is not benign — `wh_settings.setting_key` is the
+   primary key, so co-located services cannot hold different values for `debug_mode` or any
+   retention knob. Locked by `MigrationSchemaQualificationTests` and `Lint-MigrationSql.ps1`.
+
+   Note the two runners also substitute `__SCHEMA__` **differently** — Dapper injects the raw name,
+   the EF Core generator injects the quoted form (`"myschema"`). Anything that consumes the
+   placeholder as *text* rather than as an identifier must tolerate both (see 105, which resolves
+   the schema via `regclass` instead).
 4. **Naming** — tables always `wh_`; the 11 contract functions keep their fixed unprefixed names
    (see SQL function contracts); *new* functions get `wh_`; internal helpers get a leading `_`.
 5. **Modify a function = `CREATE OR REPLACE` the whole thing**, copied verbatim + the delta
