@@ -83,7 +83,24 @@ public sealed partial class TypeDefinitionReconciler {
     // The source is what module initializers REGISTERED across the loaded assemblies — the only
     // AOT-legal discovery route, since assembly scanning needs the reflection that source-generated
     // self-registration exists to avoid.
-    var registered = Whizbang.Core.Perspectives.PerspectiveTtlRegistry.RegisteredModels();
+    // Union both registries. Keying only off the TTL registry would make a perspective that declares
+    // [RowCap] WITHOUT [RowTtl] invisible to the sync — its cap would register in memory and never reach
+    // wh_perspective_registry, so the sweep would never see it. A cap is a complete retention policy on
+    // its own (bound cardinality, let age alone), so it has to enrol on its own too.
+    var ttlRegistered = Whizbang.Core.Perspectives.PerspectiveTtlRegistry.RegisteredModels();
+    var capRegistered = Whizbang.Core.Perspectives.PerspectiveRowCapRegistry.RegisteredModels();
+    var declaringModels = new Dictionary<Type, int>();
+    foreach (var (modelType, ttlSeconds) in ttlRegistered) {
+      declaringModels[modelType] = ttlSeconds;
+    }
+    foreach (var (modelType, _) in capRegistered) {
+      // -1 = enrolled with no sliding rule, which is distinct from zero and from absent.
+      if (!declaringModels.ContainsKey(modelType)) {
+        declaringModels[modelType] = -1;
+      }
+    }
+
+    var registered = declaringModels;
     if (registered.Count > 0) {
       var retention = new List<PerspectiveRetentionDeclaration>(registered.Count);
       foreach (var (modelType, ttlSeconds) in registered) {

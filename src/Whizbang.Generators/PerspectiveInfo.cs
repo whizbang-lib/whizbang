@@ -41,7 +41,9 @@ internal sealed record PerspectiveInfo(
     int InheritScopeOnCreate = 63,
     bool IsEphemeral = false,
     int TtlRowSeconds = -1,
-    bool IsFullHistory = false
+    bool IsFullHistory = false,
+    int RowCapPerScope = -1,
+    string? RowCapScopeKey = null
 );
 
 /// <summary>

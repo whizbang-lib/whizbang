@@ -158,6 +158,35 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
+    // Row cap: bounds how MANY rows a perspective keeps per scope, the companion to [RowTtl]'s bound on
+    // how OLD they get. Resolved only from the perspective's own declaration — unlike the TTL there is no
+    // ephemeral-derived source, because cardinality is a read-model property with nothing in the event
+    // stream to derive it from. PerScope partitions per (tenant, user), PerTenant across the tenant; the
+    // scope key is what the SQL sweep's ROW_NUMBER() partitions by, so it travels with the number.
+    var rowCapPerScope = -1;
+    string? rowCapScopeKey = null;
+    var rowCapAttribute = classSymbol.GetAttributes().FirstOrDefault(
+        static a => a.AttributeClass?.Name is "RowCapAttribute" or "RowCap");
+    if (rowCapAttribute is not null) {
+      var perScope = -1;
+      var perTenant = -1;
+      foreach (var namedArg in rowCapAttribute.NamedArguments) {
+        if (namedArg.Key == "PerScope" && namedArg.Value.Value is int ps) {
+          perScope = ps;
+        } else if (namedArg.Key == "PerTenant" && namedArg.Value.Value is int pt) {
+          perTenant = pt;
+        }
+      }
+      // PerScope is the more specific partition, so it outranks PerTenant when both are declared.
+      if (perScope >= 0) {
+        rowCapPerScope = perScope;
+        rowCapScopeKey = "u";
+      } else if (perTenant >= 0) {
+        rowCapPerScope = perTenant;
+        rowCapScopeKey = "t";
+      }
+    }
+
     // A1-6b: a perspective marked [FullHistory] needs every event and cannot resume from a carry-forward /
     // closing event — the A1 close guard refuses a discard-close of any stream it consumes. Resolved at compile
     // time; the generator registers the perspective's name so the runtime guard can key off it.
@@ -242,6 +271,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeOnCreate: inheritScopeOnCreate,
             IsEphemeral: isEphemeral,
             TtlRowSeconds: ttlRowSeconds,
+            RowCapPerScope: rowCapPerScope,
+            RowCapScopeKey: rowCapScopeKey,
             IsFullHistory: isFullHistory
         ),
         Warning: null
@@ -479,6 +510,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
     result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
         ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerRowTtl() =>\n      global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.Register(typeof({modelTypeName}), {perspective.TtlRowSeconds});"
+        : "");
+    // The cap registers itself the same turnkey way the TTL does — a [ModuleInitializer], no consumer
+    // code, no reflection. Emitting nothing when undeclared keeps "absent" distinct from a cap of zero.
+    result = TemplateUtilities.ReplaceRegion(result, "ROW_CAP_REGISTRATION", perspective.RowCapPerScope >= 0
+        ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerRowCap() =>\n      global::Whizbang.Core.Perspectives.PerspectiveRowCapRegistry.Register(typeof({modelTypeName}), {perspective.RowCapPerScope}, \"{perspective.RowCapScopeKey}\");"
         : "");
     // A1-6b: register a [FullHistory] perspective's name (matching its association target_name = its ClrTypeName)
     // so the close guard can refuse a discard-close of any stream it consumes. Empty for resumable perspectives.

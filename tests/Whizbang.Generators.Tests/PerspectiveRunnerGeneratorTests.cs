@@ -294,6 +294,112 @@ namespace TestNamespace {
   }
 
   [Test]
+  public async Task PerspectiveRunnerGenerator_RowCap_RegistersCapAsync() {
+    // The cardinality half. A cap must reach PerspectiveRowCapRegistry the same turnkey way the TTL
+    // reaches PerspectiveTtlRegistry — a generated [ModuleInitializer], no consumer code, no
+    // reflection. Without this the attribute compiles, the registry stays empty, the startup
+    // reconciler syncs a null cap, and the SQL reaper (which is itself correct and tested) is simply
+    // never told about the declaration. That is the exact shape the feature shipped in.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ChatArchived : IEvent {
+    public string ChatId { get; init; } = "";
+  }
+
+  public record CappedChatModel {
+    [StreamId]
+    public string ChatId { get; init; } = "";
+  }
+
+  [RowCap(PerScope = 200)]
+  public class CappedChatPerspective : IPerspectiveFor<CappedChatModel, ChatArchived> {
+    public CappedChatModel Apply(CappedChatModel currentData, ChatArchived @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "CappedChatPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!)
+      .Contains("PerspectiveRowCapRegistry.Register(typeof(global::TestNamespace.CappedChatModel), 200, \"u\")")
+      .Because("a declared cap must register itself, partitioned per (tenant, user) — a cap nothing "
+        + "registers is a declaration the reaper never sees");
+  }
+
+  [Test]
+  public async Task PerspectiveRunnerGenerator_RowCapPerTenant_RegistersTenantScopeKeyAsync() {
+    // PerTenant ranks across the whole tenant rather than per user. The scope key is what the SQL
+    // sweep partitions its ROW_NUMBER() by, so getting it wrong silently changes who evicts whom.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record RunFinished : IEvent {
+    public string RunId { get; init; } = "";
+  }
+
+  public record TenantRunModel {
+    [StreamId]
+    public string RunId { get; init; } = "";
+  }
+
+  [RowCap(PerTenant = 50)]
+  public class TenantRunPerspective : IPerspectiveFor<TenantRunModel, RunFinished> {
+    public TenantRunModel Apply(TenantRunModel currentData, RunFinished @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "TenantRunPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!)
+      .Contains("PerspectiveRowCapRegistry.Register(typeof(global::TestNamespace.TenantRunModel), 50, \"t\")");
+  }
+
+  [Test]
+  public async Task PerspectiveRunnerGenerator_NoRowCap_RegistersNoCapAsync() {
+    // Absent must stay distinct from a cap of zero, which would evict everything.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record PlainHappened : IEvent {
+    public string Id { get; init; } = "";
+  }
+
+  public record PlainModel {
+    [StreamId]
+    public string Id { get; init; } = "";
+  }
+
+  public class PlainPerspective : IPerspectiveFor<PlainModel, PlainHappened> {
+    public PlainModel Apply(PlainModel currentData, PlainHappened @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PlainPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).DoesNotContain("PerspectiveRowCapRegistry.Register")
+      .Because("an undeclared cap must emit nothing at all — registering 0 or -1 would be a cap "
+        + "meaning 'evict everything' or a lie the reconciler then syncs");
+  }
+
+  [Test]
   [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_RowTtl_OverridesEphemeralDerivedTtlAsync() {
     // Ladder precedence: an explicit [RowTtl] on the perspective wins over the TTL derived

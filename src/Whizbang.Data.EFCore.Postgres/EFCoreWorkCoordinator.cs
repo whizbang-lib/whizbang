@@ -458,7 +458,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     foreach (var declaration in declarations) {
       await using var cmd = conn.CreateCommand();
       cmd.CommandText =
-        $"SELECT {fn}(@clr, @enrolled, @ttl, @maxage); " +
+        $"SELECT {fn}(@clr, @enrolled, @ttl, @maxage, @cap, @capkey); " +
         "UPDATE " + BuildSchemaQualifiedName(schema, "wh_perspective_registry") +
         " SET row_cap_per_scope = @cap, row_cap_scope_key = @capkey WHERE clr_type_name = @clr";
       cmd.Parameters.Add(new NpgsqlParameter("clr", declaration.ClrTypeName));
