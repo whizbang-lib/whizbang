@@ -23,7 +23,7 @@ DECLARE
   v_debug_mode   BOOLEAN := FALSE;
   v_reg          RECORD;
 BEGIN
-  SELECT COALESCE((SELECT setting_value::BOOLEAN FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode'), FALSE)
+  SELECT COALESCE((SELECT setting_value::BOOLEAN FROM wh_settings WHERE setting_key = 'debug_mode'), FALSE)
     INTO v_debug_mode;
 
   IF v_debug_mode THEN
