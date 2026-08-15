@@ -43,6 +43,16 @@ public class EnrolledRowReaperSqlTests : EFCoreTestBase {
       await ddl.ExecuteNonQueryAsync();
     }
 
+    // These tests exercise the LADDER, not the adoption gate, so acknowledge enforcement up front.
+    // Without it the 104 gate correctly withholds every sweep — which is its job, and which is why
+    // it is asserted separately in RetentionAdoptionSafetyTests.
+    await using (var ack = new NpgsqlCommand(
+      "UPDATE wh_perspective_registry SET retention_enforcement_acknowledged = TRUE " +
+      "WHERE clr_type_name = @t", conn)) {
+      ack.Parameters.AddWithValue("t", CLR_TYPE);
+      await ack.ExecuteNonQueryAsync();
+    }
+
     await using var sync = new NpgsqlCommand(
       "SELECT sync_perspective_retention(@t, @e, @ttl, @max)", conn);
     sync.Parameters.AddWithValue("t", CLR_TYPE);
