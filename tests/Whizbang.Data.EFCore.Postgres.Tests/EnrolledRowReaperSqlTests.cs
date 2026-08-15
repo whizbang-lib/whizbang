@@ -54,7 +54,7 @@ public class EnrolledRowReaperSqlTests : EFCoreTestBase {
     }
 
     await using var sync = new NpgsqlCommand(
-      "SELECT sync_perspective_retention(@t, @e, @ttl, @max)", conn);
+      "SELECT sync_perspective_retention(@t, @e, @ttl, @max, NULL, NULL)", conn);
     sync.Parameters.AddWithValue("t", CLR_TYPE);
     sync.Parameters.AddWithValue("e", enrolled);
     sync.Parameters.Add(new NpgsqlParameter("ttl", NpgsqlTypes.NpgsqlDbType.Integer) {
