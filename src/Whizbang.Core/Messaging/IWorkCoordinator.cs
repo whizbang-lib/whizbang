@@ -55,9 +55,17 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="request">Instance identity + optional metadata.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// <see langword="true"/> if the heartbeat was recorded; <see langword="false"/> if this
+  /// instance has been evicted (reaped as stale, then tombstoned) and must not consider itself
+  /// part of the fleet — callers must stop heartbeating rather than retry, since a tombstoned
+  /// instance id never becomes valid again.
+  /// </returns>
   /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+  /// <docs>fundamentals/workers/instance-liveness#eviction-reaping-is-a-fence-not-just-a-deletion</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreRecordHeartbeatTests.cs:RecordHeartbeatAsync_NewInstance_InsertsRowAsync</tests>
-  Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceEvictionFencingSqlTests.cs</tests>
+  Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
       $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
 

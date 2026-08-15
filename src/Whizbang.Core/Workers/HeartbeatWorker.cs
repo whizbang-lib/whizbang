@@ -80,14 +80,23 @@ public partial class HeartbeatWorker(
     }
 
     while (!stoppingToken.IsCancellationRequested) {
+      var accepted = true;
       try {
-        await _heartbeatOnceAsync(stoppingToken);
+        accepted = await _heartbeatOnceAsync(stoppingToken);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
         // Heartbeat failures are non-fatal — peers may flag this instance stale,
         // which is the correct behavior. Log and continue.
         LogError(_logger, ex);
+      }
+
+      if (!accepted) {
+        // This instance was reaped and tombstoned (migration 106): record_heartbeat refused it.
+        // Retrying can never succeed — the tombstone does not expire on this instance's clock —
+        // so continuing to call would just be a heartbeat that is guaranteed to be rejected forever.
+        LogEvicted(_logger, _instanceProvider.InstanceId);
+        break;
       }
 
       try {
@@ -104,16 +113,21 @@ public partial class HeartbeatWorker(
     LogStopped(_logger);
   }
 
-  private async Task _heartbeatOnceAsync(CancellationToken ct) {
+  /// <summary>One heartbeat tick. Returns whether it was accepted — <see langword="false"/> means
+  /// this instance has been reaped and tombstoned, and the caller must stop retrying.</summary>
+  private async Task<bool> _heartbeatOnceAsync(CancellationToken ct) {
     await using var pin = await _pinnedPool.TryPinForAsync(typeof(HeartbeatWorker), ct);
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
+    var accepted = await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
       ProcessId: _instanceProvider.ProcessId), ct);
+    if (!accepted) {
+      return false;
+    }
     OnHeartbeatRecorded?.Invoke();
 
     // Announce InstanceJoined once, after the first successful heartbeat (which is the
@@ -129,6 +143,8 @@ public partial class HeartbeatWorker(
         LogJoinedPublishFailed(_logger, ex);
       }
     }
+
+    return true;
   }
 
   /// <inheritdoc />
@@ -173,6 +189,10 @@ public partial class HeartbeatWorker(
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "HeartbeatWorker failed to publish InstanceLeavingSignal on graceful stop; peers will detect via heartbeat expiry")]
   static partial void LogLeavingPublishFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 8, Level = LogLevel.Error,
+    Message = "Instance {InstanceId} has been evicted (reaped as stale, then tombstoned) — heartbeat refused. Stopping the heartbeat loop; this instance must not consider itself part of the fleet.")]
+  static partial void LogEvicted(ILogger logger, Guid instanceId);
 }
 
 /// <summary>

@@ -171,7 +171,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+  public async Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
@@ -181,17 +181,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _logger);
     var functionName = BuildSchemaQualifiedName(schema, "record_heartbeat");
 
-#pragma warning disable S2077
-    var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::jsonb)";
-#pragma warning restore S2077
-
     var metadataJson = request.Metadata is { } meta
       ? meta.GetRawText()
       : "{}";
 
-    await _dbContext.Database.ExecuteSqlRawAsync(sql,
-      [request.InstanceId, request.ServiceName, request.HostName, request.ProcessId, metadataJson],
-      cancellationToken);
+    // record_heartbeat returns BOOLEAN (migration 106): false means this instance_id has been
+    // tombstoned in wh_instance_evictions and the caller must stop heartbeating. ExecuteSqlRawAsync
+    // discards the function's own return value (it reports affected ROWS, not the result), so the
+    // scalar has to be read directly — the same pattern already used for other scalar-returning
+    // functions on this coordinator (see NotifyScheduledRetryDueAsync).
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("instanceId", request.InstanceId);
+    cmd.Parameters.AddWithValue("serviceName", request.ServiceName);
+    cmd.Parameters.AddWithValue("hostName", request.HostName);
+    cmd.Parameters.AddWithValue("processId", request.ProcessId);
+    cmd.Parameters.AddWithValue("metadata", metadataJson);
+
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return result is bool accepted && accepted;
   }
 
   /// <inheritdoc />

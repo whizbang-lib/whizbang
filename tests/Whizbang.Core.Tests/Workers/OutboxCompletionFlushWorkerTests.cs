@@ -15,7 +15,7 @@ public class OutboxCompletionFlushWorkerTests {
 
   private sealed class CapturingCoordinator : IWorkCoordinator {
     public TaskCompletionSource<IReadOnlyList<Guid>> FirstBatch { get; } = new();
-    public Task RecordHeartbeatAsync(HeartbeatRequest req, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest req, CancellationToken ct = default) => Task.FromResult(true);
     public Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, CancellationToken ct = default) {
       FirstBatch.TrySetResult(ids);
       return Task.FromResult(ids.Count);

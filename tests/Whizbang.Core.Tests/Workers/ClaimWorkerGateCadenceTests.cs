@@ -78,7 +78,7 @@ public class ClaimWorkerGateCadenceTests {
         PerspectiveWork = [],
       });
     }
-    public Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
     // Stubs for IWorkCoordinator members without default implementations. ClaimWorker
     // doesn't exercise these in cadence tests; throwing if hit gives a fast-failing signal
     // if the worker's surface area expands unexpectedly.
