@@ -50,7 +50,7 @@
 -- changed and the migration runner re-applied it, hitting a CREATE INDEX on
 -- a column 053 hadn't added yet. Lesson: when editing existing migrations in
 -- place, dependent DDL belongs in the new migration, not the edited one.
-ALTER TABLE wh_dead_letters
+ALTER TABLE __SCHEMA__.wh_dead_letters
   ADD COLUMN IF NOT EXISTS error_fingerprint VARCHAR(16) NULL,
   ADD COLUMN IF NOT EXISTS error_fingerprint_version SMALLINT NULL;
 
@@ -59,7 +59,7 @@ ALTER TABLE wh_dead_letters
 --  WHERE error_fingerprint IS NOT NULL GROUP BY 1`.
 -- WHERE NOT NULL keeps the index skinny on NULL-fingerprint rows.
 CREATE INDEX IF NOT EXISTS wh_dead_letters_fingerprint_idx
-  ON wh_dead_letters (error_fingerprint)
+  ON __SCHEMA__.wh_dead_letters (error_fingerprint)
   WHERE error_fingerprint IS NOT NULL;
 
 -- ============================================================================
@@ -183,7 +183,7 @@ COMMENT ON FUNCTION __SCHEMA__.compute_dead_letter_fingerprint IS
 -- Refreshed by aggregate_dead_letters() called from migration 032's
 -- perform_maintenance() (every 10 min default).
 
-CREATE TABLE IF NOT EXISTS wh_dead_letter_summary (
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_dead_letter_summary (
   error_fingerprint  VARCHAR(16) NOT NULL,
   source_table       TEXT NOT NULL,
   message_type       TEXT NOT NULL,
@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS wh_dead_letter_summary (
   PRIMARY KEY (error_fingerprint, source_table, message_type)
 );
 
-COMMENT ON TABLE wh_dead_letter_summary IS
+COMMENT ON TABLE __SCHEMA__.wh_dead_letter_summary IS
 'Slice 6 of release/v0.645.0-alpha.1 — operator/AI-friendly rollup of wh_dead_letters by (error_fingerprint, source_table, message_type). Refreshed by aggregate_dead_letters() inside perform_maintenance. sample_error_text is the most-recent row''s text for each cluster so the dashboard view tracks current behavior.';
 
 -- ============================================================================
@@ -223,7 +223,7 @@ BEGIN
   -- algorithm. Rows at the current version are deliberately left alone — they're
   -- already fingerprinted under the current algorithm. Without this skip, every
   -- maintenance tick burns IO re-hashing every row.
-  UPDATE wh_dead_letters
+  UPDATE __SCHEMA__.wh_dead_letters
   SET error_fingerprint = __SCHEMA__.compute_dead_letter_fingerprint(error_text),
       error_fingerprint_version = __SCHEMA__.current_dead_letter_fingerprint_version()
   WHERE error_text IS NOT NULL
@@ -233,7 +233,7 @@ BEGIN
   -- Step (b): aggregate. INSERT ... ON CONFLICT DO UPDATE so a fresh maintenance
   -- tick refreshes occurrence_count and last_seen_at without orphaning the
   -- first_seen_at value from the very first cluster appearance.
-  INSERT INTO wh_dead_letter_summary (
+  INSERT INTO __SCHEMA__.wh_dead_letter_summary (
     error_fingerprint, source_table, message_type,
     occurrence_count, first_seen_at, last_seen_at, sample_error_text
   )
@@ -245,14 +245,14 @@ BEGIN
     MIN(dead_lettered_at),
     MAX(dead_lettered_at),
     (array_agg(error_text ORDER BY dead_lettered_at DESC))[1]
-  FROM wh_dead_letters
+  FROM __SCHEMA__.wh_dead_letters
   WHERE error_fingerprint IS NOT NULL
     AND error_text IS NOT NULL
   GROUP BY error_fingerprint, source_table, message_type
   ON CONFLICT (error_fingerprint, source_table, message_type) DO UPDATE
   SET occurrence_count = EXCLUDED.occurrence_count,
-      first_seen_at = LEAST(wh_dead_letter_summary.first_seen_at, EXCLUDED.first_seen_at),
-      last_seen_at = GREATEST(wh_dead_letter_summary.last_seen_at, EXCLUDED.last_seen_at),
+      first_seen_at = LEAST(__SCHEMA__.wh_dead_letter_summary.first_seen_at, EXCLUDED.first_seen_at),
+      last_seen_at = GREATEST(__SCHEMA__.wh_dead_letter_summary.last_seen_at, EXCLUDED.last_seen_at),
       sample_error_text = EXCLUDED.sample_error_text;
 END;
 $$;

@@ -5,7 +5,7 @@
 --              design rationale.
 -- Dependencies: 001-049
 
-CREATE TABLE IF NOT EXISTS wh_dead_letters (
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_dead_letters (
   -- identity
   dead_letter_id     UUID PRIMARY KEY,                       -- generated; survives re-emission
   source_table       TEXT NOT NULL,                          -- 'wh_outbox' | 'wh_inbox' | 'wh_perspective_events'
@@ -53,17 +53,17 @@ CREATE TABLE IF NOT EXISTS wh_dead_letters (
 );
 
 CREATE INDEX IF NOT EXISTS wh_dead_letters_next_recovery_idx
-  ON wh_dead_letters (next_recovery_at)
+  ON __SCHEMA__.wh_dead_letters (next_recovery_at)
   WHERE recovered_at IS NULL AND recovery_status != 2;  -- 2 = HoldForReview
 
 CREATE INDEX IF NOT EXISTS wh_dead_letters_stream_idx
-  ON wh_dead_letters (stream_id, dead_lettered_at);
+  ON __SCHEMA__.wh_dead_letters (stream_id, dead_lettered_at);
 
 CREATE INDEX IF NOT EXISTS wh_dead_letters_generation_idx
-  ON wh_dead_letters (generation);
+  ON __SCHEMA__.wh_dead_letters (generation);
 
 CREATE INDEX IF NOT EXISTS wh_dead_letters_reason_status_idx
-  ON wh_dead_letters (failure_reason, recovery_status)
+  ON __SCHEMA__.wh_dead_letters (failure_reason, recovery_status)
   WHERE recovered_at IS NULL;
 
 -- Note: wh_dead_letters_fingerprint_idx (partial index on error_fingerprint) is
@@ -75,7 +75,7 @@ CREATE INDEX IF NOT EXISTS wh_dead_letters_reason_status_idx
 -- CREATE TABLE for fresh DBs (no-op on existing), but the index belongs after
 -- the column-add for re-run safety.
 
-COMMENT ON TABLE wh_dead_letters IS
+COMMENT ON TABLE __SCHEMA__.wh_dead_letters IS
 'Forensic record + recovery state for permanently-failed work items (Whizbang internal DLQ). Rows enter via move_to_dead_letters() when attempts exceed the worker''s configured Max*Attempts. The DeadLetterRecoveryWorker scans this table on an idle-cadence trigger and re-emits to the source table when policy allows; generation-tagged auto-replay catches "we shipped a fix" cases on new deploys. See plans/dlq-recovery.md for the full design.';
 
 -- ===========================================================================
@@ -177,7 +177,7 @@ BEGIN
   -- (the SQL function), three call sites (this INSERT, plus Slice 6's
   -- aggregate_dead_letters version-aware backfill). NULL p_error_text →
   -- NULL fingerprint + NULL version so the column NULLability flows through.
-  INSERT INTO wh_dead_letters (
+  INSERT INTO __SCHEMA__.wh_dead_letters (
     dead_letter_id,
     source_table,
     source_id,

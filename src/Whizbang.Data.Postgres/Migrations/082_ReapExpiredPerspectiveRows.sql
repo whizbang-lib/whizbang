@@ -28,7 +28,7 @@ BEGIN
   -- retain rows for forensics with processed_at stamped — this maintenance pass
   -- MUST skip purging those rows or the debug-mode design breaks.
   SELECT COALESCE(
-    (SELECT setting_value::BOOLEAN FROM wh_settings WHERE setting_key = 'debug_mode'),
+    (SELECT setting_value::BOOLEAN FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode'),
     FALSE
   ) INTO v_debug_mode;
 
@@ -36,7 +36,7 @@ BEGIN
   -- wh_settings; default 1 hour preserves the transient-NULL race window between
   -- cleanup_stale_instances nulling the owner and the next claim cycle re-assigning it.
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'abandoned_stream_hours'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'abandoned_stream_hours'),
     1
   ) INTO v_abandoned_stream_hours;
 
@@ -44,7 +44,7 @@ BEGIN
   -- out-of-order straggler can still rewind through it (events arrive out of order in a short window).
   -- Configurable via wh_settings; default 300s. A per-type [Ephemeral(RewindGrace)] override lands later.
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'ephemeral_rewind_grace_seconds'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'ephemeral_rewind_grace_seconds'),
     300
   ) INTO v_ephemeral_grace_seconds;
 
@@ -100,7 +100,7 @@ BEGIN
   -- Task 4: Purge old deduplication entries
   -- ========================================
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'dedup_retention_days'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'dedup_retention_days'),
     30
   ) INTO v_dedup_retention_days;
 
@@ -118,7 +118,7 @@ BEGIN
   -- Task 5: Purge ancient stuck inbox messages
   -- ========================================
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'stuck_inbox_retention_days'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'stuck_inbox_retention_days'),
     7
   ) INTO v_stuck_inbox_retention_days;
 
@@ -189,7 +189,7 @@ BEGIN
   -- Cluster-count metric is the rows_affected for this task (post-aggregation).
   v_start := clock_timestamp();
   PERFORM __SCHEMA__.aggregate_dead_letters();
-  SELECT COUNT(*) FROM wh_dead_letter_summary INTO v_rows;
+  SELECT COUNT(*) FROM __SCHEMA__.wh_dead_letter_summary INTO v_rows;
   RETURN QUERY SELECT
     'aggregate_dead_letters'::TEXT,
     v_rows,

@@ -37,7 +37,7 @@
 --
 -- Dependencies: 087 (wh_stream_digests conventions), 028 (wh_settings)
 
-INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
 VALUES ('integrity_epoch_width', '100000', 'integer',
         'Sequence width of one digest epoch. Read at a lane''s first close and pinned on its frontier row; changing it later does not move existing lanes.')
 ON CONFLICT (setting_key) DO NOTHING;
@@ -246,7 +246,7 @@ DECLARE
   v_blocked BOOLEAN;
 BEGIN
   SELECT setting_value::bigint INTO v_default_width
-  FROM wh_settings WHERE setting_key = 'integrity_epoch_width';
+  FROM __SCHEMA__.wh_settings WHERE setting_key = 'integrity_epoch_width';
   v_default_width := COALESCE(v_default_width, 100000);
 
   FOR v_lane IN
