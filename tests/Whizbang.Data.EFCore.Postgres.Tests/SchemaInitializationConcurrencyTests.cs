@@ -261,6 +261,58 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       .ThrowsNothing();
   }
 
+  [Test]
+  [Timeout(60000)]
+  public async Task SlowPath_WhenAnotherProcessHoldsTheSchemaLock_WaitsInsteadOfMigratingAsync(
+      CancellationToken cancellationToken) {
+    // The lock is worth nothing unless a DIFFERENT process computes the SAME key. That is exactly
+    // what the previous Math.Abs(schema.GetHashCode()) form could not do — .NET randomizes the
+    // string hash seed per process, so every instance took its own private lock and every instance
+    // migrated. Two initializers inside ONE test process would agree even on the broken code, so
+    // this test stands in for the other process by holding the key computed from the published,
+    // process-stable function and asserting the initializer is genuinely excluded by it.
+    var otherProcessKey = Whizbang.Data.Postgres.SchemaInitializationLockKey.Compute("public");
+
+    // Arrange — hold the schema lock from a separate session, as a mid-migration instance would.
+    await using var holdingConn = new NpgsqlConnection(ConnectionString);
+    await holdingConn.OpenAsync(cancellationToken);
+    await using (var holdCmd = holdingConn.CreateCommand()) {
+      holdCmd.CommandText = $"SELECT pg_advisory_lock({otherProcessKey})";
+      await holdCmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // Force the slow path: the fast path skips the lock entirely when every hash matches, and a
+    // lock that is never reached cannot demonstrate exclusion.
+    await using var adminConn = new NpgsqlConnection(ConnectionString);
+    await adminConn.OpenAsync(cancellationToken);
+    await using (var driftCmd = adminConn.CreateCommand()) {
+      driftCmd.CommandText = @"
+        UPDATE wh_schema_migrations SET content_hash = 'forced-drift'
+        WHERE file_name = (SELECT file_name FROM wh_schema_migrations WHERE owner = 'whizbang' LIMIT 1)";
+      var drifted = await driftCmd.ExecuteNonQueryAsync(cancellationToken);
+      await Assert.That(drifted).IsEqualTo(1); // guard: the arrangement must actually bite
+    }
+
+    // Act — initialize with a deadline. Held lock ⇒ the inner loop backs off until the token fires.
+    await using var context = CreateDbContext();
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    cts.CancelAfter(TimeSpan.FromSeconds(5));
+
+    // Assert — excluded, so it waited and was cancelled rather than running DDL alongside the
+    // holder. On a per-process key it would take its own lock, sail through, and throw nothing.
+    await Assert.That(async () =>
+        await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cts.Token))
+      .Throws<OperationCanceledException>();
+
+    // Cleanup — release the lock and let initialization complete, restoring the drifted hash.
+    await using (var unlockCmd = holdingConn.CreateCommand()) {
+      unlockCmd.CommandText = $"SELECT pg_advisory_unlock({otherProcessKey})";
+      await unlockCmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+    await using var restoreContext = CreateDbContext();
+    await restoreContext.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // _isRetryableError tests
   // ═══════════════════════════════════════════════════════════════════════════
