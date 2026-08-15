@@ -93,7 +93,7 @@ public class EFCorePostgresPerspectiveStoreTests {
   }
 
   [Test]
-  public async Task UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync() {
+  public async Task UpsertAsync_AdvancesBusinessTimeToTheAppliedEvent_OnUpdateAsync() {
     // Arrange
     var context = CreateInMemoryDbContext();
     var strategy = new InMemoryUpsertStrategy();
@@ -107,20 +107,24 @@ public class EFCorePostgresPerspectiveStoreTests {
         .AsNoTracking()
         .FirstOrDefaultAsync(r => r.Id == testId);
 
-    var originalUpdatedAt = firstRow!.UpdatedAt;
+    var originalCreatedAt = firstRow!.CreatedAt;
 
-    // Small delay to ensure timestamp difference
-    await Task.Delay(10);
+    // Act - update the record, carrying an event whose BUSINESS time is explicit. updated_at is no
+    // longer the wall clock at write, so this asserts an exact value rather than "later than before"
+    // — which also removes the sleep the old wall-clock form needed to guarantee a difference.
+    var secondEvent = new DateTime(2031, 2, 3, 4, 5, 6, DateTimeKind.Utc);
+    await ((IPerspectiveStore<StoreTestModel>)store).UpsertAsync(
+      testId, new StoreTestModel { Name = "Bob", Value = 200 },
+      new PerspectiveScope(), false,
+      new PerspectiveMetadata { EventType = "Updated", Timestamp = secondEvent });
 
-    // Act - update the record
-    await store.UpsertAsync(testId, new StoreTestModel { Name = "Bob", Value = 200 });
-
-    // Assert - UpdatedAt should be newer
     var updatedRow = await context.Set<PerspectiveRow<StoreTestModel>>()
         .FirstOrDefaultAsync(r => r.Id == testId);
 
-    await Assert.That(updatedRow!.UpdatedAt).IsGreaterThan(originalUpdatedAt);
-    await Assert.That(updatedRow.CreatedAt).IsEqualTo(firstRow.CreatedAt); // CreatedAt unchanged
+    await Assert.That(updatedRow!.UpdatedAt).IsEqualTo(secondEvent)
+      .Because("updated_at carries BUSINESS time — the applied event's own timestamp");
+    await Assert.That(updatedRow.CreatedAt).IsEqualTo(originalCreatedAt)
+      .Because("the entity still came into being when it was first created");
   }
 
   [Test]
