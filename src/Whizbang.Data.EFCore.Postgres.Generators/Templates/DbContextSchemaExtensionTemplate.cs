@@ -421,16 +421,22 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// Bulk-queries all per-object hashes from wh_schema_migrations.
   /// Used by the fast path to detect changes without acquiring a lock.
   /// </summary>
-  private static async Task<System.Collections.Generic.List<(string FileName, string Hash, string Owner)>> _bulkGetHashesAsync(
+  private static async Task<System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy)>> _bulkGetHashesAsync(
       Npgsql.NpgsqlConnection connection, CancellationToken ct) {
     await using var cmd = connection.CreateCommand();
-    cmd.CommandText = @"SELECT file_name, content_hash, owner FROM __QUOTED_SCHEMA__.wh_schema_migrations";
+    // The joined library_version is what lets the applier tell an upgrade from a downgrade —
+    // the content hash alone only says "different", never which side is newer.
+    cmd.CommandText = @"
+      SELECT m.file_name, m.content_hash, m.owner, v.library_version
+      FROM __QUOTED_SCHEMA__.wh_schema_migrations m
+      LEFT JOIN __QUOTED_SCHEMA__.wh_schema_versions v ON v.id = m.version_id";
     cmd.CommandTimeout = 30;
-    var results = new System.Collections.Generic.List<(string, string, string)>();
+    var results = new System.Collections.Generic.List<(string, string, string, string?)>();
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     while (await reader.ReadAsync(ct)) {
       var owner = reader.IsDBNull(2) ? "whizbang" : reader.GetString(2);
-      results.Add((reader.GetString(0), reader.GetString(1), owner));
+      var appliedBy = reader.IsDBNull(3) ? null : reader.GetString(3);
+      results.Add((reader.GetString(0), reader.GetString(1), owner, appliedBy));
     }
     return results;
   }
@@ -440,17 +446,17 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// Partitions by owner column to determine infrastructure vs perspective vs association changes independently.
   /// </summary>
   private static (bool InfraChanged, bool PerspChanged, bool AssociationsChanged) _compareHashes(
-      System.Collections.Generic.List<(string FileName, string Hash, string Owner)> existingRows) {
-    var infraHashes = new System.Collections.Generic.Dictionary<string, string>();
-    var perspHashes = new System.Collections.Generic.Dictionary<string, string>();
-    var associationHashes = new System.Collections.Generic.Dictionary<string, string>();
-    foreach (var (fileName, hash, owner) in existingRows) {
+      System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy)> existingRows) {
+    var infraHashes = new System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
+    var perspHashes = new System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
+    var associationHashes = new System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
+    foreach (var (fileName, hash, owner, appliedBy) in existingRows) {
       if (owner == "perspective") {
-        perspHashes[fileName] = hash;
+        perspHashes[fileName] = (hash, appliedBy);
       } else if (owner == "association") {
-        associationHashes[fileName] = hash;
+        associationHashes[fileName] = (hash, appliedBy);
       } else {
-        infraHashes[fileName] = hash;
+        infraHashes[fileName] = (hash, appliedBy);
       }
     }
 
@@ -461,7 +467,15 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
       var hash = Convert.ToHexStringLower(
           System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(transformedSql)));
-      if (!infraHashes.TryGetValue(name, out var existingHash) || existingHash != hash) {
+      if (!infraHashes.TryGetValue(name, out var existing)) {
+        infraChanged = true;
+        break;
+      }
+      // A hash that differs but was written by a NEWER build is not work this instance can do.
+      // Reporting it as changed would send this instance down the slow path to take the advisory
+      // lock and then do nothing — delaying the instance that can actually migrate.
+      if (existing.Hash != hash
+          && Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", existing.AppliedBy, out _)) {
         infraChanged = true;
         break;
       }
@@ -474,7 +488,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       var key = $"perspective:{name}";
       var hash = Convert.ToHexStringLower(
           System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sql)));
-      if (!perspHashes.TryGetValue(key, out var existingHash) || existingHash != hash) {
+      if (!perspHashes.TryGetValue(key, out var existing)) {
+        perspChanged = true;
+        break;
+      }
+      if (existing.Hash != hash
+          && Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", existing.AppliedBy, out _)) {
         perspChanged = true;
         break;
       }
@@ -485,8 +504,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // associations (empty hash) to avoid tripping on no-op.
     var associationsChanged = false;
     if (_associationsHash.Length > 0) {
-      if (!associationHashes.TryGetValue(_associationsHashKey, out var existingAssocHash)
-          || existingAssocHash != _associationsHash) {
+      if (!associationHashes.TryGetValue(_associationsHashKey, out var existingAssoc)) {
+        associationsChanged = true;
+      } else if (existingAssoc.Hash != _associationsHash
+          && Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", existingAssoc.AppliedBy, out _)) {
         associationsChanged = true;
       }
     }
@@ -611,6 +632,13 @@ END $$;
       if (existingHash == hash) {
         await _updateMigrationStatusAsync(connection, perspectiveKey, versionId.Value, 3, "Skipped (hash unchanged)", cancellationToken);
         logger?.LogDebug("Perspective {Perspective}: skipped (hash unchanged)", name);
+        continue;
+      }
+
+      // Same rule as infrastructure migrations: an older build never overwrites a newer one's DDL.
+      var perspAppliedBy = await _getExistingVersionAsync(connection, perspectiveKey, cancellationToken);
+      if (!Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", perspAppliedBy, out var perspRefusal)) {
+        logger?.LogWarning("Perspective {Perspective}: not applied — {Reason}", name, perspRefusal);
         continue;
       }
 
@@ -809,6 +837,16 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           continue;
         }
 
+        // Never replace a newer build's definition with this build's older one. The hash test
+        // above only says the content differs; it cannot say which side is newer, and migration
+        // files are edited in place, so an instance from the previous version would otherwise
+        // re-apply its own older copy over the newer one and silently downgrade the schema.
+        var appliedBy = await _getExistingVersionAsync(connection, name, cancellationToken);
+        if (!Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", appliedBy, out var refusal)) {
+          logger?.LogWarning("Migration {Migration}: not applied — {Reason}", name, refusal);
+          continue;
+        }
+
         var isUpdate = existingHash != null;
 
         try {
@@ -873,6 +911,23 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   private static async Task<string?> _getExistingHashAsync(Npgsql.NpgsqlConnection connection, string fileName, CancellationToken ct) {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = @"SELECT content_hash FROM __QUOTED_SCHEMA__.wh_schema_migrations WHERE file_name = @name";
+    cmd.Parameters.AddWithValue("name", fileName);
+    cmd.CommandTimeout = 30;
+    var result = await cmd.ExecuteScalarAsync(ct);
+    return result as string;
+  }
+
+  /// <summary>
+  /// The library version recorded against a ledger row, or <see langword="null"/> when the row
+  /// predates version tracking. Read only to decide whether this build may apply over it.
+  /// </summary>
+  private static async Task<string?> _getExistingVersionAsync(Npgsql.NpgsqlConnection connection, string fileName, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      SELECT v.library_version
+      FROM __QUOTED_SCHEMA__.wh_schema_migrations m
+      LEFT JOIN __QUOTED_SCHEMA__.wh_schema_versions v ON v.id = m.version_id
+      WHERE m.file_name = @name";
     cmd.Parameters.AddWithValue("name", fileName);
     cmd.CommandTimeout = 30;
     var result = await cmd.ExecuteScalarAsync(ct);
