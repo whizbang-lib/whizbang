@@ -54,6 +54,7 @@ public class ServiceBusConsumerWorkerPollingTests {
 
     // Act
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0);
@@ -90,6 +91,7 @@ public class ServiceBusConsumerWorkerPollingTests {
 
     // Act
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1);

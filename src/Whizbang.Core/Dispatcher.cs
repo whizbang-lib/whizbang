@@ -26,6 +26,8 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
 
+using Whizbang.Core.Workers;
+
 namespace Whizbang.Core;
 
 /// <summary>
@@ -103,6 +105,31 @@ public abstract partial class Dispatcher(
     string MemberName,
     string FilePath,
     int LineNumber);
+
+  // Increment 6, the write seam: a dispatch needs the event store and the outbox, which Migrate
+  // provides — so dispatch refuses while the schema gate is closed. Resolved lazily from the
+  // service provider (never a ctor param: generated dispatcher subclasses chain base(...)
+  // positionally, and test fixtures without a gate stay ungated). Volatile-cached after first look.
+  private ISchemaReadyGate? _schemaReadyGateCache;
+  private bool _schemaReadyGateResolved;
+
+  private void _throwIfSchemaNotReady() {
+    if (!_schemaReadyGateResolved) {
+      try {
+        _schemaReadyGateCache = (ISchemaReadyGate?)serviceProvider.GetService(typeof(ISchemaReadyGate));
+        _schemaReadyGateResolved = true;
+      } catch (ObjectDisposedException) {
+        // Shutdown teardown: the dispatcher promises graceful handling of a disposed provider,
+        // and refusing a dispatch that is about to fail on disposal anyway adds nothing.
+        return;
+      }
+    }
+    if (_schemaReadyGateCache is { IsReady: false }) {
+      throw new WhizbangNotReadyException(
+        "dispatch refused: the schema is not ready (Migrate has not completed). Writes need the "
+        + "event store and outbox the migration provides; they resume when it does.");
+    }
+  }
 
   private const string TAG_MESSAGE_TYPE = "whizbang.message.type";
   private const string TAG_MESSAGE_ID = "whizbang.message.id";
@@ -712,6 +739,7 @@ public abstract partial class Dispatcher(
   ) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
+    _throwIfSchemaNotReady();
 
     var sw = Stopwatch.StartNew();
     var messageType = typeof(TMessage);
@@ -822,6 +850,7 @@ public abstract partial class Dispatcher(
   ) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
+    _throwIfSchemaNotReady();
 
     var sw = Stopwatch.StartNew();
     var messageType = typeof(TMessage);
@@ -3001,6 +3030,7 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore S2955
 
+    _throwIfSchemaNotReady();
     var sw = Stopwatch.StartNew();
     var eventType = eventData.GetType();
     var eventTypeName = eventType.Name;
@@ -3109,6 +3139,7 @@ public abstract partial class Dispatcher(
 
     options.CancellationToken.ThrowIfCancellationRequested();
 
+    _throwIfSchemaNotReady();
     var sw = Stopwatch.StartNew();
     var eventType = eventData.GetType();
     var eventTypeName = eventType.Name;

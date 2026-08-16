@@ -24,10 +24,10 @@ namespace Whizbang.Core.Tests.Workers;
 /// </para>
 ///
 /// <para>
-/// Two properties matter, and they fail independently: the framework must not take that lock
-/// unless the operator permitted it, and it must not clear a recorded request unless the rewrite
-/// demonstrably worked — otherwise an interrupted or ineffective rewrite is silently forgotten and
-/// the table stays bloated with nothing left to say so.
+/// Since the startup pipeline landed, the runtime cycle only DETECTS and RECORDS: executing a
+/// rewrite takes an ACCESS EXCLUSIVE lock, and mid-traffic was always the wrong window. The
+/// post-ready <c>Rewrite</c> step performs the recorded requests under the maintainer duty —
+/// see <c>TableRewriteStartupStepTests</c> for the execution semantics.
 /// </para>
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
@@ -52,6 +52,12 @@ public class MaintenanceWorkerTableRewriteTests {
       Cleared.Add(tableName);
       return Task.CompletedTask;
     }
+
+    public Task RequestTableRewriteAsync(string tableName, CancellationToken ct = default) {
+      Requested.Add(tableName);
+      return Task.CompletedTask;
+    }
+    public List<string> Requested { get; } = [];
 
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default)
       => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
@@ -100,31 +106,32 @@ public class MaintenanceWorkerTableRewriteTests {
   }
 
   [Test]
-  public async Task BloatedTable_WithPermission_IsRewrittenAndTheRequestClearedAsync() {
+  public async Task BloatedTable_EvenWithPermission_IsNeverRewrittenMidTraffic_OnlyRecordedAsync() {
     var coord = new RewriteCoordinator {
-      Candidates = { new TableRewriteCandidate("wh_event_store", 4.2, Requested: true) },
-      RatioAfterRewrite = 1.0,
+      Candidates = { new TableRewriteCandidate("wh_event_store", 4.2, Requested: false) },
     };
 
     await _buildWorker(coord, allowRewrite: true).RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(coord.Rewritten).Contains("wh_event_store");
-    await Assert.That(coord.Cleared).Contains("wh_event_store")
-      .Because("a migration-recorded request is satisfied once the rewrite is confirmed to have worked");
+    await Assert.That(coord.Rewritten).IsEmpty()
+      .Because("the runtime maintenance cycle stops executing rewrites — an ACCESS EXCLUSIVE lock "
+             + "mid-traffic was always the wrong window; the post-ready Rewrite step performs them "
+             + "in the window they should have had");
+    await Assert.That(coord.Requested).Contains("wh_event_store")
+      .Because("detection records the request so the next boot's Rewrite step picks it up "
+             + "deterministically instead of depending on the bloat still measuring over threshold");
   }
 
   [Test]
-  public async Task RewriteThatDoesNotReduceTheRatio_LeavesTheRequestQueuedAsync() {
+  public async Task BloatedTable_AlreadyRecorded_IsNotReRecordedAsync() {
     var coord = new RewriteCoordinator {
       Candidates = { new TableRewriteCandidate("wh_event_store", 4.2, Requested: true) },
-      RatioAfterRewrite = 4.2,   // no improvement
     };
 
     await _buildWorker(coord, allowRewrite: true).RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(coord.Rewritten).Contains("wh_event_store");
-    await Assert.That(coord.Cleared).IsEmpty()
-      .Because("clearing a request the rewrite did not satisfy loses the only record that the table "
-               + "still owes one — it must stay queued for the next cycle");
+    await Assert.That(coord.Rewritten).IsEmpty();
+    await Assert.That(coord.Requested).IsEmpty()
+      .Because("a request already on the books needs no second recording");
   }
 }

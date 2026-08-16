@@ -211,8 +211,13 @@ public static class TransportConsumerBuilderExtensions {
     builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
 
 
-    // Register TransportConsumerWorker as hosted service (always with resilience)
-    builder.Services.AddHostedService<TransportConsumerWorker>();
+    // Register TransportConsumerWorker as hosted service (always with resilience). Singleton +
+    // hosted forward so the SAME instance is also visible as a readiness contributor — Ready
+    // composes its SubscriptionsReady signal, which previously existed but nothing consumed.
+    builder.Services.TryAddSingleton<TransportConsumerWorker>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
+    builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(
+      sp => sp.GetRequiredService<TransportConsumerWorker>()));
 
     // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
     // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +
@@ -345,8 +350,13 @@ public static class TransportConsumerBuilderExtensions {
     builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
 
 
-    // Register TransportConsumerWorker as hosted service (always with resilience)
-    builder.Services.AddHostedService<TransportConsumerWorker>();
+    // Register TransportConsumerWorker as hosted service (always with resilience). Singleton +
+    // hosted forward so the SAME instance is also visible as a readiness contributor — Ready
+    // composes its SubscriptionsReady signal, which previously existed but nothing consumed.
+    builder.Services.TryAddSingleton<TransportConsumerWorker>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
+    builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(
+      sp => sp.GetRequiredService<TransportConsumerWorker>()));
 
     // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
     // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +

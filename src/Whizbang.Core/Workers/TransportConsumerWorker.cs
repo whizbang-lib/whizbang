@@ -43,7 +43,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
-public partial class TransportConsumerWorker : BackgroundService {
+public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
@@ -62,6 +62,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly IEphemeralModeResolver? _ephemeralModeResolver;
   // Once-per-type diagnostic guard for catalog-lookup misses on the receive path (bounded).
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _warnedFlagMisses = new();
+  private readonly ISchemaReadyGate? _schemaReadyGate;
   private readonly IEventMarkerResolver? _eventMarkerResolver;
 
   // Signals when SubscribeToAllDestinationsAsync has completed and the consumer
@@ -94,6 +95,13 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// <c>await SubscriptionsReady.WaitAsync(cancellationToken)</c>.
   /// </summary>
   public Task WaitForSubscriptionsReadyAsync(CancellationToken cancellationToken = default)
+    => SubscriptionsReady.WaitAsync(cancellationToken);
+
+  /// <inheritdoc />
+  string Whizbang.Core.Startup.IStartupReadinessContributor.ContributorName => "transport-consumer";
+
+  /// <inheritdoc />
+  Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
     => SubscriptionsReady.WaitAsync(cancellationToken);
 
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).
@@ -148,7 +156,11 @@ public partial class TransportConsumerWorker : BackgroundService {
     IReceptorRegistryQuery? receptorRegistry = null,
     IReceptorRegistry? runtimeReceptorRegistry = null,
     IEphemeralModeResolver? ephemeralModeResolver = null,
-    IEventMarkerResolver? eventMarkerResolver = null
+    IEventMarkerResolver? eventMarkerResolver = null,
+    // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
+    // database work against a schema that may not exist yet on a first boot. Optional only so
+    // existing fixtures construct unchanged; DI always supplies it.
+    ISchemaReadyGate? schemaReadyGate = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -173,6 +185,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _receptorRegistry = receptorRegistry;
     _ephemeralModeResolver = ephemeralModeResolver;
     _eventMarkerResolver = eventMarkerResolver;
+    _schemaReadyGate = schemaReadyGate;
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
@@ -202,6 +215,16 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// </summary>
   /// <param name="stoppingToken">Token to signal shutdown</param>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    // Startup barrier: nothing below may run before migrations complete — subscribing lets the
+    // broker deliver, and delivery lands in the inbox tables the migration creates.
+    if (_schemaReadyGate is not null) {
+      try {
+        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
+      }
+    }
+
     // Receive-path flag-derivation wiring diagnostic: a missing resolver or a host-only index count
     // means every flag-bearing event received over the transport silently loses its flags — surface
     // the wiring state once at startup so a broken chain is visible in service logs, not just in data.

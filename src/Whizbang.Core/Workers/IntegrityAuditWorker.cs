@@ -54,15 +54,16 @@ public sealed partial class IntegrityAuditWorker(
     }
 
     var firstCycle = true;
+    // A cycle that reached no origins has not audited across services; the next delay re-arms the
+    // startup window rather than the steady interval.
+    var askedNobody = false;
     while (!stoppingToken.IsCancellationRequested) {
       // Startup-first by default: the first audit fires after a jittered startup window so
       // historical divergence heals minutes after a deploy — the jitter de-synchronizes a fleet
       // rollout and A1c's type-level exchange keeps each audit at O(types) wire cost. Opting out
       // (AuditOnStartup=false) restores interval-first scheduling; Phase B covers the fresh
       // window either way.
-      var delay = firstCycle
-        ? ComputeFirstAuditDelay(_options, Random.Shared.NextDouble)
-        : TimeSpan.FromMinutes(_options.AuditIntervalMinutes);
+      var delay = ComputeNextAuditDelay(_options, Random.Shared.NextDouble, askedNobody: firstCycle || askedNobody);
       firstCycle = false;
       try {
         await Task.Delay(delay, stoppingToken);
@@ -70,7 +71,7 @@ public sealed partial class IntegrityAuditWorker(
         break;
       }
       try {
-        await RunAuditOnceAsync(stoppingToken);
+        askedNobody = await _runAuditCoreAsync(forceSweep: false, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
@@ -87,7 +88,21 @@ public sealed partial class IntegrityAuditWorker(
   /// <param name="options">Integrity options.</param>
   /// <param name="jitter">Uniform [0,1) source (injectable for deterministic tests).</param>
   internal static TimeSpan ComputeFirstAuditDelay(StreamIntegrityOptions options, Func<double> jitter) =>
-    options.AuditOnStartup
+    ComputeNextAuditDelay(options, jitter, askedNobody: true);
+
+  /// <summary>
+  /// The delay before the next cycle. The jittered startup window is used for the first cycle and
+  /// again after any cycle that had no origins to ask — such a cycle audited nothing across
+  /// services, and waiting out the full interval (a day by default) to discover the fleet is
+  /// indistinguishable from never discovering it. The jitter is retained on the retry so a fleet
+  /// that all asked nobody does not then all retry in unison.
+  /// </summary>
+  /// <param name="options">Integrity options.</param>
+  /// <param name="jitter">Uniform [0,1) source (injectable for deterministic tests).</param>
+  /// <param name="askedNobody">Whether the cycle just completed reached no origins at all.</param>
+  internal static TimeSpan ComputeNextAuditDelay(
+      StreamIntegrityOptions options, Func<double> jitter, bool askedNobody) =>
+    options.AuditOnStartup && askedNobody
       ? TimeSpan.FromSeconds(30 + (Math.Max(0, options.StartupAuditMaxJitterSeconds) * jitter()))
       : TimeSpan.FromMinutes(options.AuditIntervalMinutes);
 
@@ -101,13 +116,20 @@ public sealed partial class IntegrityAuditWorker(
   public Task RunSweepOnceAsync(CancellationToken cancellationToken) =>
     _runAuditCoreAsync(forceSweep: true, cancellationToken);
 
-  private async Task _runAuditCoreAsync(bool forceSweep, CancellationToken cancellationToken) {
+  /// <summary>
+  /// One audit cycle. Returns <see langword="true"/> when the cross-service half had origins it
+  /// could reach but asked <em>none</em> of them — a cycle that audited nothing and should be
+  /// retried on the startup window rather than the full interval. A deployment with no
+  /// cross-service infrastructure at all returns <see langword="false"/>: that is a configuration,
+  /// not a cold start, and retrying sooner would never help.
+  /// </summary>
+  private async Task<bool> _runAuditCoreAsync(bool forceSweep, CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
     var dispatcher = services.GetService<IDispatcher>();
     if (coordinator is null || dispatcher is null) {
-      return;
+      return false;
     }
     var settle = TimeSpan.FromMinutes(_options.AuditSettleWindowMinutes);
     var metrics = services.GetService<Observability.StreamIntegrityMetrics>();
@@ -121,7 +143,7 @@ public sealed partial class IntegrityAuditWorker(
     var claimWindow = TimeSpan.FromMinutes(Math.Max(1, _options.AuditIntervalMinutes) / 2.0);
     if (!await coordinator.TryClaimIntegrityAuditCycleAsync(claimWindow, cancellationToken).ConfigureAwait(false)) {
       LogAuditCycleAlreadyClaimed(_logger, claimWindow.TotalMinutes);
-      return;
+      return false;
     }
 
     // ── A1c: the full-sweep cadence ──────────────────────────────────────
@@ -206,7 +228,7 @@ public sealed partial class IntegrityAuditWorker(
       ?? services.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
     if (tracker is null || transport is null || serializer is null
         || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
-      return;   // no cross-service infrastructure — the local half already ran.
+      return false;   // no cross-service infrastructure — the local half already ran.
     }
 
     // The assembly-qualified WIRE form ("Type, Assembly") — the origin matches these against its
@@ -216,6 +238,7 @@ public sealed partial class IntegrityAuditWorker(
       .Select(TypeNameFormatter.Format)
       .Distinct(StringComparer.Ordinal)
       .ToList();
+    var requested = 0;
     foreach (var (originId, originName, originRequestTopic) in tracker.GetOrigins()) {
       if (string.IsNullOrEmpty(originRequestTopic)) {
         // Directed or not at all: without the origin-carried address the only other topic on
@@ -262,8 +285,23 @@ public sealed partial class IntegrityAuditWorker(
         new KeyValuePair<string, object?>("origin", originName),
         new KeyValuePair<string, object?>("sweep", sweep));
       LogManifestRequested(_logger, originName, originId);
+      requested++;
     }
+
+    // Nobody to ask. On a cold fleet start the origin set is still empty — it fills only from
+    // inbound checkpoints — so this cycle audited nothing across services. Saying so lets the
+    // caller retry on the startup window instead of sleeping out the full interval.
+    if (requested == 0) {
+      LogNoOriginsToAsk(_logger);
+      return true;
+    }
+    return false;
   }
+
+  [LoggerMessage(EventId = 96, Level = LogLevel.Information,
+    Message = "Integrity audit reached no origins — none have checkpointed yet. Retrying on the "
+            + "startup window rather than the full interval.")]
+  static partial void LogNoOriginsToAsk(ILogger logger);
 
   [LoggerMessage(EventId = 80, Level = LogLevel.Information,
     Message = "Integrity audit started (interval {IntervalMinutes}m)")]

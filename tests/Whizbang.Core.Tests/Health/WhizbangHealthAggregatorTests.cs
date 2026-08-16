@@ -129,4 +129,26 @@ public class WhizbangHealthAggregatorTests {
       .EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
     await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
   }
+
+  // ── ComponentState.Ready (increment 4 of the startup-pipeline proposal) ──
+
+  [Test]
+  public async Task HealthPolicy_Ready_IsHealthyOnReadinessUnderBothBuiltInsAsync() {
+    await Assert.That(HealthPolicy.Lenient.Map(ComponentState.Ready, HealthProbe.Readiness))
+      .IsEqualTo(Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy);
+    await Assert.That(HealthPolicy.Strict.Map(ComponentState.Ready, HealthProbe.Readiness))
+      .IsEqualTo(Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy)
+      .Because("Ready is precisely the state Strict holds a pod out of rotation WAITING for — "
+             + "reaching it must put the pod back in");
+  }
+
+  [Test]
+  public async Task HealthPolicy_Ready_IsHealthyOnLivenessUnderBothBuiltInsAsync() {
+    await Assert.That(HealthPolicy.Lenient.Map(ComponentState.Ready, HealthProbe.Liveness))
+      .IsEqualTo(Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy);
+    await Assert.That(HealthPolicy.Strict.Map(ComponentState.Ready, HealthProbe.Liveness))
+      .IsEqualTo(Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy)
+      .Because("the liveness invariant covers every state, new members included — "
+             + "an intentional state must never restart the pod");
+  }
 }

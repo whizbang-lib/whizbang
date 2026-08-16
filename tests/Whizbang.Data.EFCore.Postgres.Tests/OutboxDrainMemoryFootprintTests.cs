@@ -78,13 +78,14 @@ public class OutboxDrainMemoryFootprintTests : EFCoreTestBase {
 
     // GetTotalAllocatedBytes is PROCESS-wide, and the rest of the assembly's tests run
     // concurrently in this process — their allocations land inside a single sampled delta as
-    // additive noise (observed pushing a ~10 MB fetch to ~18 MB under CI load). Pollution is
-    // additive-only, so the MINIMUM of several samples converges on the fetch's own cost.
+    // additive noise (observed pushing a ~10 MB fetch to ~18 MB under CI load, and the min of
+    // THREE samples to 21.3 MB once). Pollution is additive-only, so the MINIMUM of several
+    // samples converges on the fetch's own cost — six samples to give the min room to land.
     IReadOnlyList<OutboxBatchRow> unbudgeted = [];
     IReadOnlyList<OutboxBatchRow> budgeted = [];
     var unbudgetedAllocated = long.MaxValue;
     var budgetedAllocated = long.MaxValue;
-    for (var attempt = 0; attempt < 3; attempt++) {
+    for (var attempt = 0; attempt < 6; attempt++) {
       var before = GC.GetTotalAllocatedBytes(precise: true);
       unbudgeted = await coordinator.FetchOutboxBatchAsync([stream], instance, maxPerStream: 100);
       unbudgetedAllocated = Math.Min(unbudgetedAllocated, GC.GetTotalAllocatedBytes(precise: true) - before);
@@ -102,10 +103,11 @@ public class OutboxDrainMemoryFootprintTests : EFCoreTestBase {
 
     await Assert.That(budgeted.Count).IsLessThan(ROW_COUNT)
       .Because("the budget must have actually cut the slice for the comparison to mean anything");
-    await Assert.That(budgetedAllocated).IsLessThan(20_000_000L)
+    await Assert.That(budgetedAllocated).IsLessThan(25_000_000L)
       .Because("a 4 MB budget bounds the materialized slice (~2x budget as UTF-16 + reader "
                + "overhead + residual cross-test noise) — the same fetch is no longer capable "
-               + "of the killing allocation");
+               + "of the killing allocation. The ceiling separates memory CLASSES: an unapplied "
+               + "budget hauls 40+ MB, so noise headroom here costs the guard nothing");
     await Assert.That(budgetedAllocated * 3).IsLessThan(unbudgetedAllocated)
       .Because("the point is the RATIO: the budget changes the fetch's memory class, not its constant");
   }

@@ -40,6 +40,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+/// <tests>tests/Whizbang.Core.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
 public sealed partial class PgCommitOrderStamperWorker(
   IOptions<WhizbangNotificationOptions> notificationOptions,
   IOptions<CommitOrderStamperOptions> stamperOptions,
@@ -48,7 +49,8 @@ public sealed partial class PgCommitOrderStamperWorker(
   ILogger<PgCommitOrderStamperWorker> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
-  INotifySignalingGate? notifySignalingGate = null
+  INotifySignalingGate? notifySignalingGate = null,
+  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _notificationOptions = notificationOptions?.Value ?? throw new ArgumentNullException(nameof(notificationOptions));
   private readonly CommitOrderStamperOptions _stamperOptions = stamperOptions?.Value ?? throw new ArgumentNullException(nameof(stamperOptions));
@@ -57,6 +59,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   private readonly ILogger<PgCommitOrderStamperWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotifySignalingGate? _notifySignalingGate = notifySignalingGate;
+  private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   // Opt-in: register an INotificationDataSource via DI when the DbContext is
   // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
   // works because Npgsql strips credentials from both NpgsqlConnection.
@@ -88,6 +91,16 @@ public sealed partial class PgCommitOrderStamperWorker(
     if (_stamperOptions.DisableStamper) {
       LogDisabled(_logger);
       return;
+    }
+
+    // The leader loop calls stamp_pending_commit_sequences — a function the migration defines.
+    // Hold at the schema gate before election; a disabled stamper (above) never waits.
+    if (_schemaReadyGate is not null) {
+      try {
+        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
+      }
     }
 
     var resolution = NotificationConnectionStringResolver.Resolve(_notificationOptions, _configuration, _connectionStringFallback).WithAppliedSearchPath();

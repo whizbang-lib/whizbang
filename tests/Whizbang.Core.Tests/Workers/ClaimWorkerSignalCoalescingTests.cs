@@ -147,7 +147,7 @@ public class ClaimWorkerSignalCoalescingTests {
       return tcs.Task.WaitAsync(timeout);
     }
 
-    public Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;

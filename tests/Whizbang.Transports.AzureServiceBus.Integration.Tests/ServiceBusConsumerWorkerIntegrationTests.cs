@@ -76,7 +76,8 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
-      // Give subscription time to warm up
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
+      // Give broker-side routing time to warm up
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       var envelope = _createTestEnvelopeWithAggregateId(Guid.NewGuid());
@@ -141,6 +142,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       // Publish message with security context in hop
@@ -195,6 +197,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       // Publish a message
@@ -244,6 +247,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     // Act: Start creates subscriptions, stop disposes them
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
     // Worker should have created 2 subscriptions - verify by stopping cleanly
     await worker.StopAsync(CancellationToken.None);
 
@@ -281,6 +285,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       // Act: Pause and resume should not throw
       await worker.PauseAllSubscriptionsAsync();
       await worker.ResumeAllSubscriptionsAsync();
@@ -322,7 +327,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
-      // Assert: Worker started successfully with destination filter
+      // Subscribing moved out of StartAsync when the schema gate landed — the worker
+      // subscribes from ExecuteAsync, so "started" no longer implies "subscribed".
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Assert.That(logger.HasMessage("Subscribed")).IsTrue();
     } finally {
       await worker.StopAsync(CancellationToken.None);
@@ -361,6 +368,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       var expectedStreamId = Guid.NewGuid();
@@ -413,6 +421,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       // Envelope with no AggregateId metadata

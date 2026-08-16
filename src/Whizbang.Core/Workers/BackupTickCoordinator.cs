@@ -39,8 +39,13 @@ public sealed partial class BackupTickCoordinator(
   IOptions<BackupTickCoordinatorOptions> options,
   ILogger<BackupTickCoordinator> logger,
   INotifySignalingGate? gate = null,
-  TimeProvider? timeProvider = null
+  TimeProvider? timeProvider = null,
+  // Startup barrier: registered backstop ticks poll the database. Optional only so existing
+  // fixtures construct unchanged; DI always supplies it.
+  ISchemaReadyGate? schemaReadyGate = null
 ) : BackgroundService {
+  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+
   private readonly IIdleActivityTracker _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
   private readonly IBackupTickRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
   private readonly BackupTickCoordinatorOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -67,6 +72,15 @@ public sealed partial class BackupTickCoordinator(
       LogDisabled(_logger);
       return;
     }
+
+    if (_schemaReadyGate is not null) {
+      try {
+        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
+      }
+    }
+
 
     LogStarted(_logger, _options.IdleThreshold, _options.PollingInterval, _options.FastPollingInterval);
 

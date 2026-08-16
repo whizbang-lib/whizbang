@@ -55,9 +55,17 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="request">Instance identity + optional metadata.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// <see langword="true"/> if the heartbeat was recorded; <see langword="false"/> if this
+  /// instance has been evicted (reaped as stale, then tombstoned) and must not consider itself
+  /// part of the fleet — callers must stop heartbeating rather than retry, since a tombstoned
+  /// instance id never becomes valid again.
+  /// </returns>
   /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+  /// <docs>fundamentals/workers/instance-liveness#eviction-reaping-is-a-fence-not-just-a-deletion</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreRecordHeartbeatTests.cs:RecordHeartbeatAsync_NewInstance_InsertsRowAsync</tests>
-  Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceEvictionFencingSqlTests.cs</tests>
+  Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
       $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
 
@@ -937,6 +945,54 @@ public interface IWorkCoordinator {
 
   /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
   Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// Records that a table owes a rewrite, exactly as a migration does. The runtime maintenance
+  /// cycle calls this when it detects bloat instead of taking an ACCESS EXCLUSIVE lock
+  /// mid-traffic — the post-ready <c>Rewrite</c> startup step performs the recorded rewrites in
+  /// the window they should always have had. Idempotent per table.
+  /// </summary>
+  Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// Records this instance's lifecycle phase (and, when known, library version) on its own
+  /// instance row, so peers and the status surface can observe it — the standby handshake cannot
+  /// wait for a state nobody can see. Returns false when the instance has no row yet (early
+  /// startup transitions precede the first heartbeat — expected, not an error). Must not refresh
+  /// liveness: state is not a heartbeat, and a standing-by zombie must still be reapable.
+  /// </summary>
+  Task<bool> RecordInstanceStateAsync(
+      Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
+      CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
+  /// Records the single fleet-wide standby request: this instance asking live older peers to
+  /// drain and stand by before a breaking migration. True when this instance now holds the
+  /// active request (first claim or idempotent re-request); false when another instance's
+  /// request is active or this instance is evicted.
+  /// </summary>
+  Task<bool> RequestStandbyAsync(Guid instanceId, string version, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>Withdraws this instance's own standby request. Only the requester clears —
+  /// a dead requester's request is voided by peers watching its liveness, never by deletion.</summary>
+  Task<bool> ClearStandbyRequestAsync(Guid instanceId, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>The active standby request, with the requester's last heartbeat so peers can bound
+  /// their wait by the requester's liveness rather than its goodwill.</summary>
+  Task<StandbyRequest?> GetStandbyRequestAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<StandbyRequest?>(null);
+
+  /// <summary>
+  /// The deliberate fence: tombstones an instance so its heartbeats, capability acquisitions and
+  /// work claims are refused. Taken by the migrator during a breaking handshake, or by an
+  /// operator — never an automatic consequence of slowness. Records who issued it and why.
+  /// </summary>
+  Task EvictInstanceAsync(Guid instanceId, Guid evictedBy, string reason, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
   /// <summary>

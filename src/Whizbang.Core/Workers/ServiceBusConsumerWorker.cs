@@ -43,10 +43,30 @@ public partial class ServiceBusConsumerWorker(
   IReceptorRegistryQuery? receptorRegistry = null,
   IReceptorRegistry? runtimeReceptorRegistry = null,
   IEventMarkerResolver? eventMarkerResolver = null,
-  IEphemeralModeResolver? ephemeralModeResolver = null
-  ) : BackgroundService {
+  IEphemeralModeResolver? ephemeralModeResolver = null,
+  // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
+  // database work against a schema that may not exist yet on a first boot. Optional only so
+  // existing fixtures construct unchanged; DI always supplies it.
+  ISchemaReadyGate? schemaReadyGate = null
+  ) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+  private readonly TaskCompletionSource _subscriptionsReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  /// <summary>
+  /// Completes once every configured subscription is established — the transport-side "ready"
+  /// signal the startup pipeline's Ready composite consumes. Faults if subscribing fails, and
+  /// cancels if the host stops first, so a waiter never hangs on a worker that will not arrive.
+  /// </summary>
+  public Task SubscriptionsReady => _subscriptionsReady.Task;
+
+  /// <inheritdoc />
+  string Whizbang.Core.Startup.IStartupReadinessContributor.ContributorName => "servicebus-consumer";
+
+  /// <inheritdoc />
+  Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
+    => SubscriptionsReady.WaitAsync(cancellationToken);
   private readonly IEventMarkerResolver? _eventMarkerResolver = eventMarkerResolver;
   private readonly IEphemeralModeResolver? _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
@@ -109,15 +129,35 @@ public partial class ServiceBusConsumerWorker(
   /// Starts the worker and creates all subscriptions BEFORE background processing begins.
   /// This ensures subscriptions are ready before ExecuteAsync runs (blocking initialization).
   /// </summary>
-  public override async Task StartAsync(CancellationToken cancellationToken) {
+  /// <summary>
+  /// Background loop: waits for the schema gate, subscribes to the configured topics, then keeps
+  /// the worker alive while subscriptions process messages.
+  /// </summary>
+  /// <remarks>
+  /// Subscribing used to happen inline in <c>StartAsync</c>, which both BLOCKED host startup on
+  /// broker round-trips and let the broker deliver before migrations completed — delivered
+  /// messages land in inbox tables the migration creates. Both halves are fixed by moving the
+  /// subscribe here, behind the gate.
+  /// </remarks>
+  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
+  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
     activity?.SetTag("servicebus.has_filter", _options.Subscriptions.Any(s => !string.IsNullOrWhiteSpace(s.DestinationFilter)));
 
     LogWorkerStarting(_logger);
 
+    if (_schemaReadyGate is not null) {
+      try {
+        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        _subscriptionsReady.TrySetCanceled(stoppingToken);
+        return;
+      }
+    }
+
     try {
-      // Subscribe to configured topics (BLOCKING - ensures subscriptions ready before ExecuteAsync)
       foreach (var topicConfig in _options.Subscriptions) {
         // Create destination with DestinationFilter metadata if specified
         var metadata = !string.IsNullOrWhiteSpace(topicConfig.DestinationFilter)
@@ -159,7 +199,7 @@ public partial class ServiceBusConsumerWorker(
           },
           destination,
           new TransportBatchOptions(),
-          cancellationToken
+          stoppingToken
         );
 
         _subscriptions.Add(subscription);
@@ -168,26 +208,19 @@ public partial class ServiceBusConsumerWorker(
       }
 
       LogSubscriptionsReady(_logger, _subscriptions.Count);
-
-      // Call base.StartAsync to trigger ExecuteAsync
-      await base.StartAsync(cancellationToken);
+      _subscriptionsReady.TrySetResult();
+    } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+      _subscriptionsReady.TrySetCanceled(stoppingToken);
+      return;
     } catch (Exception ex) {
       LogFailedToStart(_logger, ex);
+      _subscriptionsReady.TrySetException(ex);
       throw;
     }
-  }
 
-  /// <summary>
-  /// Background processing loop - keeps worker alive while subscriptions process messages.
-  /// Subscriptions are already created in StartAsync (blocking), so this just waits.
-  /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
-  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogBackgroundProcessingStarted(_logger);
 
     try {
-      // Keep the worker running while subscriptions are active
       await Task.Delay(Timeout.Infinite, stoppingToken);
     } catch (OperationCanceledException) {
       LogWorkerStopping(_logger);

@@ -75,6 +75,7 @@ public class ServiceBusConsumerWorkerGapTests {
       messageProcessingOptions: new MessageProcessingOptions { MaxConcurrentMessages = 0 });
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var messageId = MessageId.New();
     await transport.CapturedBatchHandler!(
@@ -111,6 +112,7 @@ public class ServiceBusConsumerWorkerGapTests {
       messageProcessingOptions: new MessageProcessingOptions { MaxConcurrentMessages = 2 });
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createTypedEnvelope(MessageId.New());
     var envelopeType = typeof(MessageEnvelope<SbcGapTestEvent>).AssemblyQualifiedName!;
@@ -146,6 +148,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var worker = _createWorker(transport, strategy, services);
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createTypedEnvelope(MessageId.New());
     var envelopeType = typeof(MessageEnvelope<SbcGapTestEvent>).AssemblyQualifiedName!;
@@ -175,6 +178,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var worker = _createWorker(transport, strategy);
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = new MessageEnvelope<object> {
       MessageId = MessageId.New(),
@@ -215,6 +219,7 @@ public class ServiceBusConsumerWorkerGapTests {
 
     var worker = _createWorker(transport, strategy, services);
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var messageId = MessageId.New();
     await transport.CapturedBatchHandler!(
@@ -243,6 +248,7 @@ public class ServiceBusConsumerWorkerGapTests {
 
     var worker = _createWorker(transport, strategy, services);
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(MessageId.New(), Guid.Empty);
 
@@ -271,6 +277,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     var worker = _createWorker(transport, strategy);
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var messageId = MessageId.New();
     var envelope = _createJsonEnvelopeWithRawAggregateId(messageId, "\"not-a-guid\"");
@@ -295,6 +302,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     var worker = _createWorker(transport, strategy);
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var messageId = MessageId.New();
     var envelope = _createJsonEnvelopeWithRawAggregateId(messageId, "12345");
@@ -324,6 +332,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     var worker = _createWorker(transport, strategy);
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(MessageId.New(), Guid.NewGuid(), traceParent: "this-is-not-a-w3c-traceparent");
 
@@ -351,6 +360,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     var worker = _createWorker(transport, strategy);
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     await transport.CapturedBatchHandler!([], CancellationToken.None);
 
@@ -408,6 +418,7 @@ public class ServiceBusConsumerWorkerGapTests {
       lifecycleMessageDeserializer: new GapLifecycleDeserializer());
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     await transport.CapturedBatchHandler!(
       [new TransportMessage(_createJsonEnvelope(messageId, streamId), JSON_ENVELOPE_TYPE)],
@@ -442,6 +453,7 @@ public class ServiceBusConsumerWorkerGapTests {
       receptorRegistry: new GapReceptorRegistryQuery(hasAnyConsumer: _ => false));
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(MessageId.New(), Guid.NewGuid());
 
@@ -510,6 +522,7 @@ public class ServiceBusConsumerWorkerGapTests {
       receptorRegistry: new GapReceptorRegistryQuery(hasReceptors: (_, _) => false, hasAnyConsumer: _ => true));
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     await transport.CapturedBatchHandler!(
       [new TransportMessage(_createJsonEnvelope(messageId, streamId), JSON_ENVELOPE_TYPE)],
@@ -590,6 +603,7 @@ public class ServiceBusConsumerWorkerGapTests {
       lifecycleMessageDeserializer: new GapLifecycleDeserializer());
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     await transport.CapturedBatchHandler!(
       [new TransportMessage(_createJsonEnvelope(messageId, streamId), JSON_ENVELOPE_TYPE)],

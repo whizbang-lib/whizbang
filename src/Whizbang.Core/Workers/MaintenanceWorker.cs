@@ -148,9 +148,10 @@ public sealed partial class MaintenanceWorker(
     // N delete storms against one container. Best-effort — a failed sweep retries next cycle.
     await _sweepExpiredOffloadClaimsAsync(coordinator, sp, ct);
 
-    // Reclaim space held but unusable — churn leaves free space inside pages that autovacuum
+    // Detect space held but unusable — churn leaves free space inside pages that autovacuum
     // returns to the free space map but never to the OS, and a dropped column leaves bytes that
-    // autovacuum can never reclaim at all. Reports by default; rewrites only when permitted.
+    // autovacuum can never reclaim at all. Detection RECORDS the rewrite request; the post-ready
+    // Rewrite startup step performs it, in the window it should always have had.
     await _rewriteBloatedTablesAsync(coordinator, ct);
 
     // v0.657 slice 5: structural stuck-row sentinel. Runs after the regular
@@ -168,14 +169,17 @@ public sealed partial class MaintenanceWorker(
   // holds it), it never loses data.
 
   /// <summary>
-  /// Reclaims space a table holds but cannot use, when the operator has permitted it.
+  /// Detects tables holding space they cannot use, and RECORDS that a rewrite is owed — it never
+  /// performs one. Executing a rewrite takes an ACCESS EXCLUSIVE lock, and the runtime
+  /// maintenance cadence was always the wrong window for that; the post-ready <c>Rewrite</c>
+  /// startup step performs the recorded requests under the maintainer duty, in the window they
+  /// should always have had (see <c>TableRewriteStartupStep</c>).
   /// </summary>
   /// <remarks>
-  /// Candidates come from <c>wh_tables_needing_rewrite()</c>, which re-measures each one, so a
-  /// migration that replayed and re-recorded an already-rewritten table yields nothing rather
-  /// than an expensive no-op. The request is cleared only after the ratio is confirmed to have
-  /// dropped: an interrupted or ineffective rewrite stays queued and is retried next cycle
-  /// instead of being silently forgotten.
+  /// Candidates come from <c>wh_tables_needing_rewrite()</c>, which re-measures each one, so an
+  /// already-rewritten table yields nothing. Recording is what makes the next boot's step pick
+  /// the table up deterministically instead of depending on the bloat still measuring over
+  /// threshold at that moment; a candidate already recorded is not re-recorded.
   /// </remarks>
   /// <summary>
   /// Drains the expired half of the offload-claim ledger. The invariant: the ledger row outlives
@@ -254,23 +258,13 @@ public sealed partial class MaintenanceWorker(
       if (ct.IsCancellationRequested) {
         return;
       }
-      if (!_options.AllowTableRewrite) {
-        // Report and stop. An operator who never looks at this still gets the bloat gauge.
-        LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
-        continue;
+      // Report either way — an operator who never looks at this still gets the bloat gauge.
+      LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
+      if (c.Requested) {
+        continue;   // already on the books
       }
       try {
-        var after = await coordinator.RewriteTableAsync(c.TableName, ct);
-        if (after is null || after >= c.BloatRatio) {
-          // No improvement — leave the request in place so it is retried, and say so, rather
-          // than clearing it and reporting success we did not achieve.
-          LogRewriteIneffective(_logger, c.TableName, c.BloatRatio, after ?? -1);
-          continue;
-        }
-        LogRewriteDone(_logger, c.TableName, c.BloatRatio, after.Value);
-        if (c.Requested) {
-          await coordinator.ClearTableRewriteRequestAsync(c.TableName, ct);
-        }
+        await coordinator.RequestTableRewriteAsync(c.TableName, ct);
       } catch (OperationCanceledException) {
         throw;
       } catch (Exception ex) {
@@ -443,18 +437,10 @@ public sealed partial class MaintenanceWorker(
   static partial void LogEpochClosureFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
-    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Set MaintenanceWorkerOptions.AllowTableRewrite to let maintenance do it (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
+    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded — the post-ready Rewrite step performs it on the next boot when MaintenanceWorkerOptions.AllowTableRewrite permits (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
   static partial void LogRewriteNeeded(ILogger logger, string table, double ratio);
 
-  [LoggerMessage(EventId = 31, Level = LogLevel.Information,
-    Message = "Rewrote {Table}: bloat ratio {Before}x -> {After}x")]
-  static partial void LogRewriteDone(ILogger logger, string table, double before, double after);
-
-  [LoggerMessage(EventId = 32, Level = LogLevel.Warning,
-    Message = "Rewrite of {Table} did not reduce its bloat ratio ({Before}x -> {After}x); leaving it queued for retry")]
-  static partial void LogRewriteIneffective(ILogger logger, string table, double before, double after);
-
-  [LoggerMessage(EventId = 33, Level = LogLevel.Warning, Message = "Rewrite of {Table} failed")]
+  [LoggerMessage(EventId = 33, Level = LogLevel.Warning, Message = "Recording the rewrite request for {Table} failed")]
   static partial void LogRewriteFailed(ILogger logger, string table, Exception ex);
 
   [LoggerMessage(EventId = 34, Level = LogLevel.Debug, Message = "Could not scan for tables needing rewrite")]

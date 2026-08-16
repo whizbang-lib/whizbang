@@ -54,6 +54,9 @@ public sealed class HealthPolicy {
     // Readiness: serve-ability. Intentional states (startup, migrating, paused, connecting, draining)
     // are healthy under Lenient / held out of rotation under Strict; a real Faulted always fails.
     map[(ComponentState.Operational, HealthProbe.Readiness)] = HealthStatus.Healthy;
+    // Ready means fully up — blocking startup steps drained — so it is Healthy on readiness under
+    // BOTH policies: it is precisely the state Strict holds a pod out of rotation waiting for.
+    map[(ComponentState.Ready, HealthProbe.Readiness)] = HealthStatus.Healthy;
     map[(ComponentState.Starting, HealthProbe.Readiness)] = readinessForStartupStates;
     map[(ComponentState.Connecting, HealthProbe.Readiness)] = readinessForStartupStates;
     map[(ComponentState.Migrating, HealthProbe.Readiness)] = readinessForStartupStates;
