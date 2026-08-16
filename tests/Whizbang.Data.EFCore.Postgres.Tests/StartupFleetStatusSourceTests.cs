@@ -48,6 +48,8 @@ public class StartupFleetStatusSourceTests : EFCoreTestBase {
       .Because("an instance that heartbeats is a live instance the fleet section must show");
     await Assert.That(rowB).IsNotNull();
     await Assert.That(rowA!.HostName).IsEqualTo("host-a");
+    await Assert.That(rowA.Capabilities.Count).IsEqualTo(0)
+      .Because("no duty won means nothing held — an empty holdings list, not a null one");
     await Assert.That((DateTimeOffset.UtcNow - rowA.LastHeartbeatAt).TotalMinutes).IsLessThan(2)
       .Because("the heartbeat just happened — a stale timestamp here would make every per-row "
              + "age the surface reports a lie");

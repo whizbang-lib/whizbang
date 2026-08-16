@@ -182,7 +182,7 @@ public class StartupStatusEndpointsTests {
   public async Task Fleet_WithASource_ReportsEachRowWithItsOwnAgeAsync() {
     var instanceId = Guid.NewGuid();
     var rows = new List<FleetInstanceStatus> {
-      new(instanceId, "svc-a", "host-1", DateTimeOffset.UtcNow.AddSeconds(-40)),
+      new(instanceId, "svc-a", "host-1", DateTimeOffset.UtcNow.AddSeconds(-40), ["migrator"]),
     };
     using var host = _buildHost(s => s.AddSingleton<IStartupFleetStatusSource>(new FixedFleetSource(rows)));
     await host.StartAsync();
@@ -194,6 +194,9 @@ public class StartupStatusEndpointsTests {
     await Assert.That(body).Contains("\"lastSeenSecondsAgo\":")
       .Because("every fleet row is only as current as that instance's last heartbeat — each "
              + "carries its own age so a thirty-seconds-dead instance never reads as healthy");
+    await Assert.That(body).Contains("\"capabilities\":[\"migrator\"]")
+      .Because("'which instance is the migrator right now' is answerable from the fleet section — "
+             + "a join, not a fan-out");
   }
 
   // ── no shared failure domain: the route exempts itself from the gate ───

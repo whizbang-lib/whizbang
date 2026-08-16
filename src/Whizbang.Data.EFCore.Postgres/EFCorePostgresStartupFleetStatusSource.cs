@@ -33,18 +33,21 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
     var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
 
     var schema = dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var table = string.IsNullOrWhiteSpace(schema) || schema == "public"
-      ? "wh_service_instances"
-      : $"\"{schema}\".wh_service_instances";
+    var prefix = string.IsNullOrWhiteSpace(schema) || schema == "public" ? "" : $"\"{schema}\".";
 
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken).ConfigureAwait(false);
     await using var cmd = connectionScope.Connection.CreateCommand();
 #pragma warning disable S2077 // schema comes from the EF model, not user input — same pattern as the coordinator
+    // Capabilities ride along as a join, not a fan-out — "which instance is the migrator right
+    // now" answered from the recorded holdings (derived state: the lock decides, the row reports).
     cmd.CommandText = $@"
-      SELECT instance_id, service_name, host_name, last_heartbeat_at
-      FROM {table}
-      ORDER BY last_heartbeat_at DESC
+      SELECT i.instance_id, i.service_name, i.host_name, i.last_heartbeat_at,
+             COALESCE(array_agg(c.capability ORDER BY c.capability) FILTER (WHERE c.capability IS NOT NULL), '{{}}') AS capabilities
+      FROM {prefix}wh_service_instances i
+      LEFT JOIN {prefix}wh_instance_capabilities c ON c.instance_id = i.instance_id
+      GROUP BY i.instance_id, i.service_name, i.host_name, i.last_heartbeat_at
+      ORDER BY i.last_heartbeat_at DESC
       LIMIT 200";
 #pragma warning restore S2077
 
@@ -57,7 +60,8 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
         reader.GetString(2),
         reader.GetFieldValue<DateTime>(3) is { } heardAt
           ? new DateTimeOffset(DateTime.SpecifyKind(heardAt, DateTimeKind.Utc))
-          : DateTimeOffset.MinValue));
+          : DateTimeOffset.MinValue,
+        reader.GetFieldValue<string[]>(4)));
     }
     return rows;
   }

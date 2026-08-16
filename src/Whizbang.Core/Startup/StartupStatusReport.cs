@@ -55,9 +55,11 @@ public sealed record FleetStatusSection(
 /// <param name="ServiceName">The service it belongs to.</param>
 /// <param name="HostName">Where it runs.</param>
 /// <param name="LastSeenSecondsAgo">Seconds since its last heartbeat — freshness is per row, judged by the reader.</param>
+/// <param name="Capabilities">What the instance currently holds — which one is the migrator, as a query.</param>
 /// <docs>proposals/startup-pipeline#status</docs>
 public sealed record FleetStatusEntry(
-  Guid InstanceId, string ServiceName, string HostName, double LastSeenSecondsAgo);
+  Guid InstanceId, string ServiceName, string HostName, double LastSeenSecondsAgo,
+  IReadOnlyList<string> Capabilities);
 
 /// <summary>
 /// Builds the <see cref="StartupStatusReport"/> every surface serves. One implementation carries
@@ -134,7 +136,8 @@ public static class StartupStatusReporter {
       foreach (var instance in instances) {
         rows.Add(new FleetStatusEntry(
           instance.InstanceId, instance.ServiceName, instance.HostName,
-          Math.Max(0, (now - instance.LastHeartbeatAt).TotalSeconds)));
+          Math.Max(0, (now - instance.LastHeartbeatAt).TotalSeconds),
+          instance.Capabilities));
       }
       return new FleetStatusSection(Available: true, Reason: null, rows);
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {

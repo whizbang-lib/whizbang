@@ -13,9 +13,14 @@ namespace Whizbang.Core.Startup;
 /// When it was last heard from. Every fleet row is only as current as this — a reader must judge
 /// freshness per row, or an instance that died thirty seconds ago reads as healthy.
 /// </param>
+/// <param name="Capabilities">
+/// What the instance currently holds, from the recorded holdings — "which instance is the migrator
+/// right now" as a join, not a fan-out. Derived state: the lock decides, the row reports.
+/// </param>
 /// <docs>proposals/startup-pipeline#status</docs>
 public sealed record FleetInstanceStatus(
-  Guid InstanceId, string ServiceName, string HostName, DateTimeOffset LastHeartbeatAt);
+  Guid InstanceId, string ServiceName, string HostName, DateTimeOffset LastHeartbeatAt,
+  IReadOnlyList<string> Capabilities);
 
 /// <summary>
 /// The fleet section of a status response: either the live instances from the database, or an
