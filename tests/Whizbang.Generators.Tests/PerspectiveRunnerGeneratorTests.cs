@@ -294,6 +294,76 @@ namespace TestNamespace {
   }
 
   [Test]
+  public async Task PerspectiveRunnerGenerator_StreamGroup_RegistersEachMembershipWithItsDialsAsync() {
+    // Stream groups follow the same turnkey chain as the TTL and the cap: attribute -> generated
+    // [ModuleInitializer] -> registry. A perspective in TWO groups (the case the dials exist for)
+    // must register two memberships, each with its own Announce/Follow/Bridge values.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ThreadTouched : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record GroupedThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  [StreamGroup("chat")]
+  [StreamGroup("audit", Follow = false, Bridge = true)]
+  public class GroupedThreadPerspective : IPerspectiveFor<GroupedThreadModel, ThreadTouched> {
+    public GroupedThreadModel Apply(GroupedThreadModel currentData, ThreadTouched @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "GroupedThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!)
+      .Contains("PerspectiveStreamGroupRegistry.Register(typeof(global::TestNamespace.GroupedThreadModel), \"chat\", true, true, false)")
+      .Because("the first membership keeps the defaults: announce on, follow on, bridge OFF");
+    await Assert.That(runnerSource)
+      .Contains("PerspectiveStreamGroupRegistry.Register(typeof(global::TestNamespace.GroupedThreadModel), \"audit\", true, false, true)")
+      .Because("the second membership carries its own dials — per-MEMBERSHIP, not per-perspective");
+  }
+
+  [Test]
+  public async Task PerspectiveRunnerGenerator_NoStreamGroup_EmitsNoRegistrationAsync() {
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record LoneEvent : IEvent {
+    public string Id { get; init; } = "";
+  }
+
+  public record LoneModel {
+    [StreamId]
+    public string Id { get; init; } = "";
+  }
+
+  public class LonePerspective : IPerspectiveFor<LoneModel, LoneEvent> {
+    public LoneModel Apply(LoneModel currentData, LoneEvent @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "LonePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).DoesNotContain("PerspectiveStreamGroupRegistry")
+      .Because("an ungrouped perspective registers nothing — it must stay untouchable by cascades");
+  }
+
+  [Test]
   public async Task PerspectiveRunnerGenerator_RowCap_RegistersCapAsync() {
     // The cardinality half. A cap must reach PerspectiveRowCapRegistry the same turnkey way the TTL
     // reaches PerspectiveTtlRegistry — a generated [ModuleInitializer], no consumer code, no

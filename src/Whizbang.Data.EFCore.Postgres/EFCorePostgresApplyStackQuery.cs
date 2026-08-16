@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </remarks>
 /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyStackQuerySqlTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
 public sealed class EFCorePostgresApplyStackQuery : IApplyStackQuery {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly Type _dbContextType;
@@ -82,16 +83,38 @@ public sealed class EFCorePostgresApplyStackQuery : IApplyStackQuery {
 
     return await _withConnectionAsync(async (cmd, prefix) => {
 #pragma warning disable S2077 // the schema prefix comes from the EF model, not user input — coordinator pattern
-      cmd.CommandText = string.Format(
-        System.Globalization.CultureInfo.InvariantCulture,
-        PATHS_CTE + """
+      // The settled/live split: persisted (folded) signatures union into the live computation —
+      // but ONLY for the unfiltered whole-store view, because folded shapes carry no perspective
+      // or scope identity to filter by. Filtered queries stay live-only.
+      var includePersisted = options.PerspectiveName is null && options.ScopeJson is null;
+      var tail = includePersisted
+        ? """
+
+        SELECT u.path, SUM(u.stream_count)::bigint AS stream_count,
+               MIN(u.first_seen) AS first_seen, MAX(u.last_seen) AS last_seen
+        FROM (
+          SELECT path, COUNT(*) AS stream_count, MIN(head_at) AS first_seen, MAX(head_at) AS last_seen
+          FROM paths
+          GROUP BY path
+          UNION ALL
+          SELECT ap.path, ap.stream_count, ap.first_seen, ap.last_seen
+          FROM {0}wh_apply_paths ap
+        ) u
+        GROUP BY u.path
+        ORDER BY stream_count DESC, u.path
+        LIMIT @p_max
+        """
+        : """
 
         SELECT path, COUNT(*) AS stream_count, MIN(head_at) AS first_seen, MAX(head_at) AS last_seen
         FROM paths
         GROUP BY path
         ORDER BY stream_count DESC, path
         LIMIT @p_max
-        """, prefix);
+        """;
+      cmd.CommandText = string.Format(
+        System.Globalization.CultureInfo.InvariantCulture,
+        PATHS_CTE + tail, prefix);
 #pragma warning restore S2077
       _addFilterParameters(cmd, options);
       cmd.Parameters.Add(new NpgsqlParameter("p_max", options.MaxSignatures));

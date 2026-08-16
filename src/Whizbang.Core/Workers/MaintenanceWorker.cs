@@ -273,6 +273,11 @@ public sealed partial class MaintenanceWorker(
           capResult?.RowsAffected ?? 0, capResult?.Status ?? "not claimed");
       }
 
+      // The stream-group cascade: expand what the sweeps just destroyed (the journal) through the
+      // group closure and evict the same streams from sibling perspectives — same cycle, through
+      // the same guards. Zero-cost when no perspective declared a group.
+      releasedByGuard.AddRange(await _cascadeStreamGroupEvictionsAsync(coordinator, sp, ct).ConfigureAwait(false));
+
       // PostDestruction for the seam: the rows this cycle released, after the sweeps ran. Never
       // blocks destruction — a throwing observer is logged and ignored.
       foreach (var (guard, targets) in releasedByGuard) {
@@ -368,6 +373,141 @@ public sealed partial class MaintenanceWorker(
       }
     }
     return releasedByGuard;
+  }
+
+  // The stream-group cascade (proposal consumer 2): drain the origin-eviction journal, map entries
+  // to registered group members, compute the Announce/Follow/Bridge closure, offer cascaded rows of
+  // GUARDED perspectives to their guards (holds honored), then execute the hold-aware cascade
+  // deletes. Deferred cascades re-queue their seeds so the next cycle re-offers — convergence, not
+  // loss. Best-effort: any failure is logged and the journal retries next cycle.
+  private async Task<List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard Guard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget> Released)>>
+      _cascadeStreamGroupEvictionsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var released = new List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>)>();
+    try {
+      var models = Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.RegisteredModels();
+      if (models.Count == 0) {
+        return released;
+      }
+
+      var drained = await coordinator.DrainRowEvictionJournalAsync(_options.RowCascadeDrainLimit, ct).ConfigureAwait(false);
+      if (drained.Count == 0) {
+        return released;
+      }
+
+      // clr name ↔ table ↔ model type maps, from the registry + the group declarations.
+      var clrNames = models.Select(m => m.FullName).Where(n => n is not null).Cast<string>().ToList();
+      var tableNames = await coordinator.GetPerspectiveTableNamesAsync(clrNames, ct).ConfigureAwait(false);
+      var typeByClr = models.Where(m => m.FullName is not null).ToDictionary(m => m.FullName!, m => m, StringComparer.Ordinal);
+      var typeByTable = new Dictionary<string, Type>(StringComparer.Ordinal);
+      var tableByType = new Dictionary<Type, string>();
+      foreach (var entry in tableNames) {
+        if (typeByClr.TryGetValue(entry.ClrTypeName, out var type)) {
+          typeByTable[entry.TableName] = type;
+          tableByType[type] = entry.TableName;
+        }
+      }
+
+      var seeds = drained
+        .Where(d => typeByTable.ContainsKey(d.TableName))
+        .Select(d => (typeByTable[d.TableName], d.RowId))
+        .ToList();
+      if (seeds.Count == 0) {
+        return released;
+      }
+
+      var memberships = models.ToDictionary(m => m, Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.Resolve);
+      var cascade = Whizbang.Core.Perspectives.StreamGroupClosure.Compute(
+        seeds, memberships.ToDictionary(kv => kv.Key, kv => kv.Value));
+      if (cascade.Count == 0) {
+        return released;
+      }
+
+      var guards = sp.GetService<IEnumerable<Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard>>() ?? [];
+      var guardByType = new Dictionary<Type, Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard>();
+      foreach (var guard in guards) {
+        foreach (var guarded in guard.GuardedModels) {
+          guardByType[guarded] = guard;
+        }
+      }
+
+      var anyDeferred = false;
+      var deleted = 0;
+      foreach (var group in cascade.GroupBy(c => c.Model)) {
+        if (!tableByType.TryGetValue(group.Key, out var table)) {
+          continue;
+        }
+        var rowIds = group.Select(g => g.RowId).ToList();
+
+        if (guardByType.TryGetValue(group.Key, out var guard) && group.Key.FullName is { } guardedClr) {
+          // Cascaded rows of a guarded perspective pass through the same guard as sweep-selected
+          // ones — a resource-referencing row cannot slip out through the cascade path.
+          var targets = await coordinator.GetPerspectiveRowsByIdsAsync(guardedClr, table, rowIds, ct).ConfigureAwait(false);
+          try {
+            var decisions = await guard.OnBeforeReapAsync(targets, ct).ConfigureAwait(false);
+            var proceedIds = new List<Guid>();
+            var proceedTargets = new List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>();
+            var held = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
+            var defaultDefer = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
+            foreach (var target in targets) {
+              var decision = decisions.TryGetValue(target.RowId, out var d)
+                ? d
+                : Whizbang.Core.Lifecycle.PerspectiveRowDecision.Defer(defaultDefer);
+              switch (decision.Kind) {
+                case Whizbang.Core.Lifecycle.PerspectiveRowDispositionKind.Proceed:
+                  proceedIds.Add(target.RowId);
+                  proceedTargets.Add(target);
+                  break;
+                case Whizbang.Core.Lifecycle.PerspectiveRowDispositionKind.Cancel:
+                  await coordinator.HoldPerspectiveRowDestructionAsync(
+                    [new Whizbang.Core.Lifecycle.PerspectiveRowRef(table, target.RowId)], DateTimeOffset.MaxValue, ct).ConfigureAwait(false);
+                  break;
+                default:
+                  held.Add(new Whizbang.Core.Lifecycle.PerspectiveRowRef(table, target.RowId));
+                  await coordinator.HoldPerspectiveRowDestructionAsync(
+                    [new Whizbang.Core.Lifecycle.PerspectiveRowRef(table, target.RowId)],
+                    decision.DeferUntil ?? defaultDefer, ct).ConfigureAwait(false);
+                  anyDeferred = true;
+                  break;
+              }
+            }
+            if (proceedIds.Count > 0) {
+              deleted += await coordinator.CascadeDeletePerspectiveRowsAsync(table, proceedIds, ct).ConfigureAwait(false);
+              released.Add((guard, proceedTargets));
+            }
+          } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            throw;
+          } catch (Exception ex) {
+            anyDeferred = true;
+            var refs = rowIds.Select(id => new Whizbang.Core.Lifecycle.PerspectiveRowRef(table, id)).ToList();
+            var attempt = await coordinator.RecordPerspectiveRowDestructionFailureAsync(
+              refs, TimeSpan.FromSeconds(_options.DestructionRetryBackoffSeconds),
+              _options.MaxDestructionRetries, _options.OnDestroyFailure, ct).ConfigureAwait(false);
+            LogRowGuardFailed(_logger, ex, rowIds.Count, attempt, _options.MaxDestructionRetries);
+          }
+        } else {
+          deleted += await coordinator.CascadeDeletePerspectiveRowsAsync(table, rowIds, ct).ConfigureAwait(false);
+        }
+      }
+
+      // A deferred cascade re-queues its seeds: the next cycle recomputes the closure and
+      // re-offers, so coherence converges instead of losing the deferred rows from the pipeline.
+      if (anyDeferred) {
+        var reseed = seeds
+          .Where(s => tableByType.ContainsKey(s.Item1))
+          .Select(s => new Whizbang.Core.Lifecycle.PerspectiveRowRef(tableByType[s.Item1], s.Item2))
+          .ToList();
+        await coordinator.RequeueRowEvictionsAsync(reseed, ct).ConfigureAwait(false);
+      }
+
+      if (deleted > 0) {
+        LogStreamGroupCascade(_logger, seeds.Count, cascade.Count, deleted);
+      }
+    } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+      throw;
+    } catch (Exception ex) {
+      LogStreamGroupCascadeFailed(_logger, ex);
+    }
+    return released;
   }
 
   private async Task _rewriteBloatedTablesAsync(IWorkCoordinator coordinator, CancellationToken ct) {
@@ -633,6 +773,14 @@ public sealed partial class MaintenanceWorker(
     Message = "Perspective-row sweep step failed; it retries next maintenance cycle")]
   private static partial void LogRowSweepFailed(ILogger logger, Exception ex);
 
+  [LoggerMessage(EventId = 44, Level = LogLevel.Information,
+    Message = "Stream-group cascade: {SeedCount} origin eviction(s) expanded to {CascadeCount} sibling row(s), {DeletedCount} destroyed")]
+  private static partial void LogStreamGroupCascade(ILogger logger, int seedCount, int cascadeCount, int deletedCount);
+
+  [LoggerMessage(EventId = 45, Level = LogLevel.Warning,
+    Message = "Stream-group cascade failed; the journal retries next maintenance cycle")]
+  private static partial void LogStreamGroupCascadeFailed(ILogger logger, Exception ex);
+
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Stuck inbox row sentinel: message_id={MessageId} type={MessageType} stream={StreamId} attempts={Attempts} since={ClaimedSince:o} — row claimed past MaxInboxAttempts but never drained. Investigate; see operations/observability/stuck-row-sentinel.")]
   static partial void LogStuckInboxRow(ILogger logger, Guid messageId, string messageType, Guid? streamId, int attempts, DateTime claimedSince);
@@ -747,4 +895,10 @@ public sealed class MaintenanceWorkerOptions {
   /// <see cref="Lifecycle.IPerspectiveRowDestructionGuard"/>. Default 500.
   /// </summary>
   public int RowGuardCollectLimit { get; set; } = 500;
+
+  /// <summary>
+  /// Origin evictions claimed from the journal per cycle for stream-group cascade processing.
+  /// Default 1000; leftovers are claimed next cycle.
+  /// </summary>
+  public int RowCascadeDrainLimit { get; set; } = 1000;
 }

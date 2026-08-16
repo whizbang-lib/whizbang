@@ -128,6 +128,15 @@ public sealed partial class PerspectiveRebuilder(
         Current = previousMode;
       }
 
+      // The staged rebuild's EVICT stage (stream groups): a rebuild replays from the log, so it
+      // resurrects rows whose group-cascade eviction happened before the rebuild — and the
+      // cascade's edge (the journal) cannot re-fire, because the origin rows are long gone. The
+      // level-triggered repair is PRESENCE: drop this follower's rows for streams absent from ALL
+      // of its groups' announcers (their live tables materialize the eviction decisions —
+      // decisions, not rules). Conservative all-absent rule; holds honored; direct announcers
+      // only in v1 (no Bridge transitivity in presence).
+      await _streamGroupPresenceReconcileAsync(perspectiveName, sp, ct);
+
       sw.Stop();
       LogRebuildCompleted(logger, mode, perspectiveName, streamsProcessed, sw.ElapsedMilliseconds);
 
@@ -193,6 +202,50 @@ public sealed partial class PerspectiveRebuilder(
   /// bad stream doesn't kill the rebuild. Returns the updated (streamsProcessed, eventsReplayed)
   /// counters so the caller's tuple stays coherent.
   /// </summary>
+  private static async Task _streamGroupPresenceReconcileAsync(
+      string perspectiveName, IServiceProvider sp, CancellationToken ct) {
+    var model = PerspectiveStreamGroupRegistry.RegisteredModels()
+      .FirstOrDefault(m => string.Equals(m.FullName, perspectiveName, StringComparison.Ordinal));
+    if (model is null) {
+      return; // not a group member — nothing to reconcile.
+    }
+    var followMemberships = PerspectiveStreamGroupRegistry.Resolve(model).Where(m => m.Follow).ToList();
+    if (followMemberships.Count == 0) {
+      return;
+    }
+    var coordinator = sp.GetService<Whizbang.Core.Messaging.IWorkCoordinator>();
+    if (coordinator is null) {
+      return;
+    }
+
+    // Direct announcers across all followed groups.
+    var announcers = new HashSet<Type>();
+    foreach (var membership in followMemberships) {
+      foreach (var sibling in PerspectiveStreamGroupRegistry.RegisteredModels()) {
+        if (sibling == model) {
+          continue;
+        }
+        if (PerspectiveStreamGroupRegistry.Resolve(sibling)
+              .Any(m => m.Key == membership.Key && m.Announce)) {
+          announcers.Add(sibling);
+        }
+      }
+    }
+    if (announcers.Count == 0) {
+      return;
+    }
+
+    var names = new List<string> { perspectiveName };
+    names.AddRange(announcers.Select(a => a.FullName).Where(n => n is not null).Cast<string>());
+    var tables = await coordinator.GetPerspectiveTableNamesAsync(names, ct).ConfigureAwait(false);
+    var followerTable = tables.FirstOrDefault(t => t.ClrTypeName == perspectiveName)?.TableName;
+    var announcerTables = tables.Where(t => t.ClrTypeName != perspectiveName).Select(t => t.TableName).ToList();
+    if (followerTable is null || announcerTables.Count == 0) {
+      return;
+    }
+    await coordinator.ReconcileFollowerPresenceAsync(followerTable, announcerTables, ct).ConfigureAwait(false);
+  }
+
   private async Task<(int StreamsProcessed, int EventsReplayed)> _replayStreamAsync(
       IPerspectiveRunner runner,
       string perspectiveName,

@@ -77,6 +77,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // refuses a discard-close of any stream it consumes. Empty for resumable (unmarked) perspectives.
   #endregion
 
+  #region STREAM_GROUP_REGISTRATION
+  // Generated: each [StreamGroup] membership registers via a [ModuleInitializer] (key + the
+  // Announce/Follow/Bridge dials) so the maintenance cascade computes the eviction closure without
+  // reflection. Empty for perspectives that joined no group — untouchable by cascades.
+  #endregion
+
   private readonly IServiceProvider _serviceProvider;
   private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
   private readonly IEventStore _eventStore;

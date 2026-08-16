@@ -977,6 +977,106 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(0L);
 
   /// <summary>
+  /// Atomically claims a batch of journaled origin evictions (what the row sweeps destroyed) for
+  /// group-cascade processing — DELETE ... RETURNING, so N replicas never double-cascade.
+  /// Default: empty.
+  /// </summary>
+  /// <param name="limit">Maximum journal entries claimed this cycle.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowRef>> DrainRowEvictionJournalAsync(
+    int limit = 1000,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowRef>>([]);
+
+  /// <summary>
+  /// Re-queues origin evictions whose cascade was deferred (a guard held a cascaded row), so the
+  /// next cycle recomputes the closure and re-offers. Idempotent. Default: no-op.
+  /// </summary>
+  /// <param name="rows">The origin (table, row) pairs to re-journal.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task RequeueRowEvictionsAsync(
+    IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// The (CLR type name, table name) pairs for the given perspective models, from the registry.
+  /// The cascade uses it to map journal entries to group members and back. Default: empty.
+  /// </summary>
+  /// <param name="clrTypeNames">The perspective models to resolve.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<IReadOnlyList<PerspectiveTableName>> GetPerspectiveTableNamesAsync(
+    IReadOnlyCollection<string> clrTypeNames,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<PerspectiveTableName>>([]);
+
+  /// <summary>
+  /// Loads specific perspective rows as destruction targets (reason <c>cascade</c>) so a guard can
+  /// be offered cascaded rows with their payloads, exactly like sweep-selected ones. Default: empty.
+  /// </summary>
+  /// <param name="clrTypeName">The perspective model's CLR type name.</param>
+  /// <param name="tableName">The perspective's physical table.</param>
+  /// <param name="rowIds">The rows to load.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsByIdsAsync(
+    string clrTypeName,
+    string tableName,
+    IReadOnlyCollection<Guid> rowIds,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>>([]);
+
+  /// <summary>
+  /// Executes one member table's share of the group cascade: hold-aware DELETE of the given rows
+  /// (a guard's Defer survives it). Returns the count destroyed. Default: 0.
+  /// </summary>
+  /// <param name="tableName">The member perspective's physical table.</param>
+  /// <param name="rowIds">The rows the closure marked for eviction.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<int> CascadeDeletePerspectiveRowsAsync(
+    string tableName,
+    IReadOnlyCollection<Guid> rowIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Folds the given streams' apply paths (version-ordered event-type sequences, run-length
+  /// collapsed) into the persisted signature counts — call exactly once per stream, immediately
+  /// before destroying its pointers. The stream dies; its shape survives. Default: 0.
+  /// </summary>
+  /// <param name="streamIds">The streams about to lose their pointers.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
+  Task<int> FoldStreamApplyPathsAsync(
+    IReadOnlyCollection<Guid> streamIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// The staged rebuild's presence reconcile: deletes the follower table's rows whose id is absent
+  /// from EVERY announcer table (the conservative all-absent rule — announcer live tables
+  /// materialize past eviction decisions the journal can no longer re-fire). Hold-aware. Returns
+  /// the count removed. Default: 0.
+  /// </summary>
+  /// <param name="followerTable">The rebuilt follower perspective's physical table.</param>
+  /// <param name="announcerTables">Its groups' announcer tables.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<int> ReconcileFollowerPresenceAsync(
+    string followerTable,
+    IReadOnlyCollection<string> announcerTables,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
   /// Stream-integrity Phase B: the DISTINCT event types this service has ever emitted into its own
   /// audited lane (the own-emissions digest rows). The checkpoint publisher fans its heartbeat out
   /// to these types' topics — the topics this origin's consumers already subscribe to — so a quiet
@@ -1872,6 +1972,13 @@ public sealed record OffloadClaimRecord(string StorageKey, string ProviderName);
 /// <docs>proposals/pre-destruction-seam</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
 public sealed record PerspectiveRowReapResult(int RowsAffected, string Status);
+
+/// <summary>A perspective model's registry identity: its CLR type name and physical table.</summary>
+/// <param name="ClrTypeName">The model's CLR type name (the registry key).</param>
+/// <param name="TableName">The perspective's physical table.</param>
+/// <docs>proposals/pre-destruction-seam</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+public sealed record PerspectiveTableName(string ClrTypeName, string TableName);
 
 /// <summary>
 /// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,

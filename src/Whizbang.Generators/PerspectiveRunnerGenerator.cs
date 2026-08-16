@@ -187,6 +187,36 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
+    // Stream groups: each [StreamGroup] declaration is one membership with its own dials, encoded
+    // compactly (key|announce|follow|bridge;...) so the record stays equatable for incremental
+    // caching. Repeatable — a perspective in two groups is the case the dials exist for.
+    string? streamGroupSpec = null;
+    var streamGroupParts = new List<string>();
+    foreach (var groupAttribute in classSymbol.GetAttributes().Where(
+        static a => a.AttributeClass?.Name is "StreamGroupAttribute" or "StreamGroup")) {
+      if (groupAttribute.ConstructorArguments.Length == 0 ||
+          groupAttribute.ConstructorArguments[0].Value is not string groupKey ||
+          string.IsNullOrEmpty(groupKey)) {
+        continue;
+      }
+      var announce = true;
+      var follow = true;
+      var bridge = false;
+      foreach (var namedArg in groupAttribute.NamedArguments) {
+        if (namedArg.Key == "Announce" && namedArg.Value.Value is bool announceValue) {
+          announce = announceValue;
+        } else if (namedArg.Key == "Follow" && namedArg.Value.Value is bool followValue) {
+          follow = followValue;
+        } else if (namedArg.Key == "Bridge" && namedArg.Value.Value is bool bridgeValue) {
+          bridge = bridgeValue;
+        }
+      }
+      streamGroupParts.Add($"{groupKey}|{(announce ? 1 : 0)}|{(follow ? 1 : 0)}|{(bridge ? 1 : 0)}");
+    }
+    if (streamGroupParts.Count > 0) {
+      streamGroupSpec = string.Join(";", streamGroupParts);
+    }
+
     // A1-6b: a perspective marked [FullHistory] needs every event and cannot resume from a carry-forward /
     // closing event — the A1 close guard refuses a discard-close of any stream it consumes. Resolved at compile
     // time; the generator registers the perspective's name so the runtime guard can key off it.
@@ -273,6 +303,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             TtlRowSeconds: ttlRowSeconds,
             RowCapPerScope: rowCapPerScope,
             RowCapScopeKey: rowCapScopeKey,
+            StreamGroupSpec: streamGroupSpec,
             IsFullHistory: isFullHistory
         ),
         Warning: null
@@ -521,6 +552,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "FULL_HISTORY_REGISTRATION", perspective.IsFullHistory
         ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerFullHistory() =>\n      global::Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.Register(\"{perspective.ClrTypeName}\");"
         : "");
+    // Stream groups register turnkey like the TTL and the cap — one [ModuleInitializer] per
+    // membership, decoded from the compact spec, so the maintenance cascade can compute the
+    // eviction closure without reflection.
+    result = TemplateUtilities.ReplaceRegion(result, "STREAM_GROUP_REGISTRATION",
+        _buildStreamGroupRegistrations(perspective.StreamGroupSpec, modelTypeName));
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
@@ -528,6 +564,23 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 
     return result;
+  }
+
+  private static string _buildStreamGroupRegistrations(string? streamGroupSpec, string modelTypeName) {
+    if (string.IsNullOrEmpty(streamGroupSpec)) {
+      return "";
+    }
+    var registrations = new List<string>();
+    var memberships = streamGroupSpec!.Split(';');
+    for (var i = 0; i < memberships.Length; i++) {
+      var parts = memberships[i].Split('|');
+      if (parts.Length != 4) {
+        continue;
+      }
+      registrations.Add(
+        $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerStreamGroup{i}() =>\n      global::Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.Register(typeof({modelTypeName}), \"{parts[0]}\", {(parts[1] == "1" ? "true" : "false")}, {(parts[2] == "1" ? "true" : "false")}, {(parts[3] == "1" ? "true" : "false")});");
+    }
+    return string.Join("\n\n  ", registrations);
   }
 
   /// <summary>

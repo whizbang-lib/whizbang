@@ -41,6 +41,7 @@ public sealed partial class StreamCloser : IStreamCloser {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   public async Task<StreamCloseResult> CloseAsync(
       Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
     // A1-6b full-history guard: a DISCARD close (archive:false) that would strand a [FullHistory] projection —
@@ -84,6 +85,13 @@ public sealed partial class StreamCloser : IStreamCloser {
         return new StreamCloseResult("deferred", 0);
       }
     }
+
+    // Fold-before-discard (apply-stack lineage): the close is about to truncate this stream's
+    // pointers, so its collapsed path folds into the persisted signature counts first. The stream
+    // dies; its shape survives. Known v1 caveat: re-closing an already-closed stream re-folds the
+    // surviving carry-forward — a small, bounded distortion accepted until per-stream fold
+    // watermarks exist.
+    _ = await _coordinator.FoldStreamApplyPathsAsync([streamId], cancellationToken).ConfigureAwait(false);
 
     var result = await _coordinator.CloseStreamAsync(streamId, throughVersion, archive, cancellationToken)
       .ConfigureAwait(false);

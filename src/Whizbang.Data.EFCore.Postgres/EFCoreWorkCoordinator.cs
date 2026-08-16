@@ -2459,6 +2459,159 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return result is long count ? count : 0L;
     }, cancellationToken);
 
+  /// <inheritdoc />
+  public Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowRef>> DrainRowEvictionJournalAsync(
+      int limit = 1000, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowRef>>(async (cmd, schema) => {
+      var journal = BuildSchemaQualifiedName(schema, "wh_row_eviction_journal");
+#pragma warning disable S2077
+      // DELETE ... RETURNING is the atomic claim: whichever instance drains an entry owns its cascade.
+      cmd.CommandText =
+        $"DELETE FROM {journal} WHERE ctid IN (SELECT ctid FROM {journal} ORDER BY evicted_at LIMIT @n) " +
+        "RETURNING table_name, row_id";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("n", limit));
+      var drained = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        drained.Add(new Whizbang.Core.Lifecycle.PerspectiveRowRef(reader.GetString(0), reader.GetGuid(1)));
+      }
+      return drained;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task RequeueRowEvictionsAsync(
+      IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+      CancellationToken cancellationToken = default) {
+    if (rows.Count == 0) {
+      return Task.CompletedTask;
+    }
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var journal = BuildSchemaQualifiedName(schema, "wh_row_eviction_journal");
+#pragma warning disable S2077
+      cmd.CommandText =
+        $"INSERT INTO {journal} (table_name, row_id) SELECT u.t, u.r FROM unnest(@tables, @ids) AS u(t, r) " +
+        "ON CONFLICT (table_name, row_id) DO NOTHING";
+#pragma warning restore S2077
+      _addRowRefParameters(cmd, rows);
+      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<PerspectiveTableName>> GetPerspectiveTableNamesAsync(
+      IReadOnlyCollection<string> clrTypeNames, CancellationToken cancellationToken = default) {
+    if (clrTypeNames.Count == 0) {
+      return Task.FromResult<IReadOnlyList<PerspectiveTableName>>([]);
+    }
+    return _withCoordinatorCommandAsync<IReadOnlyList<PerspectiveTableName>>(async (cmd, schema) => {
+      var registry = BuildSchemaQualifiedName(schema, "wh_perspective_registry");
+#pragma warning disable S2077
+      cmd.CommandText =
+        $"SELECT clr_type_name, table_name FROM {registry} WHERE clr_type_name = ANY(@names)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("names",
+        NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = clrTypeNames.ToArray() });
+      var names = new List<PerspectiveTableName>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        names.Add(new PerspectiveTableName(reader.GetString(0), reader.GetString(1)));
+      }
+      return names;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsByIdsAsync(
+      string clrTypeName, string tableName, IReadOnlyCollection<Guid> rowIds,
+      CancellationToken cancellationToken = default) {
+    if (rowIds.Count == 0) {
+      return Task.FromResult<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>>([]);
+    }
+    return _withCoordinatorCommandAsync<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>>(
+      async (cmd, schema) => {
+#pragma warning disable S2077 // table identifier originates from wh_perspective_registry, not user input
+        cmd.CommandText =
+          $"SELECT id, scope, data FROM {BuildSchemaQualifiedName(schema, tableName)} WHERE id = ANY(@ids)";
+#pragma warning restore S2077
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("ids",
+          NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = rowIds.ToArray() });
+        var targets = new List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          System.Text.Json.JsonElement? scope = null;
+          if (!await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false)) {
+            using var scopeDoc = System.Text.Json.JsonDocument.Parse(reader.GetString(1));
+            scope = scopeDoc.RootElement.Clone();
+          }
+          using var dataDoc = System.Text.Json.JsonDocument.Parse(reader.GetString(2));
+          targets.Add(new Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget(
+            clrTypeName, tableName, reader.GetGuid(0), scope, dataDoc.RootElement.Clone(), "cascade"));
+        }
+        return targets;
+      }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<int> CascadeDeletePerspectiveRowsAsync(
+      string tableName, IReadOnlyCollection<Guid> rowIds, CancellationToken cancellationToken = default) {
+    if (rowIds.Count == 0) {
+      return Task.FromResult(0);
+    }
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var fn = BuildSchemaQualifiedName(schema, "cascade_delete_perspective_rows");
+#pragma warning disable S2077
+      cmd.CommandText = $"SELECT {fn}(@t, @ids)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("t", tableName));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("ids",
+        NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = rowIds.ToArray() });
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is int deleted ? deleted : 0;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<int> FoldStreamApplyPathsAsync(
+      IReadOnlyCollection<Guid> streamIds, CancellationToken cancellationToken = default) {
+    if (streamIds.Count == 0) {
+      return Task.FromResult(0);
+    }
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var fn = BuildSchemaQualifiedName(schema, "fold_stream_apply_paths");
+#pragma warning disable S2077
+      cmd.CommandText = $"SELECT {fn}(@ids)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("ids",
+        NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamIds.ToArray() });
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is int folded ? folded : 0;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<int> ReconcileFollowerPresenceAsync(
+      string followerTable, IReadOnlyCollection<string> announcerTables,
+      CancellationToken cancellationToken = default) {
+    if (announcerTables.Count == 0) {
+      return Task.FromResult(0);
+    }
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var follower = BuildSchemaQualifiedName(schema, followerTable);
+      var hold = BuildSchemaQualifiedName(schema, "wh_perspective_row_hold");
+      var absentFromEveryAnnouncer = string.Join(" AND ", announcerTables.Select(a =>
+        $"NOT EXISTS (SELECT 1 FROM {BuildSchemaQualifiedName(schema, a)} a WHERE a.id = f.id)"));
+#pragma warning disable S2077 // identifiers originate from wh_perspective_registry, not user input
+      cmd.CommandText =
+        $"DELETE FROM {follower} f WHERE {absentFromEveryAnnouncer} " +
+        $"AND NOT EXISTS (SELECT 1 FROM {hold} h WHERE h.table_name = @t AND h.row_id = f.id AND h.hold_until > NOW())";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("t", followerTable));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+  }
+
   private static void _addRowRefParameters(
       System.Data.Common.DbCommand cmd, IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows) {
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("tables",
