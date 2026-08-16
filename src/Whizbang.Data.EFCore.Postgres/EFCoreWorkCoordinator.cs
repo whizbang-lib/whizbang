@@ -2082,6 +2082,74 @@ public class EFCoreWorkCoordinator<TDbContext>(
       "Last claimed type-definition reconcile — first instance to CAS this watermark walks the catalog; siblings skip.",
       claimWindow, cancellationToken);
 
+  /// <inheritdoc />
+  public Task RecordOffloadClaimAsync(
+      string storageKey, string providerName, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var ledger = BuildSchemaQualifiedName(schema, "wh_offload_claims");
+#pragma warning disable S2077 // identifier from BuildSchemaQualifiedName; all values are @parameters
+      cmd.CommandText =
+        $"INSERT INTO {ledger} (storage_key, provider_name) VALUES (@k, @p) " +
+        "ON CONFLICT (storage_key) DO NOTHING";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("k", storageKey));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p", providerName));
+      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<OffloadClaimRecord>> GetExpiredOffloadClaimsAsync(
+      TimeSpan olderThan, int batchSize, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<IReadOnlyList<OffloadClaimRecord>>(async (cmd, schema) => {
+      var ledger = BuildSchemaQualifiedName(schema, "wh_offload_claims");
+#pragma warning disable S2077
+      // Age evaluated against the DB clock at query time — a changed window is retroactive over
+      // every existing blob; nothing is stamped per blob.
+      cmd.CommandText =
+        $"SELECT storage_key, provider_name FROM {ledger} " +
+        "WHERE uploaded_at < NOW() - make_interval(secs => @s) " +
+        "ORDER BY uploaded_at LIMIT @n";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("s", olderThan.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("n", batchSize));
+      var results = new List<OffloadClaimRecord>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        results.Add(new OffloadClaimRecord(reader.GetString(0), reader.GetString(1)));
+      }
+      return results;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task RemoveOffloadClaimsAsync(
+      IReadOnlyCollection<string> storageKeys, CancellationToken cancellationToken = default) {
+    if (storageKeys.Count == 0) {
+      return Task.CompletedTask;
+    }
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var ledger = BuildSchemaQualifiedName(schema, "wh_offload_claims");
+#pragma warning disable S2077
+      cmd.CommandText = $"DELETE FROM {ledger} WHERE storage_key = ANY(@keys)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("keys",
+        NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = storageKeys.ToArray()
+      });
+      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<bool> TryClaimOffloadSweepAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) =>
+    _tryClaimWatermarkAsync(
+      "offload_claim_sweep_last_run",
+      "Last claimed offload-claim sweep — first instance to CAS this watermark drains the expired ledger; siblings skip.",
+      claimWindow, cancellationToken);
+
   /// <summary>
   /// The one-per-service claim: compare-and-swap a timestamp watermark in wh_settings. The UPDATE
   /// only fires when the stored instant is older than the window, so exactly one instance wins and
