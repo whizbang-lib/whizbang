@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Whizbang.Core.Dispatch;
@@ -27,6 +28,11 @@ namespace Whizbang.Data.EFCore.Postgres.Dispatch;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:TryClaim_TwoConcurrentSameKey_ExactlyOneWinsAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:TryClaim_SecondAttemptSameKey_ReturnsFalseAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:TryClaim_DistinctKeys_BothWinAsync</tests>
+[SuppressMessage("csharpsquid", "S2077:Formatting SQL queries is security-sensitive",
+  Justification = "The only interpolated value is a schema-qualified SQL identifier " +
+    "(\"schema\".wh_unique_emission_claims) resolved from the EF Core model's configured schema " +
+    "(HasDefaultSchema), not user input. SQL identifiers cannot be parameterized; there is no " +
+    "injection vector. All row values are @parameters.")]
 public sealed class EFCoreClaimedEmissionStore(DbContext dbContext) : IClaimedEmissionStore {
 
   private readonly DbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
