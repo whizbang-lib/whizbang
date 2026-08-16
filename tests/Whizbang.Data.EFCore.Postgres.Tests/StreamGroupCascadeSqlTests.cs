@@ -140,6 +140,36 @@ public class StreamGroupCascadeSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  [Timeout(60000)]
+  public async Task PresenceReconcile_DropsRowsAbsentFromEveryAnnouncer_KeepsHeldAndPresentAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _arrangeAsync(conn);
+    var orphaned = Guid.NewGuid();   // absent from the announcer — a pre-rebuild eviction resurrected
+    var present = Guid.NewGuid();    // announcer still holds it — alive
+    var held = Guid.NewGuid();       // absent but guard-held — untouchable
+    await _seedAsync(conn, FOLLOWER_TABLE, orphaned, idleHours: 0);
+    await _seedAsync(conn, FOLLOWER_TABLE, present, idleHours: 0);
+    await _seedAsync(conn, FOLLOWER_TABLE, held, idleHours: 0);
+    await _seedAsync(conn, LEADER_TABLE, present, idleHours: 0);
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    await coordinator.HoldPerspectiveRowDestructionAsync(
+      [new PerspectiveRowRef(FOLLOWER_TABLE, held)], DateTimeOffset.UtcNow.AddHours(1), cancellationToken);
+
+    var removed = await coordinator.ReconcileFollowerPresenceAsync(
+      FOLLOWER_TABLE, [LEADER_TABLE], cancellationToken);
+
+    await Assert.That(removed).IsEqualTo(1);
+    await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, orphaned)).IsFalse()
+      .Because("absent from every announcer = an eviction decision that predates the rebuild; presence repairs what the edge cannot re-fire");
+    await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, present)).IsTrue()
+      .Because("the announcer still holds the stream — the conservative all-absent rule never over-deletes");
+    await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, held)).IsTrue()
+      .Because("holds are honored on every destruction path, the presence reconcile included");
+  }
+
+  [Test]
   [Timeout(120000)]
   public async Task LeaderTtlEviction_CascadesToTheFollower_InTheSameCycleAsync(CancellationToken cancellationToken) {
     await using var conn = new NpgsqlConnection(ConnectionString);

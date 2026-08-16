@@ -2590,6 +2590,28 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken);
   }
 
+  /// <inheritdoc />
+  public Task<int> ReconcileFollowerPresenceAsync(
+      string followerTable, IReadOnlyCollection<string> announcerTables,
+      CancellationToken cancellationToken = default) {
+    if (announcerTables.Count == 0) {
+      return Task.FromResult(0);
+    }
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var follower = BuildSchemaQualifiedName(schema, followerTable);
+      var hold = BuildSchemaQualifiedName(schema, "wh_perspective_row_hold");
+      var absentFromEveryAnnouncer = string.Join(" AND ", announcerTables.Select(a =>
+        $"NOT EXISTS (SELECT 1 FROM {BuildSchemaQualifiedName(schema, a)} a WHERE a.id = f.id)"));
+#pragma warning disable S2077 // identifiers originate from wh_perspective_registry, not user input
+      cmd.CommandText =
+        $"DELETE FROM {follower} f WHERE {absentFromEveryAnnouncer} " +
+        $"AND NOT EXISTS (SELECT 1 FROM {hold} h WHERE h.table_name = @t AND h.row_id = f.id AND h.hold_until > NOW())";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("t", followerTable));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+  }
+
   private static void _addRowRefParameters(
       System.Data.Common.DbCommand cmd, IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows) {
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("tables",
