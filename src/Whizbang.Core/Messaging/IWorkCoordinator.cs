@@ -792,6 +792,66 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(true);
 
   /// <summary>
+  /// Records a transport body-offload claim in the ledger: the database's only record of an
+  /// offloaded blob once the message completes (the claim envelope rides <c>wh_outbox</c>/
+  /// <c>wh_inbox</c>, and those rows are deleted on completion). Written by the offload hook at
+  /// upload time; consumed by the passive expiry sweep, which is a query over this ledger instead
+  /// of a container listing. Idempotent — at-least-once dispatch may replay the upload path.
+  /// Default no-op: providers without a durable ledger fall back to store-side lifecycle rules.
+  /// </summary>
+  /// <param name="storageKey">The provider-minted storage key from the upload's claim ticket.</param>
+  /// <param name="providerName">The keyed <c>IMessageBodyStore</c> registration that holds the blob.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/messaging/body-offload</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OffloadClaimLedgerSqlTests.cs</tests>
+  Task RecordOffloadClaimAsync(
+    string storageKey,
+    string providerName,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// The offload-claim ledger entries older than <paramref name="olderThan"/> — the passive
+  /// sweep's work list. Age is evaluated against <c>uploaded_at</c> (DB clock) at query time, so a
+  /// changed expiry window is retroactive over every existing blob by construction; nothing is
+  /// stamped per blob. Default empty: no ledger, nothing to sweep.
+  /// </summary>
+  /// <param name="olderThan">The expiry window (<c>MessageBodyOffloadOptions.PassiveExpiry</c>).</param>
+  /// <param name="batchSize">Upper bound per call; the sweep drains across cycles.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OffloadClaimLedgerSqlTests.cs</tests>
+  Task<IReadOnlyList<OffloadClaimRecord>> GetExpiredOffloadClaimsAsync(
+    TimeSpan olderThan,
+    int batchSize,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<OffloadClaimRecord>>([]);
+
+  /// <summary>
+  /// Removes ledger rows whose blobs were successfully deleted (a missing blob counts —
+  /// <c>IMessageBodyStore.DeleteAsync</c> is idempotent on not-found). The sweep passes ONLY the
+  /// successes: a failed delete keeps its row and is retried next sweep, so the ledger row
+  /// outlives the blob, never the reverse. Default no-op.
+  /// </summary>
+  /// <param name="storageKeys">Keys whose blob deletion succeeded.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OffloadClaimLedgerSqlTests.cs</tests>
+  Task RemoveOffloadClaimsAsync(
+    IReadOnlyCollection<string> storageKeys,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Claims one passive offload sweep for the calling instance — the same first-instance-wins
+  /// CAS-watermark discipline as <see cref="TryClaimIntegrityAuditCycleAsync"/>, so N replicas do
+  /// not issue N delete storms against the same container. Default true: a coordinator without
+  /// the watermark substrate is single-instance by assumption and just runs.
+  /// </summary>
+  /// <param name="claimWindow">Minimum interval between sweeps service-wide.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OffloadClaimLedgerSqlTests.cs</tests>
+  Task<bool> TryClaimOffloadSweepAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+  /// <summary>
   /// Stream-integrity Phase B: the DISTINCT event types this service has ever emitted into its own
   /// audited lane (the own-emissions digest rows). The checkpoint publisher fans its heartbeat out
   /// to these types' topics — the topics this origin's consumers already subscribe to — so a quiet
@@ -1645,6 +1705,14 @@ public sealed record PerspectiveRetentionDeclaration(
   int? MaxAgeSeconds,
   int? CapPerScope = null,
   string? CapScopeKey = null);
+
+/// <summary>
+/// One offload-claim ledger entry: the storage key of a transport-offloaded blob and the keyed
+/// store that holds it. The passive sweep resolves the provider per claim, deletes the blob, and
+/// removes the row only on success.
+/// </summary>
+/// <docs>fundamentals/messaging/body-offload</docs>
+public sealed record OffloadClaimRecord(string StorageKey, string ProviderName);
 
 /// <summary>
 /// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,

@@ -142,6 +142,12 @@ public sealed partial class MaintenanceWorker(
       LogPointerPruneFailed(_logger, ex);
     }
 
+    // Passive offload-claim sweep: drain the expired half of the blob ledger — delete the blob,
+    // then remove the row, successes only. Age-based (fan-out safe: no consumer's action can break
+    // a sibling's download) and fleet-elected (settings CAS watermark), so N replicas never issue
+    // N delete storms against one container. Best-effort — a failed sweep retries next cycle.
+    await _sweepExpiredOffloadClaimsAsync(coordinator, sp, ct);
+
     // Detect space held but unusable — churn leaves free space inside pages that autovacuum
     // returns to the free space map but never to the OS, and a dropped column leaves bytes that
     // autovacuum can never reclaim at all. Detection RECORDS the rewrite request; the post-ready
@@ -175,6 +181,68 @@ public sealed partial class MaintenanceWorker(
   /// the table up deterministically instead of depending on the bloat still measuring over
   /// threshold at that moment; a candidate already recorded is not re-recorded.
   /// </remarks>
+  /// <summary>
+  /// Drains the expired half of the offload-claim ledger. The invariant: the ledger row outlives
+  /// the blob, never the reverse — rows are removed ONLY for blobs whose delete succeeded (missing
+  /// counts; <c>IMessageBodyStore.DeleteAsync</c> is idempotent on not-found), so a failed delete
+  /// keeps its row and is retried next sweep. A claim whose provider has no registered store keeps
+  /// its row as the operator's signal rather than being silently dropped.
+  /// </summary>
+  private async Task _sweepExpiredOffloadClaimsAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var opts = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<Whizbang.Core.Offloads.MessageBodyOffloadOptions>>()?.CurrentValue;
+    var expiry = opts?.PassiveExpiry;
+    if (expiry is null) {
+      return; // null is the off switch: the provider-side lifecycle rule is the only cleanup.
+    }
+    try {
+      if (!await coordinator.TryClaimOffloadSweepAsync(opts!.PassiveSweepClaimWindow, ct)) {
+        return; // another replica won this window's sweep.
+      }
+      for (var batch = 0; batch < opts.PassiveSweepMaxBatchesPerCycle; batch++) {
+        var expired = await coordinator.GetExpiredOffloadClaimsAsync(expiry.Value, opts.PassiveSweepBatchSize, ct);
+        if (expired.Count == 0) {
+          break;
+        }
+        var deleted = new List<string>(expired.Count);
+        foreach (var group in expired.GroupBy(c => c.ProviderName)) {
+          var store = sp.GetKeyedService<Whizbang.Core.Offloads.IMessageBodyStore>(group.Key);
+          if (store is null) {
+            LogOffloadSweepProviderMissing(_logger, group.Key, group.Count());
+            continue;
+          }
+          foreach (var claim in group) {
+            ct.ThrowIfCancellationRequested();
+            try {
+              // Delete keys off StorageKey + provider; the remaining claim fields are upload-time
+              // metadata a delete does not need, so they are reconstructed as defaults.
+              await store.DeleteAsync(
+                new Whizbang.Core.Offloads.MessageBodyClaim(
+                  claim.ProviderName, claim.StorageKey, 0, string.Empty, string.Empty, default),
+                options: null, ct);
+              deleted.Add(claim.StorageKey);
+            } catch (OperationCanceledException) {
+              throw;
+            } catch (Exception ex) {
+              LogOffloadBlobDeleteFailed(_logger, ex, claim.StorageKey, claim.ProviderName);
+            }
+          }
+        }
+        if (deleted.Count > 0) {
+          await coordinator.RemoveOffloadClaimsAsync(deleted, ct);
+          LogOffloadSweepBatch(_logger, deleted.Count, expired.Count - deleted.Count);
+        }
+        if (expired.Count < opts.PassiveSweepBatchSize) {
+          break;
+        }
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogOffloadSweepFailed(_logger, ex);
+    }
+  }
+
   private async Task _rewriteBloatedTablesAsync(IWorkCoordinator coordinator, CancellationToken ct) {
     IReadOnlyList<Whizbang.Core.Messaging.TableRewriteCandidate> candidates;
     try {
@@ -401,6 +469,22 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
     Message = "Stuck outbox row sentinel: message_id={MessageId} type={MessageType} stream={StreamId} attempts={Attempts} since={ClaimedSince:o} — row claimed past MaxOutboxAttempts but never drained. Investigate; see operations/observability/stuck-row-sentinel.")]
   static partial void LogStuckOutboxRow(ILogger logger, Guid messageId, string messageType, Guid? streamId, int attempts, DateTime claimedSince);
+
+  [LoggerMessage(EventId = 35, Level = LogLevel.Warning,
+    Message = "Offload sweep: no IMessageBodyStore registered under provider '{ProviderName}' — {ClaimCount} expired claim(s) left in the ledger as the operator's signal")]
+  private static partial void LogOffloadSweepProviderMissing(ILogger logger, string providerName, int claimCount);
+
+  [LoggerMessage(EventId = 36, Level = LogLevel.Warning,
+    Message = "Offload sweep: blob delete failed for {StorageKey} on provider '{ProviderName}'; the ledger row is retained and retried next sweep")]
+  private static partial void LogOffloadBlobDeleteFailed(ILogger logger, Exception ex, string storageKey, string providerName);
+
+  [LoggerMessage(EventId = 37, Level = LogLevel.Information,
+    Message = "Offload sweep: deleted {DeletedCount} expired blob(s); {FailedCount} left for retry")]
+  private static partial void LogOffloadSweepBatch(ILogger logger, int deletedCount, int failedCount);
+
+  [LoggerMessage(EventId = 38, Level = LogLevel.Warning,
+    Message = "Offload sweep failed; it retries next maintenance cycle")]
+  private static partial void LogOffloadSweepFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Stuck inbox row sentinel: message_id={MessageId} type={MessageType} stream={StreamId} attempts={Attempts} since={ClaimedSince:o} — row claimed past MaxInboxAttempts but never drained. Investigate; see operations/observability/stuck-row-sentinel.")]

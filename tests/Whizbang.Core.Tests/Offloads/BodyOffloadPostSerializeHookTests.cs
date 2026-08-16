@@ -158,12 +158,85 @@ public class BodyOffloadPostSerializeHookTests {
   // Helpers
   // ============================================================
 
+  [Test]
+  public async Task RunAsync_AboveThreshold_RecordsTheClaimInTheLedgerAsync() {
+    // The ledger row is the database's ONLY record of the blob once the message completes (the
+    // claim envelope rides wh_outbox/wh_inbox, which are deleted on completion). Without this
+    // insert the passive expiry sweep has nothing to sweep and the blob lives forever unless a
+    // provider-side lifecycle rule happens to exist.
+    var coordinator = new _ledgerCoordinator();
+    var (hook, store) = _build(
+      opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100; },
+      coordinator: coordinator);
+    var ctx = _buildContext(new byte[5_000]);
+
+    var result = await hook.RunAsync(ctx, CancellationToken.None);
+
+    await Assert.That(result.NewSerializedBytes).IsNotNull();
+    await Assert.That(coordinator.Recorded).Count().IsEqualTo(1);
+    await Assert.That(coordinator.Recorded[0].ProviderName).IsEqualTo("memory");
+    await Assert.That(coordinator.Recorded[0].StorageKey).IsNotEmpty()
+      .Because("the sweep resolves the keyed store per claim and deletes by storage key — a row "
+        + "without the key is a row that can never be swept");
+  }
+
+  [Test]
+  public async Task RunAsync_LedgerInsertThrows_OffloadStillProceedsAsync() {
+    // Bookkeeping must never block dispatch: a failed ledger insert orphans one blob into the
+    // provider-side backstop's territory, which is recoverable; a failed dispatch is not.
+    var coordinator = new _ledgerCoordinator { ThrowOnRecord = true };
+    var (hook, store) = _build(
+      opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100; },
+      coordinator: coordinator);
+    var ctx = _buildContext(new byte[5_000]);
+
+    var result = await hook.RunAsync(ctx, CancellationToken.None);
+
+    await Assert.That(result.NewSerializedBytes).IsNotNull();
+    await Assert.That(store.UploadCount).IsEqualTo(1)
+      .Because("the offload itself completed; only the ledger write failed");
+  }
+
+  [Test]
+  public async Task RunAsync_PassThrough_RecordsNothingAsync() {
+    var coordinator = new _ledgerCoordinator();
+    var (hook, _) = _build(
+      opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100_000; },
+      coordinator: coordinator);
+    var ctx = _buildContext(new byte[100], transportMaxBytes: 100_000);
+
+    await hook.RunAsync(ctx, CancellationToken.None);
+
+    await Assert.That(coordinator.Recorded).IsEmpty()
+      .Because("a message that was never offloaded has no blob — a ledger row for it would make "
+        + "the sweep issue deletes for keys that never existed");
+  }
+
+  /// <summary>Every other member is the NoOp base — only the ledger insert is observed.</summary>
+  private sealed class _ledgerCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, Whizbang.Core.Messaging.IWorkCoordinator {
+    public List<(string StorageKey, string ProviderName)> Recorded { get; } = [];
+    public bool ThrowOnRecord { get; init; }
+
+    public Task RecordOffloadClaimAsync(
+        string storageKey, string providerName, CancellationToken cancellationToken = default) {
+      if (ThrowOnRecord) {
+        throw new InvalidOperationException("ledger unavailable");
+      }
+      Recorded.Add((storageKey, providerName));
+      return Task.CompletedTask;
+    }
+  }
+
   private static (BodyOffloadPostSerializeHook hook, _captureStore store) _build(
-      Action<MessageBodyOffloadOptions> configure, TransportMetrics? metrics = null) {
+      Action<MessageBodyOffloadOptions> configure, TransportMetrics? metrics = null,
+      Whizbang.Core.Messaging.IWorkCoordinator? coordinator = null) {
     var services = new ServiceCollection();
     var captureStore = new _captureStore("memory");
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => captureStore);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(configure);
+    if (coordinator is not null) {
+      services.AddSingleton(coordinator);
+    }
     // Only register metrics when a test supplies an isolated instance — keeps non-metric tests
     // from emitting to a shared meter (which would pollute a parallel metric test's capture).
     if (metrics is not null) {

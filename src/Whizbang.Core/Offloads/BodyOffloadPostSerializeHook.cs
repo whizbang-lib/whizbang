@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 
@@ -29,7 +30,7 @@ namespace Whizbang.Core.Offloads;
 /// should run after offload so the small claim envelope is also covered.
 /// </remarks>
 /// <docs>fundamentals/offloads/message-body-store</docs>
-public sealed class BodyOffloadPostSerializeHook : IPostSerializeHook {
+public sealed partial class BodyOffloadPostSerializeHook : IPostSerializeHook {
 #pragma warning disable CA1707
   /// <summary>Destination metadata key set to <c>true</c> when the wire bytes are a claim envelope.</summary>
   public const string IS_CLAIM_METADATA_KEY = "whizbang.is-claim";
@@ -81,6 +82,26 @@ public sealed class BodyOffloadPostSerializeHook : IPostSerializeHook {
         "Register via services.AddWhizbangMessageBodyStore<T>(name) (or a typed wrapper like AddWhizbangInMemoryOffload(name)) before the offload hook runs.");
 
     var claim = await store.UploadAsync(context.SerializedBytes, context.ContentType, options: null, cancellationToken);
+
+    // Ledger the claim so the passive expiry sweep can find this blob by QUERY instead of a
+    // container listing. This is the database's only durable record of the blob: the claim
+    // envelope rides wh_outbox/wh_inbox, and those rows are deleted on completion. The store mints
+    // the key during upload, so the insert cannot precede the PUT — a crash in the gap between
+    // them orphans one blob into the provider-side backstop's territory, which is recoverable.
+    // Bookkeeping must never block dispatch: a failed insert is logged and the offload proceeds.
+    var coordinator = _serviceProvider.GetService<Whizbang.Core.Messaging.IWorkCoordinator>();
+    if (coordinator is not null) {
+      try {
+        await coordinator.RecordOffloadClaimAsync(claim.StorageKey, claim.ProviderName, cancellationToken);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        var logger = _serviceProvider.GetService<ILogger<BodyOffloadPostSerializeHook>>();
+        if (logger is not null) {
+          LogLedgerInsertFailed(logger, ex, claim.StorageKey, claim.ProviderName);
+        }
+      }
+    }
 
     // Observe the offload (bounded dimensions: message type + namespace — never message IDs).
     var metrics = _serviceProvider.GetService<TransportMetrics>();
@@ -170,4 +191,8 @@ public sealed class BodyOffloadPostSerializeHook : IPostSerializeHook {
       CausedByCommitSequence = original.CausedByCommitSequence,
     };
   }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
+    Message = "Offload-claim ledger insert failed for {StorageKey} on provider '{ProviderName}'; the blob falls to the provider-side lifecycle backstop")]
+  private static partial void LogLedgerInsertFailed(ILogger logger, Exception ex, string storageKey, string providerName);
 }
