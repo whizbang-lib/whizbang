@@ -405,7 +405,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine();
     source.AppendLine("    // TURNKEY: Automatically register PerspectiveWorker as hosted service");
     source.AppendLine("    // This ensures perspectives are processed without requiring manual registration");
-    source.AppendLine("    services.AddHostedService<global::Whizbang.Core.Workers.PerspectiveWorker>();");
+    // Singleton + hosted forward so the SAME instance is resolvable by type — the read-model
+    // barrier waits on its StartupScanComplete.
+    source.AppendLine("    global::Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<global::Whizbang.Core.Workers.PerspectiveWorker>(services);");
+    source.AppendLine("    services.AddHostedService(sp => global::Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<global::Whizbang.Core.Workers.PerspectiveWorker>(sp));");
     source.AppendLine();
     source.AppendLine("    return services;");
     source.AppendLine("  }");

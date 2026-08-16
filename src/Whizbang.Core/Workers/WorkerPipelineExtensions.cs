@@ -41,6 +41,12 @@ public static class WorkerPipelineExtensions {
     // complete. Singleton because all workers + the initializer must observe the same instance.
     services.TryAddSingleton<ISchemaReadyGate, SchemaReadyGate>();
 
+    // The read-model barrier (increment 6, option A): released when Migrate completes AND the
+    // perspective startup scan has run — later than Migrate, earlier than Ready. Lens reads
+    // refuse while it is closed; dispatch refuses on the schema gate alone.
+    services.TryAddSingleton<IReadModelsReadyGate, ReadModelsReadyGate>();
+    services.AddHostedService<ReadModelsReadyDriver>();
+
     // Managed-resource health: register the aggregator + the "schema" source over the gate. When a
     // consumer wires AddWhizbangManagedHealthChecks() the schema reports "migrating" (ready under the
     // default Lenient policy) during a startup migration instead of failing readiness.

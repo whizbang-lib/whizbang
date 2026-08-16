@@ -47,6 +47,10 @@ public static class EFCoreInfrastructureRegistration {
     // Register ILensQuery<TModel>
     var queryInterfaceType = typeof(ILensQuery<>).MakeGenericType(modelType);
     services.AddScoped(queryInterfaceType, sp => {
+      // Increment 6, the read seam: every lens surface inherits this one check. Reads refuse
+      // while the read-model barrier is closed — later than Migrate (perspectives may be
+      // mid-repair), earlier than Ready (reads never needed the transports).
+      Whizbang.Core.Workers.ReadModelsGuard.ThrowIfNotReady(sp);
       var context = (DbContext)sp.GetRequiredService(dbContextType);
       var scopeContextAccessor = sp.GetRequiredService<IScopeContextAccessor>();
       var whizbangOptions = sp.GetRequiredService<IOptions<WhizbangCoreOptions>>();
@@ -75,6 +79,7 @@ public static class EFCoreInfrastructureRegistration {
     ArgumentNullException.ThrowIfNull(tableNames);
 
     services.AddTransient<ILensQuery<T1, T2>>(sp => {
+      Whizbang.Core.Workers.ReadModelsGuard.ThrowIfNotReady(sp);
       var factory = sp.GetRequiredService<IDbContextFactory<TDbContext>>();
       var context = factory.CreateDbContext();
       var scopeContextAccessor = sp.GetRequiredService<IScopeContextAccessor>();
@@ -103,6 +108,7 @@ public static class EFCoreInfrastructureRegistration {
     ArgumentNullException.ThrowIfNull(tableNames);
 
     services.AddTransient<ILensQuery<T1, T2, T3>>(sp => {
+      Whizbang.Core.Workers.ReadModelsGuard.ThrowIfNotReady(sp);
       var factory = sp.GetRequiredService<IDbContextFactory<TDbContext>>();
       var context = factory.CreateDbContext();
       var scopeContextAccessor = sp.GetRequiredService<IScopeContextAccessor>();

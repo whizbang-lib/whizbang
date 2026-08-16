@@ -92,6 +92,16 @@ public partial class PerspectiveWorker(
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
   private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
+
+  private readonly TaskCompletionSource _startupScanTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  /// <summary>
+  /// Completes when the startup scan — registry init, orphan reconcile, rewind repair — has
+  /// finished. The read-model barrier (<see cref="IReadModelsReadyGate"/>) waits on this: a lens
+  /// must not read perspectives a migration may have left mid-repair. Canceled when the worker
+  /// stops before the scan ran.
+  /// </summary>
+  public Task StartupScanComplete => _startupScanTcs.Task;
   private readonly PerspectiveMetrics? _metrics = metrics;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
@@ -383,6 +393,7 @@ public partial class PerspectiveWorker(
       try {
         await schemaReadyGate.WaitForReadyAsync(stoppingToken);
       } catch (OperationCanceledException) {
+        _startupScanTcs.TrySetCanceled(stoppingToken);
         return;
       }
     }
@@ -398,6 +409,9 @@ public partial class PerspectiveWorker(
     _processInitialCheckpoints();
     await _reconcileOrphanedLifecyclesAsync(stoppingToken);
     await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
+    // The read-model barrier waits on exactly this: the scan is what makes the read models
+    // trustworthy after a migration, and lens reads resume when it (and Migrate) complete.
+    _startupScanTcs.TrySetResult();
 
     // Subscribe to new perspective work signals so we poll immediately when events arrive
     if (workChannelWriter is not null) {

@@ -1023,6 +1023,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var typeArgs = string.Join(", ", query.ModelTypeNames);
       sb.AppendLine($"        // Auto-detected: ILensQuery<{modelNames}> (from {query.ConsumerClassName.Replace(PLACEHOLDER_GLOBAL, "")})");
       sb.AppendLine($"        services.AddTransient<Whizbang.Core.Lenses.ILensQuery<{typeArgs}>>(sp => {{");
+      sb.AppendLine("          global::Whizbang.Core.Workers.ReadModelsGuard.ThrowIfNotReady(sp);");
       sb.AppendLine($"          var factory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<{dbContext.FullyQualifiedName}>>();");
       sb.AppendLine("          var context = factory.CreateDbContext();");
       sb.AppendLine("          var tableNames = new System.Collections.Generic.Dictionary<System.Type, string> {");
