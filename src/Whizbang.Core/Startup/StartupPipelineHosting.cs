@@ -15,6 +15,8 @@ namespace Whizbang.Core.Startup;
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public static class FrameworkStartupSteps {
 #pragma warning disable CA1707
+  /// <summary>The assessment step — where this instance stands, before anything changes.</summary>
+  public const string ASSESS = "Assess";
   /// <summary>The migration step — schema initialization, ledger, version stamp.</summary>
   public const string MIGRATE = "Migrate";
   /// <summary>The post-ready table-rewrite step — fleet-exclusive, deliberately unbounded.</summary>
@@ -43,6 +45,9 @@ public sealed class MigrateStartupStep : IStartupStep {
   /// <inheritdoc />
   public StartupStepDescriptor Descriptor { get; } = new() {
     Name = FrameworkStartupSteps.MIGRATE,
+    // Assessment precedes migration: an instance cleared only to serve — or standing down —
+    // must know it BEFORE the migration barrier, not after.
+    DependsOn = [FrameworkStartupSteps.ASSESS],
   };
 
   /// <inheritdoc />

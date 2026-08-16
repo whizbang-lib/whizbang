@@ -110,6 +110,13 @@ public static class WorkerPipelineExtensions {
     services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.MetricsStartupStepObserver(
         sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>()));
+    // Assess (increment 9): where this instance stands — Migrate/Serve/StandDown — decided on
+    // every instance before the migration barrier. StandDown reports as a failed blocking step:
+    // fail-closed readiness IS not-ready-while-alive.
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStep>(sp =>
+      new Whizbang.Core.Startup.AssessStartupStep(
+        sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
+        sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.AssessStartupStep>()));
     services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>();
     // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
     // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
