@@ -852,6 +852,131 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(true);
 
   /// <summary>
+  /// The pre-destruction seam's COLLECT phase for perspective rows: the retention sweeps' DELETE
+  /// predicates as a SELECT, with row payloads, limited to the given perspective model type names —
+  /// exactly the set the next sweep would destroy (holds excluded, acknowledgement gate honored on
+  /// the expiry side, cap overflow included regardless). Default: empty (no seam substrate).
+  /// </summary>
+  /// <param name="clrTypeNames">The guarded perspective models' CLR type names.</param>
+  /// <param name="perTableLimit">Bound per perspective table per cycle.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsAboutToReapAsync(
+    IReadOnlyCollection<string> clrTypeNames,
+    int perTableLimit = 500,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>>([]);
+
+  /// <summary>
+  /// Postpones destruction of the given perspective rows until <paramref name="holdUntil"/> —
+  /// a guard's Defer/Cancel made durable. Idempotent upsert; <see cref="DateTimeOffset.MaxValue"/>
+  /// maps to keep-forever. Default: no-op.
+  /// </summary>
+  /// <param name="rows">The rows to hold.</param>
+  /// <param name="holdUntil">When the hold lapses and the row is re-offered.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task HoldPerspectiveRowDestructionAsync(
+    IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+    DateTimeOffset holdUntil,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Releases any holds on the given rows — a guard's Proceed after an earlier Defer. Default: no-op.
+  /// </summary>
+  /// <param name="rows">The rows to release.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task ReleasePerspectiveRowHoldsAsync(
+    IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Records a guard failure for the given rows and applies the destruction retry ladder: under
+  /// the retry cap the rows are held for the backoff and re-offered; past it the configured
+  /// <see cref="Whizbang.Core.Lifecycle.OnDestroyFailure"/> policy decides (forced delete or keep).
+  /// Returns the batch's highest failure count. Default: <see cref="int.MaxValue"/> (no ladder
+  /// substrate ⇒ the caller treats the batch as exhausted).
+  /// </summary>
+  /// <param name="rows">The rows the failing guard was offered.</param>
+  /// <param name="retryBackoff">Delay before the batch is re-offered.</param>
+  /// <param name="maxRetries">Retry cap before the failure policy applies.</param>
+  /// <param name="onDestroyFailure">The policy applied past the cap.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<int> RecordPerspectiveRowDestructionFailureAsync(
+    IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+    TimeSpan retryBackoff,
+    int maxRetries,
+    Whizbang.Core.Lifecycle.OnDestroyFailure onDestroyFailure,
+    CancellationToken cancellationToken = default) => Task.FromResult(int.MaxValue);
+
+  /// <summary>
+  /// Runs the enrolled-perspective expiry sweep (the [RowTtl]/max-age ladder), batched. This is
+  /// the sweep's production invocation — the SQL alone has no caller. Default: unsupported no-op.
+  /// </summary>
+  /// <param name="batchSize">Rows deleted per perspective per cycle.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<PerspectiveRowReapResult> ReapEnrolledPerspectiveRowsAsync(
+    int batchSize = 5000,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(new PerspectiveRowReapResult(0, "unsupported"));
+
+  /// <summary>
+  /// Runs the per-scope cap sweep ([RowCap] overflow eviction). Heavier than the expiry sweep
+  /// (window function), intended for a slower, fleet-claimed cadence. Default: unsupported no-op.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(new PerspectiveRowReapResult(0, "unsupported"));
+
+  /// <summary>
+  /// Claims one cap sweep for the calling instance — the same first-instance-wins CAS-watermark
+  /// discipline as <see cref="TryClaimOffloadSweepAsync"/>. Default true.
+  /// </summary>
+  /// <param name="claimWindow">Minimum interval between cap sweeps service-wide.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<bool> TryClaimRowCapSweepAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+  /// <summary>
+  /// Acknowledges retention enforcement for an enrolled perspective — the adoption gate's missing
+  /// C# half. Until acknowledged, the expiry sweep reports what it would remove (see
+  /// <see cref="CountPerspectiveRetentionBacklogAsync"/>) and removes nothing. Default: no-op.
+  /// </summary>
+  /// <param name="clrTypeName">The perspective model's CLR type name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task AcknowledgeRetentionEnforcementAsync(
+    string clrTypeName,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Counts what retention enforcement WOULD remove for an enrolled perspective, without removing
+  /// it — the number an operator reads before acknowledging. Default: 0.
+  /// </summary>
+  /// <param name="clrTypeName">The perspective model's CLR type name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<long> CountPerspectiveRetentionBacklogAsync(
+    string clrTypeName,
+    CancellationToken cancellationToken = default) => Task.FromResult(0L);
+
+  /// <summary>
   /// Stream-integrity Phase B: the DISTINCT event types this service has ever emitted into its own
   /// audited lane (the own-emissions digest rows). The checkpoint publisher fans its heartbeat out
   /// to these types' topics — the topics this origin's consumers already subscribe to — so a quiet
@@ -1740,6 +1865,13 @@ public sealed record PerspectiveRetentionDeclaration(
 /// </summary>
 /// <docs>fundamentals/messaging/body-offload</docs>
 public sealed record OffloadClaimRecord(string StorageKey, string ProviderName);
+
+/// <summary>Outcome of one perspective-row retention sweep invocation.</summary>
+/// <param name="RowsAffected">Rows destroyed by the sweep.</param>
+/// <param name="Status">The sweep's status string (<c>ok</c>, <c>skipped (debug_mode=true)</c>, <c>unsupported</c>, …).</param>
+/// <docs>proposals/pre-destruction-seam</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+public sealed record PerspectiveRowReapResult(int RowsAffected, string Status);
 
 /// <summary>
 /// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,
