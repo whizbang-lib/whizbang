@@ -108,6 +108,10 @@ public static class WorkerPipelineExtensions {
       new Whizbang.Core.Startup.MetricsStartupStepObserver(
         sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>()));
     services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>();
+    // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
+    // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
+    // now only detects and records; this is where recorded rewrites actually run.
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>();
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupPipelineRunner(
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupStep>()],
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupStepObserver>()],

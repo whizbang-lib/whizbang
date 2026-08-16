@@ -105,4 +105,28 @@ public class TableRewriteRequestSqlTests : EFCoreTestBase {
     await Assert.That(ratio is null || ratio > 0).IsTrue()
       .Because("the rewrite must complete and report a ratio the caller can verify against");
   }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task CoordinatorRequestTableRewrite_RecordsThePendingRequestAsync(CancellationToken cancellationToken) {
+    // The runtime maintenance cycle records instead of executing (increment 8) — this is the
+    // coordinator path it records through.
+    await using var ctx = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    await coordinator.RequestTableRewriteAsync("wh_outbox", cancellationToken);
+    await coordinator.RequestTableRewriteAsync("wh_outbox", cancellationToken);   // idempotent
+
+    await using var conn = new Npgsql.NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT COALESCE(setting_value,'') FROM wh_settings WHERE setting_key='pending_table_rewrites'";
+    var pending = (string)(await read.ExecuteScalarAsync(cancellationToken))!;
+
+    await Assert.That(pending.Split(',').Count(t => t == "wh_outbox")).IsEqualTo(1)
+      .Because("recording rides the same idempotent wh_request_table_rewrite a migration uses");
+
+    await coordinator.ClearTableRewriteRequestAsync("wh_outbox", cancellationToken);
+  }
 }

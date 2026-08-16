@@ -17,6 +17,8 @@ public static class FrameworkStartupSteps {
 #pragma warning disable CA1707
   /// <summary>The migration step — schema initialization, ledger, version stamp.</summary>
   public const string MIGRATE = "Migrate";
+  /// <summary>The post-ready table-rewrite step — fleet-exclusive, deliberately unbounded.</summary>
+  public const string REWRITE = "Rewrite";
 #pragma warning restore CA1707
 }
 

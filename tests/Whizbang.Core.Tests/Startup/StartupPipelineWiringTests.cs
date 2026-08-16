@@ -59,6 +59,20 @@ public class StartupPipelineWiringTests {
   }
 
   [Test]
+  public async Task AddWhizbangWorkers_RegistersRewriteAsAPostReadyMaintainerStepAsync() {
+    await using var sp = _build();
+
+    var rewrite = sp.GetServices<IStartupStep>()
+      .FirstOrDefault(s => s.Descriptor.Name == FrameworkStartupSteps.REWRITE);
+
+    await Assert.That(rewrite).IsNotNull();
+    await Assert.That(rewrite!.Descriptor.Blocking).IsFalse()
+      .Because("deliberately unbounded work must never gate Ready");
+    await Assert.That(rewrite.Descriptor.RequiredCapability).IsEqualTo(StartupDuties.MAINTAINER)
+      .Because("one instance rewrites; exclusivity follows the required capability");
+  }
+
+  [Test]
   public async Task PipelineWorker_MigrateCompletesExactlyWhenTheGateOpensAsync() {
     await using var sp = _build();
     var gate = sp.GetRequiredService<ISchemaReadyGate>();

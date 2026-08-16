@@ -888,6 +888,15 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Records that a table owes a rewrite, exactly as a migration does. The runtime maintenance
+  /// cycle calls this when it detects bloat instead of taking an ACCESS EXCLUSIVE lock
+  /// mid-traffic — the post-ready <c>Rewrite</c> startup step performs the recorded rewrites in
+  /// the window they should always have had. Idempotent per table.
+  /// </summary>
+  Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// Durable stream-integrity convergence state. Defaults keep the caller's prior behaviour when a
   /// provider cannot store it: reporting proceeds (over-reporting is recoverable) and repair does
   /// not (an unbounded repair request against real data is not).
