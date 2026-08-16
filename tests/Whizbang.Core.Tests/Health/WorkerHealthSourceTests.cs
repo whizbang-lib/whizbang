@@ -55,4 +55,13 @@ public class WorkerHealthSourceTests {
     var source = new WorkerHealthSource(new FakeLifecycle(LifecyclePhase.Running));
     await Assert.That(source.Component).IsEqualTo("workers");
   }
+
+  [Test]
+  public async Task AcceptingCommands_ReportsOperational_TheWriteSideIsLiveAsync() {
+    var state = await _reportAsync(LifecyclePhase.AcceptingCommands);
+
+    await Assert.That(state).IsEqualTo(ComponentState.Operational)
+      .Because("the whole write side — commands, events, transport, perspective writes — runs "
+             + "from the schema gate; only lenses refuse during AcceptingCommands");
+  }
 }
