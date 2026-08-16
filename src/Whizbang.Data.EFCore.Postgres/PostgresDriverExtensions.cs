@@ -90,6 +90,14 @@ public static class PostgresDriverExtensions {
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
                 sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
 
+        // TURNKEY: the apply-stack query surface — on-demand path-signature aggregation over
+        // event-store pointers. The serving surfaces (minimal API / FastEndpoints / HotChocolate)
+        // are opt-in; registering the query merely makes them answerable when a host mounts one.
+        selector.Services.TryAddSingleton<Whizbang.Core.Lineage.IApplyStackQuery>(sp =>
+            new EFCorePostgresApplyStackQuery(
+                sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+                dbContextType));
+
         // TURNKEY: Register IClaimedEmissionStore so PublishOnceAsync (saga completion via
         // SagaCompletionGuard.EmitOnceAsync, idempotent receptor emissions, etc.) doesn't
         // throw at runtime. EFCoreClaimedEmissionStore writes ON CONFLICT DO NOTHING against
