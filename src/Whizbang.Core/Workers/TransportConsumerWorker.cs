@@ -43,7 +43,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
-public partial class TransportConsumerWorker : BackgroundService {
+public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
@@ -95,6 +95,13 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// <c>await SubscriptionsReady.WaitAsync(cancellationToken)</c>.
   /// </summary>
   public Task WaitForSubscriptionsReadyAsync(CancellationToken cancellationToken = default)
+    => SubscriptionsReady.WaitAsync(cancellationToken);
+
+  /// <inheritdoc />
+  string Whizbang.Core.Startup.IStartupReadinessContributor.ContributorName => "transport-consumer";
+
+  /// <inheritdoc />
+  Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
     => SubscriptionsReady.WaitAsync(cancellationToken);
 
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).

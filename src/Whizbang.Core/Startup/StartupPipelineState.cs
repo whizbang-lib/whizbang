@@ -31,6 +31,21 @@ public interface IStartupPipelineState {
   /// <summary>Whether the current run has finished. False before any run and while one is underway.</summary>
   bool IsComplete { get; }
 
+  /// <summary>
+  /// Whether the current run's <b>blocking</b> steps have all drained without failure. Distinct
+  /// from <see cref="IsComplete"/>: non-blocking steps live in the post-ready band and never gate
+  /// this. False before the first run announces its plan, false again when a run re-enters, and
+  /// permanently false for a run in which any blocking step failed — fail-closed.
+  /// </summary>
+  bool IsReady { get; }
+
+  /// <summary>
+  /// Completes when the current run's blocking steps have all drained without failure. A run in
+  /// which a blocking step fails never completes this — waiters stay held, exactly as workers hold
+  /// at a gate the initializer never opens.
+  /// </summary>
+  Task WaitForReadyAsync(CancellationToken cancellationToken);
+
   /// <summary>Where <paramref name="stepName"/> currently stands. Unknown names report
   /// <see cref="StartupStepStatus.Pending"/> — the state is observational and cannot distinguish
   /// "not yet reached" from "never registered"; validation of names belongs at resolve time.</summary>
@@ -63,12 +78,31 @@ public sealed class StartupPipelineState : IStartupPipelineState, IStartupStepOb
   private readonly Dictionary<string, StartupStepStatus> _statuses = new(StringComparer.Ordinal);
   private readonly Dictionary<string, TaskCompletionSource> _waiters = new(StringComparer.Ordinal);
   private readonly List<StartupStepResult> _completed = [];
+  private readonly HashSet<string> _plannedBlocking = new(StringComparer.Ordinal);
+  private TaskCompletionSource _readySource = _newSource();
+  private bool _hasPlan;
+  private bool _blockingFailed;
   private bool _isComplete;
   private bool _runInProgress;
+
+  private static TaskCompletionSource _newSource() =>
+    new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   /// <inheritdoc />
   public bool IsComplete {
     get { lock (_lock) { return _isComplete; } }
+  }
+
+  /// <inheritdoc />
+  public bool IsReady {
+    get { lock (_lock) { return _readySource.Task.IsCompletedSuccessfully; } }
+  }
+
+  /// <inheritdoc />
+  public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+    Task ready;
+    lock (_lock) { ready = _readySource.Task; }
+    return ready.WaitAsync(cancellationToken);
   }
 
   /// <inheritdoc />
@@ -102,25 +136,62 @@ public sealed class StartupPipelineState : IStartupPipelineState, IStartupStepOb
   }
 
   /// <inheritdoc />
+  public ValueTask OnRunStartingAsync(StartupRunPlan plan, CancellationToken cancellationToken) {
+    TaskCompletionSource? readyNow = null;
+    lock (_lock) {
+      _beginRun();
+      _plannedBlocking.Clear();
+      foreach (var step in plan.Steps) {
+        if (step.Blocking) {
+          _plannedBlocking.Add(step.Name);
+        }
+      }
+      _hasPlan = true;
+      // A plan with no blocking steps is drained the moment it starts.
+      if (_plannedBlocking.Count == 0) {
+        readyNow = _readySource;
+      }
+    }
+    readyNow?.TrySetResult();
+    return ValueTask.CompletedTask;
+  }
+
+  /// <inheritdoc />
   public ValueTask OnStepStartingAsync(StartupStepContext context, CancellationToken cancellationToken) {
     lock (_lock) {
-      // The first notification of a new run resets the previous run's answers. Waiters are kept:
-      // a dependent waiting on a step from before the re-entry is still waiting on that step —
-      // the new run will complete it again.
+      // A run driven without a plan announcement still resets here; readiness then simply never
+      // fires this run, because "the blocking steps drained" is not computable without the plan.
       if (!_runInProgress) {
-        _runInProgress = true;
-        _isComplete = false;
-        _statuses.Clear();
-        _completed.Clear();
+        _beginRun();
+        _plannedBlocking.Clear();
+        _hasPlan = false;
       }
       _statuses[context.Descriptor.Name] = StartupStepStatus.Running;
     }
     return ValueTask.CompletedTask;
   }
 
+  /// <summary>
+  /// Resets the previous run's answers at a run boundary. Waiters are kept — a dependent waiting
+  /// on a step (or on readiness) from before the re-entry is still waiting; the new run will
+  /// complete it again. A readiness source that already answered is replaced, because reporting
+  /// the OLD run as ready would tell a reviving instance it is up when it is not.
+  /// </summary>
+  private void _beginRun() {
+    _runInProgress = true;
+    _isComplete = false;
+    _blockingFailed = false;
+    _statuses.Clear();
+    _completed.Clear();
+    if (_readySource.Task.IsCompleted) {
+      _readySource = _newSource();
+    }
+  }
+
   /// <inheritdoc />
   public ValueTask OnStepCompletedAsync(StartupStepResult result, CancellationToken cancellationToken) {
     TaskCompletionSource? waiter;
+    TaskCompletionSource? readyNow = null;
     lock (_lock) {
       _statuses[result.Name] = result.Outcome switch {
         StartupStepOutcome.Skipped => StartupStepStatus.Skipped,
@@ -129,9 +200,29 @@ public sealed class StartupPipelineState : IStartupPipelineState, IStartupStepOb
       };
       _completed.Add(result);
       _waiters.Remove(result.Name, out waiter);
+
+      if (_hasPlan && !_blockingFailed && _plannedBlocking.Contains(result.Name)) {
+        if (result.Outcome == StartupStepOutcome.Failed) {
+          // Fail-closed: a failed blocking step means this run never reports ready.
+          _blockingFailed = true;
+        } else if (_allPlannedBlockingDrained()) {
+          readyNow = _readySource;
+        }
+      }
     }
     waiter?.TrySetResult();
+    readyNow?.TrySetResult();
     return ValueTask.CompletedTask;
+  }
+
+  private bool _allPlannedBlockingDrained() {
+    foreach (var name in _plannedBlocking) {
+      if (!_statuses.TryGetValue(name, out var status)
+          || status is not (StartupStepStatus.Completed or StartupStepStatus.Skipped)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// <inheritdoc />

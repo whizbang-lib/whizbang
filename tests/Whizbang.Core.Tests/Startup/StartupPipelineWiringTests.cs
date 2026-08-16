@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Configuration;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 
@@ -84,5 +86,44 @@ public class StartupPipelineWiringTests {
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task AddWhizbangWorkers_RegistersTheReadyCompositeOnTheLifecycleSeamAsync() {
+    await using var sp = _build();
+
+    var signal = sp.GetRequiredService<IStartupReadySignal>();
+    // Resolve the service directly rather than enumerating IHostedService — materializing every
+    // hosted registration drags in workers whose dependencies the storage driver supplies.
+    var readyService = sp.GetRequiredService<StartupReadyService>();
+
+    await Assert.That(signal.IsReady).IsFalse()
+      .Because("the composite must start unset — it fires only when the blocking steps drain");
+    await Assert.That(readyService is Microsoft.Extensions.Hosting.IHostedLifecycleService).IsTrue()
+      .Because("Ready lives on IHostedLifecycleService.StartedAsync — the seam that runs after "
+             + "every StartAsync has returned, which nothing had ever claimed");
+  }
+
+  [Test]
+  public async Task AddTransportConsumer_RegistersTheSameWorkerInstanceAsAReadinessContributorAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<Whizbang.Core.Transports.ITransport>(new Whizbang.Core.Transports.InProcessTransport());
+    services.AddSingleton(new System.Text.Json.JsonSerializerOptions());
+    services.AddWhizbang()
+      .WithRouting(r => {
+        r.Inbox.UseSharedTopic("inbox");
+        r.Outbox.UseSharedTopic("inbox");
+      })
+      .AddTransportConsumer();
+    await using var sp = services.BuildServiceProvider();
+
+    var worker = sp.GetRequiredService<TransportConsumerWorker>();
+    var contributors = sp.GetServices<IStartupReadinessContributor>().ToList();
+
+    await Assert.That(contributors.Any(c => ReferenceEquals(c, worker))).IsTrue()
+      .Because("the SAME worker instance the host runs must be the contributor Ready waits on — "
+             + "a second instance would answer for subscriptions nobody made; the hosted "
+             + "registration forwards to this same singleton");
   }
 }

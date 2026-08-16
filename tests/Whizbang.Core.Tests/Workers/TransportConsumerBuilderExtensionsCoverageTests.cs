@@ -167,11 +167,13 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     await Assert.That(healthCheckService).IsNotNull()
       .Because("HealthCheckService should be registered");
 
-    // TransportConsumerWorker is registered as IHostedService, not as a direct type
-    // So GetService<TransportConsumerWorker>() returns null, exercising the null-coalescing path
-    var worker = provider.GetService<TransportConsumerWorker>();
-    await Assert.That(worker).IsNull()
-      .Because("TransportConsumerWorker is registered as IHostedService, not as direct singleton");
+    // Since the Ready composite landed, the worker IS registered as a direct singleton — the
+    // hosted registration forwards to it so the SAME instance answers as a readiness
+    // contributor. Assert at the descriptor level; resolving would need the transport.
+    var workerDescriptor = services.FirstOrDefault(
+        d => d.ServiceType == typeof(TransportConsumerWorker));
+    await Assert.That(workerDescriptor).IsNotNull()
+      .Because("Ready waits on the worker's SubscriptionsReady — it must be resolvable by type");
   }
 
   [Test]

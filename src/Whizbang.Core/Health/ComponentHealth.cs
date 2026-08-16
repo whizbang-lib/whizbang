@@ -20,6 +20,12 @@ public enum ComponentState {
   Connecting,
   /// <summary>A schema/data migration is in progress. Intentional.</summary>
   Migrating,
+  /// <summary>
+  /// The blocking startup steps have drained and every readiness contributor answered — fully up.
+  /// Sits between <see cref="Migrating"/> and <see cref="Operational"/> in the lifecycle: distinct
+  /// from Operational so a probe can tell "the schema is ready" from "the pipeline drained".
+  /// </summary>
+  Ready,
   /// <summary>Gated/drained on purpose (e.g. workers held during a migration or pause). Intentional.</summary>
   PausedByDesign,
   /// <summary>Finishing in-flight work for a graceful stop, taking no new. Intentional.</summary>

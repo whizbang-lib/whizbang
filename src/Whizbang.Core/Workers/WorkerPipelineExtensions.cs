@@ -114,6 +114,22 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineWorker>());
 
+    // Ready as a composite (increment 4): the terminal signal, on the one seam that means
+    // "after everything" — IHostedLifecycleService.StartedAsync runs once every StartAsync has
+    // returned. It waits for the blocking steps to drain, then for every registered readiness
+    // contributor (transport subscription readiness among them), and only then marks the signal.
+    // Fail-closed: a failed blocking step keeps the pipeline's readiness pending forever, so the
+    // signal never fires and the instance never reports itself fully up.
+    services.TryAddSingleton<Whizbang.Core.Startup.StartupReadySignal>();
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupReadySignal>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>());
+    services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupReadyService(
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
+      sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupReadinessContributor>()],
+      sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StartupReadyService>()));
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadyService>());
+
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
     // This avoids a circular DI deadlock: if we resolved the channel via

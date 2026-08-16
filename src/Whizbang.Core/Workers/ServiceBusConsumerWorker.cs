@@ -48,7 +48,7 @@ public partial class ServiceBusConsumerWorker(
   // database work against a schema that may not exist yet on a first boot. Optional only so
   // existing fixtures construct unchanged; DI always supplies it.
   ISchemaReadyGate? schemaReadyGate = null
-  ) : BackgroundService {
+  ) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
@@ -60,6 +60,13 @@ public partial class ServiceBusConsumerWorker(
   /// cancels if the host stops first, so a waiter never hangs on a worker that will not arrive.
   /// </summary>
   public Task SubscriptionsReady => _subscriptionsReady.Task;
+
+  /// <inheritdoc />
+  string Whizbang.Core.Startup.IStartupReadinessContributor.ContributorName => "servicebus-consumer";
+
+  /// <inheritdoc />
+  Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
+    => SubscriptionsReady.WaitAsync(cancellationToken);
   private readonly IEventMarkerResolver? _eventMarkerResolver = eventMarkerResolver;
   private readonly IEphemeralModeResolver? _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));

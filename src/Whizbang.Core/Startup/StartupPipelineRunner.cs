@@ -123,6 +123,11 @@ public sealed class StartupPipelineRunner {
     // descriptors say now — enablement in particular can differ between runs.
     var ordered = StartupStepOrderResolver.Resolve(descriptors);
 
+    // Announce the whole plan before anything executes: readiness ("the blocking steps have
+    // drained") is only computable by an observer that knows which steps are coming.
+    await _notifyAsync(o => o.OnRunStartingAsync(new StartupRunPlan(ordered), cancellationToken))
+      .ConfigureAwait(false);
+
     var results = new List<StartupStepResult>(ordered.Count);
     foreach (var descriptor in ordered) {
       cancellationToken.ThrowIfCancellationRequested();
