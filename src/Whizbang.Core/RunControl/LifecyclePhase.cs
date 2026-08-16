@@ -25,6 +25,12 @@ public enum LifecyclePhase {
   Pausing,
   /// <summary>Intentionally held, resumable. (settled)</summary>
   Paused,
+  /// <summary>
+  /// Drained and holding for a peer's breaking migration (or standing down as obsolete):
+  /// in-flight work finished, data plane held, capabilities released, still alive and reapable.
+  /// Resumable — revival re-enters the startup pipeline at Assess. (settled)
+  /// </summary>
+  StandingBy,
   /// <summary>Broadcast "resume", awaiting acks; returns to <see cref="Running"/>. (transitional)</summary>
   Resuming,
   /// <summary>Broadcast "stop"; resources drain in-flight, awaiting acks. (transitional)</summary>

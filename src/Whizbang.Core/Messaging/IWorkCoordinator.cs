@@ -969,6 +969,33 @@ public interface IWorkCoordinator {
     Task.FromResult(false);
 
   /// <summary>
+  /// Records the single fleet-wide standby request: this instance asking live older peers to
+  /// drain and stand by before a breaking migration. True when this instance now holds the
+  /// active request (first claim or idempotent re-request); false when another instance's
+  /// request is active or this instance is evicted.
+  /// </summary>
+  Task<bool> RequestStandbyAsync(Guid instanceId, string version, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>Withdraws this instance's own standby request. Only the requester clears —
+  /// a dead requester's request is voided by peers watching its liveness, never by deletion.</summary>
+  Task<bool> ClearStandbyRequestAsync(Guid instanceId, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>The active standby request, with the requester's last heartbeat so peers can bound
+  /// their wait by the requester's liveness rather than its goodwill.</summary>
+  Task<StandbyRequest?> GetStandbyRequestAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<StandbyRequest?>(null);
+
+  /// <summary>
+  /// The deliberate fence: tombstones an instance so its heartbeats, capability acquisitions and
+  /// work claims are refused. Taken by the migrator during a breaking handshake, or by an
+  /// operator — never an automatic consequence of slowness. Records who issued it and why.
+  /// </summary>
+  Task EvictInstanceAsync(Guid instanceId, Guid evictedBy, string reason, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// Durable stream-integrity convergence state. Defaults keep the caller's prior behaviour when a
   /// provider cannot store it: reporting proceeds (over-reporting is recoverable) and repair does
   /// not (an unbounded repair request against real data is not).

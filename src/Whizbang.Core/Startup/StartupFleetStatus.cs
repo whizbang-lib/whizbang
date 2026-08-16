@@ -21,9 +21,12 @@ namespace Whizbang.Core.Startup;
 /// <param name="LifecyclePhase">The phase the instance last recorded for itself, when it has.</param>
 /// <param name="LibraryVersion">The library version its binary runs, when recorded — during a
 /// mixed-version rollout this is the first question anyone asks.</param>
+/// <param name="Evicted">Whether the instance is tombstoned — refused at heartbeat, capability
+/// acquisition and claims. An evicted peer no longer counts for anything, handshakes included.</param>
 public sealed record FleetInstanceStatus(
   Guid InstanceId, string ServiceName, string HostName, DateTimeOffset LastHeartbeatAt,
-  IReadOnlyList<string> Capabilities, string? LifecyclePhase = null, string? LibraryVersion = null);
+  IReadOnlyList<string> Capabilities, string? LifecyclePhase = null, string? LibraryVersion = null,
+  bool Evicted = false);
 
 /// <summary>
 /// The fleet section of a status response: either the live instances from the database, or an

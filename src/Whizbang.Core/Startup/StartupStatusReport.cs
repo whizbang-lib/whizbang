@@ -59,9 +59,11 @@ public sealed record FleetStatusSection(
 /// <docs>proposals/startup-pipeline#status</docs>
 /// <param name="Phase">The lifecycle phase the instance last recorded for itself.</param>
 /// <param name="Version">The library version its binary runs, when recorded.</param>
+/// <param name="Evicted">Whether the instance is tombstoned — fenced out of the fleet.</param>
 public sealed record FleetStatusEntry(
   Guid InstanceId, string ServiceName, string HostName, double LastSeenSecondsAgo,
-  IReadOnlyList<string> Capabilities, string? Phase = null, string? Version = null);
+  IReadOnlyList<string> Capabilities, string? Phase = null, string? Version = null,
+  bool Evicted = false);
 
 /// <summary>
 /// Builds the <see cref="StartupStatusReport"/> every surface serves. One implementation carries
@@ -139,7 +141,7 @@ public static class StartupStatusReporter {
         rows.Add(new FleetStatusEntry(
           instance.InstanceId, instance.ServiceName, instance.HostName,
           Math.Max(0, (now - instance.LastHeartbeatAt).TotalSeconds),
-          instance.Capabilities, instance.LifecyclePhase, instance.LibraryVersion));
+          instance.Capabilities, instance.LifecyclePhase, instance.LibraryVersion, instance.Evicted));
       }
       return new FleetStatusSection(Available: true, Reason: null, rows);
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {

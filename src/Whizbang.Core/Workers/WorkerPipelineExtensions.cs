@@ -153,6 +153,23 @@ public static class WorkerPipelineExtensions {
       sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StartupReadyService>()));
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadyService>());
 
+    // The standby handshake (increment 9): the watcher is the peer side — it drains and holds on
+    // a newer instance's request, posts StandingBy for the migrator to observe, and carries the
+    // runtime verdict (an instance becomes obsolete the moment a newer peer migrates underneath
+    // it). StandbyHandshake is the migrator side, consumed when a breaking migration runs.
+    services.TryAddSingleton<Whizbang.Core.Startup.StandbyWatcherOptions>();
+    services.AddHostedService(sp => new Whizbang.Core.Startup.StandbyWatcher(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<IWhizbangLifecycleState>(),
+      sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
+      sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
+      sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
+      sp.GetService<ISchemaReadyGate>(),
+      sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>(),
+      sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StandbyWatcher>()));
+
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
     // This avoids a circular DI deadlock: if we resolved the channel via

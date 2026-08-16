@@ -44,10 +44,12 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
     cmd.CommandText = $@"
       SELECT i.instance_id, i.service_name, i.host_name, i.last_heartbeat_at,
              COALESCE(array_agg(c.capability ORDER BY c.capability) FILTER (WHERE c.capability IS NOT NULL), '{{}}') AS capabilities,
-             i.lifecycle_phase, i.library_version
+             i.lifecycle_phase, i.library_version,
+             (e.instance_id IS NOT NULL) AS evicted
       FROM {prefix}wh_service_instances i
       LEFT JOIN {prefix}wh_instance_capabilities c ON c.instance_id = i.instance_id
-      GROUP BY i.instance_id, i.service_name, i.host_name, i.last_heartbeat_at, i.lifecycle_phase, i.library_version
+      LEFT JOIN {prefix}wh_instance_evictions e ON e.instance_id = i.instance_id
+      GROUP BY i.instance_id, i.service_name, i.host_name, i.last_heartbeat_at, i.lifecycle_phase, i.library_version, e.instance_id
       ORDER BY i.last_heartbeat_at DESC
       LIMIT 200";
 #pragma warning restore S2077
@@ -64,7 +66,8 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
           : DateTimeOffset.MinValue,
         reader.GetFieldValue<string[]>(4),
         reader.IsDBNull(5) ? null : reader.GetString(5),
-        reader.IsDBNull(6) ? null : reader.GetString(6)));
+        reader.IsDBNull(6) ? null : reader.GetString(6),
+        reader.GetBoolean(7)));
     }
     return rows;
   }
