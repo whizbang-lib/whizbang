@@ -110,7 +110,11 @@ public static class WorkerPipelineExtensions {
     services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>();
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupPipelineRunner(
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupStep>()],
-      [.. sp.GetServices<Whizbang.Core.Startup.IStartupStepObserver>()]));
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupStepObserver>()],
+      // Optional: the storage driver supplies the elector. Without one, a duty degrades to a
+      // shared capability — survivable only because the framework's exclusive steps are
+      // individually idempotent and separately guarded.
+      sp.GetService<Whizbang.Core.Startup.IDutyElector>()));
     services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineWorker>());
 

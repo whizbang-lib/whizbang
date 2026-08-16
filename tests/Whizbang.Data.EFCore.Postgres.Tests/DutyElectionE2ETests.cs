@@ -100,6 +100,50 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     await Assert.That(await _holdsAsync(loser.InstanceId, "migrator", cancellationToken)).IsTrue();
   }
 
+  private sealed class _countingStep : IStartupStep {
+    private int _executions;
+    public int Executions => Volatile.Read(ref _executions);
+    public StartupStepDescriptor Descriptor { get; } = new() {
+      Name = "ExclusiveWork",
+      RequiredCapability = "pipeline-duty",
+      NonHolderBehavior = NonHolderBehavior.Skip,
+    };
+    public ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
+      Interlocked.Increment(ref _executions);
+      return new(new StartupStepReport(StartupStepOutcome.Completed));
+    }
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task TwoPipelines_RaceADutyStep_ExactlyOneInstanceRunsItAsync(CancellationToken cancellationToken) {
+    var podA = new _pod();
+    var podB = new _pod();
+    await _joinFleetAsync(podA, cancellationToken);
+    await _joinFleetAsync(podB, cancellationToken);
+
+    var stepA = new _countingStep();
+    var stepB = new _countingStep();
+    var runnerA = new StartupPipelineRunner([stepA], dutyElector: _electorFor(podA));
+    var runnerB = new StartupPipelineRunner([stepB], dutyElector: _electorFor(podB));
+
+    // Both instances run their pipelines concurrently — the real race, through the real elector.
+    var results = await Task.WhenAll(
+      runnerA.RunAsync(cancellationToken), runnerB.RunAsync(cancellationToken));
+
+    await Assert.That(stepA.Executions + stepB.Executions).IsEqualTo(1)
+      .Because("a step requiring a duty runs on the one instance that wins it — the pipeline's "
+             + "exclusivity is the capability's, not a mode it enters");
+    var outcomes = new[] { results[0][0].Outcome, results[1][0].Outcome };
+    await Assert.That(outcomes.Count(o => o == StartupStepOutcome.Completed)).IsEqualTo(1);
+    await Assert.That(outcomes.Count(o => o == StartupStepOutcome.Skipped)).IsEqualTo(1)
+      .Because("the loser reports 'capability not held' — a different fact from 'found nothing "
+             + "to do', and an operator needs to tell them apart");
+    // Tenure ended with the step: the grant released, so nothing lingers held.
+    await Assert.That(await _holdsAsync(podA.InstanceId, "pipeline-duty", cancellationToken)).IsFalse();
+    await Assert.That(await _holdsAsync(podB.InstanceId, "pipeline-duty", cancellationToken)).IsFalse();
+  }
+
   [Test]
   [Timeout(120000)]
   public async Task EvictedInstance_IsRefusedAtAcquisition_EvenWithTheLockFreeAsync(CancellationToken cancellationToken) {

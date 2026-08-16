@@ -87,6 +87,7 @@ public interface IStartupStep {
 public sealed class StartupPipelineRunner {
   private readonly IReadOnlyList<IStartupStep> _steps;
   private readonly IReadOnlyList<IStartupStepObserver> _observers;
+  private readonly IDutyElector? _dutyElector;
 
   /// <summary>Creates a runner over the registered steps.</summary>
   /// <param name="steps">The registered steps, in any order — the resolver decides the real one.</param>
@@ -94,14 +95,29 @@ public sealed class StartupPipelineRunner {
   /// The observers to notify around each step and at run completion. Advisory: an observer that
   /// throws is skipped for that notification and never fails the step, the run, or its peers.
   /// </param>
+  /// <param name="dutyElector">
+  /// Wins duties for steps that require an exclusive capability. Optional: without one, a duty
+  /// degrades to a shared capability — every instance runs the step — which is survivable only
+  /// because the framework's exclusive steps are individually idempotent and separately guarded
+  /// (the migration by its advisory lock, the rewrite by its request record).
+  /// </param>
   /// <exception cref="ArgumentNullException"><paramref name="steps"/> is <see langword="null"/>.</exception>
   public StartupPipelineRunner(
       IReadOnlyList<IStartupStep> steps,
-      IReadOnlyList<IStartupStepObserver>? observers = null) {
+      IReadOnlyList<IStartupStepObserver>? observers = null,
+      IDutyElector? dutyElector = null) {
     ArgumentNullException.ThrowIfNull(steps);
     _steps = steps;
     _observers = observers ?? [];
+    _dutyElector = dutyElector;
   }
+
+  /// <summary>
+  /// How often a non-holder whose behaviour is <see cref="NonHolderBehavior.Await"/> re-attempts
+  /// the duty. The retry is the poll-backstop layer — the holder's release is the real signal,
+  /// and re-attempting IS how a waiter learns of it. Init-settable so tests run in test time.
+  /// </summary>
+  internal TimeSpan DutyRetryInterval { get; init; } = TimeSpan.FromSeconds(1);
 
   /// <summary>
   /// Resolves the order and runs every enabled step, returning one result per step that ran.
@@ -137,14 +153,9 @@ public sealed class StartupPipelineRunner {
 
       var step = byName[descriptor.Name];
       var watch = Stopwatch.StartNew();
-      StartupStepReport report;
-      try {
-        report = await step.ExecuteAsync(cancellationToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-        throw;
-      } catch (Exception ex) {
-        report = new StartupStepReport(StartupStepOutcome.Failed, ex.Message);
-      }
+      var report = descriptor.RequiredCapability != StartupCapabilities.EVERY_INSTANCE && _dutyElector is not null
+        ? await _executeExclusiveAsync(step, descriptor, cancellationToken).ConfigureAwait(false)
+        : await _executeAsync(step, cancellationToken).ConfigureAwait(false);
       watch.Stop();
 
       var result = new StartupStepResult(descriptor.Name, report.Outcome, watch.Elapsed, report.Reason);
@@ -157,6 +168,46 @@ public sealed class StartupPipelineRunner {
     await _notifyAsync(o => o.OnPipelineCompletedAsync(summary, cancellationToken)).ConfigureAwait(false);
 
     return results;
+  }
+
+  /// <summary>Runs the step's body, mapping a throw to <see cref="StartupStepOutcome.Failed"/> —
+  /// the report is how everything downstream learns what happened, and an exception that unwinds
+  /// the runner destroys exactly that record.</summary>
+  private static async ValueTask<StartupStepReport> _executeAsync(
+      IStartupStep step, CancellationToken cancellationToken) {
+    try {
+      return await step.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+      throw;
+    } catch (Exception ex) {
+      return new StartupStepReport(StartupStepOutcome.Failed, ex.Message);
+    }
+  }
+
+  /// <summary>
+  /// Runs a step that requires a duty. The holder executes it and releases on completion; a
+  /// non-holder does what the descriptor declares: <see cref="NonHolderBehavior.Skip"/> reports
+  /// <c>capability not held</c> and carries on, <see cref="NonHolderBehavior.Await"/> keeps
+  /// re-attempting until it wins — the holder's release is the completion signal, and the step's
+  /// own idempotency makes the late winner find nothing to do. That is exactly the behaviour the
+  /// migration advisory lock produces today: losers block, then re-check, then continue.
+  /// </summary>
+  private async ValueTask<StartupStepReport> _executeExclusiveAsync(
+      IStartupStep step, StartupStepDescriptor descriptor, CancellationToken cancellationToken) {
+    var grant = await _dutyElector!.TryAcquireAsync(descriptor.RequiredCapability, cancellationToken)
+      .ConfigureAwait(false);
+    if (grant is null && descriptor.NonHolderBehavior == NonHolderBehavior.Skip) {
+      return new StartupStepReport(StartupStepOutcome.Skipped, "capability not held");
+    }
+    while (grant is null) {
+      cancellationToken.ThrowIfCancellationRequested();
+      await Task.Delay(DutyRetryInterval, cancellationToken).ConfigureAwait(false);
+      grant = await _dutyElector.TryAcquireAsync(descriptor.RequiredCapability, cancellationToken)
+        .ConfigureAwait(false);
+    }
+    await using (grant.ConfigureAwait(false)) {
+      return await _executeAsync(step, cancellationToken).ConfigureAwait(false);
+    }
   }
 
   /// <summary>
