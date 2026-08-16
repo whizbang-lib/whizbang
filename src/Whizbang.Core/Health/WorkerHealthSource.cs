@@ -26,7 +26,9 @@ public sealed class WorkerHealthSource : IWhizbangHealthSource {
   /// <inheritdoc />
   public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
     var state = _lifecycle.Phase switch {
-      LifecyclePhase.Running => ComponentState.Operational,
+      // AcceptingCommands: the worker pumps are schema-gate-driven and already run while the
+      // read side is still held — the workers component is operational, only lenses refuse.
+      LifecyclePhase.Running or LifecyclePhase.AcceptingCommands => ComponentState.Operational,
       LifecyclePhase.Stopping => ComponentState.Draining,
       LifecyclePhase.Faulted or LifecyclePhase.Halted => ComponentState.Faulted,
       _ => ComponentState.PausedByDesign

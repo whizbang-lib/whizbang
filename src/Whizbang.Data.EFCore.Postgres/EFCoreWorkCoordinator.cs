@@ -171,7 +171,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+  public async Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
@@ -181,17 +181,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _logger);
     var functionName = BuildSchemaQualifiedName(schema, "record_heartbeat");
 
-#pragma warning disable S2077
-    var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::jsonb)";
-#pragma warning restore S2077
-
     var metadataJson = request.Metadata is { } meta
       ? meta.GetRawText()
       : "{}";
 
-    await _dbContext.Database.ExecuteSqlRawAsync(sql,
-      [request.InstanceId, request.ServiceName, request.HostName, request.ProcessId, metadataJson],
-      cancellationToken);
+    // record_heartbeat returns BOOLEAN (migration 106): false means this instance_id has been
+    // tombstoned in wh_instance_evictions and the caller must stop heartbeating. ExecuteSqlRawAsync
+    // discards the function's own return value (it reports affected ROWS, not the result), so the
+    // scalar has to be read directly — the same pattern already used for other scalar-returning
+    // functions on this coordinator (see NotifyScheduledRetryDueAsync).
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("instanceId", request.InstanceId);
+    cmd.Parameters.AddWithValue("serviceName", request.ServiceName);
+    cmd.Parameters.AddWithValue("hostName", request.HostName);
+    cmd.Parameters.AddWithValue("processId", request.ProcessId);
+    cmd.Parameters.AddWithValue("metadata", metadataJson);
+
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return result is bool accepted && accepted;
   }
 
   /// <inheritdoc />
@@ -973,6 +986,119 @@ public class EFCoreWorkCoordinator<TDbContext>(
       }
     }
     return true;
+  }
+
+  /// <inheritdoc />
+  public async Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "wh_request_table_rewrite");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}(@t)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("t", tableName);
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public async Task<bool> RecordInstanceStateAsync(
+      Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
+      CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(lifecyclePhase);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "record_instance_state");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}(@id, @phase, @version)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("id", instanceId);
+    cmd.Parameters.AddWithValue("phase", lifecyclePhase);
+    cmd.Parameters.AddWithValue("version", (object?)libraryVersion ?? DBNull.Value);
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return result is true;
+  }
+
+  /// <inheritdoc />
+  public async Task<bool> RequestStandbyAsync(Guid instanceId, string version, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(version);
+    return await _scalarFunctionAsync<bool>("request_standby", cancellationToken,
+      ("id", instanceId), ("version", version)).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public async Task<bool> ClearStandbyRequestAsync(Guid instanceId, CancellationToken cancellationToken = default) {
+    return await _scalarFunctionAsync<bool>("clear_standby", cancellationToken,
+      ("id", instanceId)).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public async Task EvictInstanceAsync(Guid instanceId, Guid evictedBy, string reason, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+    _ = await _scalarFunctionAsync<object>("evict_instance", cancellationToken,
+      ("id", instanceId), ("by", evictedBy), ("reason", reason)).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public async Task<StandbyRequest?> GetStandbyRequestAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var requests = BuildSchemaQualifiedName(schema, "wh_standby_requests");
+    var instances = BuildSchemaQualifiedName(schema, "wh_service_instances");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified names built from validated schema constant
+    cmd.CommandText = $@"
+      SELECT r.requested_by, r.requested_version, r.requested_at, i.last_heartbeat_at
+      FROM {requests} r
+      LEFT JOIN {instances} i ON i.instance_id = r.requested_by";
+#pragma warning restore S2077
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      return null;
+    }
+    return new StandbyRequest(
+      reader.GetGuid(0),
+      reader.GetString(1),
+      reader.GetFieldValue<DateTime>(2) is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : DateTimeOffset.MinValue,
+      reader.IsDBNull(3)
+        ? null
+        : new DateTimeOffset(DateTime.SpecifyKind(reader.GetFieldValue<DateTime>(3), DateTimeKind.Utc)));
+  }
+
+  /// <summary>Executes a schema-qualified scalar function with named parameters — the shared
+  /// shape of the standby/eviction calls.</summary>
+  private async Task<T?> _scalarFunctionAsync<T>(
+      string functionName, CancellationToken cancellationToken, params (string Name, object Value)[] args) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, functionName);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}({string.Join(", ", args.Select(a => "@" + a.Name))})";
+#pragma warning restore S2077
+    foreach (var (name, value) in args) {
+      cmd.Parameters.AddWithValue(name, value);
+    }
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return result is T t ? t : default;
   }
 
   public async Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) {

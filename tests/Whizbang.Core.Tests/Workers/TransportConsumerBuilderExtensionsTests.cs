@@ -180,13 +180,20 @@ public class TransportConsumerBuilderExtensionsTests {
     // Act - TransportConsumerWorker always has resilience built-in
     builder.AddTransportConsumer();
 
-    // Assert - TransportConsumerWorker is always registered (with built-in resilience)
-    var hostedServiceDescriptor = services.FirstOrDefault(
+    // Assert - TransportConsumerWorker is always registered (with built-in resilience).
+    // Since the Ready composite landed, the shape is singleton + hosted forward: the worker is
+    // resolvable by type and the IHostedService registration is a factory returning that singleton.
+    var workerDescriptor = services.FirstOrDefault(
+        d => d.ServiceType == typeof(TransportConsumerWorker));
+    var hostedForward = services.FirstOrDefault(
         d => d.ServiceType == typeof(IHostedService) &&
-             d.ImplementationType == typeof(TransportConsumerWorker));
+             d.ImplementationFactory?.Method.ReturnType == typeof(TransportConsumerWorker));
 
-    await Assert.That(hostedServiceDescriptor).IsNotNull();
-    await Assert.That(hostedServiceDescriptor!.Lifetime).IsEqualTo(ServiceLifetime.Singleton);
+    await Assert.That(workerDescriptor).IsNotNull();
+    await Assert.That(workerDescriptor!.Lifetime).IsEqualTo(ServiceLifetime.Singleton);
+    await Assert.That(hostedForward).IsNotNull()
+      .Because("the hosted registration must forward to the SAME singleton the readiness "
+             + "contributor surface resolves");
   }
 
   // WorkCoordinatorPublisherWorker was deleted in Phase H step 3 — its responsibilities
@@ -351,13 +358,11 @@ public class TransportConsumerBuilderExtensionsTests {
     builder.AddTransportConsumer();
     builder.AddTransportConsumer();
 
-    // Assert - Should have hosted service registrations
-    var hostedServiceCount = services.Count(
-        d => d.ServiceType == typeof(IHostedService) &&
-             d.ImplementationType == typeof(TransportConsumerWorker));
+    // Assert - the singleton is TryAdd'd and the hosted forward dedupes by type, so calling
+    // twice leaves exactly one worker registration.
+    var workerCount = services.Count(d => d.ServiceType == typeof(TransportConsumerWorker));
 
-    // Note: This behavior may need adjustment - currently each call adds another
-    await Assert.That(hostedServiceCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(workerCount).IsEqualTo(1);
   }
 
   #endregion
@@ -467,10 +472,10 @@ public class TransportConsumerBuilderExtensionsTests {
     // Act - TransportConsumerWorker always has resilience built-in
     perspectiveBuilder.AddTransportConsumer();
 
-    // Assert - Should register TransportConsumerWorker (with built-in resilience)
+    // Assert - Should register TransportConsumerWorker (with built-in resilience) as a
+    // resolvable singleton with a hosted forward (the Ready-composite shape).
     var hostedServiceDescriptor = services.FirstOrDefault(
-        d => d.ServiceType == typeof(IHostedService) &&
-             d.ImplementationType == typeof(TransportConsumerWorker));
+        d => d.ServiceType == typeof(TransportConsumerWorker));
 
     await Assert.That(hostedServiceDescriptor).IsNotNull();
 

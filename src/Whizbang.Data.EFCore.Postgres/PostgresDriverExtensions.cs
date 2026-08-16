@@ -98,6 +98,21 @@ public static class PostgresDriverExtensions {
                 sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
                 dbContextType));
 
+        // TURNKEY: the startup status surface's fleet section reads wh_service_instances through
+        // this source. The surface itself is opt-in; registering the source merely makes the
+        // fleet section answerable when a host mounts it.
+        selector.Services.TryAddSingleton<Whizbang.Core.Startup.IStartupFleetStatusSource>(sp =>
+            new EFCorePostgresStartupFleetStatusSource(
+                sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+                dbContextType));
+
+        // TURNKEY: the Assess verdict machinery — this binary's version against every version
+        // the migration ledger records, decided on every instance before the migration barrier.
+        selector.Services.TryAddSingleton<Whizbang.Core.Startup.IStartupAssessor>(sp =>
+            new EFCorePostgresStartupAssessor(
+                sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+                dbContextType,
+                sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>()));
         // TURNKEY: Register IClaimedEmissionStore so PublishOnceAsync (saga completion via
         // SagaCompletionGuard.EmitOnceAsync, idempotent receptor emissions, etc.) doesn't
         // throw at runtime. EFCoreClaimedEmissionStore writes ON CONFLICT DO NOTHING against

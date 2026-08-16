@@ -13,7 +13,12 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/perspectives/rebuild</docs>
 public sealed partial class PerspectiveMigrationWorker(
     IPerspectiveRebuilder rebuilder,
-    ILogger<PerspectiveMigrationWorker> logger) : BackgroundService {
+    ILogger<PerspectiveMigrationWorker> logger,
+    // Startup barrier: pending-rebuild queries and rebuilds are database work. Optional only
+    // so existing fixtures construct unchanged; DI always supplies it.
+    ISchemaReadyGate? schemaReadyGate = null) : BackgroundService {
+  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+
 
   /// <summary>
   /// Callback to query pending migration rebuilds (status 4) from the database.
@@ -33,6 +38,15 @@ public sealed partial class PerspectiveMigrationWorker(
     if (GetPendingRebuilds == null || UpdateMigrationStatus == null) {
       return;
     }
+
+    if (_schemaReadyGate is not null) {
+      try {
+        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
+      }
+    }
+
 
     try {
       var pendingRebuilds = await GetPendingRebuilds(stoppingToken);

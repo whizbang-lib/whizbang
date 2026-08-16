@@ -1041,6 +1041,11 @@ COMMENT ON FUNCTION __SCHEMA__.complete_outbox_published IS
 
 SELECT __SCHEMA__.drop_all_overloads('record_heartbeat');
 
+-- Migration 106 changes this function's RETURN TYPE (VOID -> BOOLEAN). Rule 5: a re-run of this
+-- file on a database where 106 has applied would otherwise hit 42P13 — drop first, and the
+-- redefinition closure re-runs 106 afterwards so the database still ends on the BOOLEAN form.
+SELECT __SCHEMA__.drop_all_overloads('record_heartbeat');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.record_heartbeat(
   p_instance_id UUID,
   p_service_name TEXT,

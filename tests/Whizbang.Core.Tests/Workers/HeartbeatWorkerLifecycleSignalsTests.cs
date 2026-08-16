@@ -37,11 +37,11 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     public TaskCompletionSource<HeartbeatRequest> FirstHeartbeat { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public int HeartbeatCount { get; private set; }
 
-    public Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) {
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) {
       var c = Interlocked.Increment(ref _count);
       HeartbeatCount = c;
       FirstHeartbeat.TrySetResult(request);
-      return Task.CompletedTask;
+      return Task.FromResult(true);
     }
     private int _count;
 

@@ -227,6 +227,11 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
             .AddTransportConsumer();
 
           provider = services.BuildServiceProvider();
+          // The harness has no database and runs no migrations, so the schema gate's truthful
+          // state is OPEN. Without this, the consumer worker (which now waits on the gate before
+          // subscribing — nothing may let a broker deliver into an unmigrated schema) would wait
+          // forever on a migration that will never run.
+          provider.GetService<Whizbang.Core.Workers.ISchemaReadyGate>()?.MarkReady();
           var worker = ActivatorUtilities.CreateInstance<TransportConsumerWorker>(provider);
           await worker.StartAsync(CancellationToken.None);
           await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(10));

@@ -716,13 +716,15 @@ public partial class DapperWorkCoordinator(
   #region Phase B: focused IWorkCoordinator methods
 
   /// <inheritdoc />
-  public async Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+  public async Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var metadataJson = request.Metadata is { } meta ? meta.GetRawText() : "{}";
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    await connection.ExecuteAsync(
+    // record_heartbeat returns BOOLEAN (migration 106): false means this instance_id has been
+    // tombstoned in wh_instance_evictions and the caller must stop heartbeating.
+    return await connection.ExecuteScalarAsync<bool>(
       "SELECT record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb)",
       new { request.InstanceId, request.ServiceName, request.HostName, request.ProcessId, Metadata = metadataJson });
   }

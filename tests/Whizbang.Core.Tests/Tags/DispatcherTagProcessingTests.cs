@@ -286,6 +286,9 @@ public class DispatcherTagProcessingTests {
     services.AddWhizbangDispatcher();
 
     var serviceProvider = services.BuildServiceProvider();
+    // The dispatch seam refuses while the schema gate is closed; this fixture has no database
+    // and no migrations — open the gate, exactly as the initializer would after migrating.
+    serviceProvider.GetService<Whizbang.Core.Workers.ISchemaReadyGate>()?.MarkReady();
     return serviceProvider.GetRequiredService<IDispatcher>();
   }
 
@@ -317,6 +320,9 @@ public class DispatcherTagProcessingTests {
     services.AddWhizbangDispatcher();
 
     var serviceProvider = services.BuildServiceProvider();
+    // The dispatch seam refuses while the schema gate is closed; this fixture has no database
+    // and no migrations — open the gate, exactly as the initializer would after migrating.
+    serviceProvider.GetService<Whizbang.Core.Workers.ISchemaReadyGate>()?.MarkReady();
     return serviceProvider.GetRequiredService<IDispatcher>();
   }
 
@@ -351,6 +357,9 @@ public class DispatcherTagProcessingTests {
     services.AddWhizbangDispatcher();
 
     var serviceProvider = services.BuildServiceProvider();
+    // The dispatch seam refuses while the schema gate is closed; this fixture has no database
+    // and no migrations — open the gate, exactly as the initializer would after migrating.
+    serviceProvider.GetService<Whizbang.Core.Workers.ISchemaReadyGate>()?.MarkReady();
     return serviceProvider.GetRequiredService<IDispatcher>();
   }
 }

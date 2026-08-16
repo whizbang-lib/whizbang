@@ -19,12 +19,40 @@ public enum LifecyclePhase {
   Connecting,
   /// <summary>Schema/data migration in progress; it needs the DB connection from <see cref="Connecting"/>. (transitional)</summary>
   Migrating,
-  /// <summary>Fully operational. (settled)</summary>
+  /// <summary>
+  /// The WRITE side is live — commands, events, transport, perspective writes — and the READ
+  /// side (lenses) is not yet: the schema is migrated, so a dispatch lands durably in the event
+  /// store and outbox (the transport client connected back in <see cref="Connecting"/>; publish
+  /// workers drain the outbox; brokers buffer inbound), and the perspective startup repair is
+  /// itself perspective-writing in progress — the write side actively making the read side
+  /// trustworthy. A lens read is a synchronous claim about NOW — during the repair window it
+  /// could be WRONG, not
+  /// merely late, so reads keep refusing until <see cref="Running"/>. Accepting is not
+  /// completing: events written here project once the repair finishes, and a caller that reads
+  /// its own write through a lens is refused until the read side opens.
+  /// <para>
+  /// Per dispatch mode: an outbox-routed command is a durable promise — safe here
+  /// unconditionally. A LOCAL command executes its receptor now: event-store writes are safe
+  /// (events are source-of-truth; the repair rewrites perspectives, never events), and a
+  /// receptor that READS a perspective inherits the read barrier at the lens seam and refuses —
+  /// each dispatch gets exactly the barrier its actual dependencies require, which is the point
+  /// of seam-level gating.
+  /// </para>
+  /// (transitional)
+  /// </summary>
+  AcceptingCommands,
+  /// <summary>Fully operational — reads AND writes serving. (settled)</summary>
   Running,
   /// <summary>Broadcast "pause", awaiting acks. (transitional)</summary>
   Pausing,
   /// <summary>Intentionally held, resumable. (settled)</summary>
   Paused,
+  /// <summary>
+  /// Drained and holding for a peer's breaking migration (or standing down as obsolete):
+  /// in-flight work finished, data plane held, capabilities released, still alive and reapable.
+  /// Resumable — revival re-enters the startup pipeline at Assess. (settled)
+  /// </summary>
+  StandingBy,
   /// <summary>Broadcast "resume", awaiting acks; returns to <see cref="Running"/>. (transitional)</summary>
   Resuming,
   /// <summary>Broadcast "stop"; resources drain in-flight, awaiting acks. (transitional)</summary>

@@ -41,6 +41,12 @@ public static class WorkerPipelineExtensions {
     // complete. Singleton because all workers + the initializer must observe the same instance.
     services.TryAddSingleton<ISchemaReadyGate, SchemaReadyGate>();
 
+    // The read-model barrier (increment 6, option A): released when Migrate completes AND the
+    // perspective startup scan has run — later than Migrate, earlier than Ready. Lens reads
+    // refuse while it is closed; dispatch refuses on the schema gate alone.
+    services.TryAddSingleton<IReadModelsReadyGate, ReadModelsReadyGate>();
+    services.AddHostedService<ReadModelsReadyDriver>();
+
     // Managed-resource health: register the aggregator + the "schema" source over the gate. When a
     // consumer wires AddWhizbangManagedHealthChecks() the schema reports "migrating" (ready under the
     // default Lenient policy) during a startup migration instead of failing readiness.
@@ -86,6 +92,89 @@ public static class WorkerPipelineExtensions {
     // adapter is paused/resumed automatically. Inert when no adapters are registered.
     services.AddWhizbangRunControl();
     services.AddHostedService<LifecyclePhaseWorker>();
+    // Each lifecycle transition is recorded on this instance's own row so peers and the status
+    // surface can observe it — the standby handshake turns on states a peer can actually see.
+    services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
+
+    // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
+    // resolved from their dependencies, and per-step outcome/duration/reason. The state is
+    // registered as BOTH the queryable surface (IStartupPipelineState) and an observer — it
+    // derives its answers from the same notifications every other observer gets, never
+    // privileged. Migrate is the first framework behaviour to become a declared step: the
+    // schema-ready gate is demoted from THE global barrier to that one step's completion
+    // signal, and workers adopt WaitForAsync("Migrate") one declared dependency at a time.
+    services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineState>();
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupPipelineState>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
+    services.TryAddSingleton<Whizbang.Core.Observability.StartupPipelineMetrics>();
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+      new Whizbang.Core.Startup.LoggingStartupStepObserver(
+        (Microsoft.Extensions.Logging.ILogger?)sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance));
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+      new Whizbang.Core.Startup.MetricsStartupStepObserver(
+        sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>()));
+    // Assess (increment 9): where this instance stands — Migrate/Serve/StandDown — decided on
+    // every instance before the migration barrier. StandDown reports as a failed blocking step:
+    // fail-closed readiness IS not-ready-while-alive.
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStep>(sp =>
+      new Whizbang.Core.Startup.AssessStartupStep(
+        sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
+        sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.AssessStartupStep>()));
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>();
+    // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
+    // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
+    // now only detects and records; this is where recorded rewrites actually run.
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>();
+    services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupPipelineRunner(
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupStep>()],
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupStepObserver>()],
+      // Optional: the storage driver supplies the elector. Without one, a duty degrades to a
+      // shared capability — survivable only because the framework's exclusive steps are
+      // individually idempotent and separately guarded.
+      sp.GetService<Whizbang.Core.Startup.IDutyElector>()));
+    services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineWorker>());
+
+    // Ready as a composite (increment 4): the terminal signal, on the one seam that means
+    // "after everything" — IHostedLifecycleService.StartedAsync runs once every StartAsync has
+    // returned. It waits for the blocking steps to drain, then for every registered readiness
+    // contributor (transport subscription readiness among them), and only then marks the signal.
+    // Fail-closed: a failed blocking step keeps the pipeline's readiness pending forever, so the
+    // signal never fires and the instance never reports itself fully up.
+    services.TryAddSingleton<Whizbang.Core.Startup.StartupReadySignal>();
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupReadySignal>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>());
+    // The "startup" health component: probes report the current step and its progress, so "why is
+    // this pod not ready" is answerable from the health surface without reading logs.
+    services.AddSingleton<Health.IWhizbangHealthSource>(sp => new Health.StartupPipelineHealthSource(
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
+      sp.GetService<Whizbang.Core.Startup.IStartupReadySignal>()));
+    services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupReadyService(
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
+      sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupReadinessContributor>()],
+      sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StartupReadyService>()));
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadyService>());
+
+    // The standby handshake (increment 9): the watcher is the peer side — it drains and holds on
+    // a newer instance's request, posts StandingBy for the migrator to observe, and carries the
+    // runtime verdict (an instance becomes obsolete the moment a newer peer migrates underneath
+    // it). StandbyHandshake is the migrator side, consumed when a breaking migration runs.
+    services.TryAddSingleton<Whizbang.Core.Startup.StandbyWatcherOptions>();
+    services.AddHostedService(sp => new Whizbang.Core.Startup.StandbyWatcher(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<IWhizbangLifecycleState>(),
+      sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
+      sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
+      sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
+      sp.GetService<ISchemaReadyGate>(),
+      sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>(),
+      sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StandbyWatcher>()));
 
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
