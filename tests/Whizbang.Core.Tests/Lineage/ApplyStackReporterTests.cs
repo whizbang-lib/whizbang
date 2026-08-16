@@ -109,6 +109,54 @@ public class ApplyStackReporterTests {
       .Because("a cancelled caller is not a degraded store — cancellation is never converted into a reason string");
   }
 
+  [Test]
+  public async Task BuildStreamsAsync_NoQueryRegistered_ReportsUnavailableWithReasonAsync() {
+    var report = await ApplyStackReporter.BuildStreamsAsync(
+      query: null, ["Created", "Closed"], new ApplyStackQueryOptions());
+
+    await Assert.That(report.Available).IsFalse();
+    await Assert.That(report.Reason).Contains("IApplyStackQuery");
+    await Assert.That(report.Streams).IsNull();
+  }
+
+  [Test]
+  public async Task BuildStreamsAsync_ThrowingQuery_ReportsUnavailableWithTheExceptionReasonAsync() {
+    var report = await ApplyStackReporter.BuildStreamsAsync(
+      new ThrowingQuery(), ["Created", "Closed"], new ApplyStackQueryOptions());
+
+    await Assert.That(report.Available).IsFalse();
+    await Assert.That(report.Reason).Contains("wh_event_store");
+  }
+
+  [Test]
+  public async Task BuildStreamsAsync_PassesThroughTheDrillInResultAsync() {
+    var streamId = Guid.NewGuid();
+    var query = new FixedStreamsQuery([streamId]);
+
+    var report = await ApplyStackReporter.BuildStreamsAsync(
+      query, ["Created", "Closed"], new ApplyStackQueryOptions(), limit: 5);
+
+    await Assert.That(report.Available).IsTrue();
+    await Assert.That(report.Streams!).Contains(streamId);
+    await Assert.That(query.SeenLimit).IsEqualTo(5)
+      .Because("the surface adds nothing to the drill-in — the limit passes through unchanged");
+  }
+
+  private sealed class FixedStreamsQuery(IReadOnlyList<Guid> streams) : IApplyStackQuery {
+    public int SeenLimit { get; private set; }
+
+    public Task<IReadOnlyList<ApplyPathSignature>> GetPathSignaturesAsync(
+        ApplyStackQueryOptions options, CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyList<ApplyPathSignature>>([]);
+
+    public Task<IReadOnlyList<Guid>> GetStreamsForPathAsync(
+        IReadOnlyList<string> path, ApplyStackQueryOptions options, int limit,
+        CancellationToken cancellationToken = default) {
+      SeenLimit = limit;
+      return Task.FromResult(streams);
+    }
+  }
+
   private sealed class CancellingQuery : IApplyStackQuery {
     public Task<IReadOnlyList<ApplyPathSignature>> GetPathSignaturesAsync(
         ApplyStackQueryOptions options, CancellationToken cancellationToken = default) =>
