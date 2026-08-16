@@ -85,6 +85,13 @@ public sealed partial class StreamCloser : IStreamCloser {
       }
     }
 
+    // Fold-before-discard (apply-stack lineage): the close is about to truncate this stream's
+    // pointers, so its collapsed path folds into the persisted signature counts first. The stream
+    // dies; its shape survives. Known v1 caveat: re-closing an already-closed stream re-folds the
+    // surviving carry-forward — a small, bounded distortion accepted until per-stream fold
+    // watermarks exist.
+    _ = await _coordinator.FoldStreamApplyPathsAsync([streamId], cancellationToken).ConfigureAwait(false);
+
     var result = await _coordinator.CloseStreamAsync(streamId, throughVersion, archive, cancellationToken)
       .ConfigureAwait(false);
 
