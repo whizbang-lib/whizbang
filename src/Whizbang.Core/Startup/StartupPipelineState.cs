@@ -21,6 +21,20 @@ public enum StartupStepStatus {
   Failed,
 }
 
+/// <summary>One step of the current run, as the status surface projects it.</summary>
+/// <param name="Name">The step's declared name.</param>
+/// <param name="Blocking">Whether the step gates readiness.</param>
+/// <param name="Status">Where the step currently stands.</param>
+/// <param name="Duration">How long it took, once finished.</param>
+/// <param name="Outcome">What it did, once finished.</param>
+/// <param name="Reason">Why, where the outcome warrants explaining. Reasons originate in exception
+/// messages and are a separate opt-in level on any public surface — see the proposal's
+/// information-disclosure constraint.</param>
+/// <docs>proposals/startup-pipeline#status</docs>
+public sealed record StartupStepSnapshot(
+  string Name, bool Blocking, StartupStepStatus Status,
+  TimeSpan? Duration, StartupStepOutcome? Outcome, string? Reason);
+
 /// <summary>
 /// Answers questions about the pipeline at any moment, for code that needs to make a decision
 /// rather than watch a transition. <see cref="WaitForAsync"/> is what lets a consumer's own hosted
@@ -54,6 +68,17 @@ public interface IStartupPipelineState {
   /// <summary>The steps that have finished so far this run, in completion order.</summary>
   IReadOnlyList<StartupStepResult> Completed { get; }
 
+  /// <summary>Whether any run has announced itself. False means "not started" — and a status
+  /// surface must report that as such, never as an empty step list: an empty list and a pipeline
+  /// that has not begun are different facts.</summary>
+  bool HasRunStarted { get; }
+
+  /// <summary>
+  /// The current run's steps in planned order, each with its live status and, once finished, its
+  /// outcome, duration and reason. Empty before the first run announces its plan.
+  /// </summary>
+  IReadOnlyList<StartupStepSnapshot> SnapshotSteps();
+
   /// <summary>Completes when <paramref name="stepName"/> finishes (whatever its outcome).
   /// Returns immediately if it already has this run.</summary>
   Task WaitForAsync(string stepName, CancellationToken cancellationToken);
@@ -79,7 +104,9 @@ public sealed class StartupPipelineState : IStartupPipelineState, IStartupStepOb
   private readonly Dictionary<string, TaskCompletionSource> _waiters = new(StringComparer.Ordinal);
   private readonly List<StartupStepResult> _completed = [];
   private readonly HashSet<string> _plannedBlocking = new(StringComparer.Ordinal);
+  private readonly List<StartupStepDescriptor> _plannedOrder = [];
   private TaskCompletionSource _readySource = _newSource();
+  private bool _hasRunStarted;
   private bool _hasPlan;
   private bool _blockingFailed;
   private bool _isComplete;
@@ -136,12 +163,41 @@ public sealed class StartupPipelineState : IStartupPipelineState, IStartupStepOb
   }
 
   /// <inheritdoc />
+  public bool HasRunStarted {
+    get { lock (_lock) { return _hasRunStarted; } }
+  }
+
+  /// <inheritdoc />
+  public IReadOnlyList<StartupStepSnapshot> SnapshotSteps() {
+    lock (_lock) {
+      if (_plannedOrder.Count == 0) {
+        return [];
+      }
+      var resultsByName = new Dictionary<string, StartupStepResult>(_completed.Count, StringComparer.Ordinal);
+      foreach (var result in _completed) {
+        resultsByName[result.Name] = result;
+      }
+      var snapshot = new List<StartupStepSnapshot>(_plannedOrder.Count);
+      foreach (var descriptor in _plannedOrder) {
+        var status = _statuses.TryGetValue(descriptor.Name, out var s) ? s : StartupStepStatus.Pending;
+        resultsByName.TryGetValue(descriptor.Name, out var result);
+        snapshot.Add(new StartupStepSnapshot(
+          descriptor.Name, descriptor.Blocking, status,
+          result?.Duration, result?.Outcome, result?.Reason));
+      }
+      return snapshot;
+    }
+  }
+
+  /// <inheritdoc />
   public ValueTask OnRunStartingAsync(StartupRunPlan plan, CancellationToken cancellationToken) {
     TaskCompletionSource? readyNow = null;
     lock (_lock) {
       _beginRun();
       _plannedBlocking.Clear();
+      _plannedOrder.Clear();
       foreach (var step in plan.Steps) {
+        _plannedOrder.Add(step);
         if (step.Blocking) {
           _plannedBlocking.Add(step.Name);
         }
@@ -164,6 +220,7 @@ public sealed class StartupPipelineState : IStartupPipelineState, IStartupStepOb
       if (!_runInProgress) {
         _beginRun();
         _plannedBlocking.Clear();
+        _plannedOrder.Clear();
         _hasPlan = false;
       }
       _statuses[context.Descriptor.Name] = StartupStepStatus.Running;
@@ -178,6 +235,7 @@ public sealed class StartupPipelineState : IStartupPipelineState, IStartupStepOb
   /// the OLD run as ready would tell a reviving instance it is up when it is not.
   /// </summary>
   private void _beginRun() {
+    _hasRunStarted = true;
     _runInProgress = true;
     _isComplete = false;
     _blockingFailed = false;

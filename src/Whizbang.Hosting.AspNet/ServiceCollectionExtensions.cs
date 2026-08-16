@@ -47,6 +47,9 @@ public static class ServiceCollectionExtensions {
     services.AddOptions<WhizbangAvailabilityOptions>();
     services.TryAddEnumerable(
       ServiceDescriptor.Singleton<IStartupFilter, WhizbangAvailabilityStartupFilter>());
+    // Surfaces that must not share a failure domain with what they report on (the startup status
+    // endpoint above all) register their own gate exemption here at mapping time.
+    services.TryAddSingleton<WhizbangAvailabilityExemptions>();
 
     // Turnkey: managed-resource health — liveness ("live") + readiness ("ready") over every registered
     // IWhizbangHealthSource, so a migrating host reports ready-by-default instead of failing readiness.

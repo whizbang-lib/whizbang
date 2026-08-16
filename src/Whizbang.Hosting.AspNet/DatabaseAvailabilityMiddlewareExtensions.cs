@@ -33,10 +33,13 @@ public static class DatabaseAvailabilityMiddlewareExtensions {
       AvailabilityGateMode mode = AvailabilityGateMode.AllNonExempt) {
     ArgumentNullException.ThrowIfNull(app);
     // Resolve the singleton gate once at build time and construct the middleware explicitly, so the
-    // gate (DI) and the exempt paths (explicit) are unambiguously combined.
+    // gate (DI) and the exempt paths (explicit) are unambiguously combined. The dynamic exemptions
+    // ride along when registered: surfaces like the startup status endpoint add their own route at
+    // mapping time, which happens after this Use but before the middleware is constructed.
     var gate = app.ApplicationServices.GetRequiredService<ISchemaReadyGate>();
+    var dynamicExemptions = app.ApplicationServices.GetService<WhizbangAvailabilityExemptions>();
     return app.Use(next => {
-      var middleware = new DatabaseAvailabilityMiddleware(next, gate, exemptPaths, mode);
+      var middleware = new DatabaseAvailabilityMiddleware(next, gate, exemptPaths, mode, dynamicExemptions);
       return middleware.InvokeAsync;
     });
   }
