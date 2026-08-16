@@ -41,6 +41,7 @@ public sealed partial class StreamCloser : IStreamCloser {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   public async Task<StreamCloseResult> CloseAsync(
       Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
     // A1-6b full-history guard: a DISCARD close (archive:false) that would strand a [FullHistory] projection —

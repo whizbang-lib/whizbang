@@ -1055,6 +1055,7 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   Task<int> FoldStreamApplyPathsAsync(
     IReadOnlyCollection<Guid> streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(0);

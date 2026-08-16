@@ -14,6 +14,7 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <docs>proposals/pre-destruction-seam</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamGroupClosureTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs:LeaderTtlEviction_CascadesToTheFollower_InTheSameCycleAsync</tests>
 public static class StreamGroupClosure {
   /// <summary>
   /// Computes the cascade set for the given origin evictions.

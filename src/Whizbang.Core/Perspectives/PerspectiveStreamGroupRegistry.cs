@@ -19,6 +19,7 @@ public sealed record StreamGroupMembership(string Key, bool Announce, bool Follo
 /// </summary>
 /// <docs>proposals/pre-destruction-seam</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
 public static class PerspectiveStreamGroupRegistry {
   private static readonly ConcurrentDictionary<Type, List<StreamGroupMembership>> _memberships = new();
 

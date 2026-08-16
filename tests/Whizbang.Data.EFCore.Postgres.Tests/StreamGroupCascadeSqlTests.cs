@@ -72,12 +72,15 @@ public class StreamGroupCascadeSqlTests : EFCoreTestBase {
       await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) > 0;
   }
 
-  private MaintenanceWorker _buildWorker() {
+  private MaintenanceWorker _buildWorker(IPerspectiveRowDestructionGuard? guard = null) {
     var services = new ServiceCollection();
     services.AddScoped(_ => CreateDbContext());
     services.AddScoped<IWorkCoordinator>(sp => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       sp.GetRequiredService<WorkCoordinationDbContext>(),
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));
+    if (guard is not null) {
+      services.AddSingleton(guard);
+    }
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -195,6 +198,133 @@ public class StreamGroupCascadeSqlTests : EFCoreTestBase {
       await Assert.That(await _survivesAsync(conn, LEADER_TABLE, liveStream)).IsTrue();
       await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, liveStream)).IsTrue()
         .Because("the cascade is per-stream — a live stream's rows are untouched in both members");
+    } finally {
+      Whizbang.Testing.StreamGroupRegistryTestSeam.Clear();
+    }
+  }
+
+  /// <summary>A follower guard that defers until its external resource is marked clean.</summary>
+  private sealed class FollowerGuard : IPerspectiveRowDestructionGuard {
+    public bool Clean { get; set; }
+    public List<PerspectiveRowDestructionTarget> AfterReap { get; } = [];
+    public IReadOnlyCollection<Type> GuardedModels => [typeof(SgFollowerModel)];
+
+    public ValueTask<IReadOnlyDictionary<Guid, PerspectiveRowDecision>> OnBeforeReapAsync(
+        IReadOnlyList<PerspectiveRowDestructionTarget> targets, CancellationToken cancellationToken = default) =>
+      ValueTask.FromResult<IReadOnlyDictionary<Guid, PerspectiveRowDecision>>(
+        targets.ToDictionary(t => t.RowId, _ => Clean
+          ? PerspectiveRowDecision.Proceed()
+          : PerspectiveRowDecision.Defer(DateTimeOffset.UtcNow.AddHours(1))));
+
+    public ValueTask OnAfterReapAsync(
+        IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken cancellationToken = default) {
+      AfterReap.AddRange(released);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task CascadedRows_PassThroughTheGuard_DeferSurvivesAndRequeuesTheSeedAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _arrangeAsync(conn);
+    var stream = Guid.NewGuid();
+    await _seedAsync(conn, LEADER_TABLE, stream, idleHours: 48);
+    await _seedAsync(conn, FOLLOWER_TABLE, stream, idleHours: 0);
+    PerspectiveStreamGroupRegistry.Register(typeof(SgLeaderModel), "sg-guarded", announce: true, follow: true, bridge: false);
+    PerspectiveStreamGroupRegistry.Register(typeof(SgFollowerModel), "sg-guarded", announce: true, follow: true, bridge: false);
+    var guard = new FollowerGuard { Clean = false };
+    try {
+      // Cycle 1: leader dies by TTL; the CASCADED follower row is offered to its guard, which
+      // defers — the row survives, and the seed re-queues for the next cycle.
+      var worker = _buildWorker(guard);
+      await Whizbang.Testing.MaintenanceTestDriver.RunOnceAsync(worker, cancellationToken);
+      await Assert.That(await _survivesAsync(conn, LEADER_TABLE, stream)).IsFalse();
+      await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, stream)).IsTrue()
+        .Because("a cascaded row of a guarded perspective passes through the SAME guard — a "
+               + "resource-referencing row cannot slip out through the cascade path");
+      await Assert.That(guard.AfterReap).Count().IsEqualTo(0);
+
+      // The resource cleans up; age the hold; the re-queued seed re-offers and converges.
+      guard.Clean = true;
+      await using (var age = new NpgsqlCommand(
+          "UPDATE wh_perspective_row_hold SET hold_until = NOW() - INTERVAL '1 second' WHERE table_name = @t", conn)) {
+        age.Parameters.AddWithValue("t", FOLLOWER_TABLE);
+        await age.ExecuteNonQueryAsync(cancellationToken);
+      }
+      await Whizbang.Testing.MaintenanceTestDriver.RunOnceAsync(worker, cancellationToken);
+      await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, stream)).IsFalse()
+        .Because("the deferred cascade re-queued its seed — convergence, not loss");
+      await Assert.That(guard.AfterReap.Select(t => t.RowId)).Contains(stream)
+        .Because("OnAfterReap sees the cascade-released set too");
+    } finally {
+      Whizbang.Testing.StreamGroupRegistryTestSeam.Clear();
+    }
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task RebuildThenSweep_ConvergesToTheIdenticalEvictedSetAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _arrangeAsync(conn);
+    var stream = Guid.NewGuid();
+    await _seedAsync(conn, LEADER_TABLE, stream, idleHours: 48);
+    await _seedAsync(conn, FOLLOWER_TABLE, stream, idleHours: 0);
+    PerspectiveStreamGroupRegistry.Register(typeof(SgLeaderModel), "sg-rebuild", announce: true, follow: true, bridge: false);
+    PerspectiveStreamGroupRegistry.Register(typeof(SgFollowerModel), "sg-rebuild", announce: true, follow: true, bridge: false);
+    try {
+      var worker = _buildWorker();
+      await Whizbang.Testing.MaintenanceTestDriver.RunOnceAsync(worker, cancellationToken);
+      await Assert.That(await _survivesAsync(conn, LEADER_TABLE, stream)).IsFalse();
+      await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, stream)).IsFalse();
+
+      // A rebuild resurrects both rows WITH THEIR OLD BUSINESS TIMESTAMPS (retention keys on
+      // event time, never wall clock — the purity invariant). The next cycle must converge to
+      // the identical evicted set: leader re-evicted by its own rule, follower re-cascaded.
+      await _seedAsync(conn, LEADER_TABLE, stream, idleHours: 48);
+      await _seedAsync(conn, FOLLOWER_TABLE, stream, idleHours: 0);
+      await Whizbang.Testing.MaintenanceTestDriver.RunOnceAsync(worker, cancellationToken);
+
+      await Assert.That(await _survivesAsync(conn, LEADER_TABLE, stream)).IsFalse()
+        .Because("business-time purity: the resurrected row carries its old clock and re-evicts");
+      await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, stream)).IsFalse()
+        .Because("the announcer's re-eviction re-fires the edge — rebuild-then-sweep converges "
+               + "to the identical evicted set with zero bookkeeping");
+    } finally {
+      Whizbang.Testing.StreamGroupRegistryTestSeam.Clear();
+    }
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task AnnouncerRebuiltAlone_ReEvicts_AndTheCascadeNoOpsIdempotentlyAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _arrangeAsync(conn);
+    var stream = Guid.NewGuid();
+    await _seedAsync(conn, LEADER_TABLE, stream, idleHours: 48);
+    await _seedAsync(conn, FOLLOWER_TABLE, stream, idleHours: 0);
+    PerspectiveStreamGroupRegistry.Register(typeof(SgLeaderModel), "sg-idem", announce: true, follow: true, bridge: false);
+    PerspectiveStreamGroupRegistry.Register(typeof(SgFollowerModel), "sg-idem", announce: true, follow: true, bridge: false);
+    try {
+      var worker = _buildWorker();
+      await Whizbang.Testing.MaintenanceTestDriver.RunOnceAsync(worker, cancellationToken);
+
+      // Only the ANNOUNCER is rebuilt (old business timestamps); the follower stays clean.
+      await _seedAsync(conn, LEADER_TABLE, stream, idleHours: 48);
+      await Whizbang.Testing.MaintenanceTestDriver.RunOnceAsync(worker, cancellationToken);
+
+      await Assert.That(await _survivesAsync(conn, LEADER_TABLE, stream)).IsFalse()
+        .Because("the announcer's own sweep is self-contained and re-evicts after its rebuild");
+      await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, stream)).IsFalse();
+      await using var journal = new NpgsqlCommand("SELECT COUNT(*) FROM wh_row_eviction_journal", conn);
+      var remaining = Convert.ToInt64(
+        await journal.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
+      await Assert.That(remaining).IsEqualTo(0L)
+        .Because("the cascade onto already-absent follower rows is an idempotent no-op — nothing "
+               + "re-queues, nothing errors, the journal drains clean");
     } finally {
       Whizbang.Testing.StreamGroupRegistryTestSeam.Clear();
     }

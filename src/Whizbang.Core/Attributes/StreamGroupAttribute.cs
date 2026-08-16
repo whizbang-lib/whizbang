@@ -25,6 +25,8 @@ namespace Whizbang.Core.Attributes;
 /// </remarks>
 /// <docs>proposals/pre-destruction-seam</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamGroupAnalyzerTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
 public sealed class StreamGroupAttribute(string key) : Attribute {
   /// <summary>The group key. Same key within a service = one group.</summary>

@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </remarks>
 /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyStackQuerySqlTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
 public sealed class EFCorePostgresApplyStackQuery : IApplyStackQuery {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly Type _dbContextType;
