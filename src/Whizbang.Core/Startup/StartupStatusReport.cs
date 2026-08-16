@@ -57,9 +57,11 @@ public sealed record FleetStatusSection(
 /// <param name="LastSeenSecondsAgo">Seconds since its last heartbeat — freshness is per row, judged by the reader.</param>
 /// <param name="Capabilities">What the instance currently holds — which one is the migrator, as a query.</param>
 /// <docs>proposals/startup-pipeline#status</docs>
+/// <param name="Phase">The lifecycle phase the instance last recorded for itself.</param>
+/// <param name="Version">The library version its binary runs, when recorded.</param>
 public sealed record FleetStatusEntry(
   Guid InstanceId, string ServiceName, string HostName, double LastSeenSecondsAgo,
-  IReadOnlyList<string> Capabilities);
+  IReadOnlyList<string> Capabilities, string? Phase = null, string? Version = null);
 
 /// <summary>
 /// Builds the <see cref="StartupStatusReport"/> every surface serves. One implementation carries
@@ -137,7 +139,7 @@ public static class StartupStatusReporter {
         rows.Add(new FleetStatusEntry(
           instance.InstanceId, instance.ServiceName, instance.HostName,
           Math.Max(0, (now - instance.LastHeartbeatAt).TotalSeconds),
-          instance.Capabilities));
+          instance.Capabilities, instance.LifecyclePhase, instance.LibraryVersion));
       }
       return new FleetStatusSection(Available: true, Reason: null, rows);
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {

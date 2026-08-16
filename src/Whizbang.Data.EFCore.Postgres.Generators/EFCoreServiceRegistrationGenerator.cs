@@ -1804,6 +1804,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine();
       sb.AppendLine("    // Register JsonSerializerOptions for Whizbang components");
       sb.AppendLine("    services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+      // The library version as a VALUE (zero reflection): the same constant the migration ledger
+      // records, so instance rows and the ledger can never disagree about what this binary runs.
+      sb.AppendLine($"    services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
+      sb.AppendLine($"      new global::Whizbang.Core.Observability.LibraryVersionProvider(\"{GeneratorLibraryVersion.Get()}\"));");
       sb.AppendLine();
       sb.AppendLine("    return services;");
       sb.AppendLine("  }");
@@ -1944,6 +1948,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("      // Register JsonSerializerOptions for Whizbang components");
     sb.AppendLine("      services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+    sb.AppendLine($"      services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
+    sb.AppendLine($"        new global::Whizbang.Core.Observability.LibraryVersionProvider(\"{GeneratorLibraryVersion.Get()}\"));");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
     sb.AppendLine("    // Register initialization callback for EnsureWhizbangInitializedAsync()");
@@ -2098,16 +2104,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // __SERVICE_NAME__ is the assembly name for service identification
       template = template.Replace("__SERVICE_NAME__", assemblyName);
       // __LIBRARY_VERSION__ is the Whizbang library version from the generator assembly
-      var libraryVersion = typeof(EFCoreServiceRegistrationGenerator).Assembly
-          .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
-          ?? typeof(EFCoreServiceRegistrationGenerator).Assembly.GetName().Version?.ToString()
-          ?? "unknown";
-      // Strip build metadata suffix (e.g., "0.9.4-local.62+abc123" → "0.9.4-local.62")
-      var plusIdx = libraryVersion.IndexOf('+');
-      if (plusIdx > 0) {
-        libraryVersion = libraryVersion[..plusIdx];
-      }
-      template = template.Replace("__LIBRARY_VERSION__", libraryVersion);
+      template = template.Replace("__LIBRARY_VERSION__", GeneratorLibraryVersion.Get());
       // __APPLICATION_VERSION__ is the consuming assembly name + version for tracking which app applied migrations
       var appVersion = compilation.Assembly.Identity.Version.ToString();
       var applicationVersion = $"{assemblyName}/{appVersion}";
@@ -2740,3 +2737,23 @@ internal sealed record MultiLensQueryInfo(
     ImmutableArray<string> ModelTypeNames,
     int Arity,
     string ConsumerClassName);
+
+/// <summary>
+/// The Whizbang library version from the generator assembly, build metadata stripped
+/// (e.g., "0.9.4-local.62+abc123" → "0.9.4-local.62"). Used both for the __LIBRARY_VERSION__
+/// template substitution and the generated ILibraryVersionProvider registration, so the ledger
+/// and the instance rows can never disagree about what a binary runs.
+/// </summary>
+internal static class GeneratorLibraryVersion {
+  internal static string Get() {
+    var libraryVersion = typeof(EFCoreServiceRegistrationGenerator).Assembly
+        .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? typeof(EFCoreServiceRegistrationGenerator).Assembly.GetName().Version?.ToString()
+        ?? "unknown";
+    var plusIdx = libraryVersion.IndexOf('+');
+    if (plusIdx > 0) {
+      libraryVersion = libraryVersion[..plusIdx];
+    }
+    return libraryVersion;
+  }
+}

@@ -50,6 +50,14 @@ public class StartupFleetStatusSourceTests : EFCoreTestBase {
     await Assert.That(rowA!.HostName).IsEqualTo("host-a");
     await Assert.That(rowA.Capabilities.Count).IsEqualTo(0)
       .Because("no duty won means nothing held — an empty holdings list, not a null one");
+
+    // The instance records its state; the fleet section reports it — phase and version are
+    // exactly what a mixed-version rollout asks about first.
+    await podA.RecordInstanceStateAsync(idA, "Running", "0.9.4-alpha.3", cancellationToken);
+    var refreshed = await source.GetFleetAsync(cancellationToken);
+    var rowA2 = refreshed.First(r => r.InstanceId == idA);
+    await Assert.That(rowA2.LifecyclePhase).IsEqualTo("Running");
+    await Assert.That(rowA2.LibraryVersion).IsEqualTo("0.9.4-alpha.3");
     await Assert.That((DateTimeOffset.UtcNow - rowA.LastHeartbeatAt).TotalMinutes).IsLessThan(2)
       .Because("the heartbeat just happened — a stale timestamp here would make every per-row "
              + "age the surface reports a lie");

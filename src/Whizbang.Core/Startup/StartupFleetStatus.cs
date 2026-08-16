@@ -18,9 +18,12 @@ namespace Whizbang.Core.Startup;
 /// right now" as a join, not a fan-out. Derived state: the lock decides, the row reports.
 /// </param>
 /// <docs>proposals/startup-pipeline#status</docs>
+/// <param name="LifecyclePhase">The phase the instance last recorded for itself, when it has.</param>
+/// <param name="LibraryVersion">The library version its binary runs, when recorded — during a
+/// mixed-version rollout this is the first question anyone asks.</param>
 public sealed record FleetInstanceStatus(
   Guid InstanceId, string ServiceName, string HostName, DateTimeOffset LastHeartbeatAt,
-  IReadOnlyList<string> Capabilities);
+  IReadOnlyList<string> Capabilities, string? LifecyclePhase = null, string? LibraryVersion = null);
 
 /// <summary>
 /// The fleet section of a status response: either the live instances from the database, or an

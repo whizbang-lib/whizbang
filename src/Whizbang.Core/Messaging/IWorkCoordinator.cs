@@ -897,6 +897,18 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Records this instance's lifecycle phase (and, when known, library version) on its own
+  /// instance row, so peers and the status surface can observe it — the standby handshake cannot
+  /// wait for a state nobody can see. Returns false when the instance has no row yet (early
+  /// startup transitions precede the first heartbeat — expected, not an error). Must not refresh
+  /// liveness: state is not a heartbeat, and a standing-by zombie must still be reapable.
+  /// </summary>
+  Task<bool> RecordInstanceStateAsync(
+      Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
+      CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
   /// Durable stream-integrity convergence state. Defaults keep the caller's prior behaviour when a
   /// provider cannot store it: reporting proceeds (over-reporting is recoverable) and repair does
   /// not (an unbounded repair request against real data is not).

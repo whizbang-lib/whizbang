@@ -1006,6 +1006,29 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
+  /// <inheritdoc />
+  public async Task<bool> RecordInstanceStateAsync(
+      Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
+      CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(lifecyclePhase);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var fn = BuildSchemaQualifiedName(schema, "record_instance_state");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}(@id, @phase, @version)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("id", instanceId);
+    cmd.Parameters.AddWithValue("phase", lifecyclePhase);
+    cmd.Parameters.AddWithValue("version", (object?)libraryVersion ?? DBNull.Value);
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return result is true;
+  }
+
   public async Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

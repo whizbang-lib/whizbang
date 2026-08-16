@@ -86,6 +86,9 @@ public static class WorkerPipelineExtensions {
     // adapter is paused/resumed automatically. Inert when no adapters are registered.
     services.AddWhizbangRunControl();
     services.AddHostedService<LifecyclePhaseWorker>();
+    // Each lifecycle transition is recorded on this instance's own row so peers and the status
+    // surface can observe it — the standby handshake turns on states a peer can actually see.
+    services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
 
     // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
     // resolved from their dependencies, and per-step outcome/duration/reason. The state is
