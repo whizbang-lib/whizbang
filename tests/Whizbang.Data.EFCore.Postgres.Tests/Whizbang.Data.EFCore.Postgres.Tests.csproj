@@ -6,6 +6,12 @@
     <ProjectReference Include="..\..\src\Whizbang.Data.Postgres\Whizbang.Data.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Testing\Whizbang.Testing.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Offloads.InMemory\Whizbang.Offloads.InMemory.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Hosting.AspNet\Whizbang.Hosting.AspNet.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <!-- Reference the generator to discover perspectives in this project -->
     <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <!-- Reference the generator assembly directly for testing analyzer classes -->
