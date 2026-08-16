@@ -13,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// reach it; the surface treats a throw as "fleet unavailable", stated with a reason — during a
 /// cold-boot migration this table may not exist yet, and that is an honest answer, not an error.
 /// </summary>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupFleetStatusSourceTests.cs</tests>
 public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatusSource {
   private readonly IServiceScopeFactory _scopeFactory;

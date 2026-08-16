@@ -13,7 +13,7 @@ namespace Whizbang.Core.Startup;
 /// </summary>
 /// <param name="Instance">The process that answered — read from memory, exact and current.</param>
 /// <param name="Fleet">Every live instance from the database, or why they cannot be seen.</param>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 public sealed record StartupStatusReport(InstanceStatusSection Instance, FleetStatusSection Fleet);
 
 /// <summary>The responder's own pipeline state.</summary>
@@ -25,7 +25,7 @@ public sealed record StartupStatusReport(InstanceStatusSection Instance, FleetSt
 /// <param name="PipelineReady">Whether the blocking steps have drained without failure.</param>
 /// <param name="Ready">The composite: blocking steps drained AND every readiness contributor answered.</param>
 /// <param name="Steps">The run's steps in planned order with live status; absent before the run begins.</param>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 public sealed record InstanceStatusSection(
   Guid? InstanceId, string? ServiceName, bool Started, string? CurrentStep,
   bool PipelineComplete, bool PipelineReady, bool Ready, IReadOnlyList<StepStatusEntry>? Steps);
@@ -37,7 +37,7 @@ public sealed record InstanceStatusSection(
 /// <param name="DurationMs">How long it took, once finished.</param>
 /// <param name="Outcome">What it did, once finished.</param>
 /// <param name="Reason">Why — only when the host opted into reasons.</param>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 public sealed record StepStatusEntry(
   string Name, bool Blocking, StartupStepStatus Status,
   double? DurationMs, StartupStepOutcome? Outcome, string? Reason);
@@ -46,7 +46,7 @@ public sealed record StepStatusEntry(
 /// <param name="Available">Whether the fleet could be read.</param>
 /// <param name="Reason">Why not, when it could not.</param>
 /// <param name="Instances">The live instances, when it could.</param>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 public sealed record FleetStatusSection(
   bool Available, string? Reason, IReadOnlyList<FleetStatusEntry>? Instances);
 
@@ -56,7 +56,7 @@ public sealed record FleetStatusSection(
 /// <param name="HostName">Where it runs.</param>
 /// <param name="LastSeenSecondsAgo">Seconds since its last heartbeat — freshness is per row, judged by the reader.</param>
 /// <param name="Capabilities">What the instance currently holds — which one is the migrator, as a query.</param>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 /// <param name="Phase">The lifecycle phase the instance last recorded for itself.</param>
 /// <param name="Version">The library version its binary runs, when recorded.</param>
 /// <param name="Evicted">Whether the instance is tombstoned — fenced out of the fleet.</param>
@@ -72,8 +72,8 @@ public sealed record FleetStatusEntry(
 /// boundary (<c>reason</c> strings carry content the framework does not control and ride a
 /// separate opt-in).
 /// </summary>
-/// <docs>proposals/startup-pipeline#status</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStatusReporterTests.cs</tests>
+/// <docs>operations/startup/startup-status</docs>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/StartupStatusEndpointsTests.cs</tests>
 public static class StartupStatusReporter {
 
   /// <summary>Builds the two-section report from whatever is registered — every argument optional,

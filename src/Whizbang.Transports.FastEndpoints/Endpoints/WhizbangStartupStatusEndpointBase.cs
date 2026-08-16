@@ -25,7 +25,7 @@ namespace Whizbang.Transports.FastEndpoints;
 /// hosting package present, register it via <c>WhizbangAvailabilityExemptions</c>.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/WhizbangStartupStatusEndpointBaseTests.cs</tests>
 /// <example>
 /// // The consumer's endpoint — declaring it IS the opt-in:

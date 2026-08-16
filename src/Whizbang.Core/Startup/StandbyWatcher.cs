@@ -13,7 +13,7 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Startup;
 
 /// <summary>Cadences and bounds for the standby watcher.</summary>
-/// <docs>proposals/startup-pipeline#handshake</docs>
+/// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
 public sealed class StandbyWatcherOptions {
   /// <summary>How often the watcher checks for an active standby request. The poll is the floor
   /// beneath any faster signal; the handshake's latency budget is bounded by it.</summary>
@@ -51,7 +51,7 @@ public sealed class StandbyWatcherOptions {
 /// there — replacement is the orchestrator's decision, prompted by the readiness it can see.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline#handshake</docs>
+/// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StandbyWatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StandbyHandshakeE2ETests.cs</tests>
 public sealed partial class StandbyWatcher : BackgroundService {

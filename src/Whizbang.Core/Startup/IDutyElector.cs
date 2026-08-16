@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace Whizbang.Core.Startup;
 
 /// <summary>The framework's own duties — exclusive capabilities, held by one instance at a time.</summary>
-/// <docs>proposals/startup-pipeline#capabilities</docs>
+/// <docs>operations/startup/capabilities-and-duties</docs>
 public static class StartupDuties {
 #pragma warning disable CA1707 // SCREAMING_CASE constants are the established convention here
   /// <summary>The instance that runs schema migrations.</summary>
@@ -19,7 +19,7 @@ public static class StartupDuties {
 /// A duty currently held. Dispose to release cleanly; death releases server-side without a call
 /// (the session ends, the primitive frees, the recorded holding is reaped with the instance row).
 /// </summary>
-/// <docs>proposals/startup-pipeline#capabilities</docs>
+/// <docs>operations/startup/capabilities-and-duties</docs>
 public interface IDutyGrant : IAsyncDisposable {
   /// <summary>The duty this grant holds.</summary>
   string Duty { get; }
@@ -49,7 +49,7 @@ public interface IDutyGrant : IAsyncDisposable {
 /// The eviction fence reaches here too: an evicted instance is refused at acquisition even when
 /// it wins the primitive, and the implementation releases what it won.
 /// </remarks>
-/// <docs>proposals/startup-pipeline#capabilities</docs>
+/// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionE2ETests.cs</tests>
 public interface IDutyElector {
   /// <summary>

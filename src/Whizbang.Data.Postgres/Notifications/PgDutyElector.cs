@@ -30,7 +30,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <c>InstanceDiedSignal</c> prompt); the elector only ever answers "yours now" or "not yours".
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline#capabilities</docs>
+/// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionE2ETests.cs</tests>
 public sealed partial class PgDutyElector(
   IOptions<WhizbangNotificationOptions> options,

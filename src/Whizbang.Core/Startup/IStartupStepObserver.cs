@@ -7,7 +7,7 @@ namespace Whizbang.Core.Startup;
 
 /// <summary>A step about to run, as an observer sees it.</summary>
 /// <param name="Descriptor">The step's declaration — name, dependencies, capability, blocking.</param>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 public sealed record StartupStepContext(StartupStepDescriptor Descriptor);
 
 /// <summary>
@@ -16,12 +16,12 @@ public sealed record StartupStepContext(StartupStepDescriptor Descriptor);
 /// which steps are blocking, without which "the blocking steps have drained" cannot be computed.
 /// </summary>
 /// <param name="Steps">The ordered descriptors this run will execute.</param>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 public sealed record StartupRunPlan(IReadOnlyList<StartupStepDescriptor> Steps);
 
 /// <summary>One completed pipeline run, as observers and the status surface see it.</summary>
 /// <param name="Results">Every step that ran, in execution order, with outcome, duration and reason.</param>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 public sealed record StartupSummary(IReadOnlyList<StartupStepResult> Results);
 
 /// <summary>
@@ -36,7 +36,7 @@ public sealed record StartupSummary(IReadOnlyList<StartupStepResult> Results);
 /// break a boot. Implementations are registered explicitly, consistent with the framework's
 /// zero-reflection and native-AOT constraints.
 /// </remarks>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineHooksTests.cs</tests>
 public interface IStartupStepObserver {
   /// <summary>

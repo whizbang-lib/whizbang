@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 namespace Whizbang.Core.Startup;
 
 /// <summary>Where a step currently stands, as the status surface reports it.</summary>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 public enum StartupStepStatus {
   /// <summary>Not started — either the run has not reached it, or the name has never been seen.</summary>
   Pending,
@@ -30,7 +30,7 @@ public enum StartupStepStatus {
 /// <param name="Reason">Why, where the outcome warrants explaining. Reasons originate in exception
 /// messages and are a separate opt-in level on any public surface — see the proposal's
 /// information-disclosure constraint.</param>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 public sealed record StartupStepSnapshot(
   string Name, bool Blocking, StartupStepStatus Status,
   TimeSpan? Duration, StartupStepOutcome? Outcome, string? Reason);
@@ -40,7 +40,7 @@ public sealed record StartupStepSnapshot(
 /// rather than watch a transition. <see cref="WaitForAsync"/> is what lets a consumer's own hosted
 /// service say "after <c>Migrate</c>" instead of guessing at registration order.
 /// </summary>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 public interface IStartupPipelineState {
   /// <summary>Whether the current run has finished. False before any run and while one is underway.</summary>
   bool IsComplete { get; }
@@ -96,7 +96,7 @@ public interface IStartupPipelineState {
 /// tell it it is ready when it is not. Thread-safe; waiters registered before a step completes are
 /// released when it does, and late waiters return immediately.
 /// </remarks>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineHooksTests.cs</tests>
 public sealed class StartupPipelineState : IStartupPipelineState, IStartupStepObserver {
   private readonly Lock _lock = new();

@@ -25,7 +25,7 @@ namespace Whizbang.Core.Startup;
 /// No reflection, so it is safe under native AOT.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStepOrderResolverTests.cs</tests>
 public static class StartupStepOrderResolver {
   /// <summary>

@@ -26,7 +26,7 @@ namespace Whizbang.Core.RunControl;
 /// no reflection involved.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline#capabilities</docs>
+/// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/InstanceStateRunControlTests.cs</tests>
 public sealed partial class InstanceStateRunControl : IWhizbangRunControl {
   private static readonly TimeSpan _writeTimeout = TimeSpan.FromSeconds(5);

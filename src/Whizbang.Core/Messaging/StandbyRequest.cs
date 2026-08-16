@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// The requester's last heartbeat, or null when its instance row is gone (reaped) — either way,
 /// a peer treats a silent requester as dead and the request as void.
 /// </param>
-/// <docs>proposals/startup-pipeline#handshake</docs>
+/// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
 public sealed record StandbyRequest(
   Guid RequestedBy, string RequestedVersion, DateTimeOffset RequestedAt,
   DateTimeOffset? RequesterLastHeartbeatAt);

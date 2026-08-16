@@ -17,7 +17,7 @@ namespace Whizbang.Core.Startup;
 /// What the instance currently holds, from the recorded holdings — "which instance is the migrator
 /// right now" as a join, not a fan-out. Derived state: the lock decides, the row reports.
 /// </param>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 /// <param name="LifecyclePhase">The phase the instance last recorded for itself, when it has.</param>
 /// <param name="LibraryVersion">The library version its binary runs, when recorded — during a
 /// mixed-version rollout this is the first question anyone asks.</param>
@@ -36,7 +36,7 @@ public sealed record FleetInstanceStatus(
 /// <param name="Available">Whether the fleet could be read.</param>
 /// <param name="UnavailableReason">Why not, when it could not.</param>
 /// <param name="Instances">The live instances, when it could.</param>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 public sealed record FleetStatusReport(
   bool Available, string? UnavailableReason, IReadOnlyList<FleetInstanceStatus> Instances) {
 
@@ -49,7 +49,7 @@ public sealed record FleetStatusReport(
 /// database, and only a driver knows how to reach it. When none is registered, the surface reports
 /// the fleet section unavailable with that as the reason, which is the honest answer.
 /// </summary>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 public interface IStartupFleetStatusSource {
   /// <summary>Reads the live instances. Implementations should throw on failure — the surface
   /// translates the failure into an unavailable fleet section rather than an error response.</summary>

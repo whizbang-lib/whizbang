@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// stopping. An unparseable recorded version cannot outrank anything (the same stance
 /// <c>MigrationVersionGuard</c> takes: unreadable history does not block).
 /// </remarks>
-/// <docs>proposals/startup-pipeline#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#assess</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupAssessorTests.cs</tests>
 public sealed class EFCorePostgresStartupAssessor : IStartupAssessor {
   private readonly IServiceScopeFactory _scopeFactory;

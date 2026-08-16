@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace Whizbang.Core.Startup;
 
 /// <summary>The verdict <c>Assess</c> produces before anything is changed.</summary>
-/// <docs>proposals/startup-pipeline#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#assess</docs>
 public enum StartupVerdict {
   /// <summary>Fresh database, or this version has work to do and no live conflict — contend to migrate.</summary>
   Migrate,
@@ -23,7 +23,7 @@ public enum StartupVerdict {
 /// <summary>What <c>Assess</c> decided, and why.</summary>
 /// <param name="Verdict">The verdict.</param>
 /// <param name="Reason">Framework-authored explanation (versions involved, what was compared).</param>
-/// <docs>proposals/startup-pipeline#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#assess</docs>
 public sealed record StartupAssessment(StartupVerdict Verdict, string Reason);
 
 /// <summary>
@@ -31,7 +31,7 @@ public sealed record StartupAssessment(StartupVerdict Verdict, string Reason);
 /// migration ledger records. Supplied by the storage driver — only a driver can read the ledger.
 /// A read: no lock, no transaction, no DDL.
 /// </summary>
-/// <docs>proposals/startup-pipeline#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#assess</docs>
 public interface IStartupAssessor {
   /// <summary>Reads the ledger and produces the verdict. Implementations should throw on an
   /// unreadable ledger only when refusing is safer than proceeding; the step maps a throw to a
@@ -59,7 +59,7 @@ public interface IStartupAssessor {
 /// that; this step establishes the verdict at boot.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#assess</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/AssessStartupStepTests.cs</tests>
 public sealed partial class AssessStartupStep : IStartupStep {
   private readonly IStartupAssessor? _assessor;

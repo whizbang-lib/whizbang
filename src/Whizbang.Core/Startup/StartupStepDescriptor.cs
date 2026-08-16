@@ -13,7 +13,7 @@ namespace Whizbang.Core.Startup;
 /// <c>Role</c> types in one library — one meaning <em>who the caller is</em>, the other
 /// <em>what this process does</em> — is a hazard in prose and logs even where the types are distinct.
 /// </remarks>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 public static class StartupCapabilities {
   /// <summary>
   /// The capability every instance holds. A step requiring it runs everywhere, which is the default
@@ -27,7 +27,7 @@ public static class StartupCapabilities {
 /// <summary>
 /// What the instances that did <em>not</em> win an exclusive capability do while its holder works.
 /// </summary>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 public enum NonHolderBehavior {
   /// <summary>
   /// Wait for the holder to finish before continuing. Correct when later steps cannot proceed
@@ -59,7 +59,7 @@ public enum NonHolderBehavior {
 /// fleet-exclusive while requiring a capability every instance holds.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStepOrderResolverTests.cs</tests>
 public sealed record StartupStepDescriptor {
   /// <summary>
@@ -110,7 +110,7 @@ public sealed record StartupStepDescriptor {
 /// alternative is picking one of several possible orders and starting up in it, which is the
 /// behaviour the pipeline exists to replace.
 /// </remarks>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 public sealed class StartupPipelineConfigurationException : Exception {
   /// <summary>Creates the exception with a message describing what cannot be resolved.</summary>
   public StartupPipelineConfigurationException(string message) : base(message) { }

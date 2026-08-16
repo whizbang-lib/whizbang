@@ -7,7 +7,7 @@ namespace Whizbang.Data.Postgres;
 /// and namespaced so it cannot collide with the other advisory-lock families sharing Postgres's
 /// single-bigint key space (schema init, collective apply, instance liveness, per-stream locks).
 /// </summary>
-/// <docs>proposals/startup-pipeline#capabilities</docs>
+/// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyLockKeyTests.cs</tests>
 public static class DutyLockKey {
   private const string KEY_NAMESPACE = "wh_duty:";

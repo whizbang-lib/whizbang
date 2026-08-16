@@ -19,7 +19,7 @@ namespace Whizbang.Core.Observability;
 ///   silent-skip class this pipeline exists to expose.</description></item>
 /// </list>
 /// </remarks>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupBuiltInObserversTests.cs</tests>
 public sealed class StartupPipelineMetrics {
 #pragma warning disable CA1707

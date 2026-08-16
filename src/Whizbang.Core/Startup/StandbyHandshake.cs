@@ -17,7 +17,7 @@ namespace Whizbang.Core.Startup;
 /// down). The wait is bounded by liveness, never by the goodwill of a process that may already
 /// be dead: an instance that stops heartbeating stops counting.
 /// </summary>
-/// <docs>proposals/startup-pipeline#handshake</docs>
+/// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StandbyHandshakeE2ETests.cs</tests>
 public sealed partial class StandbyHandshake {
   private readonly IServiceScopeFactory _scopeFactory;

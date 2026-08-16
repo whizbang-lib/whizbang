@@ -13,7 +13,7 @@ namespace Whizbang.Core.Startup;
 /// skip is always carried, because "found nothing to do" and "could not look" are different facts
 /// and the log is the one place people grep during a slow boot.
 /// </summary>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupBuiltInObserversTests.cs</tests>
 public sealed partial class LoggingStartupStepObserver : IStartupStepObserver {
   private readonly ILogger _logger;
@@ -74,7 +74,7 @@ public sealed partial class LoggingStartupStepObserver : IStartupStepObserver {
 /// Feeds each step completion into <see cref="StartupPipelineMetrics"/> — the other built-in
 /// observer, riding the same seam as everything else.
 /// </summary>
-/// <docs>proposals/startup-pipeline#hooks</docs>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupBuiltInObserversTests.cs</tests>
 public sealed class MetricsStartupStepObserver : IStartupStepObserver {
   private readonly StartupPipelineMetrics _metrics;

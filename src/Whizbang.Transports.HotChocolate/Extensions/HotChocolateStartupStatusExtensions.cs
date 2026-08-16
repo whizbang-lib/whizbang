@@ -13,7 +13,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// Whether per-step <c>reason</c> strings and raw fleet failure text are included. Off by default —
 /// reasons originate in exception messages and are a separate opt-in level, not a verbosity dial.
 /// </param>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 public sealed record WhizbangStartupStatusGraphOptions(bool IncludeReasons);
 
 /// <summary>
@@ -27,7 +27,7 @@ public sealed record WhizbangStartupStatusGraphOptions(bool IncludeReasons);
 /// is a convenience. A diagnostic reachable only through the subsystem under diagnosis is not a
 /// diagnostic.
 /// </remarks>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/StartupStatusQueryTests.cs</tests>
 [ExtendObjectType(OperationTypeNames.Query)]
 public sealed class WhizbangStartupQueries {
@@ -48,7 +48,7 @@ public sealed class WhizbangStartupQueries {
 }
 
 /// <summary>Registers the <c>whizbangStartup</c> query field. Opt-in — one explicit call.</summary>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 public static class HotChocolateStartupStatusExtensions {
   /// <summary>
   /// Adds the <c>whizbangStartup</c> query field to the schema. Publishing internal state is the

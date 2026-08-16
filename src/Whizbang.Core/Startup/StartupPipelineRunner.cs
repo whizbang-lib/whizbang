@@ -13,7 +13,7 @@ namespace Whizbang.Core.Startup;
 /// rewind repair skipped by a cold-database catch-all reports exactly what rewind repair that found
 /// nothing to do reports.
 /// </remarks>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 public enum StartupStepOutcome {
   /// <summary>The step did its work.</summary>
   Completed,
@@ -35,7 +35,7 @@ public enum StartupStepOutcome {
 /// Why — required in practice for <see cref="StartupStepOutcome.Skipped"/> and
 /// <see cref="StartupStepOutcome.Failed"/>, since an outcome without a reason cannot be acted on.
 /// </param>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 public readonly record struct StartupStepReport(StartupStepOutcome Outcome, string? Reason = null);
 
 /// <summary>One step's execution, as the pipeline recorded it.</summary>
@@ -43,7 +43,7 @@ public readonly record struct StartupStepReport(StartupStepOutcome Outcome, stri
 /// <param name="Outcome">What it did.</param>
 /// <param name="Duration">How long it took — a long step is only legible if its length is recorded.</param>
 /// <param name="Reason">Why, where the outcome warrants explaining.</param>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 public sealed record StartupStepResult(
   string Name, StartupStepOutcome Outcome, TimeSpan Duration, string? Reason);
 
@@ -54,7 +54,7 @@ public sealed record StartupStepResult(
 /// Implementations are registered explicitly rather than discovered, consistent with the framework's
 /// zero-reflection and native-AOT constraints. No assembly scanning.
 /// </remarks>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 public interface IStartupStep {
   /// <summary>What this step is, what it needs, and who runs it.</summary>
   StartupStepDescriptor Descriptor { get; }
@@ -82,7 +82,7 @@ public interface IStartupStep {
 /// destroys exactly that record.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineRunnerTests.cs</tests>
 public sealed class StartupPipelineRunner {
   private readonly IReadOnlyList<IStartupStep> _steps;

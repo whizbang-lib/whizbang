@@ -18,7 +18,7 @@ namespace Whizbang.Core.Workers;
 /// scan that never finishes, keeps the barrier closed and every lens read refusing — which is the
 /// honest answer while the read models cannot be trusted.
 /// </remarks>
-/// <docs>proposals/startup-pipeline#seams</docs>
+/// <docs>operations/startup/startup-pipeline#seams</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ReadModelsReadyDriverTests.cs</tests>
 public sealed partial class ReadModelsReadyDriver : BackgroundService {
   private readonly IReadModelsReadyGate _readModelsGate;

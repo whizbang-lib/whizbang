@@ -53,7 +53,7 @@ internal partial class StartupStatusJsonContext : JsonSerializerContext {
 /// verbosity dial.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 /// <tests>tests/Whizbang.Hosting.AspNet.Tests/StartupStatusEndpointsTests.cs</tests>
 public static class StartupStatusEndpoints {
 

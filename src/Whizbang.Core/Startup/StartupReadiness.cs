@@ -14,7 +14,7 @@ namespace Whizbang.Core.Startup;
 /// <c>SubscriptionsReady</c> task today and nothing consumes it. Implementations surface such
 /// signals so <see cref="StartupReadyService"/> can compose them into <c>Ready</c>.
 /// </summary>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupReadyCompositeTests.cs</tests>
 public interface IStartupReadinessContributor {
   /// <summary>A stable name for logs and health detail — what the composite is waiting on.</summary>
@@ -29,7 +29,7 @@ public interface IStartupReadinessContributor {
 /// readiness contributor has answered. Sticky per run of the host — this is the instance-level
 /// "fully up", one level above <see cref="IStartupPipelineState.IsReady"/> (which is pipeline-only).
 /// </summary>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupReadyCompositeTests.cs</tests>
 public interface IStartupReadySignal {
   /// <summary>Whether the composite has been signalled.</summary>
@@ -40,7 +40,7 @@ public interface IStartupReadySignal {
 }
 
 /// <summary>Default <see cref="IStartupReadySignal"/>: one sticky completion, any number of waiters.</summary>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 public sealed class StartupReadySignal : IStartupReadySignal {
   private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -76,7 +76,7 @@ public sealed class StartupReadySignal : IStartupReadySignal {
 /// today, and composing it into <c>Ready</c> must not soften that.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline</docs>
+/// <docs>operations/startup/startup-pipeline</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupReadyCompositeTests.cs</tests>
 public sealed partial class StartupReadyService : IHostedLifecycleService {
   private readonly IStartupPipelineState _pipelineState;

@@ -26,7 +26,7 @@ namespace Whizbang.Core.Health;
 /// protected surface a pod has.
 /// </para>
 /// </remarks>
-/// <docs>proposals/startup-pipeline#status</docs>
+/// <docs>operations/startup/startup-status</docs>
 /// <tests>tests/Whizbang.Core.Tests/Health/StartupPipelineHealthSourceTests.cs</tests>
 public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
   private readonly IStartupPipelineState _state;

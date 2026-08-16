@@ -9,7 +9,7 @@ namespace Whizbang.Core.Workers;
 /// before <c>Migrate</c> completes, or a lens read before the read models are consistent. The
 /// message is framework-authored; HTTP layers should map it to 503.
 /// </summary>
-/// <docs>proposals/startup-pipeline#seams</docs>
+/// <docs>operations/startup/startup-pipeline#seams</docs>
 public sealed class WhizbangNotReadyException : InvalidOperationException {
   /// <summary>Creates the refusal with the framework-authored explanation.</summary>
   public WhizbangNotReadyException(string message) : base(message) { }
@@ -27,7 +27,7 @@ public sealed class WhizbangNotReadyException : InvalidOperationException {
 /// earlier than <c>Ready</c>. A lens needs the read models consistent, and coupling reads to the
 /// full composite would make them wait on transport provisioning they do not use.
 /// </summary>
-/// <docs>proposals/startup-pipeline#seams</docs>
+/// <docs>operations/startup/startup-pipeline#seams</docs>
 public interface IReadModelsReadyGate {
   /// <summary>True once the read models are consistent; pure synchronous query.</summary>
   bool IsReady { get; }
@@ -40,7 +40,7 @@ public interface IReadModelsReadyGate {
 }
 
 /// <summary>Default <see cref="IReadModelsReadyGate"/>: one sticky completion, any number of waiters.</summary>
-/// <docs>proposals/startup-pipeline#seams</docs>
+/// <docs>operations/startup/startup-pipeline#seams</docs>
 public sealed class ReadModelsReadyGate : IReadModelsReadyGate {
   private readonly TaskCompletionSource _ready =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -61,7 +61,7 @@ public sealed class ReadModelsReadyGate : IReadModelsReadyGate {
 /// while the read-model barrier is closed. A host with no barrier registered is ungated — test
 /// fixtures and partial hosts behave exactly as before.
 /// </summary>
-/// <docs>proposals/startup-pipeline#seams</docs>
+/// <docs>operations/startup/startup-pipeline#seams</docs>
 public static class ReadModelsGuard {
   /// <summary>Throws when a registered read-model barrier has not been released.</summary>
   public static void ThrowIfNotReady(IServiceProvider services) {

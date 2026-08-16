@@ -27,7 +27,7 @@ namespace Whizbang.Core.Startup;
 /// A request is cleared only after the ratio is confirmed to have dropped; an interrupted or
 /// ineffective rewrite stays queued for the next boot instead of being silently forgotten.
 /// </remarks>
-/// <docs>proposals/startup-pipeline#capabilities</docs>
+/// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
 public sealed partial class TableRewriteStartupStep : IStartupStep {
   private readonly IServiceScopeFactory _scopeFactory;
