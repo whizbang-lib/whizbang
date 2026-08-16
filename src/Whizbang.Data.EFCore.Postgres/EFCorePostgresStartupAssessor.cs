@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#assess</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupAssessorTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ColdBootJourneyE2ETests.cs</tests>
 public sealed class EFCorePostgresStartupAssessor : IStartupAssessor {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly Type _dbContextType;
