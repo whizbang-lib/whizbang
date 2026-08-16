@@ -148,6 +148,12 @@ public sealed partial class MaintenanceWorker(
     // N delete storms against one container. Best-effort — a failed sweep retries next cycle.
     await _sweepExpiredOffloadClaimsAsync(coordinator, sp, ct);
 
+    // The perspective-row retention sweeps (the [RowTtl]/max-age ladder and the [RowCap] overflow
+    // eviction), fronted by the pre-destruction seam: registered guards are offered the exact set
+    // the sweeps would destroy and may defer or cancel per row before anything dies. This is the
+    // sweeps' production invocation — the SQL alone has no caller.
+    await _sweepPerspectiveRowsAsync(coordinator, sp, ct);
+
     // Detect space held but unusable — churn leaves free space inside pages that autovacuum
     // returns to the free space map but never to the OS, and a dropped column leaves bytes that
     // autovacuum can never reclaim at all. Detection RECORDS the rewrite request; the post-ready
@@ -241,6 +247,127 @@ public sealed partial class MaintenanceWorker(
     } catch (Exception ex) {
       LogOffloadSweepFailed(_logger, ex);
     }
+  }
+
+  /// <summary>
+  /// The perspective-row retention step: offers about-to-die rows to registered guards (the
+  /// pre-destruction seam), applies their per-row decisions as durable holds, then invokes the
+  /// two sweeps — the expiry ladder every cycle, the cap eviction behind a fleet watermark.
+  /// Without a registered guard the offering is skipped entirely and the sweeps keep their
+  /// pure-SQL path. Best-effort: any failure is logged and retried next cycle.
+  /// </summary>
+  private async Task _sweepPerspectiveRowsAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    try {
+      var releasedByGuard = await _offerRowsToGuardsAsync(coordinator, sp, ct);
+
+      var ttlResult = await coordinator.ReapEnrolledPerspectiveRowsAsync(_options.RowReapBatchSize, ct)
+        .ConfigureAwait(false);
+      Whizbang.Core.Messaging.PerspectiveRowReapResult? capResult = null;
+      if (await coordinator.TryClaimRowCapSweepAsync(
+            TimeSpan.FromMinutes(_options.RowCapSweepClaimWindowMinutes), ct).ConfigureAwait(false)) {
+        capResult = await coordinator.ReapPerspectiveRowCapsAsync(ct).ConfigureAwait(false);
+      }
+      if (ttlResult.RowsAffected > 0 || (capResult?.RowsAffected ?? 0) > 0) {
+        LogRowSweepCompleted(_logger, ttlResult.RowsAffected, ttlResult.Status,
+          capResult?.RowsAffected ?? 0, capResult?.Status ?? "not claimed");
+      }
+
+      // PostDestruction for the seam: the rows this cycle released, after the sweeps ran. Never
+      // blocks destruction — a throwing observer is logged and ignored.
+      foreach (var (guard, targets) in releasedByGuard) {
+        try {
+          await guard.OnAfterReapAsync(targets, ct).ConfigureAwait(false);
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+          throw;
+        } catch (Exception ex) {
+          LogRowGuardAfterFailed(_logger, ex);
+        }
+      }
+    } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+      throw;
+    } catch (Exception ex) {
+      LogRowSweepFailed(_logger, ex);
+    }
+  }
+
+  // The GUARDS phase: collect the exact set the sweeps would destroy for guarded perspectives,
+  // offer each guard its batch, and make the decisions durable — Proceed releases any prior hold,
+  // Defer/Cancel hold (absent decision = Defer: the guard exists to prevent orphaned external
+  // resources, so silence fails safe). A throwing guard gets the destruction retry ladder.
+  private async Task<List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard Guard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget> Released)>>
+      _offerRowsToGuardsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var releasedByGuard = new List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>)>();
+    var guards = sp.GetService<IEnumerable<Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard>>() ?? [];
+    var guardsByType = new Dictionary<string, Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard>(StringComparer.Ordinal);
+    foreach (var guard in guards) {
+      foreach (var model in guard.GuardedModels) {
+        if (model.FullName is { } name) {
+          guardsByType[name] = guard;
+        }
+      }
+    }
+    if (guardsByType.Count == 0) {
+      return releasedByGuard;
+    }
+
+    var targets = await coordinator.GetPerspectiveRowsAboutToReapAsync(
+      [.. guardsByType.Keys], _options.RowGuardCollectLimit, ct).ConfigureAwait(false);
+    foreach (var group in targets.GroupBy(t => guardsByType[t.ClrTypeName])) {
+      var guard = group.Key;
+      var batch = group.ToList();
+      try {
+        var decisions = await guard.OnBeforeReapAsync(batch, ct).ConfigureAwait(false);
+        var proceed = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
+        var proceedTargets = new List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>();
+        var cancelled = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
+        var deferred = new Dictionary<DateTimeOffset, List<Whizbang.Core.Lifecycle.PerspectiveRowRef>>();
+        var defaultDefer = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
+        foreach (var target in batch) {
+          var rowRef = new Whizbang.Core.Lifecycle.PerspectiveRowRef(target.TableName, target.RowId);
+          var decision = decisions.TryGetValue(target.RowId, out var d)
+            ? d
+            : Whizbang.Core.Lifecycle.PerspectiveRowDecision.Defer(defaultDefer);
+          switch (decision.Kind) {
+            case Whizbang.Core.Lifecycle.PerspectiveRowDispositionKind.Proceed:
+              proceed.Add(rowRef);
+              proceedTargets.Add(target);
+              break;
+            case Whizbang.Core.Lifecycle.PerspectiveRowDispositionKind.Cancel:
+              cancelled.Add(rowRef);
+              break;
+            default:
+              var until = decision.DeferUntil ?? defaultDefer;
+              if (!deferred.TryGetValue(until, out var list)) {
+                deferred[until] = list = [];
+              }
+              list.Add(rowRef);
+              break;
+          }
+        }
+        if (proceed.Count > 0) {
+          await coordinator.ReleasePerspectiveRowHoldsAsync(proceed, ct).ConfigureAwait(false);
+          releasedByGuard.Add((guard, proceedTargets));
+        }
+        foreach (var (until, refs) in deferred) {
+          await coordinator.HoldPerspectiveRowDestructionAsync(refs, until, ct).ConfigureAwait(false);
+        }
+        if (cancelled.Count > 0) {
+          await coordinator.HoldPerspectiveRowDestructionAsync(cancelled, DateTimeOffset.MaxValue, ct).ConfigureAwait(false);
+        }
+        LogRowGuardDecisions(_logger, batch.Count, proceed.Count,
+          batch.Count - proceed.Count - cancelled.Count, cancelled.Count);
+      } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+        throw;
+      } catch (Exception ex) {
+        var refs = batch.Select(t => new Whizbang.Core.Lifecycle.PerspectiveRowRef(t.TableName, t.RowId)).ToList();
+        var attempt = await coordinator.RecordPerspectiveRowDestructionFailureAsync(
+          refs, TimeSpan.FromSeconds(_options.DestructionRetryBackoffSeconds),
+          _options.MaxDestructionRetries, _options.OnDestroyFailure, ct).ConfigureAwait(false);
+        LogRowGuardFailed(_logger, ex, batch.Count, attempt, _options.MaxDestructionRetries);
+      }
+    }
+    return releasedByGuard;
   }
 
   private async Task _rewriteBloatedTablesAsync(IWorkCoordinator coordinator, CancellationToken ct) {
@@ -486,6 +613,26 @@ public sealed partial class MaintenanceWorker(
     Message = "Offload sweep failed; it retries next maintenance cycle")]
   private static partial void LogOffloadSweepFailed(ILogger logger, Exception ex);
 
+  [LoggerMessage(EventId = 39, Level = LogLevel.Information,
+    Message = "Row guard decisions: offered {Offered}, proceeded {Proceeded}, deferred {Deferred}, cancelled {Cancelled}")]
+  private static partial void LogRowGuardDecisions(ILogger logger, int offered, int proceeded, int deferred, int cancelled);
+
+  [LoggerMessage(EventId = 40, Level = LogLevel.Warning,
+    Message = "Row guard offering failed for {RowCount} row(s) (attempt {Attempt}/{MaxRetries}); the batch is held and re-offered next cycle")]
+  private static partial void LogRowGuardFailed(ILogger logger, Exception ex, int rowCount, int attempt, int maxRetries);
+
+  [LoggerMessage(EventId = 41, Level = LogLevel.Information,
+    Message = "Perspective-row sweeps: expiry {TtlRows} row(s) ({TtlStatus}); cap {CapRows} row(s) ({CapStatus})")]
+  private static partial void LogRowSweepCompleted(ILogger logger, int ttlRows, string ttlStatus, int capRows, string capStatus);
+
+  [LoggerMessage(EventId = 42, Level = LogLevel.Warning,
+    Message = "A row guard's OnAfterReap failed; ignored — observers never block destruction")]
+  private static partial void LogRowGuardAfterFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 43, Level = LogLevel.Warning,
+    Message = "Perspective-row sweep step failed; it retries next maintenance cycle")]
+  private static partial void LogRowSweepFailed(ILogger logger, Exception ex);
+
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Stuck inbox row sentinel: message_id={MessageId} type={MessageType} stream={StreamId} attempts={Attempts} since={ClaimedSince:o} — row claimed past MaxInboxAttempts but never drained. Investigate; see operations/observability/stuck-row-sentinel.")]
   static partial void LogStuckInboxRow(ILogger logger, Guid messageId, string messageType, Guid? streamId, int attempts, DateTime claimedSince);
@@ -581,4 +728,23 @@ public sealed class MaintenanceWorkerOptions {
   /// </summary>
   /// <docs>fundamentals/events/ephemeral-events</docs>
   public Lifecycle.OnDestroyFailure OnDestroyFailure { get; set; } = Lifecycle.OnDestroyFailure.RetryThenForcedDelete;
+
+  /// <summary>
+  /// Rows deleted per perspective per cycle by the expiry sweep, so a historical backlog drains
+  /// across cycles instead of in one statement. Default 5000.
+  /// </summary>
+  public int RowReapBatchSize { get; set; } = 5000;
+
+  /// <summary>
+  /// Minimum minutes between cap sweeps service-wide (fleet watermark). The cap eviction ranks
+  /// with a window function no index avoids, so it runs on a slower cadence than the expiry
+  /// ladder. Default 60.
+  /// </summary>
+  public int RowCapSweepClaimWindowMinutes { get; set; } = 60;
+
+  /// <summary>
+  /// Rows offered per guarded perspective per cycle to a registered
+  /// <see cref="Lifecycle.IPerspectiveRowDestructionGuard"/>. Default 500.
+  /// </summary>
+  public int RowGuardCollectLimit { get; set; } = 500;
 }

@@ -2276,6 +2276,201 @@ public class EFCoreWorkCoordinator<TDbContext>(
       "Last claimed offload-claim sweep — first instance to CAS this watermark drains the expired ledger; siblings skip.",
       claimWindow, cancellationToken);
 
+  /// <inheritdoc />
+  public Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsAboutToReapAsync(
+      IReadOnlyCollection<string> clrTypeNames, int perTableLimit = 500, CancellationToken cancellationToken = default) {
+    if (clrTypeNames.Count == 0) {
+      return Task.FromResult<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>>([]);
+    }
+    return _withCoordinatorCommandAsync<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>>(
+      async (cmd, schema) => {
+        var fn = BuildSchemaQualifiedName(schema, "collect_perspective_row_reap_targets");
+#pragma warning disable S2077 // identifier from BuildSchemaQualifiedName; all values are @parameters
+        cmd.CommandText =
+          $"SELECT o_clr_type_name, o_table_name, o_row_id, o_scope, o_data, o_reason FROM {fn}(@names, @lim)";
+#pragma warning restore S2077
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("names",
+          NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = clrTypeNames.ToArray() });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("lim", perTableLimit));
+        var targets = new List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          System.Text.Json.JsonElement? scope = null;
+          if (!await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false)) {
+            using var scopeDoc = System.Text.Json.JsonDocument.Parse(reader.GetString(3));
+            scope = scopeDoc.RootElement.Clone();
+          }
+          using var dataDoc = System.Text.Json.JsonDocument.Parse(reader.GetString(4));
+          targets.Add(new Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget(
+            reader.GetString(0), reader.GetString(1), reader.GetGuid(2),
+            scope, dataDoc.RootElement.Clone(), reader.GetString(5)));
+        }
+        return targets;
+      }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task HoldPerspectiveRowDestructionAsync(
+      IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+      DateTimeOffset holdUntil, CancellationToken cancellationToken = default) {
+    if (rows.Count == 0) {
+      return Task.CompletedTask;
+    }
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var hold = BuildSchemaQualifiedName(schema, "wh_perspective_row_hold");
+#pragma warning disable S2077
+      cmd.CommandText =
+        $"INSERT INTO {hold} (table_name, row_id, hold_until) " +
+        "SELECT u.t, u.r, @until FROM unnest(@tables, @ids) AS u(t, r) " +
+        "ON CONFLICT (table_name, row_id) DO UPDATE SET hold_until = EXCLUDED.hold_until";
+#pragma warning restore S2077
+      _addRowRefParameters(cmd, rows);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("until", holdUntil));
+      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task ReleasePerspectiveRowHoldsAsync(
+      IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+      CancellationToken cancellationToken = default) {
+    if (rows.Count == 0) {
+      return Task.CompletedTask;
+    }
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var hold = BuildSchemaQualifiedName(schema, "wh_perspective_row_hold");
+#pragma warning disable S2077
+      cmd.CommandText =
+        $"DELETE FROM {hold} h USING unnest(@tables, @ids) AS u(t, r) " +
+        "WHERE h.table_name = u.t AND h.row_id = u.r";
+#pragma warning restore S2077
+      _addRowRefParameters(cmd, rows);
+      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<int> RecordPerspectiveRowDestructionFailureAsync(
+      IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+      TimeSpan retryBackoff, int maxRetries, Whizbang.Core.Lifecycle.OnDestroyFailure onDestroyFailure,
+      CancellationToken cancellationToken = default) {
+    if (rows.Count == 0) {
+      return Task.FromResult(0);
+    }
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var hold = BuildSchemaQualifiedName(schema, "wh_perspective_row_hold");
+#pragma warning disable S2077
+      // The row-shaped destruction retry ladder (the E2-5 semantics): under the cap, hold for the
+      // backoff and re-offer; past it, the policy decides — '-infinity' = no active hold = the next
+      // sweep takes the row (forced delete); 'infinity' = keep forever (the explicit leak-risk
+      // choice). ForceDeleteImmediately short-circuits on the first failure.
+      cmd.CommandText =
+        $"INSERT INTO {hold} AS h (table_name, row_id, hold_until, failure_count) " +
+        "SELECT u.t, u.r, " +
+        "  CASE WHEN @policy = 2 THEN '-infinity'::timestamptz " +
+        "       ELSE NOW() + make_interval(secs => @backoff) END, 1 " +
+        "FROM unnest(@tables, @ids) AS u(t, r) " +
+        "ON CONFLICT (table_name, row_id) DO UPDATE SET " +
+        "  failure_count = h.failure_count + 1, " +
+        "  hold_until = CASE " +
+        "    WHEN @policy = 2 THEN '-infinity'::timestamptz " +
+        "    WHEN h.failure_count + 1 > @max THEN " +
+        "      CASE WHEN @policy = 1 THEN 'infinity'::timestamptz ELSE '-infinity'::timestamptz END " +
+        "    ELSE NOW() + make_interval(secs => @backoff) END " +
+        "RETURNING failure_count";
+#pragma warning restore S2077
+      _addRowRefParameters(cmd, rows);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("backoff", retryBackoff.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("max", maxRetries));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("policy", (int)onDestroyFailure));
+      var highest = 0;
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        highest = Math.Max(highest, reader.GetInt32(0));
+      }
+      return highest;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<PerspectiveRowReapResult> ReapEnrolledPerspectiveRowsAsync(
+      int batchSize = 5000, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var fn = BuildSchemaQualifiedName(schema, "reap_enrolled_perspective_rows");
+#pragma warning disable S2077
+      cmd.CommandText = $"SELECT rows_affected, status FROM {fn}(@batch)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("batch", batchSize));
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+        ? new PerspectiveRowReapResult(reader.GetInt32(0), reader.GetString(1))
+        : new PerspectiveRowReapResult(0, "no result");
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(
+      CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var fn = BuildSchemaQualifiedName(schema, "reap_perspective_row_caps");
+#pragma warning disable S2077
+      cmd.CommandText = $"SELECT rows_affected, status FROM {fn}()";
+#pragma warning restore S2077
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+        ? new PerspectiveRowReapResult(reader.GetInt32(0), reader.GetString(1))
+        : new PerspectiveRowReapResult(0, "no result");
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<bool> TryClaimRowCapSweepAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) =>
+    _tryClaimWatermarkAsync(
+      "row_cap_sweep_last_run",
+      "Last claimed cap sweep — first instance to CAS this watermark runs the ranking eviction; siblings skip.",
+      claimWindow, cancellationToken);
+
+  /// <inheritdoc />
+  public Task AcknowledgeRetentionEnforcementAsync(
+      string clrTypeName, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var registry = BuildSchemaQualifiedName(schema, "wh_perspective_registry");
+#pragma warning disable S2077
+      cmd.CommandText =
+        $"UPDATE {registry} SET retention_enforcement_acknowledged = TRUE WHERE clr_type_name = @c";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("c", clrTypeName));
+      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<long> CountPerspectiveRetentionBacklogAsync(
+      string clrTypeName, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var fn = BuildSchemaQualifiedName(schema, "count_perspective_retention_backlog");
+#pragma warning disable S2077
+      cmd.CommandText = $"SELECT {fn}(@c)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("c", clrTypeName));
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is long count ? count : 0L;
+    }, cancellationToken);
+
+  private static void _addRowRefParameters(
+      System.Data.Common.DbCommand cmd, IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("tables",
+      NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = rows.Select(r => r.TableName).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("ids",
+      NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = rows.Select(r => r.RowId).ToArray()
+    });
+  }
+
   /// <summary>
   /// The one-per-service claim: compare-and-swap a timestamp watermark in wh_settings. The UPDATE
   /// only fires when the stored instant is older than the window, so exactly one instance wins and
