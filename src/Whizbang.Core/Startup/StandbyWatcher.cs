@@ -219,6 +219,10 @@ public sealed partial class StandbyWatcher : BackgroundService {
 
     // Rolled back, or the migrator died before changing anything: revival is not a second
     // pipeline — re-enter at Assess by re-running the re-entrant runner, then resume.
+    // Straight to Running, not through AcceptingCommands: that rung exists for the window
+    // where the read models are still being repaired, and this instance already crossed both
+    // barriers before standing by — the schema and read-model gates are sticky-open, StandingBy
+    // paused the phase without closing them, so both sides are serviceable the moment we resume.
     LogReviving(_logger, reason);
     if (_pipelineRunner is not null) {
       _ = await _pipelineRunner.RunAsync(cancellationToken).ConfigureAwait(false);
