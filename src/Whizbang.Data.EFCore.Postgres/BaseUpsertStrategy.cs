@@ -166,21 +166,32 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // Per-event apply hooks: resolve once, mutate the row's data object (SetProperty) in place, and carry the
     // updated_at / version-bump decision to both write paths below. The default whizbang.timestamps hook yields
     // updated_at = now + a version bump — identical to the prior hardcoded stamping, now overridable.
+    // ApplyTimestamp is BUSINESS time — the applied event's own timestamp — because the timestamps
+    // hook's job is to stamp the business axis. Feeding it the wall clock would make every hook
+    // decision (including the default) replay-variant, which is the defect this split removes.
+    // Direct callers with no event metadata (fixtures, seeds) fall back to now.
+    var applyAnchor = args.Metadata.Timestamp == default
+      ? DateTimeOffset.UtcNow
+      : new DateTimeOffset(DateTime.SpecifyKind(args.Metadata.Timestamp, DateTimeKind.Utc));
     var hookPlan = PerEventApplyHooks.Resolve(new ApplyHookContext {
       ModelType = typeof(TModel),
       Scope = args.Scope,
-      ApplyTimestamp = DateTimeOffset.UtcNow,
+      ApplyTimestamp = applyAnchor,
     });
     if (hookPlan.ModelFieldSetters.Count > 0) {
       PerEventApplyHooks.ApplyModelSetters(args.Model, hookPlan.ModelFieldSetters);
     }
 
-    // TtlRow perspective-row expiry (E2-4d): a perspective whose [Ephemeral] events chose TransientStorage.TtlRow
-    // gets a sliding row TTL — stamp expires_at = now + ttl on every upsert (last-activity window). The generator
-    // registers the model's TTL virally; an unregistered model (PersistedRow/InMemory/Sourced) resolves to -1 and
-    // its rows never expire (expires_at stays NULL).
+    // Row TTL expiry: a perspective registered in PerspectiveTtlRegistry gets a sliding row TTL. The
+    // window ANCHORS TO EVENT TIME — expires_at = the applied event's timestamp (metadata.Timestamp,
+    // threaded by the runner) + ttl — never the wall clock at apply time. Event-time anchoring is what
+    // makes the stamp replay-safe: re-applying old history (rebuild/rewind) reproduces the original
+    // window, so an idle-past-TTL stream rebuilds BORN-EXPIRED instead of resurrecting with a fresh
+    // window. Direct callers with no event metadata (fixtures/seeds pass default Timestamp) fall back
+    // to now + ttl. An unregistered model resolves to -1 and its rows never expire (expires_at NULL).
     var ttlSeconds = Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(TModel));
-    DateTimeOffset? expiresAt = ttlSeconds >= 0 ? DateTimeOffset.UtcNow.AddSeconds(ttlSeconds) : null;
+    var expiryAnchor = applyAnchor;
+    DateTimeOffset? expiresAt = ttlSeconds >= 0 ? expiryAnchor.AddSeconds(ttlSeconds) : null;
 
     // Path 1 atomic upsert. When configured (see PathOnePersistenceOptionsProvider) and
     // applicable (no physical fields, table name supplied), this single round-trip replaces
@@ -188,7 +199,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // race that slice 19's retry loop was built to recover from. Returns false to signal
     // the caller should fall back to the retry loop (config off, physical fields present,
     // or any other unsupported case).
-    if (await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, cancellationToken)) {
+    if (await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, expiryAnchor.UtcDateTime, cancellationToken)) {
       return;
     }
 
@@ -230,6 +241,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       UpsertRowArgs<TModel> args,
       PerEventApplyHookPlan hookPlan,
       DateTimeOffset? expiresAt,
+      DateTime businessTime,
       CancellationToken cancellationToken)
       where TModel : class {
     var optionsProvider = PathOnePersistenceOptionsProvider;
@@ -366,12 +378,13 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var expiresValue = expiresAt.HasValue ? ", @wb_expires" : "";
     var expiresUpdate = expiresAt.HasValue ? "\n          expires_at = EXCLUDED.expires_at," : "";
     var sql = $@"
-        INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, version{expiresColumn}{pfColumnsClause})
-        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, 1{expiresValue}{pfValuesClause})
+        INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version{expiresColumn}{pfColumnsClause})
+        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, @wb_syscreated, @wb_sysupdated, 1{expiresValue}{pfValuesClause})
         ON CONFLICT (id) DO UPDATE SET
           data = EXCLUDED.data,
           metadata = EXCLUDED.metadata,
-          updated_at = EXCLUDED.updated_at,{expiresUpdate}
+          updated_at = CASE WHEN @wb_suppressactivity THEN {qualifiedTable}.updated_at ELSE EXCLUDED.updated_at END,
+          sys_updated_at = EXCLUDED.sys_updated_at,{expiresUpdate}
           version = {qualifiedTable}.version + @wb_versionbump{scopeUpdateClause}{pfUpdateClause}{whereClause}";
 
     var connection = context.Database.GetDbConnection();
@@ -392,8 +405,14 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       cmd.Parameters.Add(new NpgsqlParameter("data", dataJson));
       cmd.Parameters.Add(new NpgsqlParameter("metadata", metadataJson));
       cmd.Parameters.Add(new NpgsqlParameter("scope", scopeJson));
-      cmd.Parameters.Add(new NpgsqlParameter("wb_created", DateTime.UtcNow));
-      cmd.Parameters.Add(new NpgsqlParameter("wb_updated", hookPlan.UpdatedAt?.UtcDateTime ?? DateTime.UtcNow));
+      var writeClock = DateTime.UtcNow;
+      cmd.Parameters.Add(new NpgsqlParameter("wb_created", businessTime));
+      // The timestamps hook may override business time explicitly; its default now yields the
+      // applied event's own timestamp rather than the clock.
+      cmd.Parameters.Add(new NpgsqlParameter("wb_updated", hookPlan.UpdatedAt?.UtcDateTime ?? businessTime));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_suppressactivity", hookPlan.SuppressActivity));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_syscreated", writeClock));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_sysupdated", writeClock));
       if (expiresAt.HasValue) {
         cmd.Parameters.Add(new NpgsqlParameter("wb_expires", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = expiresAt.Value.UtcDateTime });
       }
@@ -505,9 +524,14 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
     var now = DateTime.UtcNow;
-    // updated_at + the version bump come from the resolved per-event hook plan (default whizbang.timestamps:
-    // updated_at = now, bump). A hook may override the stamp or skip the bump.
-    var updatedAt = hookPlan.UpdatedAt?.UtcDateTime ?? now;
+    // BUSINESS time comes from the applied event (replay-invariant); SYSTEM time is this write's
+    // clock. The version bump still comes from the hook plan.
+    var businessTime = args.Metadata.Timestamp == default
+      ? now
+      : DateTime.SpecifyKind(args.Metadata.Timestamp, DateTimeKind.Utc);
+    // The hook now receives business time as ApplyTimestamp, so its default yields the event's own
+    // timestamp; an explicit override still wins.
+    var updatedAt = hookPlan.UpdatedAt?.UtcDateTime ?? businessTime;
 
     PerspectiveRow<TModel> row;
     if (existingRow != null) {
@@ -533,7 +557,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         Metadata = CloneMetadata(metadata),
         Scope = forceUpdateScope ? CloneScope(scope) : CloneScope(existingRow.Scope),
         CreatedAt = existingRow.CreatedAt,
-        UpdatedAt = updatedAt,
+        // A hook may declare the event non-activity (integrity repair, backfill, reclassification):
+        // the row is still written, but business time stays where it was.
+        UpdatedAt = hookPlan.SuppressActivity ? existingRow.UpdatedAt : updatedAt,
         Version = hookPlan.BumpVersion ? existingRow.Version + 1 : existingRow.Version
       };
       context.Set<PerspectiveRow<TModel>>().Update(row);
@@ -547,7 +573,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         }
       }
     } else {
-      row = _createNewRow(id, model, metadata, scope, now, updatedAt);
+      row = _createNewRow(id, model, metadata, scope, businessTime, updatedAt);
       context.Set<PerspectiveRow<TModel>>().Add(row);
     }
 
@@ -556,6 +582,21 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // property (every non-TtlRow / hand-configured test context) is untouched — no CLR property, no auto-map.
     if (expiresAt.HasValue) {
       context.Entry(row).Property("expires_at").CurrentValue = expiresAt.Value.UtcDateTime;
+    }
+
+    // System time as SHADOW properties, guarded on the MODEL declaring them.
+    //
+    // This is deliberately not the conditional the uniform-column work removed. That one keyed off
+    // runtime CONFIGURATION (the TTL registry, hence the kill switch), so the emitted statement
+    // changed shape when an operator toggled a setting. This keys off a context's model, which is
+    // fixed at startup and cannot vary per write. EF cannot infer a shadow property by convention,
+    // so contexts configured without an explicit declaration legitimately have none.
+    var rowEntry = context.Entry(row);
+    if (rowEntry.Metadata.FindProperty("sys_updated_at") is not null) {
+      if (existingRow is null) {
+        rowEntry.Property("sys_created_at").CurrentValue = now;
+      }
+      rowEntry.Property("sys_updated_at").CurrentValue = now;
     }
 
     if (physicalFieldValues != null) {
@@ -621,6 +662,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// </summary>
   /// <docs>data/efcore-complex-types#in-place-updates</docs>
   /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateMetadataInPlace_AllProperties_UpdatesTargetCorrectlyAsync</tests>
   protected static void UpdateMetadataInPlace(PerspectiveMetadata target, PerspectiveMetadata source) {
     target.EventType = source.EventType;
     target.EventId = source.EventId;
@@ -638,6 +680,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// </summary>
   /// <docs>data/efcore-complex-types#in-place-updates</docs>
   /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_ScalarProperties_UpdatesTargetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_AllowedPrincipals_ClearsAndAddsNewItemsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_AllowedPrincipals_EmptySource_ClearsTargetAsync</tests>
   protected static void UpdateScopeInPlace(PerspectiveScope target, PerspectiveScope source) {
     target.TenantId = source.TenantId;
     target.CustomerId = source.CustomerId;

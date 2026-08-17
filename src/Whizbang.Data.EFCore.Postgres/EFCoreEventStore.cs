@@ -50,6 +50,8 @@ public sealed class EFCoreEventStore<TDbContext>(
     public string EventType { get; init; } = string.Empty;
     public int Version { get; init; }
     public long? CommitSequence { get; init; }
+    public Guid? OriginServiceId { get; init; }
+    public long? OriginCommitSequence { get; init; }
     public JsonElement? EventData { get; init; }
     public EnvelopeMetadata? Metadata { get; init; }
     public PerspectiveScope? Scope { get; init; }
@@ -69,6 +71,8 @@ public sealed class EFCoreEventStore<TDbContext>(
       EventType = e.EventType,
       Version = e.Version,
       CommitSequence = e.CommitSequence,
+      OriginServiceId = e.OriginServiceId,
+      OriginCommitSequence = e.OriginCommitSequence,
       Scope = e.Scope,
       // #13b4-3 (078): the inline columns are dropped — the body table IS the body. A missing body
       // row (reaped ephemeral) surfaces as NULL and the caller skips it.
@@ -286,6 +290,20 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <summary>
+  /// Perspective row retention — the resurrection-on-wake history probe: does this stream hold
+  /// any event ordered before the given id? An indexed EXISTS over the stream's pointer rows;
+  /// UUIDv7 ordering is safe at this granularity (a reaped row's history predates the waking
+  /// batch by at least the row TTL — days, far beyond any concurrent-emission id inversion).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  public async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
+    return await _context.Set<EventStoreRecord>()
+      .AsNoTracking()
+      .AnyAsync(e => e.StreamId == streamId && e.Id.CompareTo(beforeEventId) < 0, cancellationToken);
+  }
+
+  /// <summary>
   /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
   /// Uses the EventType column to determine which concrete type to deserialize to.
   /// </summary>
@@ -345,7 +363,13 @@ public sealed class EFCoreEventStore<TDbContext>(
         Payload = (IEvent)eventData,
         Hops = hops,
         DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
-        LocalCommitSequence = record.CommitSequence
+        LocalCommitSequence = record.CommitSequence,
+        // Origin identity rides the replay read: the rewind's origin-order slotting keys on it
+        // (a reconciled straggler's local sequence is arrival-fresh, but its origin sequence is
+        // its true position in the stream). Dropping it demotes single-origin streams to
+        // local-commit order and re-applies stragglers last.
+        SourceServiceId = record.OriginServiceId ?? Guid.Empty,
+        SourceCommitSequence = record.OriginCommitSequence ?? 0,
       };
 
       yield return envelope;

@@ -42,6 +42,9 @@ public sealed record CollectiveStoreColumn(string Column, object? Value) {
 /// </summary>
 /// <typeparam name="TModel">The perspective model the collective event mutates.</typeparam>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:Hook_AndWhere_RefinesTheCohortAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:Hook_ReplaceWhere_SwapsCohortButScopeStillBindsAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:Hook_SetColumn_OverridesDefaultUpdatedAt_AndSkipsVersionBumpAsync</tests>
 public sealed record CollectiveApplyHookPlan<TModel>(
   IReadOnlyList<SetPropertyOp> ModelFieldSetters,
   IReadOnlySet<string> RemovedModelFields,

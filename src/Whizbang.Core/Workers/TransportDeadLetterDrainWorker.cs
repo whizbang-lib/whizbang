@@ -39,8 +39,13 @@ public partial class TransportDeadLetterDrainWorker(
   IServiceScopeFactory scopeFactory,
   IOptions<TransportDeadLetterDrainWorkerOptions> options,
   WhizbangMetrics whizbangMetrics,
-  ILogger<TransportDeadLetterDrainWorker> logger
+  ILogger<TransportDeadLetterDrainWorker> logger,
+  // Startup barrier: draining writes to wh_dead_letters, which may not exist on a first boot.
+  // Optional only so existing fixtures construct unchanged; DI always supplies it.
+  ISchemaReadyGate? schemaReadyGate = null
 ) : BackgroundService {
+  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly TransportDeadLetterDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<TransportDeadLetterDrainWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -67,6 +72,14 @@ public partial class TransportDeadLetterDrainWorker(
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.IntervalMinutes);
+
+    if (_schemaReadyGate is not null) {
+      try {
+        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
+      }
+    }
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
@@ -153,6 +166,9 @@ public partial class TransportDeadLetterDrainWorker(
 
 /// <summary>Configuration for <see cref="TransportDeadLetterDrainWorker"/>.</summary>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs:NoDrainersRegistered_NoOpAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs:DrainersInvoked_AllReturnNonZero_TotalAccumulatedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs:MultipleDrainOnceCalls_AccumulateTotalAsync</tests>
 public sealed class TransportDeadLetterDrainWorkerOptions {
   /// <summary>
   /// Killswitch. Default <c>true</c>. When <c>false</c>, broker DLQ messages stay in DLQ

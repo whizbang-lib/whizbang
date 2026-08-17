@@ -132,6 +132,91 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
+    // Perspective row retention: an explicit [RowTtl] on the perspective class OUTRANKS the
+    // ephemeral-derived TTL (the override ladder — the read model's own declaration is more
+    // specific than what its events imply). This is also what opens row expiry to Sourced
+    // perspectives, which have no [Ephemeral] events to derive from: their rows can age out
+    // while the log stays durable, because the event-time expiry anchor keeps rebuilds
+    // deterministic and a reaped row re-folds from the log on wake.
+    var rowTtlAttribute = classSymbol.GetAttributes().FirstOrDefault(
+        static a => a.AttributeClass?.Name is "RowTtlAttribute" or "RowTtl");
+    if (rowTtlAttribute is not null) {
+      var explicitDays = -1;
+      var explicitSeconds = -1;
+      foreach (var namedArg in rowTtlAttribute.NamedArguments) {
+        if (namedArg.Key == "Days" && namedArg.Value.Value is int d) {
+          explicitDays = d;
+        } else if (namedArg.Key == "Seconds" && namedArg.Value.Value is int sec) {
+          explicitSeconds = sec;
+        }
+      }
+      var explicitTtl = explicitSeconds >= 0 ? explicitSeconds
+          : explicitDays >= 0 ? explicitDays * 86400
+          : -1;
+      if (explicitTtl >= 0) {
+        ttlRowSeconds = explicitTtl;
+      }
+    }
+
+    // Row cap: bounds how MANY rows a perspective keeps per scope, the companion to [RowTtl]'s bound on
+    // how OLD they get. Resolved only from the perspective's own declaration — unlike the TTL there is no
+    // ephemeral-derived source, because cardinality is a read-model property with nothing in the event
+    // stream to derive it from. PerScope partitions per (tenant, user), PerTenant across the tenant; the
+    // scope key is what the SQL sweep's ROW_NUMBER() partitions by, so it travels with the number.
+    var rowCapPerScope = -1;
+    string? rowCapScopeKey = null;
+    var rowCapAttribute = classSymbol.GetAttributes().FirstOrDefault(
+        static a => a.AttributeClass?.Name is "RowCapAttribute" or "RowCap");
+    if (rowCapAttribute is not null) {
+      var perScope = -1;
+      var perTenant = -1;
+      foreach (var namedArg in rowCapAttribute.NamedArguments) {
+        if (namedArg.Key == "PerScope" && namedArg.Value.Value is int ps) {
+          perScope = ps;
+        } else if (namedArg.Key == "PerTenant" && namedArg.Value.Value is int pt) {
+          perTenant = pt;
+        }
+      }
+      // PerScope is the more specific partition, so it outranks PerTenant when both are declared.
+      if (perScope >= 0) {
+        rowCapPerScope = perScope;
+        rowCapScopeKey = "u";
+      } else if (perTenant >= 0) {
+        rowCapPerScope = perTenant;
+        rowCapScopeKey = "t";
+      }
+    }
+
+    // Stream groups: each [StreamGroup] declaration is one membership with its own dials, encoded
+    // compactly (key|announce|follow|bridge;...) so the record stays equatable for incremental
+    // caching. Repeatable — a perspective in two groups is the case the dials exist for.
+    string? streamGroupSpec = null;
+    var streamGroupParts = new List<string>();
+    foreach (var groupAttribute in classSymbol.GetAttributes().Where(
+        static a => a.AttributeClass?.Name is "StreamGroupAttribute" or "StreamGroup")) {
+      if (groupAttribute.ConstructorArguments.Length == 0 ||
+          groupAttribute.ConstructorArguments[0].Value is not string groupKey ||
+          string.IsNullOrEmpty(groupKey)) {
+        continue;
+      }
+      var announce = true;
+      var follow = true;
+      var bridge = false;
+      foreach (var namedArg in groupAttribute.NamedArguments) {
+        if (namedArg.Key == "Announce" && namedArg.Value.Value is bool announceValue) {
+          announce = announceValue;
+        } else if (namedArg.Key == "Follow" && namedArg.Value.Value is bool followValue) {
+          follow = followValue;
+        } else if (namedArg.Key == "Bridge" && namedArg.Value.Value is bool bridgeValue) {
+          bridge = bridgeValue;
+        }
+      }
+      streamGroupParts.Add($"{groupKey}|{(announce ? 1 : 0)}|{(follow ? 1 : 0)}|{(bridge ? 1 : 0)}");
+    }
+    if (streamGroupParts.Count > 0) {
+      streamGroupSpec = string.Join(";", streamGroupParts);
+    }
+
     // A1-6b: a perspective marked [FullHistory] needs every event and cannot resume from a carry-forward /
     // closing event — the A1 close guard refuses a discard-close of any stream it consumes. Resolved at compile
     // time; the generator registers the perspective's name so the runtime guard can key off it.
@@ -155,6 +240,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           )
       );
     }
+
+    // Build the CreateEmptyModel object initializer at generation time so the
+    // runner constructs the model directly (no Activator, no reflection).
+    var emptyModelInitializer = _buildEmptyModelInitializer(modelType, streamKeyPropertyName);
 
     // Extract StreamId properties from event types
     var eventStreamIds = _extractEventStreamIdsFromTypes(eventTypes, eventTypeSymbols);
@@ -201,6 +290,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             EventTypes: [.. eventTypes],
             MessageTypeNames: messageTypeNames,
             StreamIdPropertyName: streamKeyPropertyName,
+            EmptyModelInitializer: emptyModelInitializer,
             EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
@@ -211,6 +301,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeOnCreate: inheritScopeOnCreate,
             IsEphemeral: isEphemeral,
             TtlRowSeconds: ttlRowSeconds,
+            RowCapPerScope: rowCapPerScope,
+            RowCapScopeKey: rowCapScopeKey,
+            StreamGroupSpec: streamGroupSpec,
             IsFullHistory: isFullHistory
         ),
         Warning: null
@@ -449,18 +542,45 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
         ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerRowTtl() =>\n      global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.Register(typeof({modelTypeName}), {perspective.TtlRowSeconds});"
         : "");
+    // The cap registers itself the same turnkey way the TTL does — a [ModuleInitializer], no consumer
+    // code, no reflection. Emitting nothing when undeclared keeps "absent" distinct from a cap of zero.
+    result = TemplateUtilities.ReplaceRegion(result, "ROW_CAP_REGISTRATION", perspective.RowCapPerScope >= 0
+        ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerRowCap() =>\n      global::Whizbang.Core.Perspectives.PerspectiveRowCapRegistry.Register(typeof({modelTypeName}), {perspective.RowCapPerScope}, \"{perspective.RowCapScopeKey}\");"
+        : "");
     // A1-6b: register a [FullHistory] perspective's name (matching its association target_name = its ClrTypeName)
     // so the close guard can refuse a discard-close of any stream it consumes. Empty for resumable perspectives.
     result = TemplateUtilities.ReplaceRegion(result, "FULL_HISTORY_REGISTRATION", perspective.IsFullHistory
         ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerFullHistory() =>\n      global::Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.Register(\"{perspective.ClrTypeName}\");"
         : "");
+    // Stream groups register turnkey like the TTL and the cap — one [ModuleInitializer] per
+    // membership, decoded from the compact spec, so the maintenance cascade can compute the
+    // eviction closure without reflection.
+    result = TemplateUtilities.ReplaceRegion(result, "STREAM_GROUP_REGISTRATION",
+        _buildStreamGroupRegistrations(perspective.StreamGroupSpec, modelTypeName));
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
-    result = result.Replace("__STREAM_KEY_PROPERTY__", perspective.StreamIdPropertyName!);
+    result = result.Replace("__EMPTY_MODEL_INITIALIZER__", perspective.EmptyModelInitializer);
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 
     return result;
+  }
+
+  private static string _buildStreamGroupRegistrations(string? streamGroupSpec, string modelTypeName) {
+    if (string.IsNullOrEmpty(streamGroupSpec)) {
+      return "";
+    }
+    var registrations = new List<string>();
+    var memberships = streamGroupSpec!.Split(';');
+    for (var i = 0; i < memberships.Length; i++) {
+      var parts = memberships[i].Split('|');
+      if (parts.Length != 4) {
+        continue;
+      }
+      registrations.Add(
+        $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerStreamGroup{i}() =>\n      global::Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.Register(typeof({modelTypeName}), \"{parts[0]}\", {(parts[1] == "1" ? "true" : "false")}, {(parts[2] == "1" ? "true" : "false")}, {(parts[3] == "1" ? "true" : "false")});");
+    }
+    return string.Join("\n\n  ", registrations);
   }
 
   /// <summary>
@@ -720,6 +840,75 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <summary>
   /// Finds the property with [StreamId] attribute on a model type.
   /// </summary>
+  /// <summary>
+  /// Builds the object-initializer text for the generated CreateEmptyModel.
+  /// Assigns the stream key directly (Guid, Guid?, string, or a strongly-typed
+  /// id with a static From(Guid) factory) and initializes any other required
+  /// members to default! so the generated code compiles. No reflection.
+  /// </summary>
+  private static string _buildEmptyModelInitializer(ITypeSymbol modelType, string streamKeyPropertyName) {
+    var assignments = new List<string>();
+
+    var properties = modelType.GetMembers().OfType<IPropertySymbol>().ToArray();
+    var streamKeyProperty = properties.FirstOrDefault(p => p.Name == streamKeyPropertyName);
+
+    var streamKeyAssigned = false;
+    if (streamKeyProperty is { SetMethod: not null }) {
+      var expression = _buildStreamKeyInitExpression(streamKeyProperty.Type);
+      if (expression is not null) {
+        assignments.Add($"{streamKeyPropertyName} = {expression}");
+        streamKeyAssigned = true;
+      }
+    }
+
+    // Required members must appear in the object initializer or the generated
+    // runner will not compile. default! matches the previous behavior of
+    // leaving them unset on the empty model.
+    foreach (var property in properties) {
+      var isUnassignedStreamKey = property.Name == streamKeyPropertyName && !streamKeyAssigned;
+      if (property.IsRequired
+          && property.SetMethod is not null
+          && (property.Name != streamKeyPropertyName || isUnassignedStreamKey)) {
+        assignments.Add($"{property.Name} = default!");
+      }
+    }
+
+    return assignments.Count == 0 ? "{ }" : "{ " + string.Join(", ", assignments) + " }";
+  }
+
+  /// <summary>
+  /// Returns the C# expression that converts the runner's Guid streamId into
+  /// the stream key property's type, or null when no safe conversion exists
+  /// (in which case the property is left unset, as the reflection-based
+  /// implementation did for unwritable properties).
+  /// </summary>
+  private static string? _buildStreamKeyInitExpression(ITypeSymbol propertyType) {
+    var displayName = propertyType.ToDisplayString();
+    if (displayName is "System.Guid") {
+      return "streamId";
+    }
+    if (displayName is "System.Guid?") {
+      return "streamId";
+    }
+    if (propertyType.SpecialType == SpecialType.System_String) {
+      return "streamId.ToString()";
+    }
+
+    // Strongly-typed ids: a static From(System.Guid) factory returning the
+    // property type (the convention used by generated value-object ids).
+    var hasFromFactory = propertyType.GetMembers("From").OfType<IMethodSymbol>().Any(m =>
+        m.IsStatic
+        && m.DeclaredAccessibility == Accessibility.Public
+        && m.Parameters.Length == 1
+        && m.Parameters[0].Type.ToDisplayString() == "System.Guid"
+        && SymbolEqualityComparer.Default.Equals(m.ReturnType, propertyType));
+    if (hasFromFactory) {
+      return $"{propertyType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.From(streamId)";
+    }
+
+    return null;
+  }
+
   private static string? _findModelStreamIdProperty(ITypeSymbol modelType) {
     foreach (var member in modelType.GetMembers()) {
       if (member is IPropertySymbol property) {

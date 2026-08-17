@@ -46,15 +46,29 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
 
   /// <inheritdoc/>
   public Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, new PerspectiveScope(), false, cancellationToken);
+    _upsertCoreAsync(streamId, model, new PerspectiveScope(), false, metadata: null, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope, false, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope, false, metadata: null, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, bool forceUpdateScope, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata: null, cancellationToken);
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Implemented EXPLICITLY rather than left to the interface default. The default body drops
+  /// <paramref name="metadata"/> and delegates to the metadata-less overload, so a store that
+  /// does not override it silently writes an empty metadata object on every row — losing the
+  /// event type, id, correlation, causation, commit sequence, and the event timestamp that
+  /// business time is derived from. Default interface methods are not virtual dispatch; the
+  /// omission produces no compiler error and no runtime failure.
+  /// </remarks>
+  public Task UpsertAsync(
+      Guid streamId, TModel model, PerspectiveScope scope, bool forceUpdateScope,
+      PerspectiveMetadata metadata, CancellationToken cancellationToken = default) =>
+    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata, cancellationToken);
 
 #pragma warning disable RCS1163, IDE0060 // Interface (IPerspectiveStore) signature; Dapper store accepts parameter for API parity with EF Core split-mode store
   /// <inheritdoc/>
@@ -63,7 +77,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       PerspectiveScope? scope = null, CancellationToken cancellationToken = default) =>
     // Dapper store does not materialize physical fields; physicalFieldValues is accepted for
     // API parity with stores that do (split-mode EF Core, etc.) but is intentionally ignored.
-    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), false, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), false, metadata: null, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertWithPhysicalFieldsAsync(
@@ -71,7 +85,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       PerspectiveScope? scope, bool forceUpdateScope, CancellationToken cancellationToken = default) =>
     // Dapper store does not materialize physical fields; physicalFieldValues is accepted for
     // API parity with stores that do (split-mode EF Core, etc.) but is intentionally ignored.
-    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata: null, cancellationToken);
 #pragma warning restore RCS1163, IDE0060
 
   /// <inheritdoc/>
@@ -82,17 +96,17 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// <inheritdoc/>
   public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull =>
-    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, new PerspectiveScope(), false, cancellationToken);
+    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, new PerspectiveScope(), false, metadata: null, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, PerspectiveScope scope, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull =>
-    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, false, cancellationToken);
+    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, false, metadata: null, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, PerspectiveScope scope, bool forceUpdateScope, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull =>
-    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, forceUpdateScope, cancellationToken);
+    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, forceUpdateScope, metadata: null, cancellationToken);
 
   /// <inheritdoc/>
   public Task FlushAsync(CancellationToken cancellationToken = default) =>
@@ -116,6 +130,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
 
   private async Task _upsertCoreAsync(
       Guid id, TModel model, PerspectiveScope scope, bool forceUpdateScope,
+      PerspectiveMetadata? metadata,
       CancellationToken cancellationToken) {
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync(cancellationToken);
@@ -142,7 +157,16 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
 
     var dataJson = JsonSerializer.Serialize(model, dataTypeInfo);
     var scopeJson = JsonSerializer.Serialize(scope, scopeTypeInfo);
-    const string metadataJson = "{}"; // Default metadata for Dapper store
+    // Persist the applied event's metadata when the caller supplied it. Callers on the
+    // metadata-less overloads (direct upserts, purges by partition key) legitimately have none,
+    // and those rows keep an empty object as before.
+    var metadataJson = "{}";
+    if (metadata is not null) {
+      var metadataTypeInfo = jsonOptions.GetTypeInfo(typeof(PerspectiveMetadata))
+        ?? throw new InvalidOperationException(
+          "No JsonTypeInfo found for PerspectiveMetadata. Ensure InfrastructureJsonContext is in the resolver chain.");
+      metadataJson = JsonSerializer.Serialize(metadata, metadataTypeInfo);
+    }
 
     // Build SET clause based on forceUpdateScope. updated_at + the version bump come from the hook plan.
     var setClause = forceUpdateScope

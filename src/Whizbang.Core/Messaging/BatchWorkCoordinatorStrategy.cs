@@ -587,6 +587,9 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
 /// Identifies what triggered a batch flush.
 /// </summary>
 /// <docs>data/work-coordinator-strategies#flush-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_BatchSizeTrigger_TriggerIsBatchSizeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_ManualFlush_TriggerIsManualAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_WithLogger_LogsDebounceTimerFiredAsync</tests>
 public enum FlushTrigger {
   /// <summary>Batch size threshold was reached.</summary>
   BatchSize,
@@ -600,4 +603,7 @@ public enum FlushTrigger {
 /// Event args for <see cref="BatchWorkCoordinatorStrategy.OnBatchFlushed"/>.
 /// </summary>
 /// <docs>data/work-coordinator-strategies#flush-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_BatchSizeTrigger_TriggerIsBatchSizeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_ManualFlush_TriggerIsManualAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_ResetsOnEachQueueAsync</tests>
 public sealed record WorkBatchFlushedArgs(WorkBatch Batch, FlushTrigger Trigger);

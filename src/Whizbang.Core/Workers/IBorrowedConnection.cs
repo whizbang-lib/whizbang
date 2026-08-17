@@ -27,6 +27,9 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:NoOp_TryPin_ReturnsBorrowWithNullConnectionAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PinnedConnectionPoolIntegrationTests.cs:RealPool_BorrowAndDispose_RoundTripsConnectionAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PinnedConnectionPoolIntegrationTests.cs:RealPool_Size1_SecondBorrowBlocksUntilFirstDisposesAsync</tests>
 public interface IBorrowedConnection : IAsyncDisposable {
   /// <summary>
   /// The pinned connection. <c>null</c> when the borrow is a no-op.

@@ -8,4 +8,7 @@ namespace Whizbang.Core.Dispatch;
 /// <param name="Value">The business result returned by the receptor.</param>
 /// <param name="Receipt">The delivery receipt with dispatch metadata (MessageId, StreamId, CorrelationId, etc.).</param>
 /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:InvokeResult_Record_HasValueAndReceiptPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_ReturnsBusinessResultAndReceiptAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_NoExplicitExtractor_StillExtractsStreamIdViaAssemblyRegistryAsync</tests>
 public sealed record InvokeResult<TResult>(TResult Value, IDeliveryReceipt Receipt);

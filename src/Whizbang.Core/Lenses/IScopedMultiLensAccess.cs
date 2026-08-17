@@ -9,6 +9,9 @@ namespace Whizbang.Core.Lenses;
 /// Returned by multi-model <see cref="ILensQuery{T1,T2}"/> scope methods.
 /// </summary>
 /// <docs>fundamentals/lenses/scoped-queries#scoped-multi-lens-access</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiModelScopedAccessTests.cs:TwoModel_ImplementsIScopedMultiLensAccessAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiModelScopedAccessTests.cs:ThreeModel_ImplementsIScopedMultiLensAccessAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiModelScopedAccessTests.cs:TenModel_ImplementsIScopedMultiLensAccessAsync</tests>
 public interface IScopedMultiLensAccess<T1, T2>
     where T1 : class
     where T2 : class {

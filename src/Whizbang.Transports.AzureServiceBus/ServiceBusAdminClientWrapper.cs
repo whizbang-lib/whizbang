@@ -65,9 +65,11 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
     string topicName,
     string subscriptionName,
     int maxDeliveryCount,
+    TimeSpan lockDuration,
     CancellationToken cancellationToken = default) {
     var options = new CreateSubscriptionOptions(topicName, subscriptionName) {
-      MaxDeliveryCount = maxDeliveryCount
+      MaxDeliveryCount = maxDeliveryCount,
+      LockDuration = lockDuration
     };
     await _adminClient.CreateSubscriptionAsync(options, cancellationToken);
   }
@@ -78,12 +80,26 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
     string subscriptionName,
     bool requiresSession,
     int maxDeliveryCount,
+    TimeSpan lockDuration,
     CancellationToken cancellationToken = default) {
     var options = new CreateSubscriptionOptions(topicName, subscriptionName) {
       RequiresSession = requiresSession,
-      MaxDeliveryCount = maxDeliveryCount
+      MaxDeliveryCount = maxDeliveryCount,
+      LockDuration = lockDuration
     };
     await _adminClient.CreateSubscriptionAsync(options, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task UpdateSubscriptionLockDurationAsync(
+    string topicName,
+    string subscriptionName,
+    TimeSpan lockDuration,
+    CancellationToken cancellationToken = default) {
+    var response = await _adminClient.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+    var properties = response.Value;
+    properties.LockDuration = lockDuration;
+    await _adminClient.UpdateSubscriptionAsync(properties, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -101,6 +117,15 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
     string subscriptionName,
     CancellationToken cancellationToken = default) {
     await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<long> GetSubscriptionActiveMessageCountAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken = default) {
+    var response = await _adminClient.GetSubscriptionRuntimePropertiesAsync(topicName, subscriptionName, cancellationToken);
+    return response.Value.ActiveMessageCount;
   }
 
   #endregion

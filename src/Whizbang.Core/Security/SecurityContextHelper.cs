@@ -565,6 +565,8 @@ public static partial class SecurityContextHelper {
   /// in-memory operation; the CT only matters if the failure channel itself
   /// blocks.</param>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:InboxDispatchWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:OutboxDrainWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
   public static ValueTask EnqueueSecurityContextTimeoutFailureAsync(
       Whizbang.Core.Workers.IFailureChannel failureChannel,
       Whizbang.Core.Messaging.WorkCategory category,
@@ -585,6 +587,8 @@ public static partial class SecurityContextHelper {
 /// Outcome of <see cref="SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync"/>.
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:InboxDispatchWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:OutboxDrainWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
 public enum SecurityContextEstablishmentOutcome {
   /// <summary>Provider returned within the timeout. Caller proceeds normally.</summary>
   Success,

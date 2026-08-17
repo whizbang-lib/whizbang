@@ -29,6 +29,10 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs:SyncFilter_ForStream_CreatesBuilderWithStreamFilterAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs:SyncFilter_ForEventTypes_Params_CreatesBuilderAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs:SyncFilter_CurrentScope_CreatesBuilderAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderFullCoverageTests.cs:SyncFilter_ForEventTypes_10Generic_WithDummyTypes_CreatesFilterAsync</tests>
 public static class SyncFilter {
   /// <summary>
   /// Creates a filter for a specific stream.

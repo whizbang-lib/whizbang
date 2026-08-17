@@ -25,6 +25,9 @@ namespace Whizbang.Core.Workers;
 /// Uses lease-based coordination for reliable perspective processing across instances.
 /// </summary>
 /// <docs>operations/workers/perspective-worker</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs:Worker_WithWork_TransitionsToActiveAndFiresEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync</tests>
 #pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
@@ -71,7 +74,12 @@ public partial class PerspectiveWorker(
   // Renewal enqueues (ILeaseRenewalChannel) are filtered by the flush against this registry —
   // an id with no registered LeaseHandle is silently skipped. The collective sink registers its
   // leased work rows here so per-batch renewals actually land (mirrors OutboxPublishWorker).
-  LeaseRegistry? leaseRegistry = null
+  LeaseRegistry? leaseRegistry = null,
+  // Startup barrier. Optional ONLY so existing test fixtures construct unchanged; DI always
+  // supplies it, and without it the startup work below would run against a database that may
+  // not have been migrated yet — the exact ungated-repair defect the startup pipeline exists
+  // to close.
+  ISchemaReadyGate? schemaReadyGate = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -84,6 +92,16 @@ public partial class PerspectiveWorker(
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
   private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
+
+  private readonly TaskCompletionSource _startupScanTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  /// <summary>
+  /// Completes when the startup scan — registry init, orphan reconcile, rewind repair — has
+  /// finished. The read-model barrier (<see cref="IReadModelsReadyGate"/>) waits on this: a lens
+  /// must not read perspectives a migration may have left mid-repair. Canceled when the worker
+  /// stops before the scan ran.
+  /// </summary>
+  public Task StartupScanComplete => _startupScanTcs.Task;
   private readonly PerspectiveMetrics? _metrics = metrics;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
@@ -238,7 +256,12 @@ public partial class PerspectiveWorker(
 
   // Metrics tracking
   private int _consecutiveEmptyPolls;
-  private bool _isIdle = true;  // Start in idle state
+  // int, not bool, so the idle<->active transition can be a single atomic compare-and-swap.
+  // _updateWorkStateTracking runs on EVERY drain consumer concurrently; with a plain read-then-write
+  // two pollers could both observe idle and both fire Started, and an idle transition on one thread
+  // could land between another thread's flip and a handler's read of IsIdle -- so a handler invoked
+  // for "work started" could observe IsIdle == true. 1 = idle, 0 = active. Starts idle.
+  private int _isIdle = 1;
   private int _batchCycleCount;
 
   // Wake signal: allows external callers to interrupt the polling delay
@@ -268,7 +291,7 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Gets whether the worker is currently in idle state (no work being processed).
   /// </summary>
-  public bool IsIdle => _isIdle;
+  public bool IsIdle => Volatile.Read(ref _isIdle) == 1;
 
   /// <summary>
   /// Event fired when work processing starts (idle → active transition).
@@ -293,6 +316,8 @@ public partial class PerspectiveWorker(
   /// to materialize immediately. Safe to call from any thread; redundant calls are harmless.
   /// </remarks>
   /// <docs>operations/workers/perspective-worker#immediate-poll</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:RequestImmediatePoll_CalledRepeatedly_CoalescesWithoutThrowingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_WithNotificationListener_SubscribesCoalescesAndUnsubscribesAsync</tests>
   public void RequestImmediatePoll() {
     if (Interlocked.CompareExchange(ref _wakeSignaled, 1, 0) == 0) {
       _pollWakeSignal.Release();
@@ -360,6 +385,19 @@ public partial class PerspectiveWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
+    // EVERYTHING below touches the database — registry initialization, orphan-lifecycle
+    // reconcile, rewind repair, the drain loop. None of it may begin before migrations have
+    // completed. A comment here used to claim the gate "has already been awaited"; it had not
+    // been, and on a cold database the startup repair silently no-op'd inside its catch-alls.
+    if (schemaReadyGate is not null) {
+      try {
+        await schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        _startupScanTcs.TrySetCanceled(stoppingToken);
+        return;
+      }
+    }
+
     // Slice 7a — hook the perspective NOTIFY signal so we wake on every new
     // wh_perspective_events insert instead of polling at PollingIntervalMilliseconds.
     if (_perspectiveNotificationListener is not null && !_perspectiveSignalSubscribed) {
@@ -371,6 +409,9 @@ public partial class PerspectiveWorker(
     _processInitialCheckpoints();
     await _reconcileOrphanedLifecyclesAsync(stoppingToken);
     await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
+    // The read-model barrier waits on exactly this: the scan is what makes the read models
+    // trustworthy after a migration, and lens reads resume when it (and Migrate) complete.
+    _startupScanTcs.TrySetResult();
 
     // Subscribe to new perspective work signals so we poll immediately when events arrive
     if (workChannelWriter is not null) {
@@ -617,7 +658,8 @@ public partial class PerspectiveWorker(
 
   private void _processInitialCheckpoints() {
     LogCheckingPendingCheckpoints(_logger);
-    // Schema-ready gate has already been awaited in ExecuteAsync before this point.
+    // Schema-ready gate is awaited at the top of ExecuteAsync (when DI supplies it), so by
+    // this point migrations have completed.
     // ClaimWorker feeds work to the channel reader; the main loop picks up any
     // leftover work as soon as it starts.
     LogInitialCheckpointProcessingComplete(_logger);
@@ -675,37 +717,59 @@ public partial class PerspectiveWorker(
         return;
       }
 
-      var orphaned = await workCoordinator.GetOrphanedLifecycleEventsAsync(
-        _perspectivesPerEventType, TimeSpan.FromMinutes(30), ct);
-
-      if (orphaned.Count == 0) {
-        return;
-      }
-
-      LogReconciliationStarting(_logger, orphaned.Count);
-
-      foreach (var orphan in orphaned) {
-        try {
-          var tracking = lifecycleCoordinator.BeginTracking(
-            orphan.EventId, orphan.Envelope,
-            LifecycleStage.PostAllPerspectivesDetached, MessageSource.Local,
-            orphan.StreamId);
-
-          await _establishSecurityContextAsync(orphan.Envelope, scope.ServiceProvider, ct);
-          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scope.ServiceProvider, ct);
-          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scope.ServiceProvider, ct);
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, ct);
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, ct);
-
-          await workCoordinator.RecordLifecycleCompletionAsync(orphan.EventId, ct);
-          LogReconciliationCompleted(_logger, orphan.EventId);
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          LogReconciliationError(_logger, ex, orphan.EventId);
+      // Bounded drain: each pass is a capped unit of work (one set-based query + a capped replay
+      // batch), looped until the backlog drains or the pass budget runs out — an unbounded
+      // startup scan on a large store can stall the host past its liveness budget, and every
+      // probe kill orphans MORE lifecycles, making the loop self-sustaining.
+      const int MAX_ORPHANS_PER_PASS = 100;
+      const int MAX_PASSES = 20;
+      for (var pass = 0; pass < MAX_PASSES && !ct.IsCancellationRequested; pass++) {
+        var drained = await _reconcileOrphanedLifecyclesPassAsync(
+          workCoordinator, lifecycleCoordinator, scope.ServiceProvider, MAX_ORPHANS_PER_PASS, ct);
+        if (drained) {
+          return;
         }
+        await Task.Yield();
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogReconciliationFailed(_logger, ex);
     }
+  }
+
+  /// <summary>One bounded reconcile pass. Returns true when the backlog is drained (partial batch).</summary>
+  private async Task<bool> _reconcileOrphanedLifecyclesPassAsync(
+      IWorkCoordinator workCoordinator, ILifecycleCoordinator lifecycleCoordinator,
+      IServiceProvider services, int maxOrphans, CancellationToken ct) {
+    var orphaned = await workCoordinator.GetOrphanedLifecycleEventsAsync(
+        _perspectivesPerEventType!, TimeSpan.FromMinutes(30), maxOrphans, ct);
+
+    if (orphaned.Count == 0) {
+      return true;
+    }
+
+    LogReconciliationStarting(_logger, orphaned.Count);
+
+    foreach (var orphan in orphaned) {
+      try {
+        var tracking = lifecycleCoordinator.BeginTracking(
+          orphan.EventId, orphan.Envelope,
+          LifecycleStage.PostAllPerspectivesDetached, MessageSource.Local,
+          orphan.StreamId);
+
+        await _establishSecurityContextAsync(orphan.Envelope, services, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, services, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, services, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, services, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, services, ct);
+
+        await workCoordinator.RecordLifecycleCompletionAsync(orphan.EventId, ct);
+        LogReconciliationCompleted(_logger, orphan.EventId);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogReconciliationError(_logger, ex, orphan.EventId);
+      }
+    }
+
+    return orphaned.Count < maxOrphans;
   }
 
   /// <summary>
@@ -714,6 +778,9 @@ public partial class PerspectiveWorker(
   /// In Background mode, logs the summary and lets normal polling handle them.
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanDisabled_NeverQueriesAsync</tests>
   private async Task _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
     if (!_rewindOptions.StartupScanEnabled) {
       return;
@@ -1070,7 +1137,7 @@ public partial class PerspectiveWorker(
     _metrics?.BatchesProcessed.Add(1);
     _metrics?.BatchDuration.Record(batchSw.Elapsed.TotalMilliseconds);
     if (_logger.IsEnabled(LogLevel.Debug)) {
-      LogDrainCycleComplete(_logger, !_isIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
+      LogDrainCycleComplete(_logger, !IsIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
     }
     OnBatchCycleComplete?.Invoke();
   }
@@ -2542,13 +2609,13 @@ public partial class PerspectiveWorker(
   /// registered is skipped rather than thrown — the drain caller catches only
   /// <see cref="OperationCanceledException"/>, so a Register throw here would fault the host.
   /// </summary>
-  private SinkLeaseScope _registerSinkLeases(IReadOnlyList<Guid> sinkWorkIds, CancellationToken cancellationToken) {
-    if (_leaseRegistry is null || sinkWorkIds.Count == 0) {
+  private SinkLeaseScope _registerSinkLeases(Guid[] sinkWorkIds, CancellationToken cancellationToken) {
+    if (_leaseRegistry is null || sinkWorkIds.Length == 0) {
       return new SinkLeaseScope([]);
     }
     var leaseDeadline = _timeProvider.GetUtcNow()
       + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
-    var handles = new List<LeaseHandle>(sinkWorkIds.Count);
+    var handles = new List<LeaseHandle>(sinkWorkIds.Length);
     foreach (var workId in sinkWorkIds.Distinct()) {
       if (_leaseRegistry.TryGet(WorkCategory.PerspectiveEvent, workId, out _)) {
         continue;
@@ -2584,8 +2651,21 @@ public partial class PerspectiveWorker(
       AsyncServiceScope scope,
       IWorkCoordinator workCoordinator,
       Guid streamId,
-      IReadOnlyList<Guid> sinkWorkIds,
+      Guid[] sinkWorkIds,
       CancellationToken cancellationToken) {
+
+    // Drain re-offer during the completion-flush window: a prior dispatch already completed these
+    // rows (they sit in the processed-event cache until the DB acks their DELETE) but the refetch
+    // still sees them and the cursor read may not reflect the advance yet — without this guard the
+    // sink re-reads the same collective envelope and re-runs the entire batched UPDATE (idempotent,
+    // N× the DB work; observed live as same-second full-count/0-row re-applies). Mirror of the
+    // per-event path's _filterDuplicateWorkItems. Only the ALL-completed case skips — a mixed set
+    // means a new collective event arrived and the cursor-driven dispatch below handles ordering.
+    if (sinkWorkIds.Length > 0 && sinkWorkIds.All(id => id == Guid.Empty || _processedEventCache.Contains(id))) {
+      _processedEventCache.Observer.OnEventsDeduped(
+        sinkWorkIds, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
+      return;
+    }
 
     var dispatcher = scope.ServiceProvider.GetService<ICollectiveDispatcher>();
     var sessionAccessor = scope.ServiceProvider.GetService<ICollectiveSessionAccessor>();
@@ -2745,11 +2825,11 @@ public partial class PerspectiveWorker(
   /// dedup cache so a re-lease inside the flush window is short-circuited. Called on both the successful-
   /// dispatch path and the no-collective-event path of <see cref="_processCollectiveSinkAsync"/>.
   /// </summary>
-  private void _completeCollectiveSinkWorkRows(IReadOnlyList<Guid> sinkWorkIds) {
-    if (sinkWorkIds.Count == 0) {
+  private void _completeCollectiveSinkWorkRows(Guid[] sinkWorkIds) {
+    if (sinkWorkIds.Length == 0) {
       return;
     }
-    var completedWorkIds = new List<Guid>(sinkWorkIds.Count);
+    var completedWorkIds = new List<Guid>(sinkWorkIds.Length);
     foreach (var workId in sinkWorkIds) {
       if (workId == Guid.Empty) {
         continue;
@@ -3526,9 +3606,10 @@ public partial class PerspectiveWorker(
       // Reset empty poll counter
       Interlocked.Exchange(ref _consecutiveEmptyPolls, 0);
 
-      // Transition to active if was idle
-      if (_isIdle) {
-        _isIdle = false;
+      // Only the consumer that actually WINS the transition fires the event. The CAS makes the
+      // flip and the claim one operation, so the state is already Active for every observer by the
+      // time any handler runs.
+      if (Interlocked.CompareExchange(ref _isIdle, 0, 1) == 1) {
         OnWorkProcessingStarted?.Invoke();
         LogPerspectiveProcessingStarted(_logger);
       }
@@ -3538,8 +3619,8 @@ public partial class PerspectiveWorker(
       _metrics?.EmptyBatches.Add(1);
 
       // Check if should transition to idle
-      if (!_isIdle && _consecutiveEmptyPolls >= _options.IdleThresholdPolls) {
-        _isIdle = true;
+      if (Volatile.Read(ref _consecutiveEmptyPolls) >= _options.IdleThresholdPolls
+          && Interlocked.CompareExchange(ref _isIdle, 1, 0) == 0) {
         OnWorkProcessingIdle?.Invoke();
         LogPerspectiveProcessingIdle(_logger, _consecutiveEmptyPolls);
       }
@@ -3694,6 +3775,9 @@ public partial class PerspectiveWorker(
   /// </summary>
   /// <docs>operations/workers/perspective-worker#security-context</docs>
   /// <tests>Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync</tests>
   private static async ValueTask _establishSecurityContextAsync(
       IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
@@ -4223,6 +4307,9 @@ public partial class PerspectiveWorker(
 /// Configure via: "Whizbang.Core.Workers.PerspectiveStartupScan": "Information"
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBackgroundMode_DoesNotRepollAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
 internal static partial class PerspectiveStartupScanLog {
   [LoggerMessage(
     EventId = 54,

@@ -76,26 +76,74 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
-      // Give subscription time to warm up
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
+      // Give broker-side routing time to warm up
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       var envelope = _createTestEnvelopeWithAggregateId(Guid.NewGuid());
       var destination = new TransportDestination("topic-00");
       await transport.PublishAsync(envelope, destination);
 
-      // Wait for message to be processed
+      // Wait for OUR message specifically. The shared emulator subscription is at-least-once
+      // and the pre-test drain is best-effort, so a straggler from a prior test can land
+      // first — asserting on .First() flaked exactly that way in CI. Correlate by own id
+      // (the DistinctMessageIdAwaiter lesson applied at this seam). Snapshot before
+      // enumerating: the worker appends concurrently.
       var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.Count > 0,
+        () => capturedInboxMessages.ToArray().Any(m => m.MessageId == envelope.MessageId.Value),
         TimeSpan.FromSeconds(30));
 
       // Assert
       await Assert.That(processed).IsTrue();
-      await Assert.That(capturedInboxMessages.Count).IsGreaterThanOrEqualTo(1);
 
-      var inbox = capturedInboxMessages.First();
-      await Assert.That(inbox.MessageId).IsEqualTo(envelope.MessageId.Value);
+      var inbox = capturedInboxMessages.ToArray().First(m => m.MessageId == envelope.MessageId.Value);
       // TestMessage does not implement IEvent, so isEvent is false
       await Assert.That(inbox.IsEvent).IsFalse();
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>
+  /// Increment 4's missing e2e arm: the Ready composite is withheld until the REAL broker
+  /// subscription completes — in-proc signals prove the wiring, this proves it against the wire.
+  /// </summary>
+  /// <code-under-test>src/Whizbang.Core/Startup/StartupReadiness.cs</code-under-test>
+  [Test]
+  public async Task Ready_IsWithheldUntilTheRealBrokerSubscriptionCompletesAsync() {
+    var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
+    await transport.InitializeAsync();
+
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
+    services.AddScoped<IWorkCoordinatorStrategy>(_ => new CapturingWorkCoordinatorStrategy([]));
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new ServiceBusConsumerWorker(
+      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions, new TestConsumerLogger(), new OrderedStreamProcessor(),
+      new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("topic-00", "sub-00-a")] });
+
+    // The pipeline itself is drained (no blocking steps) — readiness now hangs ONLY on the broker.
+    var state = new Whizbang.Core.Startup.StartupPipelineState();
+    await new Whizbang.Core.Startup.StartupPipelineRunner([], [state]).RunAsync(CancellationToken.None);
+    var signal = new Whizbang.Core.Startup.StartupReadySignal();
+    var readyService = new Whizbang.Core.Startup.StartupReadyService(state, signal, [worker]);
+
+    var startedTask = readyService.StartedAsync(CancellationToken.None);
+    await Task.Delay(TimeSpan.FromSeconds(2));
+    await Assert.That(signal.IsReady).IsFalse()
+      .Because("the composite must wait on the real subscription, not on the passage of time — "
+             + "\"started\" is not \"subscribed\"");
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      await startedTask.WaitAsync(TimeSpan.FromSeconds(60));
+      await Assert.That(signal.IsReady).IsTrue()
+        .Because("the worker subscribed against the real broker, so the composite may now flip");
     } finally {
       await worker.StopAsync(CancellationToken.None);
     }
@@ -139,6 +187,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       // Publish message with security context in hop
@@ -193,6 +242,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       // Publish a message
@@ -242,6 +292,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     // Act: Start creates subscriptions, stop disposes them
     await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
     // Worker should have created 2 subscriptions - verify by stopping cleanly
     await worker.StopAsync(CancellationToken.None);
 
@@ -279,6 +330,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       // Act: Pause and resume should not throw
       await worker.PauseAllSubscriptionsAsync();
       await worker.ResumeAllSubscriptionsAsync();
@@ -320,7 +372,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
-      // Assert: Worker started successfully with destination filter
+      // Subscribing moved out of StartAsync when the schema gate landed — the worker
+      // subscribes from ExecuteAsync, so "started" no longer implies "subscribed".
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Assert.That(logger.HasMessage("Subscribed")).IsTrue();
     } finally {
       await worker.StopAsync(CancellationToken.None);
@@ -359,6 +413,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       var expectedStreamId = Guid.NewGuid();
@@ -411,6 +466,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
       await Task.Delay(TimeSpan.FromSeconds(5));
 
       // Envelope with no AggregateId metadata

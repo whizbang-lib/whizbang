@@ -35,9 +35,9 @@ on:
       PUSHOVER_USER_KEY_10:
         required: false
 
-permissions:
-  contents: read
-  id-token: write    # Required for NuGet OIDC trusted publishing
+# Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
+# what it needs (the push job carries id-token: write for NuGet OIDC trusted publishing).
+permissions: {}
 
 jobs:
   push:
@@ -52,7 +52,7 @@ jobs:
 
     steps:
       - name: Download NuGet packages
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ inputs.artifact-name }}
           path: ./packages
@@ -61,7 +61,7 @@ jobs:
         run: ls -la ./packages/*.nupkg
 
       - name: NuGet Login (OIDC Trusted Publishing)
-        uses: nuget/login@d22cc5f58ff5b88bf9bd452535b4335137e24544 # v1
+        uses: nuget/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         id: nuget-login
         with:
           user: phil.carbone
@@ -109,6 +109,8 @@ jobs:
     if: success() && vars.PUSHOVER_ENABLED == 'true'
     continue-on-error: true
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -141,6 +143,8 @@ jobs:
     if: failure() && vars.PUSHOVER_ENABLED == 'true'
     continue-on-error: true
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

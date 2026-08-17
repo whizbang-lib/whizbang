@@ -20,6 +20,9 @@ namespace Whizbang.Data.Postgres.Collective;
 /// EF Core index ensurer can consume the paths a <see cref="CollectivePredicateSqlCompiler{TModel}"/> emitted.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:ReferencedJsonPaths_ScopeAndData_RecordsBothColumnsForOuterTableAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:ReferencedJsonPaths_CrossPerspectiveAny_RecordsSiblingTableColumnAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:ReferencedJsonPaths_ContainsInClause_RecordsTheColumnAsync</tests>
 public sealed record ReferencedJsonPath(string Table, string ColumnExpression);
 
 /// <summary>

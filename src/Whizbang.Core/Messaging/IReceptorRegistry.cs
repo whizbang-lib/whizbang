@@ -24,7 +24,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Register_VoidReceptor_IsReturnedByGetReceptorsForAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Unregister_VoidReceptor_RemovesFromRegistryAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GeneratedRegistry_RuntimeRegister_AnswersHasRuntimeConsumerForAsync</tests>
 public interface IReceptorRegistry {
   /// <summary>
   /// Gets all receptors registered to handle the specified message type at the specified lifecycle stage.
@@ -66,6 +68,18 @@ public interface IReceptorRegistry {
   /// <param name="stage">The lifecycle stage at which to invoke the receptor.</param>
   /// <docs>operations/testing/lifecycle-synchronization</docs>
   void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage;
+
+  /// <summary>
+  /// True when a RUNTIME-registered receptor consumes the given CLR type name (the storage form
+  /// <c>TypeNameFormatter.Format</c> writes, or a bare FullName). The receive/inbox discard gates
+  /// consult this alongside the source-generated tables — runtime-registered control-plane
+  /// receptors (integrity checkpoints/manifests, rebuild commands) are otherwise invisible to
+  /// them and their messages get silently discarded as "no consumer". Default: false (registries
+  /// without runtime registration support change nothing).
+  /// </summary>
+  /// <param name="clrTypeName">The payload CLR type name as carried on the wire/rows.</param>
+  /// <docs>internals/message-discard-policy</docs>
+  bool HasRuntimeConsumerFor(string clrTypeName) => false;
 
   /// <summary>
   /// Unregisters a previously registered void receptor.

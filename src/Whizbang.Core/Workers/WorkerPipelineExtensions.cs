@@ -29,10 +29,23 @@ public static class WorkerPipelineExtensions {
   public static IServiceCollection AddWhizbangWorkers(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 
+    // Establish the thread-pool reserve BEFORE registering the workers that will compete for it.
+    // These workers run on the host's pool, so their burst of async database completions is what
+    // starves the host's own request pipeline — including a liveness endpoint that does no I/O,
+    // whose probe timeout then kills a pod that is merely busy, discarding the progress that
+    // would have ended the burst. Raises only; never lowers.
+    WorkerThreadPoolFloor.Apply();
+
     // Schema-ready gate — workers await this before issuing any SQL. The driver's
     // initializer (e.g., WhizbangDatabaseInitializerService) calls MarkReady after migrations
     // complete. Singleton because all workers + the initializer must observe the same instance.
     services.TryAddSingleton<ISchemaReadyGate, SchemaReadyGate>();
+
+    // The read-model barrier (increment 6, option A): released when Migrate completes AND the
+    // perspective startup scan has run — later than Migrate, earlier than Ready. Lens reads
+    // refuse while it is closed; dispatch refuses on the schema gate alone.
+    services.TryAddSingleton<IReadModelsReadyGate, ReadModelsReadyGate>();
+    services.AddHostedService<ReadModelsReadyDriver>();
 
     // Managed-resource health: register the aggregator + the "schema" source over the gate. When a
     // consumer wires AddWhizbangManagedHealthChecks() the schema reports "migrating" (ready under the
@@ -79,6 +92,89 @@ public static class WorkerPipelineExtensions {
     // adapter is paused/resumed automatically. Inert when no adapters are registered.
     services.AddWhizbangRunControl();
     services.AddHostedService<LifecyclePhaseWorker>();
+    // Each lifecycle transition is recorded on this instance's own row so peers and the status
+    // surface can observe it — the standby handshake turns on states a peer can actually see.
+    services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
+
+    // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
+    // resolved from their dependencies, and per-step outcome/duration/reason. The state is
+    // registered as BOTH the queryable surface (IStartupPipelineState) and an observer — it
+    // derives its answers from the same notifications every other observer gets, never
+    // privileged. Migrate is the first framework behaviour to become a declared step: the
+    // schema-ready gate is demoted from THE global barrier to that one step's completion
+    // signal, and workers adopt WaitForAsync("Migrate") one declared dependency at a time.
+    services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineState>();
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupPipelineState>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
+    services.TryAddSingleton<Whizbang.Core.Observability.StartupPipelineMetrics>();
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+      new Whizbang.Core.Startup.LoggingStartupStepObserver(
+        (Microsoft.Extensions.Logging.ILogger?)sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance));
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+      new Whizbang.Core.Startup.MetricsStartupStepObserver(
+        sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>()));
+    // Assess (increment 9): where this instance stands — Migrate/Serve/StandDown — decided on
+    // every instance before the migration barrier. StandDown reports as a failed blocking step:
+    // fail-closed readiness IS not-ready-while-alive.
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStep>(sp =>
+      new Whizbang.Core.Startup.AssessStartupStep(
+        sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
+        sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.AssessStartupStep>()));
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>();
+    // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
+    // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
+    // now only detects and records; this is where recorded rewrites actually run.
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>();
+    services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupPipelineRunner(
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupStep>()],
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupStepObserver>()],
+      // Optional: the storage driver supplies the elector. Without one, a duty degrades to a
+      // shared capability — survivable only because the framework's exclusive steps are
+      // individually idempotent and separately guarded.
+      sp.GetService<Whizbang.Core.Startup.IDutyElector>()));
+    services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineWorker>());
+
+    // Ready as a composite (increment 4): the terminal signal, on the one seam that means
+    // "after everything" — IHostedLifecycleService.StartedAsync runs once every StartAsync has
+    // returned. It waits for the blocking steps to drain, then for every registered readiness
+    // contributor (transport subscription readiness among them), and only then marks the signal.
+    // Fail-closed: a failed blocking step keeps the pipeline's readiness pending forever, so the
+    // signal never fires and the instance never reports itself fully up.
+    services.TryAddSingleton<Whizbang.Core.Startup.StartupReadySignal>();
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupReadySignal>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>());
+    // The "startup" health component: probes report the current step and its progress, so "why is
+    // this pod not ready" is answerable from the health surface without reading logs.
+    services.AddSingleton<Health.IWhizbangHealthSource>(sp => new Health.StartupPipelineHealthSource(
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
+      sp.GetService<Whizbang.Core.Startup.IStartupReadySignal>()));
+    services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupReadyService(
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
+      sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),
+      [.. sp.GetServices<Whizbang.Core.Startup.IStartupReadinessContributor>()],
+      sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StartupReadyService>()));
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadyService>());
+
+    // The standby handshake (increment 9): the watcher is the peer side — it drains and holds on
+    // a newer instance's request, posts StandingBy for the migrator to observe, and carries the
+    // runtime verdict (an instance becomes obsolete the moment a newer peer migrates underneath
+    // it). StandbyHandshake is the migrator side, consumed when a breaking migration runs.
+    services.TryAddSingleton<Whizbang.Core.Startup.StandbyWatcherOptions>();
+    services.AddHostedService(sp => new Whizbang.Core.Startup.StandbyWatcher(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<IWhizbangLifecycleState>(),
+      sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
+      sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
+      sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
+      sp.GetService<ISchemaReadyGate>(),
+      sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>(),
+      sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StandbyWatcher>()));
 
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
@@ -93,6 +189,21 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<LeaseRenewalWorker>();
     services.TryAddSingleton<InboxHandlerWorker>();
     services.TryAddSingleton<MaintenanceWorker>();
+    // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
+    // registration constructable (the F2-era lesson: extensions must be self-contained).
+    services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
+    services.TryAddSingleton<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    services.TryAddSingleton<Whizbang.Core.Observability.MaintenanceMetrics>();
+    services.TryAddSingleton<IntegrityCheckpointWorker>();
+    services.TryAddSingleton<SubscriptionExpansionWorker>();
+    services.TryAddSingleton<IntegrityAuditWorker>();
+    services.TryAddSingleton<RepairDrainWorker>();
+    // #80-D: the audit worker doubles as the sweep runner (the scheduled occurrence's receptor
+    // resolves it); the state object is how the driver's cron scheduler stands the counter down.
+    services.TryAddSingleton<IIntegritySweepRunner>(sp => sp.GetRequiredService<IntegrityAuditWorker>());
+    services.TryAddSingleton<IntegritySweepScheduleState>();
+    services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityGapTracker>();
+    services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();
     services.TryAddSingleton<OutboxDrainWorker>();
@@ -102,6 +213,13 @@ public static class WorkerPipelineExtensions {
     // Type-definition fingerprint reconciler (F-4): detect-by-default, act-by-opt-in. Inert without a
     // catalog (GetService returns null) or without the fingerprint tables (coordinator defaults no-op).
     services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>();
+    // Perspective row retention (operator rung of the override ladder): the options are applied
+    // to the TTL registry at startup so a TTL can be retuned — or retention switched off — per
+    // environment without a redeploy. Registered as a hosted configurator; inert on defaults.
+    services.AddOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>();
+    services.TryAddSingleton<Whizbang.Core.Perspectives.PerspectiveRowRetentionConfigurator>();
+    services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(
+      sp => sp.GetRequiredService<Whizbang.Core.Perspectives.PerspectiveRowRetentionConfigurator>());
     // Schema-init behavior (blocking by default; opt-in non-blocking + optional migration timeout).
     services.AddOptions<SchemaInitializationOptions>();
     services.TryAddSingleton(TimeProvider.System);
@@ -181,7 +299,8 @@ public static class WorkerPipelineExtensions {
     // InboxDispatchWorker uses this to skip lifecycle deserialize for cross-service events
     // that the local service has no receptor for. Registered as a singleton — adapter is
     // stateless and just forwards to the static generated lookup.
-    services.TryAddSingleton<IReceptorRegistryQuery, WhizbangReceptorRegistryQueryAdapter>();
+    services.TryAddSingleton<IReceptorRegistryQuery>(sp =>
+      new WhizbangReceptorRegistryQueryAdapter(sp.GetService<IReceptorRegistry>()));
 
     // Message-discard policy: shared "should this message be skipped?" decision used by
     // the transport-receive, inbox-dispatch, and outbox-publish gates. Owns the structured
@@ -211,6 +330,10 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<LeaseRenewalWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxHandlerWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<MaintenanceWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<IntegrityCheckpointWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<IntegrityAuditWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<RepairDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());

@@ -20,6 +20,9 @@ namespace Whizbang.Generators;
 /// <param name="DerivedTypes">All concrete derived types that inherit from or implement this base</param>
 /// <param name="IsInterface">True if BaseTypeName is an interface, false if it's a class</param>
 /// <docs>extending/source-generators/polymorphic-serialization</docs>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonPolymorphicAbstractType_DiscoversDerivedTypesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeAttributes_DiscoversDerivedTypesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithUserBaseClass_AutoDiscoversPolymorphicTypesAsync</tests>
 internal sealed record PolymorphicTypeInfo(
     string BaseTypeName,
     string BaseSimpleName,

@@ -21,6 +21,9 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#dispatcher-registry</docs>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithCustomAttribute_CallsDispatcherRegistryAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithBuiltInAttribute_UsesDirectDispatchAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/TagHookStageFilteringAndScopeTests.cs:ProcessTagsAsync_CustomAttribute_HookFiresViaDispatcherRegistryAsync</tests>
 public static class MessageTagHookDispatcherRegistry {
   /// <summary>
   /// Gets the number of registered dispatchers.

@@ -68,6 +68,9 @@ public readonly struct RoutedNone : IRouted {
 /// </example>
 /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs:IRouted_CanPatternMatch_OnRoutedTypeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs:IRouted_Mode_ReturnsSameModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:Local_Result_ImplementsIRoutedAsync</tests>
 public interface IRouted {
   /// <summary>
   /// Gets the wrapped value as an object.

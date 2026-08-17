@@ -141,6 +141,48 @@ public partial class EnvelopeSerializerTests {
   }
 
   [Test]
+  public async Task SerializeEnvelope_PreservesDirectedTargetAsync() {
+    // Arrange — a DIRECTED envelope (stream-integrity R0): losing Target at this conversion seam
+    // would broadcast a point-to-point message, so the copy must carry it.
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = MessageId.New(),
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Target = "damaged-svc"
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result.JsonEnvelope.Target).IsEqualTo("damaged-svc");
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_PreservesStateOnlyAsync() {
+    // Arrange — a STATE-ONLY envelope (stream-integrity Phase S): losing the marker at this
+    // conversion seam would re-fire trigger receptors on backfilled history.
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = MessageId.New(),
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      StateOnly = true
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result.JsonEnvelope.StateOnly).IsTrue();
+  }
+
+  [Test]
   public async Task SerializeEnvelope_PreservesHopsAsync() {
     // Arrange
     var options = _createTestJsonOptions();

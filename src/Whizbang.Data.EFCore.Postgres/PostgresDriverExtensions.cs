@@ -90,6 +90,29 @@ public static class PostgresDriverExtensions {
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
                 sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
 
+        // TURNKEY: the apply-stack query surface — on-demand path-signature aggregation over
+        // event-store pointers. The serving surfaces (minimal API / FastEndpoints / HotChocolate)
+        // are opt-in; registering the query merely makes them answerable when a host mounts one.
+        selector.Services.TryAddSingleton<Whizbang.Core.Lineage.IApplyStackQuery>(sp =>
+            new EFCorePostgresApplyStackQuery(
+                sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+                dbContextType));
+
+        // TURNKEY: the startup status surface's fleet section reads wh_service_instances through
+        // this source. The surface itself is opt-in; registering the source merely makes the
+        // fleet section answerable when a host mounts it.
+        selector.Services.TryAddSingleton<Whizbang.Core.Startup.IStartupFleetStatusSource>(sp =>
+            new EFCorePostgresStartupFleetStatusSource(
+                sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+                dbContextType));
+
+        // TURNKEY: the Assess verdict machinery — this binary's version against every version
+        // the migration ledger records, decided on every instance before the migration barrier.
+        selector.Services.TryAddSingleton<Whizbang.Core.Startup.IStartupAssessor>(sp =>
+            new EFCorePostgresStartupAssessor(
+                sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+                dbContextType,
+                sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>()));
         // TURNKEY: Register IClaimedEmissionStore so PublishOnceAsync (saga completion via
         // SagaCompletionGuard.EmitOnceAsync, idempotent receptor emissions, etc.) doesn't
         // throw at runtime. EFCoreClaimedEmissionStore writes ON CONFLICT DO NOTHING against
@@ -110,6 +133,24 @@ public static class PostgresDriverExtensions {
         // TURNKEY: A1 scheduled close — runtime-register ScheduledStreamCloseReceptor so a fired
         // "close the books" schedule occurrence drives IStreamCloser.CloseAsync. Same rationale as above.
         selector.Services.AddHostedService<ScheduledStreamCloseReceptorRegistrar>();
+
+        // TURNKEY: stream-integrity R1b — runtime-register RedeliveryRequestReceptor so a received
+        // RequestRedeliveryCommand drives the selection + targeted re-delivery pump. Same rationale as above.
+        selector.Services.AddHostedService<RedeliveryRequestReceptorRegistrar>();
+
+        // TURNKEY: #80-D scheduled integrity sweep — the receptor reacts to the idle-time cron's
+        // occurrences, and the scheduler registers that cron on the temporal engine (standing the
+        // audit worker's every-Nth-cycle counter down). Same rationale as above.
+        selector.Services.AddHostedService<ScheduledIntegritySweepReceptorRegistrar>();
+        selector.Services.AddHostedService<IntegritySweepScheduler>();
+
+        // TURNKEY: stream-integrity B2/B3 — runtime-register IntegrityCheckpointReceptor so received
+        // checkpoints drive windowed gap detection (and ladder-gated auto-repair). Same rationale as above.
+        selector.Services.AddHostedService<IntegrityCheckpointReceptorRegistrar>();
+
+        // TURNKEY: stream-integrity Phase A — runtime-register the manifest receptors so the deep
+        // audit's request/response exchange works out of the box. Same rationale as above.
+        selector.Services.AddHostedService<IntegrityManifestReceptorRegistrar>();
 
         // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
         // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
@@ -170,6 +211,13 @@ public static class PostgresDriverExtensions {
           return new PostgresTableStatisticsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
+
+        // Durable stream-integrity convergence state. The in-memory ledger is per-process and
+        // dies on restart, which is sound only while restarts are rare — but a report storm is
+        // what causes the restarts, so every boot cleared the state that would have suppressed
+        // it, and each replica reported the same divergence independently.
+        selector.Services.TryAddSingleton<Whizbang.Core.Messaging.IIntegrityRepairLedger,
+          CoordinatorIntegrityRepairLedger>();
         selector.Services.AddHostedService<TableStatisticsCollector>();
 
         // v0.502 DLQ — register IDeadLetterStore + IDeadLetterRecoveryService so the

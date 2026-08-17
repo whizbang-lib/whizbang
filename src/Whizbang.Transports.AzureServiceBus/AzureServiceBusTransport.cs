@@ -35,6 +35,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly IMessageDiscardPolicy? _discardPolicy;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly bool _isEmulator;
+  private readonly ReceiveLivenessWatchdog? _livenessWatchdog;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
@@ -60,7 +61,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     Whizbang.Core.Messaging.IRawReceptorRegistry? rawReceptorRegistry = null,
     Whizbang.Core.Messaging.IMessageTypeBinder? typeBinder = null,
     IMessageDiscardPolicy? discardPolicy = null,
-    IReadOnlySet<string>? absorbedNamespaces = null
+    IReadOnlySet<string>? absorbedNamespaces = null,
+    TimeProvider? timeProvider = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -78,6 +80,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     _jsonOptions = jsonOptions;
     _options = options ?? new AzureServiceBusOptions();
+    _sessionGovernor = new SessionOccupancyGovernor(_options.MaxAutoLockRenewalDuration);
     _receptorRegistry = receptorRegistry;
     _perspectiveRegistry = perspectiveRegistry;
     _rawReceptorRegistry = rawReceptorRegistry;
@@ -95,6 +98,23 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _logger.LogInformation("No admin client - auto-provisioning disabled, infrastructure must be pre-provisioned");
     }
 
+    // Receive-liveness watchdog: needs the admin plane to tell healthy-idle from stalled
+    // (silence alone would restart quiet-but-healthy services).
+    if (_options.EnableReceiveLivenessWatchdog) {
+      if (_adminClient is not null) {
+        var adminClientForProbe = _adminClient;
+        _livenessWatchdog = new ReceiveLivenessWatchdog(
+          _options,
+          (topic, sub, ct) => adminClientForProbe.GetSubscriptionActiveMessageCountAsync(topic, sub, ct),
+          _ => _invokeRecoveryHandlerAsync(),
+          timeProvider ?? TimeProvider.System,
+          _logger);
+      } else {
+        _logger.LogInformation(
+          "Receive-liveness watchdog disabled - no admin client available to distinguish idle from stalled subscriptions");
+      }
+    }
+
     // Add OTEL tags for observability
     activity?.SetTag("transport.type", "AzureServiceBus");
     activity?.SetTag("transport.emulator", _isEmulator);
@@ -106,6 +126,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
     _recoveryHandler = onRecovered;
   }
+
+  /// <summary>
+  /// The receive-liveness watchdog, when active (watchdog enabled AND an admin client is
+  /// available). Internal so tests drive sweeps deterministically via
+  /// <see cref="ReceiveLivenessWatchdog.ProbeAsync"/>.
+  /// </summary>
+  internal ReceiveLivenessWatchdog? LivenessWatchdog => _livenessWatchdog;
 
   /// <summary>
   /// Slice 2 receptor-registry filter — returns true if any local receptor handles the given
@@ -692,6 +719,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         : await _startNonSessionBatchSubscriptionAsync(
             topicName, subscriptionName, batchHandler, batchOptions, destination, cancellationToken);
 
+      if (_livenessWatchdog is not null) {
+        _livenessWatchdog.Track(topicName, subscriptionName);
+        _livenessWatchdog.Start();
+      }
+
       if (_logger.IsEnabled(LogLevel.Information)) {
         _logger.LogInformation(
           "Started batch subscription to {TopicName}/{SubscriptionName} (BatchSize={BatchSize}, SlideMs={SlideMs}, MaxWaitMs={MaxWaitMs})",
@@ -733,8 +765,26 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
     var subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
-    sessionProcessor.ProcessMessageAsync += args => _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
-    sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination);
+    sessionProcessor.ProcessMessageAsync += args => {
+      _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
+      return _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
+    };
+    // Occupancy clock: stamped at session ACCEPT (when the renewal window actually starts) and
+    // cleared on natural close, so an idle-closed session's next accept starts a fresh clock
+    // instead of inheriting a stale one and rotating immediately.
+    sessionProcessor.SessionInitializingAsync += args => {
+      OnSessionInitializing(destination, args.SessionId, DateTimeOffset.UtcNow);
+      return Task.CompletedTask;
+    };
+    sessionProcessor.SessionClosingAsync += args => {
+      OnSessionClosing(destination, args.SessionId);
+      return Task.CompletedTask;
+    };
+    // CancellationToken.None is deliberate: the throttle pause runs detached and must complete
+    // its stop/resume even after the error-handler scope (args.CancellationToken) has ended.
+    sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination,
+      () => sessionProcessor.StopProcessingAsync(CancellationToken.None),
+      () => sessionProcessor.StartProcessingAsync(CancellationToken.None));
 
     await sessionProcessor.StartProcessingAsync(cancellationToken);
     return subscription;
@@ -764,10 +814,57 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       await batchHandler([new TransportMessage(envelope, envelopeTypeName)], args.CancellationToken);
       await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+      _rotateSessionIfPastBudget(args, destination);
     } catch (Exception ex) {
       await _handleSessionMessageProcessingErrorAsync(args, ex, destination);
     }
   }
+
+  /// <summary>
+  /// Voluntary session rotation, called after a successful completion. The SDK renews a
+  /// session's lock only for MaxAutoLockRenewalDuration from ACCEPT; under a deep backlog a
+  /// session never idles out, outlives that window, and loses its lock mid-stream — every
+  /// later completion throws SessionLockLost and the message redelivers until it dead-letters.
+  /// Releasing at the occupancy budget hands the lock back while it is still valid; the
+  /// processor re-accepts under a fresh lock and FIFO resumes where it left off.
+  /// </summary>
+  private string _sessionKey(TransportDestination destination, string sessionId) =>
+    $"{destination.Address}/{destination.RoutingKey ?? _options.DefaultSubscriptionName}/{sessionId}";
+
+  private void _rotateSessionIfPastBudget(ProcessSessionMessageEventArgs args, TransportDestination destination) =>
+    RotateSessionIfPastBudget(args, destination, DateTimeOffset.UtcNow);
+
+  /// <summary>Time-parameterized core of the rotation check — internal so tests drive `now` deterministically.</summary>
+  internal void RotateSessionIfPastBudget(ProcessSessionMessageEventArgs args, TransportDestination destination, DateTimeOffset now) {
+    var sessionKey = _sessionKey(destination, args.SessionId);
+    // Fallback stamp for processors without the SessionInitializing hook — TryAdd is a no-op
+    // when the accept-time stamp already exists.
+    _sessionGovernor.RecordMessage(sessionKey, now);
+    if (!_sessionGovernor.ShouldRelease(sessionKey, now)) {
+      return;
+    }
+    args.ReleaseSession();
+    _sessionGovernor.OnReleased(sessionKey);
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      _logger.LogDebug(
+        "Rotating session {SessionId} on {TopicName}/{SubscriptionName} after {BudgetSeconds}s continuous occupancy — releasing ahead of the lock-renewal window",
+        args.SessionId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        _sessionGovernor.OccupancyBudget.TotalSeconds);
+    }
+  }
+
+  /// <summary>Session-accept hook body: starts the occupancy clock at the moment the renewal window opens.</summary>
+  internal void OnSessionInitializing(TransportDestination destination, string sessionId, DateTimeOffset now) =>
+    _sessionGovernor.RecordMessage(_sessionKey(destination, sessionId), now);
+
+  /// <summary>
+  /// Session-close hook body: clears the occupancy clock so an idle-closed session's next
+  /// accept starts fresh instead of inheriting a stale clock and rotating immediately.
+  /// </summary>
+  internal void OnSessionClosing(TransportDestination destination, string sessionId) =>
+    _sessionGovernor.OnReleased(_sessionKey(destination, sessionId));
 
   /// <summary>
   /// Non-session batch subscription. Per-message callbacks enqueue to the TransportBatchCollector,
@@ -796,6 +893,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     // Non-blocking: enqueue to collector, return immediately
     processor.ProcessMessageAsync += args => {
+      _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
       if (!subscription.IsActive) {
         return args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
       }
@@ -803,7 +901,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       return Task.CompletedTask;
     };
 
-    processor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination);
+    // CancellationToken.None is deliberate — see the session-processor attach site above.
+    processor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination,
+      () => processor.StopProcessingAsync(CancellationToken.None),
+      () => processor.StartProcessingAsync(CancellationToken.None));
 
     await processor.StartProcessingAsync(cancellationToken);
     return subscription;
@@ -908,6 +1009,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
         sessionProcessor.ProcessMessageAsync += async args => {
+          _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
           if (!subscription.IsActive) {
             _logger.LogWarning(
               "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
@@ -922,7 +1024,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           await _processReceivedMessageAsync(args, handler, destination);
         };
 
-        sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination);
+        // Occupancy clock — see the batch session-processor attach site for the rationale.
+        sessionProcessor.SessionInitializingAsync += args => {
+          OnSessionInitializing(destination, args.SessionId, DateTimeOffset.UtcNow);
+          return Task.CompletedTask;
+        };
+        sessionProcessor.SessionClosingAsync += args => {
+          OnSessionClosing(destination, args.SessionId);
+          return Task.CompletedTask;
+        };
+
+        // CancellationToken.None is deliberate — see the batch session-processor attach site.
+        sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination,
+          () => sessionProcessor.StopProcessingAsync(CancellationToken.None),
+          () => sessionProcessor.StartProcessingAsync(CancellationToken.None));
 
         await sessionProcessor.StartProcessingAsync(cancellationToken);
       } else {
@@ -943,6 +1058,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         subscription = new AzureServiceBusSubscription(processor, _logger);
 
         processor.ProcessMessageAsync += async args => {
+          _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
           if (!subscription.IsActive) {
             _logger.LogWarning(
               "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
@@ -960,6 +1076,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         processor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination);
 
         await processor.StartProcessingAsync(cancellationToken);
+      }
+
+      if (_livenessWatchdog is not null) {
+        _livenessWatchdog.Track(topicName, subscriptionName);
+        _livenessWatchdog.Start();
       }
 
       if (_logger.IsEnabled(LogLevel.Information)) {
@@ -1029,6 +1150,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       await handler(envelope, envelopeTypeName, args.CancellationToken);
       await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+      _rotateSessionIfPastBudget(args, destination);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
         _logger.LogDebug(
@@ -1265,9 +1387,27 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
   }
 
+  /// <summary>
+  /// One namespace-wide accept-pressure governor per transport: ServiceBusy throttling is a
+  /// NAMESPACE condition, so every processor on this client shares one backoff streak and one
+  /// single-flight pause. Base 2s (the broker's own guidance), capped at 60s, streak resets
+  /// after 5 quiet minutes.
+  /// </summary>
+  /// <summary>
+  /// One rotation governor per transport: sessions voluntarily release before the SDK's
+  /// lock-renewal window ends, so completion always happens under a still-renewed lock.
+  /// See <see cref="SessionOccupancyGovernor"/> for the live failure this prevents.
+  /// </summary>
+  private readonly SessionOccupancyGovernor _sessionGovernor;
+
+  private readonly AsbThrottleBackoffPolicy _throttlePolicy =
+    new(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(60), TimeSpan.FromMinutes(5));
+
   private async Task _handleProcessorErrorAsync(
     ProcessErrorEventArgs args,
-    TransportDestination destination
+    TransportDestination destination,
+    Func<Task>? stopProcessingAsync = null,
+    Func<Task>? startProcessingAsync = null
   ) {
     _logger.LogError(
       args.Exception,
@@ -1283,6 +1423,47 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         (args.Exception as ServiceBusException)?.Reason
       );
       await _invokeRecoveryHandlerAsync();
+    }
+
+    // Namespace throttling (50009 ServiceBusy): the SDK's accept loop retries immediately across
+    // every concurrent session slot, which AMPLIFIES the throttle — observed live as a fleet whose
+    // consumers could not accept one session while thousands of messages queued broker-side. The
+    // governor answers with ONE exponentially-backed pause per streak; the pause runs detached
+    // because StopProcessingAsync awaits in-flight handlers (including this one).
+    if (args.Exception is ServiceBusException sbEx
+        && _throttlePolicy.RecordError(sbEx.Reason, DateTimeOffset.UtcNow) is { } pause
+        && stopProcessingAsync is not null && startProcessingAsync is not null
+        && _throttlePolicy.TryBeginPause()) {
+      if (_logger.IsEnabled(LogLevel.Warning)) {
+        _logger.LogWarning(
+          "Namespace throttled (ServiceBusy) on {TopicName}/{SubscriptionName}; pausing accepts for {PauseSeconds}s to shed pressure",
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName,
+          pause.TotalSeconds);
+      }
+      // CancellationToken.None throughout the detached pause is deliberate: args.CancellationToken
+      // is signaled when the processor stops — which is exactly what the pause DOES first, so
+      // flowing it here would cancel our own delay/resume and strand the processor stopped.
+      _ = Task.Run(async () => {
+        try {
+          await stopProcessingAsync();
+          await Task.Delay(pause, CancellationToken.None);
+          await startProcessingAsync();
+          if (_logger.IsEnabled(LogLevel.Information)) {
+            _logger.LogInformation(
+              "Resumed Service Bus processor for {TopicName}/{SubscriptionName} after throttle pause",
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName);
+          }
+        } catch (Exception ex) {
+          _logger.LogError(ex,
+            "Throttle pause/resume failed for {TopicName}/{SubscriptionName} — the receive-liveness watchdog is the backstop",
+            destination.Address,
+            destination.RoutingKey ?? _options.DefaultSubscriptionName);
+        } finally {
+          _throttlePolicy.EndPause();
+        }
+      }, CancellationToken.None);
     }
   }
 
@@ -1439,12 +1620,32 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
       activity?.SetTag("servicebus.subscription_exists", true);
 
+      // Idempotency: an existing DestinationFilter already targeting this destination — with no
+      // $Default match-all alongside it — needs no churn. The delete-create gap would briefly
+      // leave the subscription without its filter (see _applyRoutingPatternFilterAsync).
+      var existingRules = new List<RuleProperties>();
+      await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
+        existingRules.Add(rule);
+      }
+      var currentFilter = existingRules.FirstOrDefault(r => r.Name == customRuleName);
+      if (currentFilter is not null
+          && !existingRules.Any(r => r.Name == defaultRuleName)
+          && currentFilter.Filter is CorrelationRuleFilter existingCorrelation
+          && existingCorrelation.ApplicationProperties.TryGetValue("Destination", out var existingDestination)
+          && Equals(existingDestination, destination)) {
+        activity?.SetTag("servicebus.rule_unchanged", true);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          _logger.LogDebug(
+            "DestinationFilter already correct on {TopicName}/{SubscriptionName}; skipping re-application",
+            topicName,
+            subscriptionName);
+        }
+        return;
+      }
+
       // Remove default rule if it exists
-      var rules = _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken);
       var deletedRules = 0;
-      // S3267: Loop contains await — LINQ doesn't support async lambdas
-#pragma warning disable S3267
-      await foreach (var rule in rules) {
+      foreach (var rule in existingRules) {
         if (rule.Name == defaultRuleName || rule.Name == customRuleName) {
           await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
           deletedRules++;
@@ -1461,7 +1662,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           }
         }
       }
-#pragma warning restore S3267
       activity?.SetTag("servicebus.rules_deleted", deletedRules);
 
       // Create new rule with CorrelationFilter on Destination application property
@@ -1513,6 +1713,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <returns>A valid Azure Service Bus subscription name.</returns>
   /// <docs>messaging/transports/azure-service-bus#subscription-naming</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs:DeriveSubscriptionNameWithSubscriberNameMetadataUsesServiceNameAndTopicAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs:DeriveSubscriptionNameWithHashWildcardDoesNotUseAsSubscriptionNameAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_SubscriberNameMetadata_DerivesSubscriptionNameAsync</tests>
   private string _deriveSubscriptionName(TransportDestination destination, string topicName) {
     // Try to get SubscriberName from metadata (set by TransportSubscriptionBuilder)
     if (destination.Metadata?.TryGetValue("SubscriberName", out var elem) == true &&
@@ -1578,6 +1781,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>messaging/transports/azure-service-bus#auto-provisioning</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_TopicAndSubscriptionMissing_CreatesBothAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_AutoProvisionDisabled_DoesNotTouchAdminPlaneAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_TopicCreate409Race_ContinuesToSubscriptionCreationAsync</tests>
   private async Task _ensureInfrastructureExistsAsync(
     string topicName,
     string subscriptionName,
@@ -1619,6 +1825,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
     var properties = await _adminClient!.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken);
     if (properties.RequiresSession) {
+      // Session shape is right; reconcile the lock duration (raise-only — see the option docs).
+      // LockDuration IS updatable in place, so environments provisioned before the safe
+      // default existed self-heal here on their next deploy.
+      if (properties.LockDuration < _options.SubscriptionLockDuration) {
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation(
+            "Raising LockDuration on {TopicName}/{SubscriptionName} from {CurrentSeconds}s to {DesiredSeconds}s — " +
+            "short session locks lose renewals under concurrency and freeze the receive side",
+            topicName, subscriptionName,
+            properties.LockDuration.TotalSeconds, _options.SubscriptionLockDuration.TotalSeconds);
+        }
+        await _adminClient.UpdateSubscriptionLockDurationAsync(
+          topicName, subscriptionName, _options.SubscriptionLockDuration, cancellationToken);
+      }
       return;
     }
     if (_logger.IsEnabled(LogLevel.Information)) {
@@ -1628,7 +1848,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         topicName, subscriptionName);
     }
     await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
-    await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
+    await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
   }
 
   /// <summary>Creates the subscription — honoring EnableSessions for the RequiresSession flag —
@@ -1639,9 +1859,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
     }
     if (_options.EnableSessions) {
-      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
+      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
     } else {
-      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, cancellationToken);
+      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
     }
   }
 
@@ -1655,6 +1875,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>messaging/transports/azure-service-bus#routing-filters</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatterns_AppliesSqlFilterRuleAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternWithBareWildcard_TranslatesToPercentAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternRuleCreationFails_ProceedsWithoutFilterAsync</tests>
   private async Task _applyRoutingPatternFilterAsync(
     string topicName,
     string subscriptionName,
@@ -1679,15 +1902,33 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     const string ruleName = "RoutingPatternFilter";
 
     try {
+      // Idempotency: when the subscription's rules already converge on exactly the desired
+      // SqlFilter, leave them alone. Deleting-then-recreating opens a brief no-rule window in
+      // which published messages match nothing and are silently dropped — resubscribes (deploy,
+      // connection recovery, receive-liveness watchdog) must not reopen that window for a no-op.
+      var existingRules = new List<RuleProperties>();
+      await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
+        existingRules.Add(rule);
+      }
+      if (existingRules.Count == 1
+          && existingRules[0].Name == ruleName
+          && existingRules[0].Filter is SqlRuleFilter existingFilter
+          && existingFilter.SqlExpression == sqlExpression) {
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          _logger.LogDebug(
+            "[SqlFilter] Rule already correct on {TopicName}/{SubscriptionName}; skipping re-application",
+            topicName,
+            subscriptionName);
+        }
+        return;
+      }
+
       // Delete existing rules (including $Default)
       var deletedRules = new List<string>();
-      // S3267: Loop contains await — LINQ doesn't support async lambdas
-#pragma warning disable S3267
-      await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
+      foreach (var rule in existingRules) {
         await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
         deletedRules.Add(rule.Name);
       }
-#pragma warning restore S3267
 
       // Create SqlFilter rule
       var ruleOptions = new CreateRuleOptions(ruleName, new SqlRuleFilter(sqlExpression));
@@ -1737,6 +1978,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Shared by both subscribe-path and publish-path auto-provisioning.
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_EnsuresTopicExistsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_TopicAlreadyExists_SkipsCreationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_RaceCondition_HandlesGracefullyAsync</tests>
   private async Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
     if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
       return;
@@ -1795,6 +2039,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     // Clear recovery handler to prevent memory leak
     _recoveryHandler = null;
+
+    // Stop the receive-liveness loop before tearing anything else down
+    if (_livenessWatchdog is not null) {
+      await _livenessWatchdog.DisposeAsync();
+    }
 
     // Dispose all senders
     foreach (var sender in _senders.Values) {

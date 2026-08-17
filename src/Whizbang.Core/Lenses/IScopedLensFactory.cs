@@ -27,7 +27,7 @@ namespace Whizbang.Core.Lenses;
 /// </code>
 /// </example>
 /// <docs>fundamentals/lenses/scoped-lenses</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs:ScopedLensFactory_GetEventStoreQuery_None_ReturnsQueryAsync</tests>
 public interface IScopedLensFactory {
   // === Legacy API (string-based scope names) ===
 
@@ -155,6 +155,8 @@ public interface IScopedLensFactory {
   /// Principal filters are not applied for event queries.
   /// </remarks>
   /// <docs>fundamentals/events/event-store-query</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs:ScopedLensFactory_GetEventStoreQuery_None_ReturnsQueryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs:ScopedLensFactory_GetEventStoreQuery_Tenant_AppliesFilterAsync</tests>
   Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilters filters);
 
   /// <summary>
@@ -165,6 +167,7 @@ public interface IScopedLensFactory {
   /// <param name="requiredPermission">Permission the caller must have.</param>
   /// <returns>An event store query with the scope filters applied.</returns>
   /// <docs>fundamentals/events/event-store-query</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs:ScopedLensFactory_GetEventStoreQuery_WithPermission_Denied_ThrowsAsync</tests>
   Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilters filters, Security.Permission requiredPermission);
 
   /// <summary>
@@ -173,6 +176,7 @@ public interface IScopedLensFactory {
   /// <returns>An event store query with no scope filtering applied.</returns>
   /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilters.None)</remarks>
   /// <docs>fundamentals/events/event-store-query</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs:ScopedLensFactory_GetGlobalEventStoreQuery_UsesNoneFilterAsync</tests>
   Messaging.IEventStoreQuery GetGlobalEventStoreQuery();
 
   /// <summary>
@@ -181,6 +185,7 @@ public interface IScopedLensFactory {
   /// <returns>An event store query filtered by TenantId.</returns>
   /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilters.Tenant)</remarks>
   /// <docs>fundamentals/events/event-store-query</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs:ScopedLensFactory_GetTenantEventStoreQuery_UsesTenantFilterAsync</tests>
   Messaging.IEventStoreQuery GetTenantEventStoreQuery();
 
   /// <summary>
@@ -189,5 +194,6 @@ public interface IScopedLensFactory {
   /// <returns>An event store query filtered by TenantId and UserId.</returns>
   /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilters.Tenant | ScopeFilters.User)</remarks>
   /// <docs>fundamentals/events/event-store-query</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs:ScopedLensFactory_GetUserEventStoreQuery_UsesTenantAndUserFilterAsync</tests>
   Messaging.IEventStoreQuery GetUserEventStoreQuery();
 }

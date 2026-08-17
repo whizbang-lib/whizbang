@@ -79,16 +79,30 @@ public class PerspectiveRow<TModel> where TModel : class {
   public required PerspectiveScope Scope { get; set; }
 
   /// <summary>
-  /// When this row was first created.
+  /// BUSINESS time: when the entity came into being, taken from the first applied event.
   /// </summary>
+  /// <remarks>
+  /// Replay-invariant — a rebuild re-applies the same events and reproduces the same value, so a
+  /// displayed "created" date survives projection maintenance. The wall clock at which the ROW was
+  /// first written is the separate <c>sys_created_at</c> column.
+  /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_SetsTimestampsAsync</tests>
   public required DateTime CreatedAt { get; init; }
 
   /// <summary>
-  /// When this row was last updated.
+  /// BUSINESS time: the last business activity on this record, taken from the applied event.
   /// </summary>
   /// <remarks>
-  /// Uses <c>set</c> accessor to allow in-place updates during perspective upserts.
+  /// <para>
+  /// Replay-invariant, which is what lets retention anchor on it and lets recency ordering survive a
+  /// rebuild. The wall clock at which the ROW was last written is the separate
+  /// <c>sys_updated_at</c> column — that one legitimately changes on every rebuild.
+  /// </para>
+  /// <para>
+  /// An apply hook may declare an event NOT to be business activity (integrity repairs, backfills),
+  /// in which case the row is written but this value is left where it was.
+  /// </para>
+  /// <para>Uses <c>set</c> accessor to allow in-place updates during perspective upserts.</para>
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_SetsTimestampsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PerspectiveTable_ShouldHaveCorrectSchemaAsync</tests>

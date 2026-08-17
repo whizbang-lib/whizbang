@@ -11,7 +11,7 @@ namespace Whizbang.Core.Serialization;
 /// the result instead of re-serializing. AOT-safe — the caller supplies the source-generated
 /// <see cref="JsonTypeInfo"/>.
 /// </summary>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/WireEnvelopeSerializerTests.cs</tests>
 public static class WireEnvelopeSerializer {
   /// <summary>Serializes <paramref name="value"/> to UTF-8 JSON bytes using the supplied type info.</summary>

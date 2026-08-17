@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace Whizbang.Data.Postgres.Collective;
 
 /// <summary>
@@ -15,6 +13,7 @@ namespace Whizbang.Data.Postgres.Collective;
 /// Scope granularity means disjoint scopes (different tenants) get different keys and run concurrently.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_TakesExclusiveAdvisoryLockPerBatchAsync</tests>
 public static class CollectiveApplyLockKey {
   /// <summary>
   /// The advisory-lock key for a collective apply against <paramref name="table"/> under
@@ -24,18 +23,6 @@ public static class CollectiveApplyLockKey {
   public static long Compute(string table, string scopeKey) {
     ArgumentNullException.ThrowIfNull(table);
     ArgumentNullException.ThrowIfNull(scopeKey);
-    return _fnv1a64(table + "|" + scopeKey);
-  }
-
-  private static long _fnv1a64(string s) {
-    const ulong offset = 14695981039346656037UL;
-    const ulong prime = 1099511628211UL;
-    var hash = offset;
-    var bytes = Encoding.UTF8.GetBytes(s);
-    foreach (var b in bytes) {
-      hash ^= b;
-      hash *= prime;
-    }
-    return unchecked((long)hash);
+    return Fnv1a64.Compute(table + "|" + scopeKey);
   }
 }

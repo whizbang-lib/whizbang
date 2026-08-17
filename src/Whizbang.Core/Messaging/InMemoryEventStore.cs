@@ -171,7 +171,12 @@ public class InMemoryEventStore : IEventStore {
           MessageId = envelope.MessageId,
           Payload = eventPayload,
           Hops = envelope.Hops,
-          DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Outbox, Source = MessageSource.Local }
+          DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Outbox, Source = MessageSource.Local },
+          // Origin identity rides the replay read: the rewind's origin-order slotting keys on
+          // it, and a reconstruction that drops it silently demotes every single-origin
+          // stream to local-commit order.
+          SourceServiceId = envelope.SourceServiceId,
+          SourceCommitSequence = envelope.SourceCommitSequence,
         };
         yield return typedEnvelope;
       }

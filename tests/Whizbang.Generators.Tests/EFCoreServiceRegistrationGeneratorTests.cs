@@ -776,6 +776,42 @@ public class EFCoreServiceRegistrationGeneratorTests {
   /// Migrations enhance the core schema with additional features.
   /// </summary>
   [Test]
+  public async Task Generator_SchemaExtensions_RetryPathClearsStaleTransactionEnlistmentAsync() {
+    // A transient failure can leave a dead transaction enlisted on the context (rollback over a
+    // broken connection is best-effort). The retry path MUST clear it before the next attempt, or
+    // EF's retrying execution strategy refuses to start (OnFirstExecution) and a transient outage
+    // becomes a permanent init failure — a never-ready pod.
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    var retryIdx = sourceText.IndexOf("Reset state for retry", StringComparison.Ordinal);
+    await Assert.That(retryIdx).IsGreaterThan(0);
+    var clearIdx = sourceText.IndexOf("Database.CurrentTransaction is not null", StringComparison.Ordinal);
+    await Assert.That(clearIdx).IsGreaterThan(0)
+      .Because("the retry path checks for a stale enlistment left by the failed attempt");
+    await Assert.That(clearIdx).IsLessThan(retryIdx)
+      .Because("the stale enlistment clears BEFORE the next attempt's state reset");
+    await Assert.That(sourceText.Substring(clearIdx, Math.Min(400, sourceText.Length - clearIdx)))
+      .Contains("UseTransactionAsync(null")
+      .Because("clearing = detaching the dead transaction from the context");
+  }
+
+  [Test]
   public async Task Generator_SchemaExtensions_CallsExecuteMigrationsAsync() {
     // Arrange
     var source = $$"""

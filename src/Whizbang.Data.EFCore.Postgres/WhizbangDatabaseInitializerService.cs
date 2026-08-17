@@ -15,13 +15,21 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Blocking (default, <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/> = false):</b>
-/// migrations run inline in <c>StartAsync</c>, so the host does not finish starting (no HTTP port,
-/// no workers) until they complete, and a failure throws — aborting startup and keeping the system
-/// in a safe halted state. The long-standing behavior; unchanged for every existing consumer.
+/// <b>Non-blocking (default, <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/> = true):</b>
+/// initialization runs in the background and <c>StartAsync</c> returns immediately, so the host
+/// binds its port and begins serving <em>while migrations are still running</em>. That is the most
+/// consequential fact about startup here, and it is why the availability gate and the readiness
+/// check exist: the gate stays closed until migrations succeed, so nothing reaches an unmigrated
+/// schema through them.
 /// </para>
 /// <para>
-/// <b>Non-blocking (opt-in):</b> initialization runs in the background; <c>StartAsync</c> returns
+/// <b>Blocking (opt in with <c>NonBlockingSchemaInit = false</c>):</b>
+/// migrations run inline in <c>StartAsync</c>, so the host does not finish starting (no HTTP port,
+/// no workers) until they complete, and a failure throws — aborting startup and keeping the system
+/// in a safe halted state.
+/// </para>
+/// <para>
+/// <b>In the non-blocking default:</b> initialization runs in the background; <c>StartAsync</c> returns
 /// immediately so the host binds and can answer a liveness probe, while the gate stays closed until
 /// migrations succeed. Workers — and a readiness check that reads the gate — hold off until then, so
 /// nothing touches an unmigrated schema. On failure (including a
@@ -43,7 +51,7 @@ internal sealed partial class WhizbangDatabaseInitializerService(
     IOptions<ClaimWorkerOptions> claimWorkerOptions,
     IOptions<SchemaInitializationOptions> schemaInitOptions,
     TimeProvider timeProvider,
-    ILogger<WhizbangDatabaseInitializerService> logger) : IHostedService {
+    ILogger<WhizbangDatabaseInitializerService> logger) : IHostedService, IDisposable {
 
   private readonly IServiceProvider _serviceProvider = serviceProvider;
   private readonly ISchemaInitializationRunner _initRunner = initRunner;
@@ -54,6 +62,7 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   private readonly ILogger<WhizbangDatabaseInitializerService> _logger = logger;
 
   private Task? _backgroundInit;
+  private readonly CancellationTokenSource _stopCts = new();
 
   /// <summary>
   /// The background initialization task when <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/>
@@ -75,22 +84,40 @@ internal sealed partial class WhizbangDatabaseInitializerService(
     return _runInitializationAsync(cancellationToken);
   }
 
-  public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+  public Task StopAsync(CancellationToken cancellationToken) {
+    // Ends the background retry loop (it waits on this token between attempts).
+    _stopCts.Cancel();
+    return Task.CompletedTask;
+  }
+
+  public void Dispose() => _stopCts.Dispose();
 
   private async Task _runInitializationLoggedAsync() {
-    try {
-      await _runInitializationAsync(CancellationToken.None);
-    } catch (Exception ex) {
-      // Fail-closed: MarkReady was never reached, so the gate stays closed and no worker or readiness
-      // check ever sees a ready schema. The host stays alive (liveness green) but never becomes ready.
-      LogBackgroundInitializationFailed(_logger, ex);
-
-      // Drive the managed-resource lifecycle into the fault path (Faulted -> record window -> Halted)
-      // so the schema health source reports the failure (Degraded warning -> Faulted failure) instead
-      // of looping "still initializing" forever. Optional: a no-op if run-control isn't registered.
-      var lifecycle = _serviceProvider.GetService<IWhizbangLifecycleState>();
-      if (lifecycle is not null) {
-        await lifecycle.FaultAsync(CancellationToken.None).ConfigureAwait(false);
+    // Self-healing loop: fail-closed WHILE retrying, but never give up. MarkReady is only reached
+    // on success, so the gate stays shut across failed attempts and no worker or readiness check
+    // ever sees a ready schema; the host stays alive (liveness green) and re-attempts on a cadence
+    // — a transient environment problem (connection exhaustion, a broken pool) recovers, and a pod
+    // that never re-attempts is a not-ready zombie only a human can fix. The lifecycle is
+    // deliberately NOT faulted here: FaultAsync drives Faulted -> Halted with no recovery API, so
+    // faulting on a transient failure would permanently halt a pipeline whose next attempt
+    // succeeds — the closed gate is the honest health signal while init re-attempts.
+    var attempt = 0;
+    while (true) {
+      try {
+        await _runInitializationAsync(CancellationToken.None);
+        if (attempt > 0) {
+          LogBackgroundInitializationRecovered(_logger, attempt + 1);
+        }
+        return;
+      } catch (Exception ex) {
+        attempt++;
+        var delay = _schemaInitOptions.Value.InitRetryDelay;
+        LogBackgroundInitializationRetrying(_logger, ex, attempt, delay.TotalSeconds);
+        try {
+          await Task.Delay(delay, _timeProvider, _stopCts.Token).ConfigureAwait(false);
+        } catch (OperationCanceledException) {
+          return;   // host shutdown ends the loop; the gate stays closed.
+        }
       }
     }
   }
@@ -161,6 +188,10 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   static partial void LogPartitionRecomputeFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Error,
-    Message = "Background schema initialization failed; the schema-ready gate remains closed and the host will not become ready")]
-  static partial void LogBackgroundInitializationFailed(ILogger logger, Exception ex);
+    Message = "Background schema initialization attempt {Attempt} failed; the schema-ready gate stays closed and the next attempt runs in {DelaySeconds}s")]
+  static partial void LogBackgroundInitializationRetrying(ILogger logger, Exception ex, int attempt, double delaySeconds);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information,
+    Message = "Background schema initialization recovered on attempt {Attempt}; the schema-ready gate is now open")]
+  static partial void LogBackgroundInitializationRecovered(ILogger logger, int attempt);
 }

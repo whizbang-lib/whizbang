@@ -257,6 +257,259 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_RowTtlOnSourcedPerspective_RegistersRowTtlAsync() {
+    // Perspective-row-retention increment 2: [RowTtl] declares a row TTL directly on the
+    // perspective class — no [Ephemeral] events required. Row lifecycle is a read-model
+    // property; a Sourced perspective's rows can age out while its event log stays durable
+    // (safe since the event-time anchor makes rebuild deterministic and the sourced log can
+    // re-fold a reaped row on wake).
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ThreadArchived : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record SourcedThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  [RowTtl(Days = 60)]
+  public class SourcedThreadPerspective : IPerspectiveFor<SourcedThreadModel, ThreadArchived> {
+    public SourcedThreadModel Apply(SourcedThreadModel currentData, ThreadArchived @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SourcedThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.SourcedThreadModel), 5184000)")
+      .Because("[RowTtl(Days = 60)] registers 60 days in seconds with no ephemeral involvement.");
+  }
+
+  [Test]
+  public async Task PerspectiveRunnerGenerator_StreamGroup_RegistersEachMembershipWithItsDialsAsync() {
+    // Stream groups follow the same turnkey chain as the TTL and the cap: attribute -> generated
+    // [ModuleInitializer] -> registry. A perspective in TWO groups (the case the dials exist for)
+    // must register two memberships, each with its own Announce/Follow/Bridge values.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ThreadTouched : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record GroupedThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  [StreamGroup("chat")]
+  [StreamGroup("audit", Follow = false, Bridge = true)]
+  public class GroupedThreadPerspective : IPerspectiveFor<GroupedThreadModel, ThreadTouched> {
+    public GroupedThreadModel Apply(GroupedThreadModel currentData, ThreadTouched @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "GroupedThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!)
+      .Contains("PerspectiveStreamGroupRegistry.Register(typeof(global::TestNamespace.GroupedThreadModel), \"chat\", true, true, false)")
+      .Because("the first membership keeps the defaults: announce on, follow on, bridge OFF");
+    await Assert.That(runnerSource)
+      .Contains("PerspectiveStreamGroupRegistry.Register(typeof(global::TestNamespace.GroupedThreadModel), \"audit\", true, false, true)")
+      .Because("the second membership carries its own dials — per-MEMBERSHIP, not per-perspective");
+  }
+
+  [Test]
+  public async Task PerspectiveRunnerGenerator_NoStreamGroup_EmitsNoRegistrationAsync() {
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record LoneEvent : IEvent {
+    public string Id { get; init; } = "";
+  }
+
+  public record LoneModel {
+    [StreamId]
+    public string Id { get; init; } = "";
+  }
+
+  public class LonePerspective : IPerspectiveFor<LoneModel, LoneEvent> {
+    public LoneModel Apply(LoneModel currentData, LoneEvent @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "LonePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).DoesNotContain("PerspectiveStreamGroupRegistry")
+      .Because("an ungrouped perspective registers nothing — it must stay untouchable by cascades");
+  }
+
+  [Test]
+  public async Task PerspectiveRunnerGenerator_RowCap_RegistersCapAsync() {
+    // The cardinality half. A cap must reach PerspectiveRowCapRegistry the same turnkey way the TTL
+    // reaches PerspectiveTtlRegistry — a generated [ModuleInitializer], no consumer code, no
+    // reflection. Without this the attribute compiles, the registry stays empty, the startup
+    // reconciler syncs a null cap, and the SQL reaper (which is itself correct and tested) is simply
+    // never told about the declaration. That is the exact shape the feature shipped in.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ChatArchived : IEvent {
+    public string ChatId { get; init; } = "";
+  }
+
+  public record CappedChatModel {
+    [StreamId]
+    public string ChatId { get; init; } = "";
+  }
+
+  [RowCap(PerScope = 200)]
+  public class CappedChatPerspective : IPerspectiveFor<CappedChatModel, ChatArchived> {
+    public CappedChatModel Apply(CappedChatModel currentData, ChatArchived @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "CappedChatPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!)
+      .Contains("PerspectiveRowCapRegistry.Register(typeof(global::TestNamespace.CappedChatModel), 200, \"u\")")
+      .Because("a declared cap must register itself, partitioned per (tenant, user) — a cap nothing "
+        + "registers is a declaration the reaper never sees");
+  }
+
+  [Test]
+  public async Task PerspectiveRunnerGenerator_RowCapPerTenant_RegistersTenantScopeKeyAsync() {
+    // PerTenant ranks across the whole tenant rather than per user. The scope key is what the SQL
+    // sweep partitions its ROW_NUMBER() by, so getting it wrong silently changes who evicts whom.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record RunFinished : IEvent {
+    public string RunId { get; init; } = "";
+  }
+
+  public record TenantRunModel {
+    [StreamId]
+    public string RunId { get; init; } = "";
+  }
+
+  [RowCap(PerTenant = 50)]
+  public class TenantRunPerspective : IPerspectiveFor<TenantRunModel, RunFinished> {
+    public TenantRunModel Apply(TenantRunModel currentData, RunFinished @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "TenantRunPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!)
+      .Contains("PerspectiveRowCapRegistry.Register(typeof(global::TestNamespace.TenantRunModel), 50, \"t\")");
+  }
+
+  [Test]
+  public async Task PerspectiveRunnerGenerator_NoRowCap_RegistersNoCapAsync() {
+    // Absent must stay distinct from a cap of zero, which would evict everything.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record PlainHappened : IEvent {
+    public string Id { get; init; } = "";
+  }
+
+  public record PlainModel {
+    [StreamId]
+    public string Id { get; init; } = "";
+  }
+
+  public class PlainPerspective : IPerspectiveFor<PlainModel, PlainHappened> {
+    public PlainModel Apply(PlainModel currentData, PlainHappened @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PlainPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).DoesNotContain("PerspectiveRowCapRegistry.Register")
+      .Because("an undeclared cap must emit nothing at all — registering 0 or -1 would be a cap "
+        + "meaning 'evict everything' or a lie the reconciler then syncs");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_RowTtl_OverridesEphemeralDerivedTtlAsync() {
+    // Ladder precedence: an explicit [RowTtl] on the perspective wins over the TTL derived
+    // virally from its [Ephemeral(TtlRow)] events (most-specific wins — the read model's own
+    // declaration outranks what its events imply).
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral(Destruction = Destruction.AfterTtl, Storage = TransientStorage.TtlRow, TtlSeconds = 7776000)]
+  public record ChatMessage : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record OverriddenThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  [RowTtl(Seconds = 42)]
+  public class OverriddenThreadPerspective : IPerspectiveFor<OverriddenThreadModel, ChatMessage> {
+    public OverriddenThreadModel Apply(OverriddenThreadModel currentData, ChatMessage @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OverriddenThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.OverriddenThreadModel), 42)")
+      .Because("the explicit [RowTtl] outranks the ephemeral-derived TTL on the override ladder.");
+    await Assert.That(runnerSource!).DoesNotContain(", 7776000)")
+      .Because("the derived value must not leak through when an explicit declaration exists.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_FullHistoryPerspective_RegistersNameAsync() {
     // A1-6b: a [FullHistory] perspective emits a [ModuleInitializer] registering its name so the close guard
     // refuses a discard-close of any stream it consumes.
@@ -2903,6 +3156,150 @@ namespace TestNamespace {
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("ExtractStreamId");
     await Assert.That(runnerSource).Contains("@event.SagaId");
+  }
+
+  #endregion
+
+  #region CreateEmptyModel direct construction (no reflection)
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_CreateEmptyModel_UsesDirectConstructionWithoutReflectionAsync() {
+    // Arrange - the generated CreateEmptyModel must construct the model
+    // directly instead of Activator.CreateInstance + PropertyInfo.SetValue
+    // (reflection is banned and breaks AOT).
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TestNamespace {
+  public record WidgetCreatedEvent : IEvent {
+    public Guid WidgetId { get; init; }
+  }
+
+  public record WidgetReadModel {
+    [StreamId]
+    public Guid WidgetId { get; init; }
+    public string Status { get; init; } = "";
+  }
+
+  public class WidgetPerspective : IPerspectiveFor<WidgetReadModel, WidgetCreatedEvent> {
+    public WidgetReadModel Apply(WidgetReadModel currentData, WidgetCreatedEvent @event) {
+      return new WidgetReadModel { WidgetId = @event.WidgetId, Status = "Created" };
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "WidgetPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).DoesNotContain("Activator.CreateInstance")
+      .Because("CreateEmptyModel must not use runtime activation; reflection breaks AOT.");
+    await Assert.That(runnerSource).DoesNotContain(".GetProperty(")
+      .Because("CreateEmptyModel must not assign the stream key via reflection.");
+    await Assert.That(runnerSource).Contains("new global::TestNamespace.WidgetReadModel { WidgetId = streamId }");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_StronglyTypedStreamId_ConstructsViaFromFactoryAsync() {
+    // Arrange - a model whose [StreamId] property is a strongly-typed id
+    // struct with a static From(Guid) factory. The reflection-based
+    // CreateEmptyModel threw ArgumentException at runtime ('System.Guid'
+    // cannot be converted); direct construction must use the factory.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TestNamespace {
+  public readonly struct WidgetId {
+    public Guid Value { get; }
+    private WidgetId(Guid value) { Value = value; }
+    public static WidgetId From(Guid value) => new WidgetId(value);
+  }
+
+  public record WidgetCreatedEvent : IEvent {
+    public Guid WidgetId { get; init; }
+  }
+
+  public record WidgetReadModel {
+    [StreamId]
+    public WidgetId WidgetId { get; init; }
+    public string Status { get; init; } = "";
+  }
+
+  public class WidgetPerspective : IPerspectiveFor<WidgetReadModel, WidgetCreatedEvent> {
+    public WidgetReadModel Apply(WidgetReadModel currentData, WidgetCreatedEvent @event) {
+      return currentData with { Status = "Created" };
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "WidgetPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("global::TestNamespace.WidgetId.From(streamId)")
+      .Because("strongly-typed stream ids must be constructed through their From(Guid) factory.");
+    await Assert.That(runnerSource).DoesNotContain("Activator.CreateInstance");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_RequiredModelMembers_AreInitializedSoGeneratedCodeCompilesAsync() {
+    // Arrange - required members must appear in the object initializer or the
+    // generated runner will not compile in the consumer's build.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TestNamespace {
+  public record WidgetCreatedEvent : IEvent {
+    public Guid WidgetId { get; init; }
+  }
+
+  public record WidgetReadModel {
+    [StreamId]
+    public required Guid WidgetId { get; init; }
+    public required string Name { get; init; }
+  }
+
+  public class WidgetPerspective : IPerspectiveFor<WidgetReadModel, WidgetCreatedEvent> {
+    public WidgetReadModel Apply(WidgetReadModel currentData, WidgetCreatedEvent @event) {
+      return currentData with { Name = "Created" };
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "WidgetPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("WidgetId = streamId");
+    await Assert.That(runnerSource).Contains("Name = default!")
+      .Because("other required members must be explicitly initialized (to default!, matching the old reflection behavior of leaving them unset).");
   }
 
   #endregion

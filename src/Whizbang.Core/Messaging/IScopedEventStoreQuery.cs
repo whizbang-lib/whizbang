@@ -41,7 +41,9 @@ public interface IScopedEventStoreQuery {
 /// Use for batch operations where multiple queries should share one scope (and DbContext).
 /// </summary>
 /// <docs>fundamentals/events/event-store-query</docs>
-/// <tests>Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:IEventStoreQueryFactory_IsInterfaceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:IEventStoreQueryFactory_HasCreateScopedMethodAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedEventStoreQueryTests.cs:EventStoreQueryFactory_CreateScoped_SharesScopeAcrossQueriesAsync</tests>
 public interface IEventStoreQueryFactory {
   /// <summary>
   /// Creates a scoped IEventStoreQuery instance.

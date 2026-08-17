@@ -24,8 +24,9 @@ public class TransportConsumerWorkerProvisioningTests {
   [Test]
   public async Task ExecuteAsync_WithProvisionerAndOwnedDomains_CallsProvisionerBeforeSubscriptionsAsync() {
     // Arrange
-    var provisioner = new TrackingProvisioner();
-    var transport = new TrackingTransport();
+    var callOrder = new CallOrderRecorder();
+    var provisioner = new TrackingProvisioner(callOrder);
+    var transport = new TrackingTransport(callOrder);
     var ownedDomains = new HashSet<string> { "myapp.users", "myapp.orders" };
 
     var services = new ServiceCollection();
@@ -39,14 +40,14 @@ public class TransportConsumerWorkerProvisioningTests {
 
     var worker = _createWorker(transport, options, serviceProvider);
 
-    // Act
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+    // Act — wait on the subscription signal (the worker's last startup step), never a fixed delay:
+    // under full-suite load a sleep-then-assert races the worker's ExecuteAsync and flakes.
+    using var cts = new CancellationTokenSource();
     try {
       await worker.StartAsync(cts.Token);
-      await Task.Delay(100, cts.Token); // Let worker execute
-    } catch (OperationCanceledException) {
-      // Expected - worker runs forever until cancelled
+      await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
+      cts.Cancel();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -56,10 +57,11 @@ public class TransportConsumerWorkerProvisioningTests {
     await Assert.That(provisioner.ProvisionedDomains).Contains("myapp.users");
     await Assert.That(provisioner.ProvisionedDomains).Contains("myapp.orders");
 
-    // Verify provisioning happened before subscriptions
-    await Assert.That(provisioner.ProvisionCalledAt).IsNotNull();
-    await Assert.That(transport.SubscribeCalledAt).IsNotNull();
-    await Assert.That(provisioner.ProvisionCalledAt!.Value).IsLessThan(transport.SubscribeCalledAt!.Value);
+    // Verify provisioning happened before subscriptions — recorded call order, not wall-clock
+    // timestamps (same-tick DateTimeOffset stamps compare equal and flake an IsLessThan).
+    await Assert.That(callOrder.IndexOf("provision")).IsGreaterThanOrEqualTo(0);
+    await Assert.That(callOrder.IndexOf("subscribe")).IsGreaterThanOrEqualTo(0);
+    await Assert.That(callOrder.IndexOf("provision")).IsLessThan(callOrder.IndexOf("subscribe"));
   }
 
   /// <summary>
@@ -78,12 +80,13 @@ public class TransportConsumerWorkerProvisioningTests {
 
     var worker = _createWorker(transport, options, serviceProvider);
 
-    // Act
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+    // Act — signal-driven (see the ordering test): a fixed delay races ExecuteAsync under load.
+    using var cts = new CancellationTokenSource();
     try {
       await worker.StartAsync(cts.Token);
-      await Task.Delay(100, cts.Token);
-    } catch (OperationCanceledException) { } finally {
+      await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    } finally {
+      cts.Cancel();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -110,12 +113,14 @@ public class TransportConsumerWorkerProvisioningTests {
 
     var worker = _createWorker(transport, options, serviceProvider);
 
-    // Act
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+    // Act — subscribing is the step AFTER the provisioning decision, so once the subscribe
+    // signal fires the skip-provisioning assertion below is ordering-sound (no fixed delay).
+    using var cts = new CancellationTokenSource();
     try {
       await worker.StartAsync(cts.Token);
-      await Task.Delay(100, cts.Token);
-    } catch (OperationCanceledException) { } finally {
+      await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    } finally {
+      cts.Cancel();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -154,17 +159,32 @@ public class TransportConsumerWorkerProvisioningTests {
   // TEST DOUBLES
   // ========================================
 
+  /// <summary>Records the relative order of provisioning/subscription calls — wall-clock stamps
+  /// can tie on the same tick and flake a strict less-than comparison.</summary>
+  private sealed class CallOrderRecorder {
+    private readonly List<string> _steps = [];
+    public void Record(string step) {
+      lock (_steps) {
+        _steps.Add(step);
+      }
+    }
+    public int IndexOf(string step) {
+      lock (_steps) {
+        return _steps.IndexOf(step);
+      }
+    }
+  }
+
   /// <summary>
   /// Test double for IInfrastructureProvisioner that tracks calls.
   /// </summary>
-  private sealed class TrackingProvisioner : IInfrastructureProvisioner {
+  private sealed class TrackingProvisioner(CallOrderRecorder? callOrder = null) : IInfrastructureProvisioner {
     public IReadOnlySet<string>? ProvisionedDomains { get; private set; }
-    public DateTimeOffset? ProvisionCalledAt { get; private set; }
 
     public Task ProvisionOwnedDomainsAsync(
         IReadOnlySet<string> ownedDomains,
         CancellationToken cancellationToken = default) {
-      ProvisionCalledAt = DateTimeOffset.UtcNow;
+      callOrder?.Record("provision");
       ProvisionedDomains = ownedDomains;
       return Task.CompletedTask;
     }
@@ -173,12 +193,16 @@ public class TransportConsumerWorkerProvisioningTests {
   /// <summary>
   /// Test double for ITransport that tracks subscription calls.
   /// </summary>
-  private sealed class TrackingTransport : ITransport {
+  private sealed class TrackingTransport(CallOrderRecorder? callOrder = null) : ITransport {
+    private readonly TaskCompletionSource _firstSubscribe = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
     public int SubscribeCallCount { get; private set; }
-    public DateTimeOffset? SubscribeCalledAt { get; private set; }
+
+    /// <summary>Completes on the first subscription — the deterministic "worker reached its last
+    /// startup step" signal the tests wait on instead of a fixed delay.</summary>
+    public Task FirstSubscribe => _firstSubscribe.Task;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
@@ -189,7 +213,8 @@ public class TransportConsumerWorkerProvisioningTests {
         TransportDestination destination,
         CancellationToken cancellationToken = default) {
       SubscribeCallCount++;
-      SubscribeCalledAt ??= DateTimeOffset.UtcNow;
+      callOrder?.Record("subscribe");
+      _firstSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(new NoOpSubscription());
     }
 
@@ -208,7 +233,8 @@ public class TransportConsumerWorkerProvisioningTests {
         TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       SubscribeCallCount++;
-      SubscribeCalledAt ??= DateTimeOffset.UtcNow;
+      callOrder?.Record("subscribe");
+      _firstSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(new NoOpSubscription());
     }
 

@@ -31,6 +31,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/event-completion</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/EventCompletionAwaiterTests.cs:WaitForEventsAsync_WaitsForAllPerspectivesToCompleteAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/EventCompletionAwaiterTests.cs:WaitForEventsAsync_TimeoutsWhenPerspectiveNeverCompletesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/EventCompletionAwaiterTests.cs:WaitForEventsAsync_ReturnsImmediatelyWhenNoEventsTrackedAsync</tests>
 public interface IEventCompletionAwaiter : IAwaiterIdentity {
   /// <summary>
   /// Waits for specific events to be processed by ALL perspectives.

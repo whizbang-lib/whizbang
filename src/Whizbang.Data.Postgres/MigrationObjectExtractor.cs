@@ -11,7 +11,7 @@ namespace Whizbang.Data.Postgres;
 /// from the file's DDL or taken verbatim from an explicit <c>-- Objects:</c> header override
 /// (required for files whose definitions hide inside dynamic SQL).
 /// </summary>
-/// <docs>operations/migrations</docs>
+/// <docs>operations/infrastructure/migrations</docs>
 public sealed record MigrationObjectSet(IReadOnlyList<string> Objects, bool ExplicitOverride);
 
 /// <summary>
@@ -22,7 +22,7 @@ public sealed record MigrationObjectSet(IReadOnlyList<string> Objects, bool Expl
 /// re-run automatic. Over-capture (e.g. a CREATE inside a function body's string) merely widens
 /// the closure; under-capture is the dangerous direction, so recognition is deliberately broad.
 /// </summary>
-/// <docs>operations/migrations</docs>
+/// <docs>operations/infrastructure/migrations</docs>
 public static partial class MigrationObjectExtractor {
   [GeneratedRegex(@"^\s*--\s*Objects:\s*(?<list>.+?)\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase)]
   private static partial Regex _objectsHeader();

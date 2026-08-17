@@ -21,6 +21,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultGenerationProviderTests.cs:GetGeneration_ReturnsNonEmptyStringAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultGenerationProviderTests.cs:GetGeneration_StableAcrossInstancesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerDeadLetterTests.cs:CustomGenerationProvider_OverridesDefaultWhenRegisteredAsync</tests>
 public interface IGenerationProvider {
   /// <summary>
   /// Returns the current generation tag — a short stable string that uniquely identifies

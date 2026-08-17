@@ -20,6 +20,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs:PerspectiveSyncOptions_DefaultTimeout_Is5SecondsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs:PerspectiveSyncOptions_DefaultDebuggerAwareTimeout_IsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderFullCoverageTests.cs:ImplicitConversion_ProducesSameResultAsBuildAsync</tests>
 public sealed class PerspectiveSyncOptions {
   /// <summary>
   /// Gets or sets the filter tree (supports AND/OR combinations).

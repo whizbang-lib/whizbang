@@ -25,7 +25,7 @@ BEGIN
   -- retain rows for forensics with processed_at stamped — this maintenance pass
   -- MUST skip purging those rows or the debug-mode design breaks.
   SELECT COALESCE(
-    (SELECT setting_value::BOOLEAN FROM wh_settings WHERE setting_key = 'debug_mode'),
+    (SELECT setting_value::BOOLEAN FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode'),
     FALSE
   ) INTO v_debug_mode;
 
@@ -33,7 +33,7 @@ BEGIN
   -- wh_settings; default 1 hour preserves the transient-NULL race window between
   -- cleanup_stale_instances nulling the owner and the next claim cycle re-assigning it.
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'abandoned_stream_hours'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'abandoned_stream_hours'),
     1
   ) INTO v_abandoned_stream_hours;
 
@@ -89,7 +89,7 @@ BEGIN
   -- Task 4: Purge old deduplication entries
   -- ========================================
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'dedup_retention_days'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'dedup_retention_days'),
     30
   ) INTO v_dedup_retention_days;
 
@@ -107,7 +107,7 @@ BEGIN
   -- Task 5: Purge ancient stuck inbox messages
   -- ========================================
   SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'stuck_inbox_retention_days'),
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'stuck_inbox_retention_days'),
     7
   ) INTO v_stuck_inbox_retention_days;
 
@@ -188,11 +188,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Seed default retention settings
-INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
 VALUES ('dedup_retention_days', '30', 'integer', 'Days to retain message deduplication entries')
 ON CONFLICT (setting_key) DO NOTHING;
 
-INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
 VALUES ('stuck_inbox_retention_days', '7', 'integer', 'Days to retain inbox messages that were never processed')
 ON CONFLICT (setting_key) DO NOTHING;
 
@@ -200,14 +200,14 @@ ON CONFLICT (setting_key) DO NOTHING;
 -- complete_* functions retain rows for forensics with processed_at stamped, and
 -- perform_maintenance skips its purge tasks so those rows survive maintenance cycles.
 -- Default false: production ephemeral semantics.
-INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
 VALUES ('debug_mode', 'false', 'boolean', 'When true, complete_* functions retain rows and perform_maintenance skips purge of completed messages.')
 ON CONFLICT (setting_key) DO NOTHING;
 
 -- Grace period (hours) before an OWNER-LESS active-stream row is purged. Rows whose owning
 -- wh_service_instances row is gone are purged immediately regardless; this knob only governs the
 -- transient-NULL race window (owner nulled, not yet re-claimed). Default 1.
-INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
 VALUES ('abandoned_stream_hours', '1', 'integer', 'Hours an owner-less active-stream row must be idle before perform_maintenance purges it (transient-NULL race grace window).')
 ON CONFLICT (setting_key) DO NOTHING;
 

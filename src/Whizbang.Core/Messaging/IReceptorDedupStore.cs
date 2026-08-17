@@ -28,6 +28,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/IReceptorDedupStoreContractTests.cs:Contract_RecordInvocationThenTryGet_ReturnsRecordedValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/IReceptorDedupStoreContractTests.cs:Contract_TryGetPriorInvocation_ReturnsNullForUnseenReceptorAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/IReceptorDedupStoreContractTests.cs:Contract_PriorInvocationIsReturnedRegardlessOfStageAsync</tests>
 public interface IReceptorDedupStore {
   /// <summary>
   /// Returns a prior <see cref="ReceptorInvocationRecord"/> for <paramref name="receptorId"/>

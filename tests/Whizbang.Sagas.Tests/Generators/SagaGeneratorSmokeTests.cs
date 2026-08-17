@@ -154,6 +154,9 @@ public class SagaGeneratorSmokeTests {
 public partial class GeneratorTestDefaultSaga;
 
 public class FakeProjectEventBase : Whizbang.Core.IEvent {
+  /// <summary>Every emitted saga event overrides this with its own [StreamId] EntityId; the base
+  /// carries one so the base type itself satisfies stream-id resolution (WHIZ009).</summary>
+  [Whizbang.Core.StreamId] public Guid StreamEntityId { get; set; }
   public Guid MessageId { get; set; } = Guid.NewGuid();
 }
 

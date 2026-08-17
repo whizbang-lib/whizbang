@@ -15,7 +15,7 @@ namespace Whizbang.Core.Offloads;
 /// <param name="ContentHash">SHA-256 (or provider-equivalent) of the body. Receiver MUST verify after download; mismatch → dead-letter with integrity-failure code.</param>
 /// <param name="ContentType">MIME type of the original body so the receiver can deserialize into the correct payload type.</param>
 /// <param name="UploadedAt">Wall-clock timestamp of upload. Useful for diagnostics and provider-side TTL bookkeeping; not part of the integrity check.</param>
-/// <docs>offloads</docs>
+/// <docs>fundamentals/offloads/message-body-store</docs>
 public sealed record MessageBodyClaim(
   string ProviderName,
   string StorageKey,

@@ -55,9 +55,17 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="request">Instance identity + optional metadata.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// <see langword="true"/> if the heartbeat was recorded; <see langword="false"/> if this
+  /// instance has been evicted (reaped as stale, then tombstoned) and must not consider itself
+  /// part of the fleet — callers must stop heartbeating rather than retry, since a tombstoned
+  /// instance id never becomes valid again.
+  /// </returns>
   /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+  /// <docs>fundamentals/workers/instance-liveness#eviction-reaping-is-a-fence-not-just-a-deletion</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreRecordHeartbeatTests.cs:RecordHeartbeatAsync_NewInstance_InsertsRowAsync</tests>
-  Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceEvictionFencingSqlTests.cs</tests>
+  Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
       $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
 
@@ -268,7 +276,7 @@ public interface IWorkCoordinator {
   /// in this service — otherwise wh_inbox.partition_number and wh_active_streams.partition_number
   /// disagree for the same stream and claim_orphaned_inbox deadlocks.</param>
   /// <param name="cancellationToken">Cancellation token</param>
-  /// <docs>operations/workers/transport-consumer</docs>
+  /// <docs>messaging/transports/transport-consumer</docs>
   Task StoreInboxMessagesAsync(
     InboxMessage[] messages,
     int partitionCount,
@@ -424,12 +432,16 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="perspectivesPerEventType">Registry map: event type key → expected perspective names.</param>
   /// <param name="lookbackWindow">How far back to scan for orphaned events.</param>
+  /// <param name="maxOrphans">GLOBAL cap on the returned batch (oldest first) — the reconcile is a
+  /// bounded unit of work the caller loops, never an unbounded startup scan that can stall a host
+  /// past its liveness budget on a large store.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Orphaned events with their envelopes for PostLifecycle replay.</returns>
   /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
   Task<IReadOnlyList<OrphanedLifecycleEvent>> GetOrphanedLifecycleEventsAsync(
     Dictionary<string, IReadOnlyList<string>> perspectivesPerEventType,
     TimeSpan lookbackWindow,
+    int maxOrphans = 100,
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<OrphanedLifecycleEvent>>([]);
 
   /// <summary>
@@ -553,6 +565,18 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// Carries each perspective's row-retention declaration into the perspective registry, so the
+  /// reaper resolves enrollment and windows from SQL rather than needing them threaded in per cycle.
+  /// Called once at startup. No-op on engines without the registry columns.
+  /// </summary>
+  /// <param name="declarations">Every perspective's declaration; drives enrolment and un-enrolment.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  Task SyncPerspectiveRetentionAsync(
+    IReadOnlyList<PerspectiveRetentionDeclaration> declarations,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Finds the <c>(stream, perspective)</c> pairs the maintenance cycle must snapshot BEFORE it reaps: an
   /// ephemeral body that is consumed and aged past its grace window, whose consuming perspective has NO
   /// snapshot at/past the event's <c>commit_sequence</c>. Snapshotting these (via the runner's bootstrap
@@ -566,6 +590,762 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<EphemeralSnapshotTarget>>([]);
 
   /// <summary>
+  /// Stream-integrity R1: selects persisted events from THIS service's event store for re-delivery
+  /// to the wire, in original stored form, ordered by <c>(stream_id, version)</c> so per-stream
+  /// bundles replay in append order. All <see cref="RedeliveryRequest"/> filters are conjunctive.
+  /// The selection itself excludes at-most-once schedule occurrences (their delivery guarantee
+  /// forbids re-delivery) and reaped ephemeral events (the body join — an absent body cannot be
+  /// re-delivered). Default: empty (engines without an event store cannot re-deliver).
+  /// </summary>
+  /// <param name="request">Selection criteria and cap.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Selected events, capped at <see cref="RedeliveryRequest.MaxEvents"/>.</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs</tests>
+  Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(
+    RedeliveryRequest request,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RedeliveryEvent>>([]);
+
+  /// <summary>
+  /// Stream-integrity Phase B: atomically advances this origin's checkpoint watermark to the
+  /// highest STAMPED commit sequence and returns the per-(tenant, type) emission counts inside the
+  /// advanced window — the payload of one <see cref="IntegrityCheckpoint"/>. Multi-instance safe:
+  /// the watermark advance is an optimistic compare-and-swap, so exactly one instance wins each
+  /// window (the others get null and skip the cycle). The FIRST call baselines (returns an empty
+  /// window at the current watermark) so history is never counted retroactively. At-most-once
+  /// schedule occurrences and checkpoints themselves are excluded from the counts. Default: null
+  /// (engines without commit-sequence stamping cannot checkpoint).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The advanced window, or null when unsupported / lost the advance race.</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointAdvanceTests.cs</tests>
+  Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IntegrityCheckpointWindow?>(null);
+
+  /// <summary>
+  /// Stream-integrity Phase B, consumer side: counts the events THIS service has persisted from
+  /// the given origin inside an origin commit-sequence window, per (tenant, type) — the local half
+  /// of a checkpoint comparison. Keys on the origin identity every received event already persists
+  /// (<c>origin_service_id</c> + <c>origin_commit_sequence</c>). Default: empty (engines without
+  /// origin stamping cannot verify).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose window is being verified.</param>
+  /// <param name="fromCommitSequence">Exclusive window floor.</param>
+  /// <param name="toCommitSequence">Inclusive window watermark.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Per-(tenant, type) receipt counts inside the window.</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointAdvanceTests.cs</tests>
+  Task<IReadOnlyList<CheckpointBucket>> CountReceivedFromOriginAsync(
+    Guid originServiceId,
+    long fromCommitSequence,
+    long toCommitSequence,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<CheckpointBucket>>([]);
+
+  /// <summary>
+  /// Stream-integrity Phase S: the consumed-type registry — when each event type joined this
+  /// service's consumed set, and its backfill status. Default: empty (engines without the
+  /// registry table cannot track expansions).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Every registered consumed type with its backfill status.</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedTypeRegistryTests.cs</tests>
+  Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ConsumedTypeRegistration>>([]);
+
+  /// <summary>
+  /// Stream-integrity Phase S: registers newly-consumed event types. First boot registers the
+  /// whole catalog as <see cref="ConsumedTypeBackfillStatus.Baseline"/> (nothing existed to miss);
+  /// later boots register additions as <see cref="ConsumedTypeBackfillStatus.Pending"/>
+  /// (an expansion — history exists this service never received). Idempotent and multi-instance
+  /// safe (<c>ON CONFLICT DO NOTHING</c> — the first instance to boot wins each row). Default: no-op.
+  /// </summary>
+  /// <param name="eventTypes">Stored event type names to register.</param>
+  /// <param name="asBaseline">True = first-boot registration (no backfill); false = expansion (Pending).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedTypeRegistryTests.cs</tests>
+  Task RegisterConsumedTypesAsync(
+    IReadOnlyList<string> eventTypes,
+    bool asBaseline,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Stream-integrity Phase S: marks pending expansions as
+  /// <see cref="ConsumedTypeBackfillStatus.Requested"/> after the broadcast re-delivery request is
+  /// sent. Only Pending rows transition (Baseline/Requested rows are untouched). Default: no-op.
+  /// </summary>
+  /// <param name="eventTypes">The requested types.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedTypeRegistryTests.cs</tests>
+  Task MarkConsumedTypeBackfillRequestedAsync(
+    IReadOnlyList<string> eventTypes,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Stream-integrity Phase A: computes the order-independent identity digests of this store's
+  /// events per (tenant, type, stream). <paramref name="originServiceId"/> null = OWN emissions
+  /// (locally-originated rows — what this service publishes as an origin); a value = events
+  /// RECEIVED from that origin (the consumer's half of a manifest comparison). Ephemeral events
+  /// (mode-excluded from the deep audit) and at-most-once occurrences are excluded, matching
+  /// Phase B's counts. The computation is bounded to events older than
+  /// <paramref name="settleWindow"/> so in-flight deliveries never read as divergence.
+  /// Default: empty (engines without the store cannot audit).
+  /// </summary>
+  /// <param name="originServiceId">Null = own emissions; a value = received from that origin.</param>
+  /// <param name="eventTypes">Optional type filter (the consumer restricts to subscribed types).</param>
+  /// <param name="settleWindow">Only events older than this are folded (default 1 hour).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Digest rows ordered by (tenant, type, stream).</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
+  Task<IReadOnlyList<StreamDigest>> ComputeStreamDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<StreamDigest>>([]);
+
+  /// <summary>
+  /// Stream-integrity Phase A: the TYPE-level recompute — the same fold as
+  /// <see cref="ComputeStreamDigestsAsync"/> rolled up per (tenant, type), with the roll-up done
+  /// AT THE STORE. A types-level answer materialized per-stream first holds one row per stream in
+  /// memory (a large store's first full audit has memory-killed consumers doing exactly that);
+  /// rolled up at the store, the result is bounded by #types × #tenants. The XOR of a type's
+  /// stream buckets equals folding every event of the type, because the buckets partition them.
+  /// Default: delegates to the per-stream compute + C# roll-up (providers without a set-based
+  /// store keep the old behavior).
+  /// </summary>
+  /// <param name="originServiceId">Null = own emissions; a value = received from that origin.</param>
+  /// <param name="eventTypes">Optional type filter (the consumer restricts to subscribed types).</param>
+  /// <param name="settleWindow">Only events older than this are folded (default 1 hour).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Type-level digest rows (StreamId = <see cref="Guid.Empty"/>), ordered by (tenant, type).</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
+  async Task<IReadOnlyList<StreamDigest>> ComputeTypeDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    IntegrityDigestMath.RollUpToTypes(
+      await ComputeStreamDigestsAsync(originServiceId, eventTypes, settleWindow, cancellationToken).ConfigureAwait(false));
+
+  /// <summary>
+  /// Stream-integrity Phase L: finds LOCAL coverage gaps — streams holding settled, non-ephemeral
+  /// events that a registered perspective (message association) should fold, where that
+  /// perspective has NO cursor on the stream and the events have no pending work items (typically:
+  /// the perspective was born after the history). Repair is a LOCAL rebuild. Default: empty.
+  /// </summary>
+  /// <param name="settleWindow">Only events older than this count (in-flight work is not a gap).</param>
+  /// <param name="maxGaps">Hard bound on returned gaps — the report cap belongs in the query
+  /// (fetching thousands of rows to report a hundred is the same flood one layer down).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Distinct (stream, perspective) gaps with their settled event counts, at most
+  /// <paramref name="maxGaps"/> rows.</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
+  Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
+    TimeSpan settleWindow,
+    int maxGaps,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([]);
+
+  /// <summary>
+  /// Claims the current integrity-audit cycle for the calling instance — the same
+  /// first-instance-wins discipline the schema initializer (advisory lock) and the deep-prune
+  /// watermark (settings CAS) already apply to their one-per-service work. True: this instance
+  /// won and runs the cycle. False: a sibling instance ran one within <paramref name="claimWindow"/>
+  /// — skip; the audit is per-SERVICE work, and every replica re-running the full-store digest
+  /// recompute multiplies fleet-wide load for identical results. Default: always true
+  /// (single-instance providers and engines without a settings store keep today's behavior).
+  /// </summary>
+  /// <param name="claimWindow">How recently a sibling's claim suppresses this one.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
+  Task<bool> TryClaimIntegrityAuditCycleAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+  /// <summary>
+  /// Claims the startup type-definition reconciliation for the calling instance — the same
+  /// first-instance-wins discipline as <see cref="TryClaimIntegrityAuditCycleAsync"/>. True: this
+  /// instance won and performs the walk. False: a sibling already reconciled within
+  /// <paramref name="claimWindow"/> — skip entirely.
+  /// <para>
+  /// The walk is idempotent, so every instance running it was never incorrect — merely N times the
+  /// cost for one instance's worth of result. At fleet scale that is the expensive part: a catalog
+  /// walk plus a register round-trip per message type, from every replica of every service, all at
+  /// once during a deploy. Measured taking a shared server from 29% CPU / 62 connections to 99% /
+  /// 272, which killed pods on their liveness probes and restarted the same work.
+  /// </para>
+  /// Default: always true (single-instance providers and engines without a settings store keep
+  /// today's behavior).
+  /// </summary>
+  /// <param name="claimWindow">How recently a sibling's claim suppresses this one.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TypeDefinitionReconcilerTests.cs:Reconcile_SecondInstanceInTheWindow_SkipsTheWholeWalkAsync</tests>
+  Task<bool> TryClaimTypeDefinitionReconcileAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+  /// <summary>
+  /// Records a transport body-offload claim in the ledger: the database's only record of an
+  /// offloaded blob once the message completes (the claim envelope rides <c>wh_outbox</c>/
+  /// <c>wh_inbox</c>, and those rows are deleted on completion). Written by the offload hook at
+  /// upload time; consumed by the passive expiry sweep, which is a query over this ledger instead
+  /// of a container listing. Idempotent — at-least-once dispatch may replay the upload path.
+  /// Default no-op: providers without a durable ledger fall back to store-side lifecycle rules.
+  /// </summary>
+  /// <param name="storageKey">The provider-minted storage key from the upload's claim ticket.</param>
+  /// <param name="providerName">The keyed <c>IMessageBodyStore</c> registration that holds the blob.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/messaging/body-offload</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OffloadClaimLedgerSqlTests.cs</tests>
+  Task RecordOffloadClaimAsync(
+    string storageKey,
+    string providerName,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// The offload-claim ledger entries older than <paramref name="olderThan"/> — the passive
+  /// sweep's work list. Age is evaluated against <c>uploaded_at</c> (DB clock) at query time, so a
+  /// changed expiry window is retroactive over every existing blob by construction; nothing is
+  /// stamped per blob. Default empty: no ledger, nothing to sweep.
+  /// </summary>
+  /// <param name="olderThan">The expiry window (<c>MessageBodyOffloadOptions.PassiveExpiry</c>).</param>
+  /// <param name="batchSize">Upper bound per call; the sweep drains across cycles.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OffloadClaimLedgerSqlTests.cs</tests>
+  Task<IReadOnlyList<OffloadClaimRecord>> GetExpiredOffloadClaimsAsync(
+    TimeSpan olderThan,
+    int batchSize,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<OffloadClaimRecord>>([]);
+
+  /// <summary>
+  /// Removes ledger rows whose blobs were successfully deleted (a missing blob counts —
+  /// <c>IMessageBodyStore.DeleteAsync</c> is idempotent on not-found). The sweep passes ONLY the
+  /// successes: a failed delete keeps its row and is retried next sweep, so the ledger row
+  /// outlives the blob, never the reverse. Default no-op.
+  /// </summary>
+  /// <param name="storageKeys">Keys whose blob deletion succeeded.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OffloadClaimLedgerSqlTests.cs</tests>
+  Task RemoveOffloadClaimsAsync(
+    IReadOnlyCollection<string> storageKeys,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Claims one passive offload sweep for the calling instance — the same first-instance-wins
+  /// CAS-watermark discipline as <see cref="TryClaimIntegrityAuditCycleAsync"/>, so N replicas do
+  /// not issue N delete storms against the same container. Default true: a coordinator without
+  /// the watermark substrate is single-instance by assumption and just runs.
+  /// </summary>
+  /// <param name="claimWindow">Minimum interval between sweeps service-wide.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OffloadClaimLedgerSqlTests.cs</tests>
+  Task<bool> TryClaimOffloadSweepAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+  /// <summary>
+  /// The pre-destruction seam's COLLECT phase for perspective rows: the retention sweeps' DELETE
+  /// predicates as a SELECT, with row payloads, limited to the given perspective model type names —
+  /// exactly the set the next sweep would destroy (holds excluded, acknowledgement gate honored on
+  /// the expiry side, cap overflow included regardless). Default: empty (no seam substrate).
+  /// </summary>
+  /// <param name="clrTypeNames">The guarded perspective models' CLR type names.</param>
+  /// <param name="perTableLimit">Bound per perspective table per cycle.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsAboutToReapAsync(
+    IReadOnlyCollection<string> clrTypeNames,
+    int perTableLimit = 500,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>>([]);
+
+  /// <summary>
+  /// Postpones destruction of the given perspective rows until <paramref name="holdUntil"/> —
+  /// a guard's Defer/Cancel made durable. Idempotent upsert; <see cref="DateTimeOffset.MaxValue"/>
+  /// maps to keep-forever. Default: no-op.
+  /// </summary>
+  /// <param name="rows">The rows to hold.</param>
+  /// <param name="holdUntil">When the hold lapses and the row is re-offered.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task HoldPerspectiveRowDestructionAsync(
+    IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+    DateTimeOffset holdUntil,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Releases any holds on the given rows — a guard's Proceed after an earlier Defer. Default: no-op.
+  /// </summary>
+  /// <param name="rows">The rows to release.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task ReleasePerspectiveRowHoldsAsync(
+    IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Records a guard failure for the given rows and applies the destruction retry ladder: under
+  /// the retry cap the rows are held for the backoff and re-offered; past it the configured
+  /// <see cref="Whizbang.Core.Lifecycle.OnDestroyFailure"/> policy decides (forced delete or keep).
+  /// Returns the batch's highest failure count. Default: <see cref="int.MaxValue"/> (no ladder
+  /// substrate ⇒ the caller treats the batch as exhausted).
+  /// </summary>
+  /// <param name="rows">The rows the failing guard was offered.</param>
+  /// <param name="retryBackoff">Delay before the batch is re-offered.</param>
+  /// <param name="maxRetries">Retry cap before the failure policy applies.</param>
+  /// <param name="onDestroyFailure">The policy applied past the cap.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<int> RecordPerspectiveRowDestructionFailureAsync(
+    IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+    TimeSpan retryBackoff,
+    int maxRetries,
+    Whizbang.Core.Lifecycle.OnDestroyFailure onDestroyFailure,
+    CancellationToken cancellationToken = default) => Task.FromResult(int.MaxValue);
+
+  /// <summary>
+  /// Runs the enrolled-perspective expiry sweep (the [RowTtl]/max-age ladder), batched. This is
+  /// the sweep's production invocation — the SQL alone has no caller. Default: unsupported no-op.
+  /// </summary>
+  /// <param name="batchSize">Rows deleted per perspective per cycle.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<PerspectiveRowReapResult> ReapEnrolledPerspectiveRowsAsync(
+    int batchSize = 5000,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(new PerspectiveRowReapResult(0, "unsupported"));
+
+  /// <summary>
+  /// Runs the per-scope cap sweep ([RowCap] overflow eviction). Heavier than the expiry sweep
+  /// (window function), intended for a slower, fleet-claimed cadence. Default: unsupported no-op.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(
+    int batchSize = 5000,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(new PerspectiveRowReapResult(0, "unsupported"));
+
+  /// <summary>
+  /// Claims one cap sweep for the calling instance — the same first-instance-wins CAS-watermark
+  /// discipline as <see cref="TryClaimOffloadSweepAsync"/>. Default true.
+  /// </summary>
+  /// <param name="claimWindow">Minimum interval between cap sweeps service-wide.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<bool> TryClaimRowCapSweepAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+  /// <summary>
+  /// Acknowledges retention enforcement for an enrolled perspective — the adoption gate's missing
+  /// C# half. Until acknowledged, the expiry sweep reports what it would remove (see
+  /// <see cref="CountPerspectiveRetentionBacklogAsync"/>) and removes nothing. Default: no-op.
+  /// </summary>
+  /// <param name="clrTypeName">The perspective model's CLR type name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task AcknowledgeRetentionEnforcementAsync(
+    string clrTypeName,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Counts what retention enforcement WOULD remove for an enrolled perspective, without removing
+  /// it — the number an operator reads before acknowledging. Default: 0.
+  /// </summary>
+  /// <param name="clrTypeName">The perspective model's CLR type name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+  Task<long> CountPerspectiveRetentionBacklogAsync(
+    string clrTypeName,
+    CancellationToken cancellationToken = default) => Task.FromResult(0L);
+
+  /// <summary>
+  /// Atomically claims a batch of journaled origin evictions (what the row sweeps destroyed) for
+  /// group-cascade processing — DELETE ... RETURNING, so N replicas never double-cascade.
+  /// Default: empty.
+  /// </summary>
+  /// <param name="limit">Maximum journal entries claimed this cycle.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowRef>> DrainRowEvictionJournalAsync(
+    int limit = 1000,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowRef>>([]);
+
+  /// <summary>
+  /// Re-queues origin evictions whose cascade was deferred (a guard held a cascaded row), so the
+  /// next cycle recomputes the closure and re-offers. Idempotent. Default: no-op.
+  /// </summary>
+  /// <param name="rows">The origin (table, row) pairs to re-journal.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task RequeueRowEvictionsAsync(
+    IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// The (CLR type name, table name) pairs for the given perspective models, from the registry.
+  /// The cascade uses it to map journal entries to group members and back. Default: empty.
+  /// </summary>
+  /// <param name="clrTypeNames">The perspective models to resolve.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<IReadOnlyList<PerspectiveTableName>> GetPerspectiveTableNamesAsync(
+    IReadOnlyCollection<string> clrTypeNames,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<PerspectiveTableName>>([]);
+
+  /// <summary>
+  /// Loads specific perspective rows as destruction targets (reason <c>cascade</c>) so a guard can
+  /// be offered cascaded rows with their payloads, exactly like sweep-selected ones. Default: empty.
+  /// </summary>
+  /// <param name="clrTypeName">The perspective model's CLR type name.</param>
+  /// <param name="tableName">The perspective's physical table.</param>
+  /// <param name="rowIds">The rows to load.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsByIdsAsync(
+    string clrTypeName,
+    string tableName,
+    IReadOnlyCollection<Guid> rowIds,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>>([]);
+
+  /// <summary>
+  /// Executes one member table's share of the group cascade: hold-aware DELETE of the given rows
+  /// (a guard's Defer survives it). Returns the count destroyed. Default: 0.
+  /// </summary>
+  /// <param name="tableName">The member perspective's physical table.</param>
+  /// <param name="rowIds">The rows the closure marked for eviction.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<int> CascadeDeletePerspectiveRowsAsync(
+    string tableName,
+    IReadOnlyCollection<Guid> rowIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Folds the given streams' apply paths (version-ordered event-type sequences, run-length
+  /// collapsed) into the persisted signature counts — call exactly once per stream, immediately
+  /// before destroying its pointers. The stream dies; its shape survives. Default: 0.
+  /// </summary>
+  /// <param name="streamIds">The streams about to lose their pointers.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
+  Task<int> FoldStreamApplyPathsAsync(
+    IReadOnlyCollection<Guid> streamIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Folds SETTLED streams — idle past the window, not yet folded — into the persisted apply-path
+  /// signatures. Non-destructive and bounded; the watermark makes it fold-exactly-once by
+  /// mechanism. Default: 0.
+  /// </summary>
+  /// <param name="idleWindow">How long a stream must be idle to count as settled.</param>
+  /// <param name="limit">Streams folded per invocation.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
+  Task<int> FoldSettledApplyPathsAsync(
+    TimeSpan idleWindow,
+    int limit = 1000,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Claims one settled-fold sweep for the calling instance — the same first-instance-wins
+  /// CAS-watermark discipline as <see cref="TryClaimRowCapSweepAsync"/>. Default true.
+  /// </summary>
+  /// <param name="claimWindow">Minimum interval between settled folds service-wide.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
+  Task<bool> TryClaimSettledFoldSweepAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+  /// <summary>
+  /// The staged rebuild's presence reconcile: deletes the follower table's rows whose id is absent
+  /// from EVERY announcer table (the conservative all-absent rule — announcer live tables
+  /// materialize past eviction decisions the journal can no longer re-fire). Hold-aware. Returns
+  /// the count removed. Default: 0.
+  /// </summary>
+  /// <param name="followerTable">The rebuilt follower perspective's physical table.</param>
+  /// <param name="announcerTables">Its groups' announcer tables.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<int> ReconcileFollowerPresenceAsync(
+    string followerTable,
+    IReadOnlyCollection<string> announcerTables,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Stream-integrity Phase B: the DISTINCT event types this service has ever emitted into its own
+  /// audited lane (the own-emissions digest rows). The checkpoint publisher fans its heartbeat out
+  /// to these types' topics — the topics this origin's consumers already subscribe to — so a quiet
+  /// period (no new emissions in the window) still heartbeats every historically-covered topic.
+  /// Default: empty (engines without the digest table publish through the dispatcher fallback).
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Distinct stored event-type names from the own-emissions digest lane.</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTests.cs</tests>
+  Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<string>>([]);
+
+  /// <summary>
+  /// Stream-integrity A1c: reads the incrementally-maintained per-(tenant, type, stream) digests
+  /// from <c>wh_stream_digests</c> — O(buckets) instead of a store-wide recompute. Same origin
+  /// semantics as <see cref="ComputeStreamDigestsAsync"/> (null = own emissions; a value = events
+  /// received from that origin). Rows carry <see cref="StreamDigest.UpdatedAt"/> so compare-time
+  /// settle-skipping replaces the recompute's created-at settle filter. Default: empty (engines
+  /// without the digest table cannot serve table-driven audits — callers fall back to recompute).
+  /// </summary>
+  /// <param name="originServiceId">Null = own emissions; a value = received from that origin.</param>
+  /// <param name="eventTypes">Optional type filter.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Digest rows ordered by (tenant, type, stream), with bucket update times.</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.cs</tests>
+  Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<StreamDigest>>([]);
+
+  /// <summary>
+  /// Stream-integrity A1c: per-(tenant, type) digest roll-ups from <c>wh_stream_digests</c> —
+  /// XOR of the type's stream buckets (valid because they partition the type's events) with
+  /// summed counts and the newest bucket update time. The wire unit of the hierarchical audit:
+  /// O(types) instead of O(streams) per exchange; mismatched types drill down to stream level.
+  /// Rows carry <see cref="StreamDigest.StreamId"/> = <see cref="Guid.Empty"/>. Default: empty.
+  /// </summary>
+  /// <param name="originServiceId">Null = own emissions; a value = received from that origin.</param>
+  /// <param name="eventTypes">Optional type filter.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Type-level roll-ups ordered by (tenant, type).</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.cs</tests>
+  Task<IReadOnlyList<StreamDigest>> GetTypeDigestsAsync(
+    Guid? originServiceId,
+    IReadOnlyList<string>? eventTypes,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<StreamDigest>>([]);
+
+  /// <summary>
+  /// Stream-integrity A1c: the trust-but-verify sweep — reconciles the incrementally-maintained
+  /// digest table against a full recompute and HEALS it: drifted buckets updated in place,
+  /// phantom buckets removed, missing buckets added. Only settled state participates (buckets
+  /// updated inside <paramref name="settleWindow"/> and events created inside it are ignored) so
+  /// in-flight folds never read as drift. Non-zero drift means an unaccounted write path touched
+  /// audited rows — the caller alarms. Default: zeros (nothing to verify).
+  /// </summary>
+  /// <param name="settleWindow">Buckets/events younger than this are ignored.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Checked/healed bucket counts.</returns>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.cs</tests>
+  Task<DigestVerificationResult> VerifyDigestTableAsync(
+    TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(new DigestVerificationResult {
+      BucketsChecked = 0,
+      DriftUpdated = 0,
+      DriftRemoved = 0,
+      DriftAdded = 0,
+    });
+  /// <summary>
+  /// Tables whose heap is disproportionate to their live rows, re-measured at call time.
+  /// </summary>
+  /// <remarks>
+  /// Space a table holds but cannot use costs on every read — index heap-fetches pull emptier
+  /// pages and the buffer cache holds fewer useful rows. Churn is the usual cause: autovacuum
+  /// reclaims deleted rows to the free space map for reuse but never returns them to the OS, so
+  /// the file stays large. A dropped column is the other, and autovacuum can never reclaim that
+  /// at all. Only a table rewrite recovers either.
+  /// </remarks>
+  Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<TableRewriteCandidate>>([]);
+
+  /// <summary>
+  /// Rewrites a table to reclaim unusable space, returning the ratio afterwards so the caller can
+  /// confirm it worked. Takes an ACCESS EXCLUSIVE lock for the duration.
+  /// </summary>
+  Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.FromResult<double?>(null);
+
+  /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
+  Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// Records that a table owes a rewrite, exactly as a migration does. The runtime maintenance
+  /// cycle calls this when it detects bloat instead of taking an ACCESS EXCLUSIVE lock
+  /// mid-traffic — the post-ready <c>Rewrite</c> startup step performs the recorded rewrites in
+  /// the window they should always have had. Idempotent per table.
+  /// </summary>
+  Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// Records this instance's lifecycle phase (and, when known, library version) on its own
+  /// instance row, so peers and the status surface can observe it — the standby handshake cannot
+  /// wait for a state nobody can see. Returns false when the instance has no row yet (early
+  /// startup transitions precede the first heartbeat — expected, not an error). Must not refresh
+  /// liveness: state is not a heartbeat, and a standing-by zombie must still be reapable.
+  /// </summary>
+  Task<bool> RecordInstanceStateAsync(
+      Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
+      CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
+  /// Records the single fleet-wide standby request: this instance asking live older peers to
+  /// drain and stand by before a breaking migration. True when this instance now holds the
+  /// active request (first claim or idempotent re-request); false when another instance's
+  /// request is active or this instance is evicted.
+  /// </summary>
+  Task<bool> RequestStandbyAsync(Guid instanceId, string version, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>Withdraws this instance's own standby request. Only the requester clears —
+  /// a dead requester's request is voided by peers watching its liveness, never by deletion.</summary>
+  Task<bool> ClearStandbyRequestAsync(Guid instanceId, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>The active standby request, with the requester's last heartbeat so peers can bound
+  /// their wait by the requester's liveness rather than its goodwill.</summary>
+  Task<StandbyRequest?> GetStandbyRequestAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<StandbyRequest?>(null);
+
+  /// <summary>
+  /// The deliberate fence: tombstones an instance so its heartbeats, capability acquisitions and
+  /// work claims are refused. Taken by the migrator during a breaking handshake, or by an
+  /// operator — never an automatic consequence of slowness. Records who issued it and why.
+  /// </summary>
+  Task EvictInstanceAsync(Guid instanceId, Guid evictedBy, string reason, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// Durable stream-integrity convergence state. Defaults keep the caller's prior behaviour when a
+  /// provider cannot store it: reporting proceeds (over-reporting is recoverable) and repair does
+  /// not (an unbounded repair request against real data is not).
+  /// </summary>
+  Task<bool> IntegrityTryBeginReportAsync(
+      IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+      DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
+    Task.FromResult(true);
+
+  /// <inheritdoc cref="IntegrityTryBeginReportAsync"/>
+  Task<bool> IntegrityTryBeginRepairAsync(
+      IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+      CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>Forgets a bucket that folded identical.</summary>
+  Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// Batched <see cref="IntegrityTryBeginReportAsync"/> — one round trip for a manifest chunk's
+  /// report decisions (element i answers observation i). Null = unsupported; the caller loops the
+  /// singles. All observations share one origin (a manifest chunk is per-origin by construction).
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<IReadOnlyList<bool>?> IntegrityTryBeginReportBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityReportObservation> observations,
+    DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<bool>?>(null);
+
+  /// <summary>
+  /// Batched <see cref="IntegrityTryBeginRepairAsync"/>, capped at <paramref name="maxGrants"/>
+  /// in order — past the cap keys are not consulted (a discarded grant burns attempt budget).
+  /// Null = unsupported.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<IReadOnlyList<bool>?> IntegrityTryBeginRepairBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<bool>?>(null);
+
+  /// <summary>
+  /// Stamps the compared window ([from, until] origin commit sequences) onto the keyed ledger
+  /// rows — discovery-time context the paced repair drain later dispatches with, so a repair
+  /// asks for exactly the slice that disagreed without the in-flight manifest. No-op = unsupported.
+  /// </summary>
+  /// <docs>proposals/paced-repair-drain</docs>
+  Task IntegrityStampRepairWindowsAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    long windowFrom, long windowUntil, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// Atomically claims up to <paramref name="limit"/> repair-eligible ledger rows for the paced
+  /// drain: past their exponential backoff, under <paramref name="maxAttempts"/>, restricted to
+  /// <paramref name="originIds"/> (origins whose request topic is learned — nothing else could be
+  /// sent), least-recently-attempted first, never the synthetic bulk lane. A claim stamps the
+  /// attempt exactly like a burst-path grant, and concurrent drainers skip each other's locked
+  /// rows, so a bucket is never double-dispatched. Empty = nothing eligible or unsupported.
+  /// </summary>
+  /// <docs>proposals/paced-repair-drain</docs>
+  Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
+    IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+    int limit, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityRepairDrainItem>>([]);
+
+  /// <summary>Batched <see cref="IntegrityMarkHealedAsync"/>. False = unsupported.</summary>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<bool> IntegrityMarkHealedBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
+  /// <see cref="IntegrityMarkHealedBatchAsync"/>, additionally returning each healed bucket's age
+  /// in seconds (first sighting → heal) read from the rows the delete destroys — the per-stream
+  /// time-to-reconcile at zero extra work. Null = unsupported (fall back to the ageless batch or
+  /// singles); an empty list is a real answer (no tracked bucket matched).
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<double>?>(null);
+
+  /// <summary>
+  /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
+  /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
+  /// </summary>
+  /// <param name="maxRepairAttempts">The repair budget, so the query can count who has spent it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  Task<Observability.LedgerGaugeSnapshot> GetIntegrityLedgerSummaryAsync(
+    int maxRepairAttempts, CancellationToken cancellationToken = default) =>
+    Task.FromResult(Observability.LedgerGaugeSnapshot.Empty);
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is
@@ -576,9 +1356,178 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Rows pruned plus a status string (<c>disabled</c> | <c>not due</c> | <c>ok</c> | …).</returns>
   /// <docs>fundamentals/events/ephemeral-events</docs>
+
   Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(
     CancellationToken cancellationToken = default) =>
     Task.FromResult(new EphemeralPointerPruneResult(0, "unsupported"));
+
+  /// <summary>
+  /// Advances the digest-epoch closure frontier (migration 092): folds every closable epoch —
+  /// settled max beyond it AND no unsettled event inside its range — into immutable
+  /// <c>wh_digest_epochs</c> bucket rows, up to <paramref name="maxEpochs"/> across all lanes.
+  /// Called from the maintenance cycle; the epoch substrate is inert without this.
+  /// </summary>
+  /// <param name="settleSeconds">The settle window — MUST equal the audit's
+  /// (<see cref="StreamIntegrityOptions.AuditSettleWindowMinutes"/> in seconds), or a seal could
+  /// disagree with a manifest folded over the same range.</param>
+  /// <param name="maxEpochs">Cap on epochs closed this call, bounding the cycle's recompute work.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// Epochs closed, or <c>-1</c> for engines without the substrate. The sentinel is deliberate:
+  /// this is a default interface method, and a default that returned a plausible <c>0</c> would
+  /// make a missed override look exactly like a healthy idle system (the same silent-fallback
+  /// hazard the byte-budget overload documented).
+  /// </returns>
+  /// <docs>resilience/stream-integrity</docs>
+
+  Task<int> CloseDigestEpochsAsync(
+    int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) =>
+    Task.FromResult(-1);
+
+  /// <summary>
+  /// The lane's SETTLED maximum sequence — the watermark ceiling for negotiated-scope answers
+  /// (#80-B). An answer must never claim coverage of an unsettled sequence, or the asker could
+  /// seal over an in-flight delivery. Null = unsupported (engines without sequence lanes) or
+  /// nothing settled; callers treat both as "cannot window".
+  /// </summary>
+  /// <param name="originServiceId">Null = the local lane (own emissions); a value = the received
+  /// lane for that origin, measured on the ORIGIN's sequence.</param>
+  /// <param name="settleWindow">Only events older than this count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<long?> GetIntegritySettledMaxAsync(
+    Guid? originServiceId, TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
+  /// Negotiated-scope type-level digest read (#80-B): folds only the window
+  /// <c>[sinceSequence, untilSequence)</c>. Epochs fully inside the window contribute their
+  /// SEALED fold (authoritative); partially covered epochs fold live over just the covered
+  /// fringe — a seal is indivisible. <see cref="WindowedDigestResult.ComputedThrough"/> is the
+  /// exclusive end actually covered, capped at the settled max. Null return = the engine cannot
+  /// window (no substrate) — the caller answers unwindowed rather than silently wrong.
+  /// </summary>
+  /// <param name="originServiceId">Null = the local lane; a value = that origin's received lane.</param>
+  /// <param name="eventTypes">Types to fold (null = all).</param>
+  /// <param name="sinceSequence">Inclusive window start — the asker's current watermark.</param>
+  /// <param name="untilSequence">Exclusive window end; null = through the settled max.</param>
+  /// <param name="settleWindow">Only events older than this count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<WindowedDigestResult?> ComputeTypeDigestsWindowedAsync(
+    Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+    long sinceSequence, long? untilSequence, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<WindowedDigestResult?>(null);
+
+  /// <summary>
+  /// Negotiated-scope stream-level digest read (#80-B): the drill-down granularity, bounded on
+  /// BOTH cursor dimensions — the sequence window <c>[sinceSequence, untilSequence)</c> and a
+  /// stream-id page (<paramref name="resumeAfterStreamId"/> + <paramref name="maxDigests"/>).
+  /// A non-null <see cref="WindowedDigestResult.ResumeAfterStreamId"/> in the result means the
+  /// window is NOT complete: ask again from there, and never advance a seal past a partial
+  /// window. Null return = the engine cannot window.
+  /// </summary>
+  /// <param name="originServiceId">Null = the local lane; a value = that origin's received lane.</param>
+  /// <param name="eventTypes">Types to fold (null = all).</param>
+  /// <param name="sinceSequence">Inclusive window start — the asker's current watermark.</param>
+  /// <param name="untilSequence">Exclusive window end; null = through the settled max.</param>
+  /// <param name="resumeAfterStreamId">Page start: only streams ABOVE this id (null = from the first).</param>
+  /// <param name="maxDigests">The asker's page bound — whole streams are paged, never split.</param>
+  /// <param name="settleWindow">Only events older than this count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<WindowedDigestResult?> ComputeStreamDigestsWindowedAsync(
+    Guid? originServiceId, IReadOnlyList<string>? eventTypes,
+    long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
+    TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
+    Task.FromResult<WindowedDigestResult?>(null);
+
+  /// <summary>
+  /// The CHUNK-BOUNDED local fold for stream-level manifest COMPARISON: digests for exactly
+  /// <paramref name="streamIds"/> on the origin's received lane, optionally limited to the
+  /// half-open window <c>[sinceSequence, untilSequence)</c> (both null = full history). The local
+  /// side of a chunk comparison only ever needs the streams the chunk names — observed live,
+  /// folding the whole lane (or the whole window) to check one 500-stream chunk OOM-crashlooped
+  /// an entire fleet within seconds of each audit. Memory is bounded by the chunk size no matter
+  /// how large the lane is. Null return = unsupported (callers fall back to the legacy paths).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose received lane is compared.</param>
+  /// <param name="streamIds">The manifest chunk's stream set (bounded by the origin's chunk size).</param>
+  /// <param name="sinceSequence">Inclusive window start on the origin's sequence; null = no floor.</param>
+  /// <param name="untilSequence">Exclusive window end; null = no ceiling.</param>
+  /// <param name="settleWindow">Only events older than this count — matching the answer side.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
+    Guid originServiceId, IReadOnlyList<Guid> streamIds,
+    long? sinceSequence, long? untilSequence, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<StreamDigest>?>(null);
+
+  /// <summary>
+  /// The consumer's verified watermark for an origin (#80-C): every sequence below it proved
+  /// clean in a past complete-window audit, so steady-state audits start here instead of zero —
+  /// what stops verified history from being re-shipped and re-verified forever. Default 0 =
+  /// nothing verified (engines without the seal store audit from the beginning every time).
+  /// </summary>
+  /// <param name="originServiceId">The origin the seal is against.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0L);
+
+  /// <summary>
+  /// Advances the seal after a window proved clean AND complete (every bucket matched, one chunk,
+  /// no resume cursor). Monotonic — a late or replayed advance can only move it forward. Default
+  /// no-op for engines without the seal store.
+  /// </summary>
+  /// <param name="originServiceId">The origin the seal is against.</param>
+  /// <param name="through">The verified window's exclusive end — the next audit's start.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #80-D: the sweep's SEAL backstop — recomputes each closed digest epoch from the store,
+  /// compares bucket-for-bucket, and refolds on drift. Epochs holding an unsettled arrival are
+  /// skipped whole (verifying now would fold an in-flight delivery into a seal). Default: nothing
+  /// checked, for engines without the epoch substrate.
+  /// </summary>
+  /// <param name="settleWindow">The settle window — an arrival younger than this blocks its epoch.</param>
+  /// <param name="maxEpochs">Cap on epochs recomputed this call.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<EpochVerificationResult> VerifyDigestEpochsAsync(
+    TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) =>
+    Task.FromResult(new EpochVerificationResult(0, 0));
+
+  /// <summary>
+  /// #80-F: this origin's history generation — bumped by the two legitimate fold-mutation sites
+  /// (close-the-books truncation, reclassification) and stamped on every manifest answer so
+  /// consumers can distinguish deliberate change from damage. Default 0 for engines without the
+  /// generation store.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<long> GetIntegrityOriginGenerationAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult(0L);
+
+  /// <summary>
+  /// #80-F: the consumer-side generation guard, one atomic call. True = the carried generation
+  /// matches the stored one (or first contact) — compare away. False = the origin's history
+  /// legitimately moved: the seal was reset to zero, the new generation recorded, and the caller
+  /// must SKIP this comparison round (its windows were aligned to the old world). The reset
+  /// happens once per generation change. Default true (no store — proceed as before).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose generation the manifest carried.</param>
+  /// <param name="generation">The carried generation.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  Task<bool> EnsureIntegritySealGenerationAsync(
+    Guid originServiceId, long generation, CancellationToken cancellationToken = default) =>
+    Task.FromResult(true);
 
   /// <summary>
   /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
@@ -763,6 +1712,28 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<OutboxBatchRow>>([]);
 
   /// <summary>
+  /// Byte-budgeted outbox fetch: bounds the slice by payload bytes as well as row count — the
+  /// outbox sibling of the byte-budgeted <c>FetchInboxBatchAsync</c> overload below, and shaped
+  /// as a separate overload for the same reason (see that overload's remarks: changing a
+  /// defaulted-interface-method signature silently un-implements it for every existing
+  /// implementer). The default delegates to the count-only overload, so an engine that has not
+  /// implemented this keeps its previous behavior (unbounded by bytes).
+  /// </summary>
+  /// <param name="streamIds">Streams to drain.</param>
+  /// <param name="instanceId">The claiming instance.</param>
+  /// <param name="maxPerStream">Row cap per stream.</param>
+  /// <param name="maxBytes">Payload-byte cap per stream; null disables it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
+    CancellationToken cancellationToken = default)
+    => FetchOutboxBatchAsync(streamIds, instanceId, maxPerStream, cancellationToken);
+
+  /// <summary>
   /// Per-stream-id payload fetch for the InboxDrainWorker. Mirror of
   /// <see cref="FetchOutboxBatchAsync"/> for <c>wh_inbox</c>, ordered by received_at within each stream.
   /// </summary>
@@ -773,6 +1744,36 @@ public interface IWorkCoordinator {
     int maxPerStream = 100,
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<InboxBatchRow>>([]);
+
+  /// <summary>
+  /// Byte-budgeted fetch: bounds the slice by payload bytes as well as row count.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A separate overload rather than a parameter on the one above, deliberately. Changing the
+  /// signature of a method that carries a default implementation SILENTLY un-implements it for
+  /// every existing implementer — their method stops matching the interface, the class still
+  /// compiles, and every call quietly falls through to the default. Doing exactly that here broke
+  /// nineteen drain tests with empty results and no diagnostic, and would have done the same to
+  /// any consumer's own coordinator.
+  /// </para>
+  /// <para>
+  /// The default delegates to the count-only overload, so an engine that has not implemented this
+  /// keeps its previous behavior (unbounded by bytes) instead of silently returning nothing.
+  /// </para>
+  /// </remarks>
+  /// <param name="streamIds">Streams to drain.</param>
+  /// <param name="instanceId">The claiming instance.</param>
+  /// <param name="maxPerStream">Row cap per stream.</param>
+  /// <param name="maxBytes">Payload-byte cap per stream; null disables it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
+    CancellationToken cancellationToken = default)
+    => FetchInboxBatchAsync(streamIds, instanceId, maxPerStream, cancellationToken);
 
   /// <summary>
   /// Cheap ID-only prefetch for the perspective drainer (Phase H step 7 slice 2). Returns
@@ -931,6 +1932,9 @@ public sealed record MaintenanceResult(string TaskName, long RowsAffected, doubl
 /// <param name="LastEventId">Current cursor position.</param>
 /// <param name="RewindTriggerEventId">The late-arriving event that triggered the rewind.</param>
 /// <docs>fundamentals/perspectives/rewind</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_PositionalCtor_RoundTripsAllValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_NullsAreAllowedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
 public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? LastEventId, Guid? RewindTriggerEventId);
 
 /// <summary>
@@ -963,6 +1967,46 @@ public sealed record EphemeralReclassificationResult(
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record EphemeralTypeGrace(string EventTypeName, int GraceSeconds);
+
+/// <summary>
+/// One perspective's row-retention declaration, carried from the C# registry into the perspective
+/// registry so the reaper can sweep only enrolled perspectives.
+/// </summary>
+/// <remarks>
+/// Enrollment and duration are separate: an enrolled perspective with both windows null is swept
+/// but has no default rule, so its rows expire only by an explicitly assigned expiry. Null stays
+/// distinct from zero, which would mean expire-immediately.
+/// </remarks>
+/// <docs>fundamentals/perspectives/row-retention</docs>
+public sealed record PerspectiveRetentionDeclaration(
+  string ClrTypeName,
+  bool Enrolled,
+  int? TtlSeconds,
+  int? MaxAgeSeconds,
+  int? CapPerScope = null,
+  string? CapScopeKey = null);
+
+/// <summary>
+/// One offload-claim ledger entry: the storage key of a transport-offloaded blob and the keyed
+/// store that holds it. The passive sweep resolves the provider per claim, deletes the blob, and
+/// removes the row only on success.
+/// </summary>
+/// <docs>fundamentals/messaging/body-offload</docs>
+public sealed record OffloadClaimRecord(string StorageKey, string ProviderName);
+
+/// <summary>Outcome of one perspective-row retention sweep invocation.</summary>
+/// <param name="RowsAffected">Rows destroyed by the sweep.</param>
+/// <param name="Status">The sweep's status string (<c>ok</c>, <c>skipped (debug_mode=true)</c>, <c>unsupported</c>, …).</param>
+/// <docs>proposals/pre-destruction-seam</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
+public sealed record PerspectiveRowReapResult(int RowsAffected, string Status);
+
+/// <summary>A perspective model's registry identity: its CLR type name and physical table.</summary>
+/// <param name="ClrTypeName">The model's CLR type name (the registry key).</param>
+/// <param name="TableName">The perspective's physical table.</param>
+/// <docs>proposals/pre-destruction-seam</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+public sealed record PerspectiveTableName(string ClrTypeName, string TableName);
 
 /// <summary>
 /// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,
@@ -1683,6 +2727,9 @@ public record PerspectiveCursorCompletion {
   /// Used by rewind observability to populate PerspectiveRewindCompleted.EventsReplayed.
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDtoSurfaceTests.cs:PerspectiveCursorCompletion_ProcessedEventIds_DefaultsEmptyAndRoundTripsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveApplyIdempotencyTests.cs:RunAsync_RerunWithSameEvents_SkipsAllAndDoesNotReWriteAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveApplyIdempotencyTests.cs:RunAsync_RerunWithMixOfAppliedAndNewEvents_AppliesOnlyNewAsync</tests>
   public int EventsProcessed { get; init; }
 
   /// <summary>
@@ -1981,3 +3028,9 @@ public sealed record InboxBatchRow {
   public string? Error { get; init; }
 }
 
+
+/// <summary>A table offered for rewrite, with the measurement that justified offering it.</summary>
+/// <param name="TableName">Unqualified table name.</param>
+/// <param name="BloatRatio">Heap bytes per live row over the expected row width; ~1.0 is lean.</param>
+/// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
+public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested);

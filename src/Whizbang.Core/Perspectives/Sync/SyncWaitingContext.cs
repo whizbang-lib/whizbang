@@ -10,6 +10,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#callbacks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncCallbackTests.cs:LocalInvokeAndSyncAsync_WithEvents_InvokesOnWaitingCallbackAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncCallbackTests.cs:LocalInvokeAndSyncAsync_WithMultipleEvents_CallbackHasCorrectEventCountAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncCallbackTests.cs:LocalInvokeAndSyncAsync_WithNoEvents_DoesNotInvokeOnWaitingCallbackAsync</tests>
 public sealed record SyncWaitingContext {
   /// <summary>
   /// The perspective type being waited for, or null if waiting for all perspectives.

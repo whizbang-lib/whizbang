@@ -72,6 +72,10 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   private sealed class _StartupCoordinator : IWorkCoordinator, IDisposable {
     // ── orphan reconciliation ────────────────────────────────
     public List<OrphanedLifecycleEvent> Orphans { get; init; } = [];
+    public Queue<IReadOnlyList<OrphanedLifecycleEvent>> OrphanBatches { get; } = new();
+    private int _orphanQueryCount;
+    public int OrphanQueryCount => _orphanQueryCount;
+    public int? CapturedMaxOrphans { get; private set; }
     public bool ThrowOnOrphanQuery { get; init; }
     public TaskCompletionSource OrphanQueryCalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TimeSpan? CapturedLookback { get; private set; }
@@ -141,14 +145,19 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public Task<IReadOnlyList<OrphanedLifecycleEvent>> GetOrphanedLifecycleEventsAsync(
         Dictionary<string, IReadOnlyList<string>> perspectivesPerEventType,
         TimeSpan lookbackWindow,
+        int maxOrphans = 100,
         CancellationToken cancellationToken = default) {
       CapturedPerspectivesMap = perspectivesPerEventType;
       CapturedLookback = lookbackWindow;
+      CapturedMaxOrphans = maxOrphans;
+      Interlocked.Increment(ref _orphanQueryCount);
       OrphanQueryCalled.TrySetResult();
       if (ThrowOnOrphanQuery) {
         throw new InvalidOperationException("simulated orphan-query failure");
       }
-      return Task.FromResult<IReadOnlyList<OrphanedLifecycleEvent>>(Orphans);
+      IReadOnlyList<OrphanedLifecycleEvent> batch =
+        OrphanBatches.Count > 0 ? OrphanBatches.Dequeue() : Orphans;
+      return Task.FromResult(batch);
     }
 
     public Task RecordLifecycleCompletionAsync(Guid eventId, CancellationToken cancellationToken = default) {
@@ -355,6 +364,34 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       .Because("Per-orphan error isolation: a poisoned orphan must not block replay of the remaining orphans.");
     await Assert.That(coordinator.RecordedLifecycleCompletions.Contains(poisoned.EventId)).IsFalse()
       .Because("A failed replay must NOT record completion — the next startup retries it.");
+
+    await cts.CancelAsync();
+    await fx.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Startup_LargeOrphanBacklog_DrainsInBoundedPassesAsync() {
+    // A backlog larger than one pass's cap must drain through REPEATED bounded passes — one
+    // capped query + one capped replay batch per pass — instead of a single unbounded scan
+    // that can stall the host past its liveness budget on a large store (and every probe kill
+    // orphans MORE lifecycles, making that loop self-sustaining).
+    var fullBatch = Enumerable.Range(0, 100).Select(_ => _orphan()).ToList();
+    var tailBatch = new List<OrphanedLifecycleEvent> { _orphan(), _orphan(), _orphan() };
+    var coordinator = new _StartupCoordinator();
+    coordinator.OrphanBatches.Enqueue(fullBatch);
+    coordinator.OrphanBatches.Enqueue(tailBatch);
+    var fx = _build(coordinator, _registryWithOnePerspective());
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    await coordinator.WaitForRecordedCompletionsAsync(103, TimeSpan.FromSeconds(60));
+
+    await Assert.That(coordinator.OrphanQueryCount).IsEqualTo(2)
+      .Because("a FULL first batch means more may remain — the reconciler must run another " +
+               "bounded pass; the partial second batch means drained, so it must stop there.");
+    await Assert.That(coordinator.CapturedMaxOrphans).IsEqualTo(100)
+      .Because("the cap belongs in the query — fetching an unbounded orphan set to replay a " +
+               "bounded batch is the same stall one layer down.");
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);

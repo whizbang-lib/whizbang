@@ -11,6 +11,9 @@ namespace Whizbang.Core.Messaging;
 /// which provides compile-time filtering.
 /// </remarks>
 /// <docs>operations/testing/lifecycle-synchronization</docs>
+/// <tests>tests/Whizbang.Testing.Tests/Lifecycle/LifecycleStageAwaiterTests.cs:WaitAsync_ReceptorInvokedAtMatchingStage_CompletesWithMessageAsync</tests>
+/// <tests>tests/Whizbang.Testing.Tests/Lifecycle/LifecycleStageAwaiterTests.cs:WaitAsync_MessageFilterAccepts_CompletesAsync</tests>
+/// <tests>tests/Whizbang.Testing.Tests/Lifecycle/MultiHostPerspectiveAwaiterTests.cs:WaitAsync_DistinctPerspectivesReachExpectedCount_CompletesAsync</tests>
 public interface IAcceptsLifecycleContext {
   /// <summary>
   /// Sets the lifecycle context for the current invocation.

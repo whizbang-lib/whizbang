@@ -8,6 +8,8 @@ namespace Whizbang.Core.Perspectives;
 /// instead of replaying from event zero.
 /// </summary>
 /// <docs>fundamentals/perspectives/snapshots</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:GetLatestSnapshotWithCommitSequenceAsync_DefaultImpl_LegacyReturnsNullAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesOverload_ResolvesRealImplementationTypesAsync</tests>
 public interface IPerspectiveSnapshotStore {
   /// <summary>
   /// Creates a snapshot of the perspective model state at the given event.

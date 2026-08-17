@@ -35,6 +35,9 @@ public sealed class FieldPermissionAttribute(string permission, MaskingStrategy 
 /// </summary>
 /// <docs>fundamentals/security/security#masking-strategies</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:MaskingStrategy_AllValues_AreDistinctAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:FieldPermissionAttribute_Constructor_WithMaskingStrategy_SetsMaskingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:FieldPermissionAttribute_Constructor_DefaultMaskingIsHideAsync</tests>
 public enum MaskingStrategy {
   /// <summary>
   /// Return null/default value.

@@ -6,6 +6,9 @@ namespace Whizbang.Core.Messaging;
 /// hold both: failure workers only need Move; the recovery worker holds this surface.
 /// </summary>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:PendingEntry_RetryableReason_GetsRecoveredAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:Startup_RunsGenerationReplayOnceAsync</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/DeadLetterOperatorEndpointsTests.cs:PostRetry_SchedulesIdForImmediateAttemptAsync</tests>
 public interface IDeadLetterRecoveryService {
   /// <summary>
   /// Returns up to <paramref name="maxCount"/> DLQ rows ready for the recovery worker

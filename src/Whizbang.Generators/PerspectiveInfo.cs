@@ -12,6 +12,7 @@ namespace Whizbang.Generators;
 /// <param name="EventTypes">Array of fully qualified event type names with global:: prefix for code generation (extracted from InterfaceTypeArguments for diagnostics)</param>
 /// <param name="MessageTypeNames">Array of event type names in database format (TypeName, AssemblyName - no global:: prefix) for message association registration</param>
 /// <param name="StreamIdPropertyName">Property name marked with [StreamId] attribute on the model (null if not found)</param>
+/// <param name="EmptyModelInitializer">Object-initializer text used by the generated CreateEmptyModel to construct the model directly (no reflection): assigns the stream key and sets any other required members to default!</param>
 /// <param name="EventStreamIds">Map of event type name to its StreamId property name</param>
 /// <param name="EventValidationErrors">Array of validation errors for event types (event name, error type)</param>
 /// <param name="MustExistEventTypes">Array of event type names (fully qualified) whose Apply methods have [MustExist] attribute</param>
@@ -27,6 +28,7 @@ internal sealed record PerspectiveInfo(
     string[] EventTypes,
     string[] MessageTypeNames,
     string? StreamIdPropertyName = null,
+    string EmptyModelInitializer = "{ }",
     EventStreamIdInfo[]? EventStreamIds = null,
     EventValidationError[]? EventValidationErrors = null,
     string[]? MustExistEventTypes = null,
@@ -39,7 +41,10 @@ internal sealed record PerspectiveInfo(
     int InheritScopeOnCreate = 63,
     bool IsEphemeral = false,
     int TtlRowSeconds = -1,
-    bool IsFullHistory = false
+    bool IsFullHistory = false,
+    int RowCapPerScope = -1,
+    string? RowCapScopeKey = null,
+    string? StreamGroupSpec = null
 );
 
 /// <summary>

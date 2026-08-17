@@ -31,6 +31,8 @@ public interface ITenantScoped {
 /// </summary>
 /// <docs>fundamentals/security/scoping#marker-interfaces</docs>
 /// <tests>Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs:IUserScoped_ImplementingModel_HasUserIdAndTenantIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs:IUserScoped_InheritedFromITenantScoped_CanBeUsedAsTenantScopedAsync</tests>
 public interface IUserScoped : ITenantScoped {
   /// <summary>
   /// The user identifier for this model.
@@ -43,6 +45,7 @@ public interface IUserScoped : ITenantScoped {
 /// </summary>
 /// <docs>fundamentals/security/scoping#marker-interfaces</docs>
 /// <tests>Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs:IOrganizationScoped_ImplementingModel_HasOrganizationIdAndTenantIdAsync</tests>
 public interface IOrganizationScoped : ITenantScoped {
   /// <summary>
   /// The organization identifier for this model.
@@ -55,6 +58,7 @@ public interface IOrganizationScoped : ITenantScoped {
 /// </summary>
 /// <docs>fundamentals/security/scoping#marker-interfaces</docs>
 /// <tests>Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs:ICustomerScoped_ImplementingModel_HasCustomerIdAndTenantIdAsync</tests>
 public interface ICustomerScoped : ITenantScoped {
   /// <summary>
   /// The customer identifier for this model.

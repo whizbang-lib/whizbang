@@ -255,21 +255,160 @@ public class PostgresFunctionTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task CalculateInstanceRank_NonExistentInstance_ThrowsExceptionAsync() {
-    // Arrange
-    var nonExistentInstance = _idProvider.NewGuid();
+  public async Task CalculateInstanceRank_PurgedRegistration_DegradesToSoloRankAsync() {
+    // Previously this raised P0001. Raising is the wrong response to a missing registration: the
+    // caller is demonstrably alive (it is executing this function), and the raise aborts the whole
+    // enclosing statement — including the work that would have repaired the registration. That
+    // makes the failure self-sustaining rather than self-correcting.
+    //
+    // This function receives only an id, so it cannot rebuild the NOT NULL identity columns
+    // (service name, host, process id); re-registration belongs to callers that carry them. Its job
+    // is simply to never be the thing that takes the pod down: degrade to a solo rank. Claims are
+    // guarded by FOR UPDATE SKIP LOCKED and leases, so an over-broad rank costs contention for one
+    // interval, never correctness.
+    var purgedInstance = _idProvider.NewGuid();
     var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
-    // Act & Assert
-    var exception = await Assert.ThrowsExactlyAsync<Npgsql.PostgresException>(async () => {
-      await connection.QuerySingleAsync<InstanceRankResult>(@"
-        SELECT instance_rank, active_instance_count FROM calculate_instance_rank(@instanceId, @cutoff)",
-        new { instanceId = nonExistentInstance, cutoff });
-    });
+    var result = await connection.QuerySingleAsync<InstanceRankResult>(@"
+      SELECT instance_rank, active_instance_count FROM calculate_instance_rank(@instanceId, @cutoff)",
+      new { instanceId = purgedInstance, cutoff });
 
-    await Assert.That(exception!.Message).Contains("Failed to calculate rank");
+    await Assert.That(result.instance_rank).IsEqualTo(0);
+    await Assert.That(result.active_instance_count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task CalculateInstanceRank_StaleCallerRegistration_DegradesInsteadOfRaisingAsync() {
+    // A row that exists but has lapsed past the cutoff is excluded from the active set, so the
+    // lookup finds nothing — the same code path as a purged row, and previously the same raise.
+    var staleCaller = _idProvider.NewGuid();
+    var staleTime = DateTimeOffset.UtcNow.AddMinutes(-15);
+    var cutoff = DateTimeOffset.UtcNow.AddMinutes(-10);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
+      VALUES (@id, 'StaleCaller', 'host', 1, @time, @time)",
+      new { id = staleCaller, time = staleTime });
+
+    var result = await connection.QuerySingleAsync<InstanceRankResult>(@"
+      SELECT instance_rank, active_instance_count FROM calculate_instance_rank(@instanceId, @cutoff)",
+      new { instanceId = staleCaller, cutoff });
+
+    await Assert.That(result.instance_rank).IsEqualTo(0);
+    await Assert.That(result.active_instance_count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ClaimWork_PurgedInstanceRegistration_ReregistersInstanceAsync() {
+    // The real repair. claim_work already receives the full identity, so when its own registration
+    // has been reaped by stale-instance cleanup it can restore a correct, fully-identified row
+    // instead of failing. Without this, a pod whose heartbeat lapsed under load stayed locked out
+    // forever: cleanup deleted the row, every subsequent claim aborted, and nothing on the claim
+    // path was left to put the row back.
+    var purgedInstance = _idProvider.NewGuid();
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await _seedPendingOutboxWorkAsync(connection, _idProvider.NewGuid());
+
+    await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM claim_work(@instanceId, 'RecoveredService', 'recovered-host', 4242)",
+      new { instanceId = purgedInstance });
+
+    var row = await connection.QuerySingleOrDefaultAsync<ServiceInstanceRow>(@"
+      SELECT instance_id, service_name, host_name, process_id, last_heartbeat_at
+      FROM wh_service_instances WHERE instance_id = @id",
+      new { id = purgedInstance });
+
+    await Assert.That(row).IsNotNull();
+    // The identity must be the caller's real identity, not a placeholder — the registry feeds
+    // instance-lifecycle signals and operator diagnostics.
+    await Assert.That(row!.service_name).IsEqualTo("RecoveredService");
+    await Assert.That(row.host_name).IsEqualTo("recovered-host");
+    await Assert.That(row.process_id).IsEqualTo(4242);
+  }
+
+  [Test]
+  public async Task ClaimWork_StaleInstanceRegistration_RefreshesHeartbeatAsync() {
+    var staleInstance = _idProvider.NewGuid();
+    var staleTime = DateTimeOffset.UtcNow.AddMinutes(-15);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
+      VALUES (@id, 'StaleService', 'stale-host', 7, @time, @time)",
+      new { id = staleInstance, time = staleTime });
+    await _seedPendingOutboxWorkAsync(connection, _idProvider.NewGuid());
+
+    await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM claim_work(@instanceId, 'StaleService', 'stale-host', 7)",
+      new { instanceId = staleInstance });
+
+    var heartbeat = await connection.QuerySingleAsync<DateTimeOffset>(@"
+      SELECT last_heartbeat_at FROM wh_service_instances WHERE instance_id = @id",
+      new { id = staleInstance });
+
+    // Must be durable, not merely reflected in this call's ranking — otherwise the next claim
+    // re-enters the same stale state and the pod never recovers.
+    await Assert.That(heartbeat).IsGreaterThan(DateTimeOffset.UtcNow.AddMinutes(-1));
+  }
+
+  [Test]
+  public async Task ClaimWork_HealthyRegistration_DoesNotRewriteHeartbeatAsync() {
+    // claim_work is polled continuously, so the repair must be guarded by a cheap pre-check rather
+    // than writing on every call. An unconditional UPSERT here would churn a row version per poll
+    // per instance and bloat wh_service_instances — the healthy path must not write at all.
+    var healthyInstance = _idProvider.NewGuid();
+    var registeredAt = DateTimeOffset.UtcNow.AddSeconds(-2);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
+      VALUES (@id, 'HealthyService', 'healthy-host', 9, @time, @time)",
+      new { id = healthyInstance, time = registeredAt });
+    await _seedPendingOutboxWorkAsync(connection, _idProvider.NewGuid());
+
+    await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM claim_work(@instanceId, 'HealthyService', 'healthy-host', 9)",
+      new { instanceId = healthyInstance });
+
+    var heartbeat = await connection.QuerySingleAsync<DateTimeOffset>(@"
+      SELECT last_heartbeat_at FROM wh_service_instances WHERE instance_id = @id",
+      new { id = healthyInstance });
+
+    await Assert.That(heartbeat).IsEqualTo(registeredAt).Within(TimeSpan.FromMilliseconds(1));
+  }
+
+  [Test]
+  public async Task ClaimWork_RegistrationRepair_DoesNotRevivePeersAsync() {
+    // The repair is scoped to the caller. A genuinely dead peer must stay excluded, or the rank
+    // denominator inflates and every instance claims only a fraction of the work.
+    var staleCaller = _idProvider.NewGuid();
+    var deadPeer = _idProvider.NewGuid();
+    var staleTime = DateTimeOffset.UtcNow.AddMinutes(-15);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
+      VALUES (@caller, 'StaleCaller', 'host', 1, @time, @time),
+             (@peer, 'DeadPeer', 'host', 2, @time, @time)",
+      new { caller = staleCaller, peer = deadPeer, time = staleTime });
+    await _seedPendingOutboxWorkAsync(connection, _idProvider.NewGuid());
+
+    await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM claim_work(@instanceId, 'StaleCaller', 'host', 1)",
+      new { instanceId = staleCaller });
+
+    var peerHeartbeat = await connection.QuerySingleOrDefaultAsync<DateTimeOffset?>(@"
+      SELECT last_heartbeat_at FROM wh_service_instances WHERE instance_id = @id",
+      new { id = deadPeer });
+
+    // The peer is either cleaned up outright or left stale — never refreshed by our repair.
+    if (peerHeartbeat is not null) {
+      await Assert.That(peerHeartbeat.Value).IsLessThan(DateTimeOffset.UtcNow.AddMinutes(-5));
+    }
   }
 
   [Test]
@@ -1548,6 +1687,16 @@ public class PostgresFunctionTests : PostgresTestBase {
     string? error,
     int? failure_reason,
     string? perspective_name);
+
+  /// <summary>
+  /// claim_work short-circuits and returns before it ranks when every queue is empty, so a test
+  /// that needs the ranking path to execute must leave at least one unprocessed row behind.
+  /// </summary>
+  private static Task<int> _seedPendingOutboxWorkAsync(System.Data.IDbConnection connection, Guid messageId)
+    => connection.ExecuteAsync(@"
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, created_at)
+      VALUES (@messageId, 'test-destination', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, NOW())",
+      new { messageId, streamId = messageId });
 
   private sealed record ServiceInstanceRow(
     Guid instance_id,

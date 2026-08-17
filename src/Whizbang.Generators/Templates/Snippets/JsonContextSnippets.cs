@@ -260,7 +260,11 @@ public JsonTypeInfo<__INTERFACE_TYPE__> __INTERFACE_NAME__ => ___INTERFACE_NAME_
 
 #region GET_TYPE_INFO_INTERFACE
 if (type == typeof(__INTERFACE_TYPE__)) {
-  return __INTERFACE_NAME__;
+  // Bind to the SERIALIZING options (cycle-safe lazy), not this context's own Options — a nested
+  // interface-typed member must resolve derived types registered by ANY assembly visible to the
+  // caller's options, not just this assembly's. Falls back to the context-bound property (which
+  // throws a descriptive error) when nothing is registered at all.
+  return global::Whizbang.Core.Serialization.JsonContextRegistry.GetLazyPolymorphicTypeInfo<__INTERFACE_TYPE__>(options) ?? __INTERFACE_NAME__;
 }
 #endregion
 
@@ -280,7 +284,8 @@ public JsonTypeInfo<global::Whizbang.Core.Observability.MessageEnvelope<__INTERF
 
 #region GET_TYPE_INFO_MESSAGE_ENVELOPE_INTERFACE
 if (type == typeof(global::Whizbang.Core.Observability.MessageEnvelope<__INTERFACE_TYPE__>)) {
-  return MessageEnvelope___INTERFACE_NAME__;
+  // Serializing-options binding — see the __INTERFACE_TYPE__ dispatch above.
+  return global::Whizbang.Core.Serialization.JsonContextRegistry.GetLazyPolymorphicEnvelopeTypeInfo<__INTERFACE_TYPE__>(options) ?? MessageEnvelope___INTERFACE_NAME__;
 }
 #endregion
 
@@ -300,7 +305,8 @@ public JsonTypeInfo<global::System.Collections.Generic.List<__INTERFACE_TYPE__>>
 
 #region GET_TYPE_INFO_LIST_INTERFACE
 if (type == typeof(global::System.Collections.Generic.List<__INTERFACE_TYPE__>)) {
-  return List___INTERFACE_NAME__;
+  // Serializing-options binding — see the __INTERFACE_TYPE__ dispatch above.
+  return global::Whizbang.Core.Serialization.JsonContextRegistry.GetLazyPolymorphicListTypeInfo<__INTERFACE_TYPE__>(options) ?? List___INTERFACE_NAME__;
 }
 #endregion
 

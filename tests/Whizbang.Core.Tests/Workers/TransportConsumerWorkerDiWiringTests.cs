@@ -160,6 +160,10 @@ public class TransportConsumerWorkerDiWiringTests {
         .AddTransportConsumer();
 
       await using var sp = services.BuildServiceProvider();
+      // No storage driver in this fixture, so no migrations will ever run — open the gate the
+      // consumer now waits on before subscribing (nothing may let a broker deliver into an
+      // unmigrated schema; here there is no schema at all).
+      sp.GetRequiredService<Whizbang.Core.Workers.ISchemaReadyGate>().MarkReady();
       // Activate ONLY the consumer worker against the full AddWhizbang registration set — resolving
       // every IHostedService would drag in workers whose dependencies the storage driver supplies
       // in a real host. Optional ctor params still fill from this container, which is the seam

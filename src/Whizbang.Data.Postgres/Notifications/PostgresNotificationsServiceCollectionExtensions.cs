@@ -166,6 +166,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingleton<PgDurableSignalRetentionWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalRetentionWorker>());
 
+    // Duty election (startup-pipeline increment 7): duties are won on a session advisory lock over
+    // a dedicated direct connection, with holdings recorded via record_capability — the lock
+    // decides, the row reports.
+    services.TryAddSingleton<Whizbang.Core.Startup.IDutyElector, PgDutyElector>();
+
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
     // AddWhizbangNotificationDataSource), and no explicit

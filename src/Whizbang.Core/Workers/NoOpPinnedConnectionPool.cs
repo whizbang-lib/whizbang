@@ -17,6 +17,9 @@ namespace Whizbang.Core.Workers;
 /// the borrow returned is a pre-built struct-like sentinel.
 /// </remarks>
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:NoOp_TryPin_ReturnsBorrowWithNullConnectionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:NoOp_Instance_IsProcessWideSingletonAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:NoOp_TryPin_CancelledToken_ThrowsOperationCanceledAsync</tests>
 public sealed class NoOpPinnedConnectionPool : IPinnedConnectionPool {
   /// <summary>Process-wide singleton instance.</summary>
   public static NoOpPinnedConnectionPool Instance { get; } = new();

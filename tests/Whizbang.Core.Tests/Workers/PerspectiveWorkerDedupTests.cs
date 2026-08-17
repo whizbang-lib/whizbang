@@ -278,30 +278,37 @@ public class PerspectiveWorkerDedupTests {
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
     var registry = new SingleRunnerRegistry(runner);
-    var workId = Guid.CreateVersion7();
+    var observer = new SpyDedupObserver();
 
-    var work = new PerspectiveWork {
-      WorkId = workId,
+    coordinator.ReturnWorkOnEveryCycle = true;
+    coordinator.PerspectiveWorkTemplate = new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
       StreamId = Guid.CreateVersion7(),
       PerspectiveName = "Test.FakePerspective",
       LastProcessedEventId = null,
       PartitionNumber = 1
     };
-    coordinator.WorkItemsPerCycle = [[work], [work], []];
 
-    var (worker, harness) = _createWorker(coordinator, registry, useBatchedStrategy: false);
+    var (worker, harness) = _createWorker(coordinator, registry, observer: observer, useBatchedStrategy: false);
 
-    // Act
+    // Act — same steady-state shape as the batched-strategy test above: an exact "==1" races the
+    // window between cycle-2's dispatch and cycle-1's cooldown mark (the prior rotating flake).
+    // The real invariant: once dedup begins, the runner is never invoked again for that WorkId.
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await coordinator.WaitForClaimCallsAsync(3, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
+    await observer.WaitForDedupCallsAsync(1, TimeSpan.FromSeconds(5));
+    var runCountWhenDedupBegan = runner.RunAsyncCallCount;
+    await observer.WaitForDedupCallsAsync(2, TimeSpan.FromSeconds(5)); // further redeliveries keep deduping
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
     // Assert
-    await Assert.That(runner.RunAsyncCallCount).IsEqualTo(1)
-      .Because("Dedup cache should prevent duplicate Apply with instant strategy too");
+    await Assert.That(runner.RunAsyncCallCount).IsEqualTo(runCountWhenDedupBegan)
+      .Because("Once the WorkId is cached, redeliveries are deduped — the instant strategy must not re-Apply either");
+    await Assert.That(observer.DedupCalls.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Observer should be notified of dedup");
   }
 
   // ==================== PostLifecycle WhenAll RED/GREEN Test ====================

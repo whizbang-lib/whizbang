@@ -122,6 +122,60 @@
       "formerNames": []
     },
     {
+      "pinnedId": "7d2a9c4e-5b83-4f1a-9e67-0c8d3b2a1f54",
+      "clrTypeName": "Whizbang.Core.Messaging.IntegrityCheckpoint",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "f8a3c6e1-9d47-4b28-a5c1-3e7b0d9f2a64",
+      "clrTypeName": "Whizbang.Core.Messaging.IntegrityDivergenceDetected",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "a1e6d8c2-3f7b-4a95-8d21-6e4c9b0f7a38",
+      "clrTypeName": "Whizbang.Core.Messaging.IntegrityGapDetected",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "e2b7d9f4-6c15-4a83-b270-9d4e1c8f5a36",
+      "clrTypeName": "Whizbang.Core.Messaging.IntegrityManifest",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "b5e8d2a7-4f91-4c36-8a05-6d3c9e1b7f48",
+      "clrTypeName": "Whizbang.Core.Messaging.PerspectiveCoverageGapDetected",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "b3d9f2a1-6c47-4e0d-9a58-1f2e3c4d5b6a",
+      "clrTypeName": "Whizbang.Core.Messaging.RedeliveryComposite",
+      "kind": "message",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "c9f4b1e7-2a6d-4c38-9b05-7e1f8d3a6c92",
+      "clrTypeName": "Whizbang.Core.Messaging.RequestIntegrityManifest",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "4f8e2b7a-9d31-4c6e-8b5f-2a1d0c9e7f43",
+      "clrTypeName": "Whizbang.Core.Messaging.RequestRedeliveryCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "a7d2e9c4-5b18-4f36-8e0a-1c9b7d4f2a85",
+      "clrTypeName": "Whizbang.Core.Messaging.ScheduledIntegritySweep",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
       "pinnedId": "d4e8c1a6-9b03-4f27-8a5e-1c7b2d9e6f04",
       "clrTypeName": "Whizbang.Core.Perspectives.Compacted",
       "kind": "event",

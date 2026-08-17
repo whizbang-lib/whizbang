@@ -69,12 +69,45 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
   /// <summary>Active per-stream buffer count — exposed for tests + diagnostics.</summary>
   public int ActiveStreamCount => _streams.Count;
 
+  /// <summary>
+  /// Test seam: completes a mapped stream buffer's writer WITHOUT removing it from the active
+  /// map. That is precisely the state the idle sweep leaves for a caller that already grabbed
+  /// the buffer from <c>GetOrAdd</c> — the sweep removes then completes, so an in-flight
+  /// <see cref="AppendAsync"/> can be holding a reference to a completed channel. The interleave
+  /// has no other seam (it lives between two statements), so this reproduces it deterministically
+  /// instead of relying on scheduling luck.
+  /// </summary>
+  internal bool CompleteMappedWriterForTest(Guid streamId) =>
+    _streams.TryGetValue(streamId, out var buffer) && buffer.Writer.TryComplete();
+
   /// <inheritdoc />
+  /// <remarks>
+  /// Retries once past an idle eviction. The sweep evicts in two steps (remove from the map,
+  /// then complete the writer), so between this method's <c>GetOrAdd</c> and its write the
+  /// buffer it holds can be completed underneath it — the write would then throw
+  /// <see cref="ChannelClosedException"/> at the caller for what is a routine, expected event.
+  /// On that signal the dead entry is dropped (if still mapped) and the append retried, which
+  /// re-creates a live buffer. Shutdown also completes writers, so <c>_disposed</c> is
+  /// re-checked before retrying to surface a genuine <see cref="ObjectDisposedException"/>
+  /// rather than spin.
+  /// </remarks>
   public async ValueTask AppendAsync(Guid streamId, CancellationToken cancellationToken = default) {
     ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-    var buffer = _streams.GetOrAdd(streamId, k => _createStreamBuffer(k));
-    buffer.LastActivity = _timeProvider.GetUtcNow();
-    await buffer.Writer.WriteAsync(streamId, cancellationToken).ConfigureAwait(false);
+
+    // Bounded: a freshly created buffer carries a fresh LastActivity, so it cannot be evicted
+    // for idleness before the retry writes to it. The cap is a backstop, not the mechanism.
+    const int maxAttempts = 3;
+    for (var attempt = 1; ; attempt++) {
+      var buffer = _streams.GetOrAdd(streamId, k => _createStreamBuffer(k));
+      buffer.LastActivity = _timeProvider.GetUtcNow();
+      try {
+        await buffer.Writer.WriteAsync(streamId, cancellationToken).ConfigureAwait(false);
+        return;
+      } catch (ChannelClosedException) when (attempt < maxAttempts) {
+        _ = _streams.TryRemove(KeyValuePair.Create(streamId, buffer));
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+      }
+    }
   }
 
   /// <inheritdoc />

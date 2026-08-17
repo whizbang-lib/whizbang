@@ -131,13 +131,23 @@ public class ServiceBusConsumerWorkerDropGateTests {
     };
   }
 
+  /// <summary>Catalog double stamping <see cref="DropGateTestEvent"/> as a composite, so the
+  /// receive gate can recognise it by wire type name the way the real generated catalog does.</summary>
+  private sealed class CompositeMarkerCatalog : IMessageTypeCatalog {
+    private static readonly IReadOnlyList<MessageTypeCatalogEntry> _entries = [
+      new(typeof(DropGateTestEvent), TypeNameFormatter.FormatClrTypeName(typeof(DropGateTestEvent)), "event", null) { IsComposite = true },
+    ];
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => _entries;
+  }
+
   private static (
       ServiceBusConsumerWorker worker,
       CapturingTransport transport,
       CountingStrategy strategy,
       ServiceProvider sp)
     _buildWorker(IReceptorRegistryQuery? registry, IReceptorRegistry? runtimeRegistry = null,
-                 IEnvelopeSerializer? envelopeSerializer = null) {
+                 IEnvelopeSerializer? envelopeSerializer = null,
+                 IEventMarkerResolver? eventMarkerResolver = null) {
     var transport = new CapturingTransport();
     var strategy = new CountingStrategy();
     var services = new ServiceCollection();
@@ -158,7 +168,8 @@ public class ServiceBusConsumerWorkerDropGateTests {
       },
       envelopeSerializer: envelopeSerializer,
       receptorRegistry: registry,
-      runtimeReceptorRegistry: runtimeRegistry);
+      runtimeReceptorRegistry: runtimeRegistry,
+      eventMarkerResolver: eventMarkerResolver);
 
     return (worker, transport, strategy, sp);
   }
@@ -190,6 +201,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       await Assert.That(transport.BatchHandler).IsNotNull()
         .Because("Worker must register a batch handler with the transport during StartAsync.");
@@ -215,6 +227,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       var claimEnvelopeType = typeof(MessageEnvelope<BodyClaimEnvelopePayload>).AssemblyQualifiedName!;
       await transport.BatchHandler!.Invoke(
@@ -272,6 +285,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       await Assert.That(transport.BatchHandler).IsNotNull()
         .Because("Worker must register a batch handler with the transport during StartAsync.");
@@ -282,6 +296,36 @@ public class ServiceBusConsumerWorkerDropGateTests {
 
       await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(1)
         .Because("Drop gate must consult runtime registry too — when a runtime receptor exists for the inner type, the message must NOT be dropped even when compile-time HasAnyConsumer reports false.");
+
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
+  public async Task HandleMessage_CompositeWireType_NotDroppedByNoConsumerGateAsync() {
+    // Composites are wire-only (IMessage, never IEvent): no service registers a consumer for the
+    // composite type itself — its consumers are registered for the INNER event types, which only
+    // exist after the dispatch seam fans the composite out. HasAnyConsumer is therefore false for
+    // every composite by construction, and an unexempted gate drops it before any inbox row is
+    // written, losing the whole burst with no dead-letter and no recovery path. Mirrors the
+    // TransportConsumerWorker lock so both receive paths stay honest.
+    var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = DropGateTestJsonContext.Default };
+    var (worker, transport, strategy, sp) = _buildWorker(
+      new FakeReceptorRegistry(hasAnyConsumer: false),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      eventMarkerResolver: new EventMarkerResolver(new CompositeMarkerCatalog()));
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+
+      await transport.BatchHandler!.Invoke(
+        [new TransportMessage(_makeEnvelope(), _makeWrapperEnvelopeType())],
+        cts.Token);
+
+      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(1)
+        .Because("The no-consumer gate must exempt composites — nothing consumes the composite type itself, " +
+                 "so dropping here destroys the whole burst before the dispatch seam can fan it out into its inner events.");
 
       await worker.StopAsync(CancellationToken.None);
     }

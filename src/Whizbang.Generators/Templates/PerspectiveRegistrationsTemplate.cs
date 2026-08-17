@@ -40,6 +40,8 @@ public sealed record MessageAssociation(
 /// <param name="ServiceName">Service name (assembly name)</param>
 /// <param name="ApplyDelegate">Strongly-typed delegate to perspective's Apply method</param>
 /// <docs>fundamentals/perspectives/association-metadata</docs>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs:PerspectiveDiscoveryGenerator_GeneratesGetPerspectiveAssociationsMethodAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs:PerspectiveDiscoveryGenerator_GeneratesPerspectiveAssociationInfoRecordAsync</tests>
 public sealed record PerspectiveAssociationInfo<TModel, TEvent>(
   string MessageType,
   string TargetName,

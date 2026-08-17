@@ -25,6 +25,7 @@ public sealed class PgScheduleManager : IScheduleManager {
   private readonly WhizbangNotificationOptions _options;
   private readonly IConfiguration _configuration;
   private readonly INotificationConnectionStringFallback? _connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource;
   private readonly ILogger<PgScheduleManager> _logger;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly int _partitionCount;
@@ -38,7 +39,8 @@ public sealed class PgScheduleManager : IScheduleManager {
     IOptions<ClaimWorkerOptions> claimWorkerOptions,
     IOptions<TemporalOptions> temporalOptions,
     ILogger<PgScheduleManager> logger,
-    INotificationConnectionStringFallback? connectionStringFallback = null) {
+    INotificationConnectionStringFallback? connectionStringFallback = null,
+    INotificationDataSource? notificationDataSource = null) {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -46,6 +48,7 @@ public sealed class PgScheduleManager : IScheduleManager {
     _leaseSeconds = (temporalOptions?.Value ?? new TemporalOptions()).LeaseDurationSeconds;
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _connectionStringFallback = connectionStringFallback;
+    _notificationDataSource = notificationDataSource;
   }
 
   /// <inheritdoc />
@@ -214,11 +217,13 @@ public sealed class PgScheduleManager : IScheduleManager {
 
   private async Task<NpgsqlConnection?> _openAsync(CancellationToken cancellationToken) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    if (resolution.ConnectionString is null) {
+    // Prefer the registered notification data source - the only path that
+    // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
+    // string has had its credentials stripped by Npgsql.
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
       return null;
     }
-    var conn = new NpgsqlConnection(resolution.ConnectionString);
-    await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
-    return conn;
+    return await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
   }
 }

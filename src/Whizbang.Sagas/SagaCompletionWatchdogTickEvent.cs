@@ -25,6 +25,9 @@ namespace Whizbang.Sagas;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/sagas/completion-orchestration</docs>
+/// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:FirstReArm_NoSnapshot_UsesInitialBudgetAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NoProgressBetweenTicks_StallCounterIncrementsAndBacksOffAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Tests/Generated/SagasJsonContextTests.cs:SagasJsonContext_RoundTripsSagaCompletionWatchdogTickEventAsync</tests>
 public class SagaCompletionWatchdogTickEvent : SagaEventBase, ISagaCompletionWatchdogTickEvent {
 
   /// <summary>The name of the saga whose completion this tick is checking.</summary>

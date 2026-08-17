@@ -268,19 +268,28 @@ public class ServiceBusInfrastructureProvisionerTests {
       throw new NotImplementedException();
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();
     }
+
+    public Task UpdateSubscriptionLockDurationAsync(string topicName, string subscriptionName, TimeSpan lockDuration, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+
 
     public Task<SubscriptionProperties> GetSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();
     }
 
     public Task DeleteSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task<long> GetSubscriptionActiveMessageCountAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();
     }
 

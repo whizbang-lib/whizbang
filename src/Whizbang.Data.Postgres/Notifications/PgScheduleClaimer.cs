@@ -24,6 +24,7 @@ public sealed partial class PgScheduleClaimer : IScheduleClaimer {
   private readonly IConfiguration _configuration;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly INotificationConnectionStringFallback? _connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource;
   private readonly int _partitionCount;
   private readonly int _leaseSeconds;
   private readonly ILogger<PgScheduleClaimer> _logger;
@@ -36,7 +37,8 @@ public sealed partial class PgScheduleClaimer : IScheduleClaimer {
     IOptions<ClaimWorkerOptions> claimWorkerOptions,
     IOptions<TemporalOptions> temporalOptions,
     ILogger<PgScheduleClaimer> logger,
-    INotificationConnectionStringFallback? connectionStringFallback = null) {
+    INotificationConnectionStringFallback? connectionStringFallback = null,
+    INotificationDataSource? notificationDataSource = null) {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -44,17 +46,21 @@ public sealed partial class PgScheduleClaimer : IScheduleClaimer {
     _leaseSeconds = (temporalOptions?.Value ?? new TemporalOptions()).LeaseDurationSeconds;
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _connectionStringFallback = connectionStringFallback;
+    _notificationDataSource = notificationDataSource;
   }
 
   /// <inheritdoc />
   public async Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    if (resolution.ConnectionString is null) {
+    // Prefer the registered notification data source - the only path that
+    // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
+    // string has had its credentials stripped by Npgsql.
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
       return 0;   // no DB connection yet — the doorbell / backstop drives us when it returns
     }
 
-    await using var conn = new NpgsqlConnection(resolution.ConnectionString);
-    await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+    await using var conn = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using var cmd = conn.CreateCommand();
     // p_now omitted => the function uses NOW() (DB-clock authority). p_lease_expiry is the outbox
     // publish lease for the spawned occurrences.
@@ -74,12 +80,15 @@ public sealed partial class PgScheduleClaimer : IScheduleClaimer {
   /// <inheritdoc />
   public async Task<DateTimeOffset?> GetNextFireTimeAsync(CancellationToken cancellationToken = default) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    if (resolution.ConnectionString is null) {
+    // Prefer the registered notification data source - the only path that
+    // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
+    // string has had its credentials stripped by Npgsql.
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
       return null;
     }
 
-    await using var conn = new NpgsqlConnection(resolution.ConnectionString);
-    await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+    await using var conn = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       SELECT MIN(sc.next_fire_at)

@@ -31,10 +31,14 @@ public class HeartbeatWorkerTests {
     public TaskCompletionSource<HeartbeatRequest> FirstHeartbeat { get; } = new();
     public int CallCount { get; private set; }
 
-    public Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+    /// <summary>Whether RecordHeartbeatAsync accepts the heartbeat (true) or reports this instance
+    /// as evicted (false) — the tombstone-refusal signal from migration 106.</summary>
+    public bool AcceptHeartbeats { get; set; } = true;
+
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
       CallCount++;
       FirstHeartbeat.TrySetResult(request);
-      return Task.CompletedTask;
+      return Task.FromResult(AcceptHeartbeats);
     }
 
     // Unused — fail loud if any other path is exercised.
@@ -97,6 +101,43 @@ public class HeartbeatWorkerTests {
     await Assert.That(first.ServiceName).IsEqualTo("svc");
     await Assert.That(first.HostName).IsEqualTo("host");
     await Assert.That(first.ProcessId).IsEqualTo(42);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  // record_heartbeat (migration 106) refuses a reaped instance's heartbeat and reports it through
+  // its own return value. Retrying can never succeed — the tombstone does not expire on this
+  // instance's clock — so continuing to call would be a heartbeat guaranteed to be rejected
+  // forever. The worker must stop rather than loop on a call it cannot win.
+  [Test]
+  public async Task ExecuteAsync_WhenEvicted_StopsHeartbeatingAsync() {
+    var instanceId = TrackedGuid.NewMedo();
+    var instProvider = new StubInstanceProvider((Guid)instanceId, "svc", "host", 1);
+    var coord = new StubCoordinator { AcceptHeartbeats = false };
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var worker = new HeartbeatWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instProvider,
+      gate,
+      Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
+      NullLogger<HeartbeatWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    await coord.FirstHeartbeat.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // If the worker kept looping despite the refusal, several more ticks would have landed by now.
+    await Task.Delay(TimeSpan.FromSeconds(3));
+
+    await Assert.That(coord.CallCount).IsEqualTo(1)
+      .Because("a refused heartbeat means this instance was evicted; it must not keep retrying a "
+               + "call that can never succeed");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

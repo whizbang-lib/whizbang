@@ -83,6 +83,104 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
+  public async Task TryExpand_IdentityPreservingComposite_ChildrenCarryProvidedIdsAsync() {
+    // Re-delivery bundles carry PREVIOUSLY PERSISTED events: their original ids are what make
+    // consumer convergence free (event-id conflict skip). A fresh fan-out id would append a
+    // duplicate instead of skipping an already-present event.
+    var streamId = Guid.NewGuid();
+    var idA = Guid.NewGuid();
+    var idB = Guid.NewGuid();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      InnerPayloads = [_raw("{\"v\":\"A\"}"), _raw("{\"v\":\"B\"}")],
+      InnerTypeNames = ["Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts"],
+      InnerEventIds = [idA, idB],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    await Assert.That(result.Children[0].MessageId).IsEqualTo(idA)
+      .Because("an identity-preserving composite's children must keep their caller-supplied " +
+               "(original) ids — identity is what makes re-delivery idempotent at consumers.");
+    await Assert.That(result.Children[1].MessageId).IsEqualTo(idB);
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_ChildrenCarryOriginIdentityAsync() {
+    // Stream-integrity Phase B: windowed integrity accounting keys on each event's ORIGIN identity
+    // (origin service + origin commit sequence). Re-delivered children must carry the ORIGINALS —
+    // under the bundle's own identity a repaired window would never recount as filled.
+    var streamId = Guid.NewGuid();
+    var origin = Guid.NewGuid();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      InnerPayloads = [_raw("{\"v\":\"A\"}"), _raw("{\"v\":\"B\"}"), _raw("{\"v\":\"C\"}")],
+      InnerTypeNames = ["Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()],
+      OriginServiceId = origin,
+      InnerCommitSequences = [10, 11, null],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children[0].SourceServiceId).IsEqualTo(origin)
+      .Because("the bundle names the ORIGIN the events were emitted by — children carry it, not " +
+               "the repair bundle's own source identity.");
+    await Assert.That(result.Children[1].SourceServiceId).IsEqualTo(origin);
+    await Assert.That(result.Children[0].SourceCommitSequence).IsEqualTo(10L);
+    await Assert.That(result.Children[1].SourceCommitSequence).IsEqualTo(11L);
+    await Assert.That(result.Children[2].SourceCommitSequence).IsEqualTo(source.SourceCommitSequence)
+      .Because("a null entry means the event predates commit-sequence stamping — fall back to the " +
+               "composite envelope's value rather than inventing one.");
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_SequenceCountMismatch_FailsAsync() {
+    // Strict, mirroring the id pairing: a machine-built bundle with desynchronized sequences is a
+    // producer bug — fail the whole expansion rather than misattribute origin windows.
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{\"v\":\"A\"}"), _raw("{\"v\":\"B\"}")],
+      InnerTypeNames = ["Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
+      InnerCommitSequences = [10],
+    };
+    var source = _sourceEnvelope(composite.StreamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Children).IsEmpty();
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityPreservingComposite_IdCountMismatch_FailsAsync() {
+    // Strict: a machine-built repair bundle with desynchronized ids/inners is a producer bug —
+    // fail the whole expansion (DLQ route) rather than guess at the pairing.
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{\"v\":\"A\"}"), _raw("{\"v\":\"B\"}")],
+      InnerTypeNames = ["Contracts.Repaired, Contracts", "Contracts.Repaired, Contracts"],
+      InnerEventIds = [Guid.NewGuid()],
+    };
+    var source = _sourceEnvelope(composite.StreamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Children).IsEmpty();
+  }
+
+  [Test]
   public async Task TryExpand_ChildrenAreMarkedAsEventsAsync() {
     var composite = new _testComposite(new _innerEvent("E"));
     var source = _sourceEnvelope(Guid.NewGuid());
@@ -222,9 +320,74 @@ public class CompositeInboxFanoutTests {
       .Because("The replacement set (2) is fanned out, not the composite's own InnerEvents (1).");
   }
 
+  [Test]
+  public async Task TryExpand_RawComposite_ChildrenBuiltFromRawPayloadsAsync() {
+    // Raw carry: no typed payloads exist on either side — the child inbox row is built DIRECTLY
+    // from the stored wire JSON and wire type name, with no serializer on the path.
+    var streamId = Guid.NewGuid();
+    var idA = Guid.NewGuid();
+    var idB = Guid.NewGuid();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      InnerPayloads = [_raw("{\"tags\":[\"a\",\"b\"]}"), _raw("{\"n\":7}")],
+      InnerTypeNames = ["Contracts.RepairedA, Contracts", "Contracts.RepairedB, Contracts"],
+      InnerEventIds = [idA, idB],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    await Assert.That(result.Children[0].Envelope.Payload.GetRawText()).IsEqualTo("{\"tags\":[\"a\",\"b\"]}")
+      .Because("the payload bytes that were emitted are the payload bytes that repair — verbatim, " +
+               "no rehydration, no polymorphic metadata for arbitrary consumer shapes.");
+    await Assert.That(result.Children[0].MessageType).IsEqualTo("Contracts.RepairedA, Contracts");
+    await Assert.That(result.Children[0].EnvelopeType)
+      .IsEqualTo("Whizbang.Core.Observability.MessageEnvelope`1[[Contracts.RepairedA, Contracts]], Whizbang.Core")
+      .Because("the child envelope type composes from the carried wire name — same shape the " +
+               "serializer would have produced from a typed payload.");
+    await Assert.That(result.Children[1].MessageType).IsEqualTo("Contracts.RepairedB, Contracts");
+    await Assert.That(result.Children[0].Flags.HasFlag(EventFlags.NoRebroadcast)).IsTrue();
+  }
+
+  [Test]
+  public async Task TryExpand_RawComposite_TypeNameCountMismatch_FailsAsync() {
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{}"), _raw("{}")],
+      InnerTypeNames = ["Contracts.OnlyOne, Contracts"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed)
+      .Because("raw bundles are machine-built — a payload/type-name desync is a producer bug and " +
+               "guessing at the pairing would mislabel repaired events.");
+  }
+
+  [Test]
+  public async Task TryExpand_RawComposite_OverCap_ReturnsCapExceededAsync() {
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{}"), _raw("{}"), _raw("{}")],
+      InnerTypeNames = ["T, A", "T, A", "T, A"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()],
+      MaxInnerEventsAllowed = 2,
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.CapExceeded);
+  }
+
   // ============================================================
   // Fakes + helpers
   // ============================================================
+
+  private static JsonElement _raw(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
   private static ServiceProvider _provider() =>
     new ServiceCollection()
@@ -334,5 +497,83 @@ public class CompositeInboxFanoutTests {
     public int? MaxInnerEventsAllowedOverride { get; init; }
     public int MaxInnerEventsAllowed => MaxInnerEventsAllowedOverride ?? 10_000;
     public IEnumerable<IMessage> InnerEvents => _inner;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // IsCompositeWireType — the receive-boundary lookup that keeps composites past the
+  // "no local consumer" gates. A composite is wire-only, so nothing registers a consumer for the
+  // composite type itself; recognition has to come from the compile-time catalog, by type name,
+  // because the payload is still an undeserialized JsonElement at the gate.
+  // ---------------------------------------------------------------------------------------------
+
+  private sealed class _compositeMarker;
+  private sealed class _plainMarker;
+
+  private sealed class _markerCatalog : IMessageTypeCatalog {
+    private static readonly IReadOnlyList<MessageTypeCatalogEntry> _entries = [
+      new(typeof(_compositeMarker), TypeNameFormatter.FormatClrTypeName(typeof(_compositeMarker)), "event", null) { IsComposite = true },
+      new(typeof(_plainMarker), TypeNameFormatter.FormatClrTypeName(typeof(_plainMarker)), "event", null),
+    ];
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => _entries;
+  }
+
+  private static EventMarkerResolver _markerResolver() => new(new _markerCatalog());
+
+  /// <summary>The assembly-qualified wire form the receive gates hand to the lookup.</summary>
+  private static string _wireName(Type type) => type.AssemblyQualifiedName!;
+
+  [Test]
+  public async Task IsCompositeWireType_CatalogStampsComposite_ReturnsTrueAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(_compositeMarker)), _markerResolver());
+
+    await Assert.That(isComposite).IsTrue()
+      .Because("A composite must be recognisable at the receive boundary from its wire type name alone — " +
+               "the payload is an undeserialized JsonElement there, so the compile-time catalog stamp is the only signal.");
+  }
+
+  [Test]
+  public async Task IsCompositeWireType_CatalogStampsPlainEvent_ReturnsFalseAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(_plainMarker)), _markerResolver());
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("Ordinary events must stay subject to the no-consumer gate — exempting them would refill the inbox " +
+               "with cross-service types this service knows nothing about.");
+  }
+
+  [Test]
+  public async Task IsCompositeWireType_TypeNotInCatalog_ReturnsFalseAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType("Some.Unknown.Type, Some.Assembly", _markerResolver());
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("A catalog miss means 'unknown here', not 'composite' — the gate keeps its normal behaviour.");
+  }
+
+  [Test]
+  public async Task IsCompositeWireType_NoMarkerResolver_ReturnsFalseAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(_compositeMarker)), markerResolver: null);
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("Without a catalog there is nothing to consult; the caller keeps its pre-existing behaviour rather than guessing.");
+  }
+
+  [Test]
+  [Arguments(null)]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task IsCompositeWireType_BlankTypeName_ReturnsFalseAsync(string? wireTypeName) {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(wireTypeName, _markerResolver());
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("An unusable type name cannot be catalog-addressed, so it cannot be claimed as a composite.");
+  }
+
+  [Test]
+  public async Task IsCompositeWireType_GenericTypeName_ReturnsFalseAsync() {
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[Some.Inner, Some.Assembly]], Whizbang.Core",
+      _markerResolver());
+
+    await Assert.That(isComposite).IsFalse()
+      .Because("Generic payload names are not catalog-addressed — the catalog holds concrete message types only.");
   }
 }

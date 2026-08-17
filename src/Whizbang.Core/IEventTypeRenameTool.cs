@@ -35,6 +35,9 @@ public sealed record PendingRename(
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/pinned-type-ledger</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventTypeRenameToolTests.cs:DetectRenames_PinnedDrift_ReturnsPendingRenameAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventTypeRenameToolTests.cs:ExecuteAsync_RewritesAllSixTablesAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventTypeRenameToolTests.cs:ExecuteAsync_ManualRenameRunsAsync</tests>
 public interface IEventTypeRenameTool {
   /// <summary>
   /// Compares registry state against the current code and returns every detected drift.

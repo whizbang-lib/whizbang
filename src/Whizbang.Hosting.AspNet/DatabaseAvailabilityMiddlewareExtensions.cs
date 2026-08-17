@@ -15,6 +15,7 @@ public static class DatabaseAvailabilityMiddlewareExtensions {
   /// pipeline (before routing) to reject requests fast.
   /// </summary>
   /// <docs>resilience/database-availability-middleware</docs>
+  /// <tests>tests/Whizbang.Hosting.AspNet.Tests/DatabaseAvailabilityMiddlewareExtensionsTests.cs:UseDatabaseAvailabilityGate_RegistersMiddleware_AndReturnsBuilderAsync</tests>
   public static IApplicationBuilder UseDatabaseAvailabilityGate(this IApplicationBuilder app)
     => app.UseDatabaseAvailabilityGate(exemptPaths: null);
 
@@ -26,15 +27,19 @@ public static class DatabaseAvailabilityMiddlewareExtensions {
   /// ones (<see cref="AvailabilityGateMode.MutationsOnly"/> lets reads serve during migration).
   /// </summary>
   /// <docs>resilience/database-availability-middleware</docs>
+  /// <tests>tests/Whizbang.Hosting.AspNet.Tests/DatabaseAvailabilityMiddlewareExtensionsTests.cs:UseDatabaseAvailabilityGate_WithExemptPaths_ReturnsBuilderAsync</tests>
   public static IApplicationBuilder UseDatabaseAvailabilityGate(
       this IApplicationBuilder app, IReadOnlyList<string>? exemptPaths,
       AvailabilityGateMode mode = AvailabilityGateMode.AllNonExempt) {
     ArgumentNullException.ThrowIfNull(app);
     // Resolve the singleton gate once at build time and construct the middleware explicitly, so the
-    // gate (DI) and the exempt paths (explicit) are unambiguously combined.
+    // gate (DI) and the exempt paths (explicit) are unambiguously combined. The dynamic exemptions
+    // ride along when registered: surfaces like the startup status endpoint add their own route at
+    // mapping time, which happens after this Use but before the middleware is constructed.
     var gate = app.ApplicationServices.GetRequiredService<ISchemaReadyGate>();
+    var dynamicExemptions = app.ApplicationServices.GetService<WhizbangAvailabilityExemptions>();
     return app.Use(next => {
-      var middleware = new DatabaseAvailabilityMiddleware(next, gate, exemptPaths, mode);
+      var middleware = new DatabaseAvailabilityMiddleware(next, gate, exemptPaths, mode, dynamicExemptions);
       return middleware.InvokeAsync;
     });
   }

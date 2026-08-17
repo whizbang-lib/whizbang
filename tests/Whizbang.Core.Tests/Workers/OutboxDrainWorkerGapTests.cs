@@ -607,6 +607,48 @@ public class OutboxDrainWorkerGapTests {
   /// task directly (no WaitAsync wrapper). Publish + completion must still work.
   /// </summary>
   [Test]
+  public async Task OutboxDrainWorker_DroppedControlPlaneRow_CompletesSoTheRowTerminatesAsync() {
+    // Observed live: 65 dropped control-plane rows re-fetched and re-"dropped" every drain
+    // cycle FOREVER (attempts climbing past 470) — the drop logged and skipped but never
+    // terminated the wh_outbox row, so the drop was a per-cycle log line, not a disposal.
+    // A dropped row must complete like a published one so the completion flush removes it.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new GapWorkCoordinator();
+    coord.RowsByStream[streamId] = [
+      _row(msgId, streamId, attempts: 10) with {
+        MessageType = typeof(RequestRedeliveryCommand).AssemblyQualifiedName!,
+      },
+    ];
+
+    var drainChannel = new GapDrainChannel();
+    var completion = new GapCompletionChannel();
+    var failure = new GapFailureChannel();
+    var publish = new GapPublishStrategy { TargetCount = 0 };
+    var sp = _sp(coord);
+
+    var worker = _worker(sp, drainChannel, completion, failure,
+      new OutboxDrainWorkerOptions { Enabled = true, MaxOutboxAttempts = 3 }, publish);
+
+    var idled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idled.TrySetResult();
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await idled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(completion.AllIds).Contains(msgId)
+      .Because("a DROPPED control-plane row is terminally handled — completing it lets the flush " +
+               "remove the wh_outbox row; without this the same row re-drops every cycle forever");
+    await Assert.That(publish.Published).IsEmpty()
+      .Because("dropped means dropped — the row must still never reach the transport");
+  }
+
+  [Test]
   public async Task OutboxDrainWorker_PublishTimeoutZero_SingularPath_PublishesAndCompletesAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();

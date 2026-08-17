@@ -19,6 +19,9 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 /// </remarks>
 /// <typeparam name="TModel">The perspective model this executor mutates.</typeparam>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:Executor_ReportsModelTypeAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:Executor_NonFactorySession_ThrowsArgumentAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:Executor_NullTableName_ThrowsAsync</tests>
 public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExecutor
     where TModel : class {
   private readonly string _tableName;

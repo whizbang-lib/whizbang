@@ -265,6 +265,82 @@ public class AzureServiceBusProvisioningPathTests {
   }
 
   /// <summary>
+  /// The broker-side subscription lock duration defaults to the ASB maximum (5 minutes). The
+  /// ASB default of 1 minute proved a hair-trigger on a live fleet: under many concurrent
+  /// sessions, lock renewals arriving seconds late killed session locks ~90s after accept,
+  /// completions failed, and messages redelivered until they dead-lettered.
+  /// </summary>
+  [Test]
+  public async Task Options_SubscriptionLockDuration_DefaultsToTheFiveMinuteMaximumAsync() {
+    await Assert.That(new AzureServiceBusOptions().SubscriptionLockDuration)
+      .IsEqualTo(TimeSpan.FromMinutes(5))
+      .Because("every renewal margin scales with the lock duration — the widest lock is the "
+               + "turnkey-safe default for session-heavy workloads");
+  }
+
+  /// <summary>Fresh subscriptions are created with the configured lock duration.</summary>
+  [Test]
+  public async Task SubscribeAsync_FreshSubscription_CarriesTheConfiguredLockDurationAsync() {
+    var adminClient = new RecordingAdminClient { ExistingTopics = { "orders-topic" } };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _sessionOptions());
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic"));
+
+    await Assert.That(adminClient.CreatedSubscriptions).Count().IsEqualTo(1);
+    await Assert.That(adminClient.CreatedSubscriptions[0].LockDuration).IsEqualTo(TimeSpan.FromMinutes(5))
+      .Because("a new environment must get the safe lock duration with zero configuration");
+  }
+
+  /// <summary>
+  /// An existing subscription with a SHORTER lock duration is raised in place on the ensure
+  /// path — LockDuration is updatable (unlike RequiresSession), so existing environments
+  /// self-heal on their next deploy instead of keeping the hair-trigger forever.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_ExistingSubscriptionWithShorterLock_IsRaisedInPlaceAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      SessionRequiredSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingLockDuration = TimeSpan.FromMinutes(1),
+    };
+    // Debug-enabled logger: the raise announcement's IsEnabled-gated body executes too.
+    var logger = new RecordingTransportLogger();
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _sessionOptions(), logger);
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic"));
+
+    await Assert.That(adminClient.UpdatedLockDurations.Contains(("orders-topic", "unit-sub", TimeSpan.FromMinutes(5)))).IsTrue()
+      .Because("the reconcile is what carries the fix to environments provisioned before it existed");
+    await Assert.That(adminClient.DeletedSubscriptions).IsEmpty()
+      .Because("LockDuration updates in place — no delete/recreate, no message loss");
+    await Assert.That(logger.Contains(Microsoft.Extensions.Logging.LogLevel.Information, "Raising LockDuration")).IsTrue()
+      .Because("an infrastructure mutation must announce itself — operators diagnose lock storms from this line");
+  }
+
+  /// <summary>
+  /// An existing subscription at (or above) the configured duration is left alone — the
+  /// reconcile only ever RAISES, so an operator's deliberate broker-side value is never
+  /// churned by every deploy.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_ExistingSubscriptionAtTheConfiguredLock_IsLeftAloneAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      SessionRequiredSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingLockDuration = TimeSpan.FromMinutes(5),
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _sessionOptions());
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic"));
+
+    await Assert.That(adminClient.UpdatedLockDurations).IsEmpty()
+      .Because("an idempotent reconcile that rewrites an unchanged value spams the management "
+               + "plane on every pod start");
+  }
+
+  /// <summary>
   /// Sessions enabled + existing subscription that already requires sessions is a no-op.
   /// </summary>
   [Test]
@@ -457,6 +533,142 @@ public class AzureServiceBusProvisioningPathTests {
     await Assert.That(sqlFilter).IsNotNull();
     await Assert.That(sqlFilter!.SqlExpression)
       .IsEqualTo("sys.Label LIKE 'orders.%' OR sys.Label LIKE 'audit.%'");
+  }
+
+  /// <summary>
+  /// A subscription whose single rule already matches the desired SqlFilter exactly is left
+  /// untouched. The delete-then-create churn opens a brief no-rule window in which published
+  /// messages match nothing and are silently dropped — resubscribes (deploy, connection
+  /// recovery, liveness watchdog) must not reopen that window when nothing changed.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_RoutingPatterns_RuleAlreadyCorrect_SkipsRuleChurnAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("RoutingPatternFilter",
+          new SqlRuleFilter("sys.Label LIKE 'orders.%' OR sys.Label LIKE 'audit.%'"))
+      }
+    };
+    // Debug-enabled logger: the skip path's IsEnabled-gated diagnostics execute too.
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions(),
+      new RecordingTransportLogger());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["RoutingPatterns"] = _json("""["orders.#","audit.*"]""")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules).IsEmpty()
+      .Because("an already-correct rule must not be deleted — the delete-create gap drops in-flight publishes");
+    await Assert.That(adminClient.CreatedRules).IsEmpty()
+      .Because("nothing changed, so nothing is recreated");
+  }
+
+  /// <summary>A drifted DestinationFilter (same name, different Destination value) is replaced.</summary>
+  [Test]
+  public async Task SubscribeAsync_DestinationFilter_RuleDrifted_ReplacesRuleAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("DestinationFilter",
+          new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "stale-destination" } })
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["DestinationFilter"] = _json("\"my-destination\"")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "DestinationFilter"))).IsTrue()
+      .Because("a correlation rule targeting a different destination must converge");
+    await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
+    var filter = adminClient.CreatedRules[0].Options.Filter as CorrelationRuleFilter;
+    await Assert.That(filter!.ApplicationProperties["Destination"]).IsEqualTo("my-destination");
+  }
+
+  /// <summary>
+  /// A lingering $Default match-all beside an otherwise-correct DestinationFilter forces the full
+  /// re-apply — the match-all admits everything, so "correct rule present" alone is not converged.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_DestinationFilter_DefaultAlongsideCorrectRule_ReappliesAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("$Default", new TrueRuleFilter()),
+        ServiceBusModelFactory.RuleProperties("DestinationFilter",
+          new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "my-destination" } })
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions(),
+      new RecordingTransportLogger());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["DestinationFilter"] = _json("\"my-destination\"")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "$Default"))).IsTrue()
+      .Because("the match-all admits everything — its presence means the subscription is NOT converged");
+    await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
+  }
+
+  /// <summary>A drifted RoutingPatternFilter (same name, different expression) is replaced.</summary>
+  [Test]
+  public async Task SubscribeAsync_RoutingPatterns_RuleDrifted_ReplacesRuleAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("RoutingPatternFilter",
+          new SqlRuleFilter("sys.Label LIKE 'stale.%'"))
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["RoutingPatterns"] = _json("""["orders.#"]""")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "RoutingPatternFilter"))).IsTrue()
+      .Because("a drifted rule must converge to the desired expression");
+    await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
+    var sqlFilter = adminClient.CreatedRules[0].Options.Filter as SqlRuleFilter;
+    await Assert.That(sqlFilter!.SqlExpression).IsEqualTo("sys.Label LIKE 'orders.%'");
+  }
+
+  /// <summary>
+  /// The DestinationFilter correlation rule gets the same idempotency: an existing rule already
+  /// filtering on the same Destination value, with no $Default alongside it, is left untouched.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_DestinationFilter_RuleAlreadyCorrect_SkipsRuleChurnAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = {
+        ServiceBusModelFactory.RuleProperties("DestinationFilter",
+          new CorrelationRuleFilter { ApplicationProperties = { ["Destination"] = "my-destination" } })
+      }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions(),
+      new RecordingTransportLogger());
+    var metadata = new Dictionary<string, JsonElement> {
+      ["DestinationFilter"] = _json("\"my-destination\"")
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(adminClient.DeletedRules).IsEmpty()
+      .Because("an already-correct correlation rule must not churn");
+    await Assert.That(adminClient.CreatedRules).IsEmpty();
   }
 
   /// <summary>Bare '#' and '*' wildcards (no dot prefix) also translate to '%'.</summary>
@@ -770,12 +982,13 @@ public class AzureServiceBusProvisioningPathTests {
   private static AzureServiceBusTransport _createTransport(
     FakeServiceBusClient client,
     RecordingAdminClient? adminClient,
-    AzureServiceBusOptions? options = null) {
+    AzureServiceBusOptions? options = null,
+    Microsoft.Extensions.Logging.ILogger<AzureServiceBusTransport>? logger = null) {
     return new AzureServiceBusTransport(
       client,
       _createJsonOptions(),
       options ?? _nonSessionOptions(),
-      NullLogger<AzureServiceBusTransport>.Instance,
+      logger ?? NullLogger<AzureServiceBusTransport>.Instance,
       adminClient);
   }
 
@@ -864,8 +1077,10 @@ public class AzureServiceBusProvisioningPathTests {
     public List<string> CreatedTopics { get; } = [];
     public HashSet<(string Topic, string Subscription)> ExistingSubscriptions { get; init; } = [];
     public HashSet<(string Topic, string Subscription)> SessionRequiredSubscriptions { get; init; } = [];
-    public List<(string Topic, string Subscription, bool? RequiresSession, int MaxDeliveryCount)> CreatedSubscriptions { get; } = [];
+    public List<(string Topic, string Subscription, bool? RequiresSession, int MaxDeliveryCount, TimeSpan LockDuration)> CreatedSubscriptions { get; } = [];
     public List<(string Topic, string Subscription)> DeletedSubscriptions { get; } = [];
+    public TimeSpan ExistingLockDuration { get; init; } = TimeSpan.FromMinutes(1);
+    public List<(string Topic, string Subscription, TimeSpan LockDuration)> UpdatedLockDurations { get; } = [];
     public List<RuleProperties> ExistingRules { get; init; } = [];
     public List<(string Topic, string Subscription, string RuleName)> DeletedRules { get; } = [];
     public List<(string Topic, string Subscription, CreateRuleOptions Options)> CreatedRules { get; } = [];
@@ -910,24 +1125,29 @@ public class AzureServiceBusProvisioningPathTests {
       return Task.FromResult(ExistingSubscriptions.Contains((topicName, subscriptionName)));
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
       if (CreateSubscriptionException is not null) {
         return Task.FromException(CreateSubscriptionException);
       }
-      CreatedSubscriptions.Add((topicName, subscriptionName, null, maxDeliveryCount));
+      CreatedSubscriptions.Add((topicName, subscriptionName, null, maxDeliveryCount, lockDuration));
       ExistingSubscriptions.Add((topicName, subscriptionName));
       return Task.CompletedTask;
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
       if (CreateSubscriptionException is not null) {
         return Task.FromException(CreateSubscriptionException);
       }
-      CreatedSubscriptions.Add((topicName, subscriptionName, requiresSession, maxDeliveryCount));
+      CreatedSubscriptions.Add((topicName, subscriptionName, requiresSession, maxDeliveryCount, lockDuration));
       ExistingSubscriptions.Add((topicName, subscriptionName));
       if (requiresSession) {
         SessionRequiredSubscriptions.Add((topicName, subscriptionName));
       }
+      return Task.CompletedTask;
+    }
+
+    public Task UpdateSubscriptionLockDurationAsync(string topicName, string subscriptionName, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
+      UpdatedLockDurations.Add((topicName, subscriptionName, lockDuration));
       return Task.CompletedTask;
     }
 
@@ -936,7 +1156,7 @@ public class AzureServiceBusProvisioningPathTests {
       var properties = ServiceBusModelFactory.SubscriptionProperties(
         topicName: topicName,
         subscriptionName: subscriptionName,
-        lockDuration: TimeSpan.FromMinutes(1),
+        lockDuration: ExistingLockDuration,
         requiresSession: SessionRequiredSubscriptions.Contains((topicName, subscriptionName)),
         defaultMessageTimeToLive: TimeSpan.FromDays(14),
         autoDeleteOnIdle: TimeSpan.FromDays(30),
@@ -950,6 +1170,9 @@ public class AzureServiceBusProvisioningPathTests {
       ExistingSubscriptions.Remove((topicName, subscriptionName));
       return Task.CompletedTask;
     }
+
+    public Task<long> GetSubscriptionActiveMessageCountAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) =>
+      Task.FromResult(0L);
 
     public async IAsyncEnumerable<RuleProperties> GetRulesAsync(
       string topicName,

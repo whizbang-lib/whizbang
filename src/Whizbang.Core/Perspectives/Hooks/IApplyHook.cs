@@ -14,6 +14,9 @@ namespace Whizbang.Core.Perspectives.Hooks;
 /// interface because the two execution mechanics (object mutation vs SQL compile) differ.
 /// </remarks>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:PerEventRegistry_Marker_Order_And_KeyedOverrideAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:SetProperty_IsCarried_AndApplyModelSettersMutatesTheObjectAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:NonMatchingMarkerHook_DoesNotContributeSettersAsync</tests>
 public interface IApplyHook<TMarker> {
   /// <summary>Record the mutations this hook wants applied to the row.</summary>
   /// <param name="builder">The op-recording builder, typed to <typeparamref name="TMarker"/>.</param>
@@ -34,6 +37,9 @@ public interface IApplyHook<TMarker> {
 /// set-based UPDATE, on both the EF Core and Dapper drivers.
 /// </remarks>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:ConcreteMarker_FiresForThatModelAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:NonAssignableMarker_IsSkippedAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:Hook_SetProperty_OverridesSpecField_AndLastRegisteredWinsAsync</tests>
 public interface ICollectiveApplyHook<TMarker> {
   /// <summary>Record the mutations this hook wants applied to the collective UPDATE.</summary>
   /// <param name="builder">The op-recording collective builder, typed to <typeparamref name="TMarker"/>.</param>

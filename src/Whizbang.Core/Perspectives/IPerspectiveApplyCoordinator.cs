@@ -34,6 +34,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rewind</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/RewindLiveApplyRaceTests.cs:Rewind_ConcurrentWithLiveApply_WithCoordinator_RetainsAllIncrementsAsync</tests>
 public interface IPerspectiveApplyCoordinator {
   /// <summary>
   /// Acquires exclusive Apply access for the given <c>(streamId, perspectiveName)</c>.

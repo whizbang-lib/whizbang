@@ -45,7 +45,7 @@ DECLARE
   v_deleted BIGINT;
 BEGIN
   -- debug_mode retains forensic history — a close is a truncation, so skip it entirely (like the reaper).
-  SELECT (setting_value = 'true') INTO v_debug FROM wh_settings WHERE setting_key = 'debug_mode';
+  SELECT (setting_value = 'true') INTO v_debug FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode';
   IF COALESCE(v_debug, FALSE) THEN
     RETURN QUERY SELECT 'debug_skipped'::TEXT, 0::BIGINT;
     RETURN;

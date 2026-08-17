@@ -179,7 +179,11 @@ public class SlidingWindowOutboxBatchStrategyTests {
 
     var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, ct) => {
-        captured.Add(msgs);
+        // Stream buffers drain CONCURRENTLY (independent parallel windows), so the capture
+        // must be synchronized — an unlocked List.Add race silently loses a batch.
+        lock (captured) {
+          captured.Add(msgs);
+        }
         return Task.CompletedTask;
       },
       options: new SlidingWindowOutboxOptions {

@@ -189,12 +189,19 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
   }
 
   [Test]
-  public async Task Migration063_UnderNonPublicSchema_ReferencesWhSettingsUnqualifiedAsync() {
-    // Regression: wh_settings is created UNqualified in migration 028, so it lives in the
-    // search_path schema (public), NOT __SCHEMA__. A qualified __SCHEMA__.wh_settings reference
-    // throws 42P01 ("relation \"inventory.wh_settings\" does not exist") whenever __SCHEMA__ is a
-    // non-public schema — exactly what the ECommerce sample (schema 'inventory') hit in CI. This
-    // reproduces that: the qualified core tables live in 'inventory', wh_settings stays in public.
+  public async Task Migration063_UnderNonPublicSchema_UsesTheServiceSchemasSettingsAsync() {
+    // This test previously asserted the OPPOSITE — that 063 must reference wh_settings UNqualified —
+    // and its comment recorded why: someone qualified the reference, the sample app running on a
+    // non-public schema failed CI with 42P01 "relation \"<schema>.wh_settings\" does not exist", and
+    // the reference was reverted. The diagnosis stopped one step short. The reference was right; the
+    // TABLE was in the wrong place, because migration 028 created it bare while migration 000 had
+    // already established the __SCHEMA__ form. Reverting the caller preserved the accident and the
+    // allow-list then codified it as intent.
+    //
+    // With 028 qualified and migration 105 carrying existing rows across, the premise is gone:
+    // wh_settings lives in the service schema like every other framework table, so a qualified
+    // reference is the correct one and this test now locks that. The version marker is per-service,
+    // which is the point — a shared marker would let one service's data migration satisfy another's.
     const string schema = "inv_test";
     await _execAsync($@"
       CREATE SCHEMA IF NOT EXISTS {schema};
@@ -202,18 +209,37 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
       CREATE TABLE {schema}.wh_message_type_registry (clr_type_name text PRIMARY KEY, pinned_id uuid, kind text, updated_at timestamptz DEFAULT now());
       CREATE TABLE {schema}.wh_outbox (message_id uuid DEFAULT gen_random_uuid(), message_type text, envelope_type text);
       CREATE TABLE {schema}.wh_inbox (message_id uuid DEFAULT gen_random_uuid(), message_type text);
-      CREATE TABLE {schema}.wh_message_associations (message_type text, association_type text, target_name text, service_name text);");
+      CREATE TABLE {schema}.wh_message_associations (message_type text, association_type text, target_name text, service_name text);
+      CREATE TABLE {schema}.wh_settings (LIKE public.wh_settings INCLUDING ALL);");
 
-    // Reset the (public) version marker so the migration acts.
-    await _execAsync("UPDATE wh_settings SET setting_value = '1' WHERE setting_key = 'clr_type_name_format_version'");
+    // Seed the marker in the SERVICE schema — that is the one 063 now reads and advances.
+    await _execAsync($@"
+      INSERT INTO {schema}.wh_settings (setting_key, setting_value, value_type)
+      VALUES ('clr_type_name_format_version', '1', 'integer')
+      ON CONFLICT (setting_key) DO UPDATE SET setting_value = '1'");
 
-    // Run migration 063 with __SCHEMA__ resolved to the non-public schema.
+    // A distinct value in public proves the migration is not silently reaching across schemas.
+    await _execAsync(@"
+      INSERT INTO wh_settings (setting_key, setting_value, value_type)
+      VALUES ('clr_type_name_format_version', '1', 'integer')
+      ON CONFLICT (setting_key) DO UPDATE SET setting_value = '99'");
+
     var sql063 = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, schema)
       .GetMigration("063_NormalizeClrTypeNamesV2")!.Sql;
 
-    // Must NOT throw 42P01 — and must still write the marker to the unqualified (public) wh_settings.
     await _execAsync(sql063);
-    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("3");
+
+    await Assert.That(await _scalarAsync(
+        $"SELECT setting_value FROM {schema}.wh_settings WHERE setting_key = @Key",
+        new { Key = "clr_type_name_format_version" }))
+      .IsEqualTo("3")
+      .Because("the data migration must advance the marker in its OWN schema — under the old bare "
+        + "reference every co-located service shared one marker, so whichever ran first would "
+        + "satisfy the gate for all of them and the rest would skip a migration they still needed");
+
+    await Assert.That(await _settingAsync("clr_type_name_format_version")).IsEqualTo("99")
+      .Because("public's copy must be left exactly as it was — reaching across schemas is the "
+        + "behaviour being removed, not preserved");
   }
 
   // ── helpers ──

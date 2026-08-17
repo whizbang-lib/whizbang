@@ -30,6 +30,9 @@ namespace Whizbang.Core.Lenses;
 /// </example>
 /// <docs>fundamentals/lenses/scoped-lenses#configuration</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs:LensOptions_Scopes_IsEmptyByDefaultAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs:LensOptions_GetScope_ReturnsNullForUndefinedScopeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs:ScopedLensFactory_GetEventStoreQuery_Unregistered_ThrowsAsync</tests>
 public sealed class LensOptions {
   private readonly List<ScopeDefinition> _scopes = [];
 

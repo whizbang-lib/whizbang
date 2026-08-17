@@ -8,7 +8,7 @@ namespace Whizbang.Offloads.AzureBlob;
 /// <summary>
 /// DI registration for the Azure Blob body-store provider.
 /// </summary>
-/// <docs>offloads</docs>
+/// <docs>fundamentals/offloads/providers/azure-blob</docs>
 public static class AzureBlobOffloadServiceCollectionExtensions {
 
   // Config section holding one subsection per Azure Blob offload provider
@@ -64,7 +64,7 @@ public static class AzureBlobOffloadServiceCollectionExtensions {
   /// <param name="configuration">Application configuration (root). Read paths:
   /// <c>Whizbang:Offloads:AzureBlob</c> and <c>Whizbang:BodyOffload</c>.</param>
   /// <returns>The service collection for chaining.</returns>
-  /// <docs>offloads</docs>
+  /// <docs>fundamentals/offloads/providers/azure-blob</docs>
   /// <tests>tests/Whizbang.Offloads.AzureBlob.Tests/AzureBlobOffloadFromConfigurationTests.cs</tests>
   public static IServiceCollection AddWhizbangAzureBlobOffloadsFromConfiguration(
       this IServiceCollection services,

@@ -15,6 +15,9 @@ namespace Whizbang.Core.AutoPopulate;
 /// </para>
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:PopulateKind_AllValues_AreDistinctAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:PopulateKind_HasFiveValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs:AutoPopulateRegistration_RequiredProperties_CanBeSetAsync</tests>
 public enum PopulateKind {
   /// <summary>
   /// Populate from lifecycle timestamps (SentAt, QueuedAt, DeliveredAt).

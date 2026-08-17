@@ -3,7 +3,7 @@ namespace Whizbang.Core.Offloads;
 /// <summary>
 /// Optional per-call knobs for <see cref="IMessageBodyStore.DownloadAsync"/>.
 /// </summary>
-/// <docs>offloads</docs>
+/// <docs>fundamentals/offloads/message-body-store</docs>
 public sealed record MessageBodyDownloadOptions {
   /// <summary>
   /// Defensive cap to refuse downloads above this size, regardless of what

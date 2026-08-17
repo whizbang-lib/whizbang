@@ -5,6 +5,9 @@ namespace Whizbang.Core.Perspectives;
 /// Controls lock duration and keepalive interval for rewind, bootstrap, and purge operations.
 /// </summary>
 /// <docs>fundamentals/perspectives/stream-locking</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveStreamLockOptions_Defaults_HaveExpectedValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveStreamLockOptions_CustomValues_ArePreservedAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperPerspectiveStreamLockerTests.cs:TryAcquireLockAsync_ExpiredLock_AcquiresSuccessfullyAsync</tests>
 public class PerspectiveStreamLockOptions {
   /// <summary>
   /// How long a lock is valid before expiring. Must be longer than KeepAliveInterval.

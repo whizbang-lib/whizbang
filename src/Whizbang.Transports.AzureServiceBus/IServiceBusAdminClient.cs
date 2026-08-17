@@ -8,6 +8,9 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <docs>messaging/transports/azure-service-bus#admin-client</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusAdminClientWrapperTests.cs:GetNamespacePropertiesAsync_ReturnsUnwrappedValueAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusAdminClientWrapperTests.cs:GetNamespacePropertiesAsync_PassesCancellationTokenAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
 public interface IServiceBusAdminClient {
   #region Namespace Management
 
@@ -58,6 +61,7 @@ public interface IServiceBusAdminClient {
     string topicName,
     string subscriptionName,
     int maxDeliveryCount,
+    TimeSpan lockDuration,
     CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -74,6 +78,22 @@ public interface IServiceBusAdminClient {
     string subscriptionName,
     bool requiresSession,
     int maxDeliveryCount,
+    TimeSpan lockDuration,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Raises an existing subscription's lock duration in place. LockDuration is updatable
+  /// (unlike RequiresSession), so environments provisioned before the safe default existed
+  /// self-heal on their next deploy — no delete/recreate, no message loss.
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="lockDuration">The lock duration to apply.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  Task UpdateSubscriptionLockDurationAsync(
+    string topicName,
+    string subscriptionName,
+    TimeSpan lockDuration,
     CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -97,6 +117,22 @@ public interface IServiceBusAdminClient {
   /// <param name="subscriptionName">The subscription name.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   Task DeleteSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Gets the number of active (deliverable, not dead-lettered or scheduled) messages
+  /// currently waiting on a subscription. Used by the receive-liveness watchdog to
+  /// distinguish a genuinely idle subscription from one whose receiver has silently stalled.
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The subscription's active message count.</returns>
+  /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusAdminClientWrapperTests.cs:GetSubscriptionActiveMessageCountAsync_ReturnsActiveMessageCountAsync</tests>
+  Task<long> GetSubscriptionActiveMessageCountAsync(
     string topicName,
     string subscriptionName,
     CancellationToken cancellationToken = default);

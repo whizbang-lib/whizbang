@@ -5,6 +5,9 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <docs>messaging/transports/azure-service-bus</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableSessions_DefaultsToTrueAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishMaxConcurrency_DefaultsTo200Async</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_OptionsCallback_ReceivesFreshDefaultsAsync</tests>
 public class AzureServiceBusOptions {
   /// <summary>
   /// If true, automatically create topics and subscriptions when subscribing.
@@ -12,6 +15,9 @@ public class AzureServiceBusOptions {
   /// Default: true (auto-provision infrastructure)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#auto-provisioning</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_AutoProvisionDisabled_DoesNotTouchAdminPlaneAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternsWithAutoProvisionDisabled_SkipsFilterAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_AutoProvisionDisabled_DoesNotRegisterAdminClientAsync</tests>
   public bool AutoProvisionInfrastructure { get; set; } = true;
 
   /// <summary>
@@ -42,6 +48,7 @@ public class AzureServiceBusOptions {
   /// values are safe and improve throughput by filling the batch collector faster.
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#concurrency</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_OptionsCallback_ReceivesFreshDefaultsAsync</tests>
   public int MaxConcurrentCalls { get; set; } = 200;
 
   /// <summary>
@@ -84,6 +91,7 @@ public class AzureServiceBusOptions {
   /// Default: 200 (matches <see cref="MaxConcurrentSessions"/> for producer/consumer parity)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#publish-concurrency</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_OptionsCallback_ReceivesFreshDefaultsAsync</tests>
   public int PublishMaxConcurrency { get; set; } = 200;
 
   /// <summary>
@@ -103,6 +111,27 @@ public class AzureServiceBusOptions {
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#lock-renewal</docs>
   public TimeSpan MaxAutoLockRenewalDuration { get; set; } = TimeSpan.FromMinutes(5);
+
+  /// <summary>
+  /// The broker-side lock duration provisioned onto subscriptions this transport creates —
+  /// and reconciled (raise-only) onto existing subscriptions on the ensure path.
+  /// Default: <b>5 minutes</b>, the ASB maximum.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// ASB's own default of 1 minute proved a hair-trigger on a live fleet: with many concurrent
+  /// sessions, lock renewals arriving seconds late killed session locks ~90 seconds after
+  /// accept, completions failed, and messages redelivered until they dead-lettered — the
+  /// receive side froze while tens of thousands of messages queued. Every renewal margin
+  /// scales with the lock duration, so the widest lock is the turnkey-safe default.
+  /// </para>
+  /// <para>
+  /// The reconcile only ever RAISES an existing subscription's value, so a deliberate
+  /// broker-side override above this setting is never churned by deploys.
+  /// </para>
+  /// </remarks>
+  /// <docs>messaging/transports/azure-service-bus#lock-renewal</docs>
+  public TimeSpan SubscriptionLockDuration { get; set; } = TimeSpan.FromMinutes(5);
 
   /// <summary>
   /// How many times a single failing message is redelivered before being moved to the dead-letter queue.
@@ -142,10 +171,11 @@ public class AzureServiceBusOptions {
   /// Default: true (FIFO ordering works out of the box)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SubscribeAsync_WithEnableSessions_CreatesSessionProcessorAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SubscribeAsync_WithoutEnableSessions_CreatesStandardProcessorAsync</tests>
   public bool EnableSessions { get; set; } = true;
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo200Async</tests>
   /// How many sessions (streams) can be processed at the same time by a single consumer instance.
   /// Each session maintains strict FIFO ordering internally — messages within one session are
   /// always processed one at a time, in order. This setting controls how many <em>different</em>
@@ -176,10 +206,10 @@ public class AzureServiceBusOptions {
   /// Default: 200
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo200Async</tests>
   public int MaxConcurrentSessions { get; set; } = 200;
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToOneSecondAsync</tests>
   /// Maximum time a session processor will wait for a new message in the currently-held session
   /// before releasing the session and accepting a different one. Only applies when
   /// <see cref="EnableSessions"/> is true.
@@ -200,6 +230,7 @@ public class AzureServiceBusOptions {
   /// Default: 1 second
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#session-idle-timeout</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToOneSecondAsync</tests>
   public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromSeconds(1);
 
   /// <summary>
@@ -225,6 +256,61 @@ public class AzureServiceBusOptions {
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#prefetch</docs>
   public int PrefetchCount { get; set; } = 50;
+
+  #endregion
+
+  #region Receive Liveness Watchdog
+
+  /// <summary>
+  /// When true, the transport runs a receive-liveness watchdog that detects a subscription
+  /// whose receiver has silently stopped delivering messages and triggers subscription
+  /// recovery automatically.
+  /// <para>
+  /// <b>Failure mode this guards against:</b> a receiver's underlying AMQP link can drop
+  /// without surfacing any error — no <c>ProcessErrorAsync</c> callback, nothing dead-lettered,
+  /// process-level health checks stay green — while messages accumulate unconsumed on the
+  /// subscription ("alive but deaf"). Session receivers are particularly exposed: a dropped
+  /// session receiver strands every message routed to its subscription until the process is
+  /// restarted.
+  /// </para>
+  /// <para>
+  /// <b>Detection:</b> every <see cref="ReceiveLivenessProbeInterval"/>, subscriptions that
+  /// have not received a message for <see cref="ReceiveLivenessSilenceThreshold"/> are checked
+  /// against the admin plane. Silence with an empty backlog is healthy idle; silence with
+  /// messages waiting is a stall, and the transport re-establishes its subscriptions (the same
+  /// recovery path used for detected connection errors).
+  /// </para>
+  /// <para>
+  /// <b>Requires an admin client</b> (<see cref="IServiceBusAdminClient"/>) to query backlog —
+  /// without one the watchdog is disabled, because silence alone cannot distinguish a stalled
+  /// receiver from a genuinely idle service.
+  /// </para>
+  /// Default: true
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableReceiveLivenessWatchdog_DefaultsToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportLivenessWiringTests.cs</tests>
+  public bool EnableReceiveLivenessWatchdog { get; set; } = true;
+
+  /// <summary>
+  /// How often the receive-liveness watchdog sweeps tracked subscriptions.
+  /// Detection latency is bounded by <c>ReceiveLivenessProbeInterval + ReceiveLivenessSilenceThreshold</c>.
+  /// Default: 60 seconds
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:ReceiveLivenessProbeInterval_DefaultsToSixtySecondsAsync</tests>
+  public TimeSpan ReceiveLivenessProbeInterval { get; set; } = TimeSpan.FromSeconds(60);
+
+  /// <summary>
+  /// How long a subscription may go without receiving a message before the watchdog checks
+  /// its backlog. Set well above normal inter-message gaps: the threshold only gates the
+  /// (cheap) admin-plane backlog query — recovery additionally requires messages to actually
+  /// be waiting, so quiet-but-healthy services are never restarted.
+  /// Default: 5 minutes
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:ReceiveLivenessSilenceThreshold_DefaultsToFiveMinutesAsync</tests>
+  public TimeSpan ReceiveLivenessSilenceThreshold { get; set; } = TimeSpan.FromMinutes(5);
 
   #endregion
 

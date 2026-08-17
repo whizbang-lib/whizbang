@@ -35,6 +35,10 @@ namespace Whizbang.Core.Generated;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Register_VoidReceptor_InvokeAsyncCallsHandleAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_ZeroReceptors_GeneratesEmptyReceptorRegistryAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_ReceptorRegistry_HasCorrectStructureAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithReceptor_GeneratesReceptorRegistryAsync</tests>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.IReceptorRegistry {
@@ -87,6 +91,31 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
     compileTimeEntries.CopyTo(combined, 0);
     runtimeInfos.CopyTo(combined, compileTimeEntries.Length);
     return combined;
+  }
+
+  /// <summary>
+  /// True when a runtime-registered receptor consumes the given CLR type name (the storage form
+  /// TypeNameFormatter.Format writes, or a bare FullName). The receive/inbox discard gates
+  /// consult this so runtime-registered control-plane receptors count as consumers.
+  /// </summary>
+  public bool HasRuntimeConsumerFor(string clrTypeName) {
+    if (string.IsNullOrEmpty(clrTypeName) || _runtimeRegistrations.IsEmpty) {
+      return false;
+    }
+    // Normalize FIRST: the live inbox gate passes the fully-versioned assembly-qualified name
+    // ("Ns.Type, Asm, Version=…, Culture=…, PublicKeyToken=…"); normalization reduces it to the
+    // storage form TypeNameFormatter.Format produces, which is what registered types compare as.
+    var normalized = global::Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName(clrTypeName);
+    foreach (var key in _runtimeRegistrations.Keys) {
+      var messageType = key.MessageType;
+      var storageForm = global::Whizbang.Core.TypeNameFormatter.Format(messageType);
+      if (storageForm == clrTypeName
+          || storageForm == normalized
+          || messageType.FullName == clrTypeName) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// <summary>

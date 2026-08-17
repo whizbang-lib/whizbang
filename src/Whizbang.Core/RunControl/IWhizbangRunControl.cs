@@ -18,6 +18,9 @@ namespace Whizbang.Core.RunControl;
 /// resource — transport-consume, the write/append path, offload, temporal, the signal bus.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangLifecycleCoordinatorTests.cs:Transition_BroadcastsToEveryParticipantAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangLifecycleCoordinatorTests.cs:Transition_Barrier_WaitsForAllAcksBeforeReturningAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControlDiTests.cs:AddWhizbangRunControl_BroadcastsToRegisteredAdaptersAsync</tests>
 public interface IWhizbangRunControl {
   /// <summary>Stable component id, shared with the health source's <c>Component</c> id space.</summary>
   string Component { get; }

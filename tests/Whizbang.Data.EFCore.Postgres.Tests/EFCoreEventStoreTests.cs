@@ -1710,4 +1710,55 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var record = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
     await Assert.That(record.Id).IsEqualTo(messageId.Value);
   }
+
+  /// <summary>
+  /// The rewind's origin-order slotting keys on the envelope's origin identity — a replay read
+  /// that drops it silently demotes every single-origin stream to local-commit order, which
+  /// re-applies a reconciled straggler LAST (its local sequence is arrival-fresh) instead of
+  /// slotting it at its origin position.
+  /// </summary>
+  [Test]
+  public async Task ReadPolymorphicAsync_CarriesOriginIdentityFromTheRowAsync() {
+    await using var context = CreateDbContext();
+    var streamId = Guid.NewGuid();
+    var messageId = MessageId.New();
+    var originId = Guid.NewGuid();
+
+    var record = new EventStoreRecord {
+      Id = messageId.Value,
+      StreamId = streamId,
+      AggregateId = streamId,
+      AggregateType = "TestAggregate",
+      Version = 1,
+      EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
+      EventData = System.Text.Json.JsonDocument.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Origin\"}}").RootElement,
+      Metadata = new EnvelopeMetadata { MessageId = messageId, Hops = [CreateTestHop()] },
+      CreatedAt = DateTime.UtcNow,
+      OriginServiceId = originId,
+      OriginCommitSequence = 4242,
+    };
+    context.Set<EventStoreRecord>().Add(record);
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord {
+      EventId = record.Id,
+      EventData = record.EventData!.Value,
+      Metadata = record.Metadata!,
+    });
+    await context.SaveChangesAsync();
+    context.ChangeTracker.Clear();
+
+    await using var readContext = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(readContext);
+    var envelopes = new List<MessageEnvelope<IEvent>>();
+    await foreach (var env in eventStore.ReadPolymorphicAsync(streamId, null, [typeof(OrderCreatedEvent)])) {
+      envelopes.Add(env);
+    }
+
+    await Assert.That(envelopes).Count().IsEqualTo(1);
+    await Assert.That(envelopes[0].SourceServiceId).IsEqualTo(originId)
+      .Because("the row's origin_service_id must ride the replay envelope — origin-order "
+               + "slotting is scoped to a single origin's sequence space");
+    await Assert.That(envelopes[0].SourceCommitSequence).IsEqualTo(4242L)
+      .Because("the row's origin_commit_sequence is the event's true position in its stream");
+  }
 }

@@ -298,6 +298,20 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       //
       // When the store isn't wired, fall back to the legacy mark-Published path so
       // existing callers (in-memory tests, etc.) still terminate the row correctly.
+      // Control-plane traffic is DROPPED, never stored: a stale checkpoint or repair request has
+      // no forensic value (the audit re-issues them on its own cadence), and a stored copy is not
+      // inert — the recovery worker re-emits it into the inbox on a later boot, so a burst of
+      // failures becomes a backlog every restart replays.
+      if (DeadLetterDropPolicy.ShouldDropInsteadOfStore(work.MessageType)) {
+        LogControlPlaneDropped(_logger, work.MessageId, work.MessageType, work.Attempts);
+        _dlqMetrics?.Added.Add(1,
+          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>("reason", "ControlPlaneDropped"));
+        var droppedRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
+        await _handlerCommitChannel.EnqueueAsync(droppedRequest, stoppingToken);
+        return;
+      }
+
       if (_deadLetterStore is not null && _generationProvider is not null) {
         try {
           var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
@@ -389,10 +403,19 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         return;
       }
 
-      await InvokeInboxLifecycleStageAsync(
-        work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
-        "PreInbox", ct, detachedCancellationToken: stoppingToken);
-      LogDiagPreInboxReturned(_logger, work.MessageId);
+      // Stream-integrity Phase S: a state-only delivery (backfill) builds STATE — the event is
+      // stored and projected exactly as normal via the commit below — but its trigger-receptor
+      // stages are SKIPPED: backfilled history must never re-run business reactions. The
+      // perspective-side lifecycle completion stages still fire (completion accounting, not
+      // domain triggers).
+      var stateOnly = work.Envelope.StateOnly;
+
+      if (!stateOnly) {
+        await InvokeInboxLifecycleStageAsync(
+          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+          "PreInbox", ct, detachedCancellationToken: stoppingToken);
+        LogDiagPreInboxReturned(_logger, work.MessageId);
+      }
 
       // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
       // calls commit_handler_batch.
@@ -401,14 +424,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogDiagCommitEnqueued(_logger, work.MessageId, commitRequest.InboxCompletion.Status);
 
       // PostInbox lands AFTER event storage.
-      await InvokeInboxLifecycleStageAsync(
-        work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
-        "PostInbox", ct, detachedCancellationToken: stoppingToken);
-      LogDiagPostInboxReturned(_logger, work.MessageId);
+      if (!stateOnly) {
+        await InvokeInboxLifecycleStageAsync(
+          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+          "PostInbox", ct, detachedCancellationToken: stoppingToken);
+        LogDiagPostInboxReturned(_logger, work.MessageId);
+      }
 
       // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
-      if (_hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
+      if (!stateOnly && _hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
         await InvokeInboxLifecycleStageAsync(
           work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
           "PostAllPerspectives", ct, detachedCancellationToken: stoppingToken);
@@ -790,6 +815,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   [LoggerMessage(EventId = 10, Level = LogLevel.Warning, Message = "InboxDispatchWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling back to legacy mark-Published path")]
   static partial void LogDeadLetterStoreFailed(ILogger logger, Guid messageId, Exception ex);
 
+  [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+    Message = "InboxDispatchWorker DROPPED control-plane message {MessageId} ({MessageType}) after {Attempts} attempt(s) — " +
+              "control-plane traffic is re-emitted on its own cadence and is never durably dead-lettered")]
+  static partial void LogControlPlaneDropped(ILogger logger, Guid messageId, string messageType, int attempts);
+
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
 
@@ -924,5 +954,8 @@ public sealed class InboxDispatchWorkerOptions {
   /// motivated this safeguard.
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:InboxDispatchWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:OutboxDrainWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorkerOptions_Defaults_MatchDocumentedValuesAsync</tests>
   public int SecurityContextTimeoutSeconds { get; set; } = 10;
 }

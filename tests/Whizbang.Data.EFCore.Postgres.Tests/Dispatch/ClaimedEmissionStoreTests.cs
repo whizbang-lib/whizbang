@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.EFCore.Postgres.Configuration;
 using Whizbang.Data.EFCore.Postgres.Dispatch;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Dispatch;
@@ -45,6 +46,80 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
   }
 
   // ── Race invariant: two concurrent claimants, exactly one wins ────────
+
+  /// <summary>
+  /// A consumer whose tables live in a service schema (HasDefaultSchema), with a
+  /// connection whose search_path does not include that schema — the multi-schema
+  /// deployment shape.
+  /// </summary>
+  private sealed class SchemaScopedDbContext(DbContextOptions<SchemaScopedDbContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      modelBuilder.ConfigureWhizbangInfrastructure();
+      modelBuilder.HasDefaultSchema(ServiceSchema);
+    }
+  }
+
+  private const string ServiceSchema = "svc_claims";
+
+  [Test]
+  public async Task TryClaim_SchemaScopedDbContext_ClaimsInTheModelSchemaAsync() {
+    // The migration creates the table schema-qualified (__SCHEMA__.wh_unique_emission_claims),
+    // so in a multi-schema deployment the table exists ONLY in the service schema. A bare
+    // INSERT resolves through search_path, which is not guaranteed to include that schema —
+    // the same 42P01 shape move_to_dead_letters and the upsert strategies were already
+    // fixed for. The store must qualify from the model, like EFCoreDeadLetterStore does.
+    await using (var setup = CreateDbContext()) {
+      var setupConn = (NpgsqlConnection)setup.Database.GetDbConnection();
+      if (setupConn.State != System.Data.ConnectionState.Open) {
+        await setupConn.OpenAsync();
+      }
+
+      await using var ddl = setupConn.CreateCommand();
+      ddl.CommandText = $"""
+        CREATE SCHEMA IF NOT EXISTS {ServiceSchema};
+        CREATE TABLE IF NOT EXISTS {ServiceSchema}.wh_unique_emission_claims (
+          claim_key TEXT PRIMARY KEY,
+          claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          claimed_by_event_id UUID NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 minutes')
+        );
+        """;
+      await ddl.ExecuteNonQueryAsync();
+    }
+
+    var options = new DbContextOptionsBuilder<SchemaScopedDbContext>()
+      .UseNpgsql(ConnectionString)
+      .Options;
+    await using var schemaScoped = new SchemaScopedDbContext(options);
+    var store = new EFCoreClaimedEmissionStore(schemaScoped);
+
+    var key = $"schema-scoped:{Guid.NewGuid():N}";
+    var claimed = await store.TryClaimAsync(key, TrackedGuid.NewMedo().Value, CancellationToken.None);
+
+    await Assert.That(claimed).IsTrue()
+      .Because("the model says where the table is; a store that trusts search_path instead "
+             + "throws 42P01 against the very deployment shape the migration supports.");
+
+    // And the row landed where the model said — not in public, which also has the table
+    // in this test database (migration 060 ran there), so a bare INSERT that resolved to
+    // public would return true while writing to the wrong schema.
+    await using var verify = CreateDbContext();
+    var verifyConn = (NpgsqlConnection)verify.Database.GetDbConnection();
+    if (verifyConn.State != System.Data.ConnectionState.Open) {
+      await verifyConn.OpenAsync();
+    }
+
+    await using var count = verifyConn.CreateCommand();
+    count.CommandText = $"SELECT count(*) FROM {ServiceSchema}.wh_unique_emission_claims WHERE claim_key = @key;";
+    var keyParam = count.CreateParameter();
+    keyParam.ParameterName = "@key";
+    keyParam.Value = key;
+    count.Parameters.Add(keyParam);
+
+    await Assert.That((long)(await count.ExecuteScalarAsync())!).IsEqualTo(1L)
+      .Because("a claim that reports true but landed in another schema is exactly-once "
+             + "against the wrong table, which is exactly-zero against the right one.");
+  }
 
   [Test]
   public async Task TryClaim_TwoConcurrentSameKey_ExactlyOneWinsAsync() {

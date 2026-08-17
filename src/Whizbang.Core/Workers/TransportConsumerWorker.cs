@@ -42,7 +42,8 @@ namespace Whizbang.Core.Workers;
 /// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
-public partial class TransportConsumerWorker : BackgroundService {
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
+public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
@@ -61,6 +62,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly IEphemeralModeResolver? _ephemeralModeResolver;
   // Once-per-type diagnostic guard for catalog-lookup misses on the receive path (bounded).
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _warnedFlagMisses = new();
+  private readonly ISchemaReadyGate? _schemaReadyGate;
   private readonly IEventMarkerResolver? _eventMarkerResolver;
 
   // Signals when SubscribeToAllDestinationsAsync has completed and the consumer
@@ -93,6 +95,13 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// <c>await SubscriptionsReady.WaitAsync(cancellationToken)</c>.
   /// </summary>
   public Task WaitForSubscriptionsReadyAsync(CancellationToken cancellationToken = default)
+    => SubscriptionsReady.WaitAsync(cancellationToken);
+
+  /// <inheritdoc />
+  string Whizbang.Core.Startup.IStartupReadinessContributor.ContributorName => "transport-consumer";
+
+  /// <inheritdoc />
+  Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
     => SubscriptionsReady.WaitAsync(cancellationToken);
 
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).
@@ -147,7 +156,11 @@ public partial class TransportConsumerWorker : BackgroundService {
     IReceptorRegistryQuery? receptorRegistry = null,
     IReceptorRegistry? runtimeReceptorRegistry = null,
     IEphemeralModeResolver? ephemeralModeResolver = null,
-    IEventMarkerResolver? eventMarkerResolver = null
+    IEventMarkerResolver? eventMarkerResolver = null,
+    // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
+    // database work against a schema that may not exist yet on a first boot. Optional only so
+    // existing fixtures construct unchanged; DI always supplies it.
+    ISchemaReadyGate? schemaReadyGate = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -172,6 +185,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _receptorRegistry = receptorRegistry;
     _ephemeralModeResolver = ephemeralModeResolver;
     _eventMarkerResolver = eventMarkerResolver;
+    _schemaReadyGate = schemaReadyGate;
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
@@ -201,6 +215,16 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// </summary>
   /// <param name="stoppingToken">Token to signal shutdown</param>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    // Startup barrier: nothing below may run before migrations complete — subscribing lets the
+    // broker deliver, and delivery lands in the inbox tables the migration creates.
+    if (_schemaReadyGate is not null) {
+      try {
+        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
+      }
+    }
+
     // Receive-path flag-derivation wiring diagnostic: a missing resolver or a host-only index count
     // means every flag-bearing event received over the transport silently loses its flags — surface
     // the wiring state once at startup so a broken chain is visible in service logs, not just in data.
@@ -423,6 +447,9 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// Processing (Process, PostInbox, completion) deferred to WorkCoordinatorPublisherWorker.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:MixedBatch_DroppedTypesFilteredBeforeBulkInsertAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchProcessing_CreatesExactlyOneScopePerBatchAsync</tests>
   private async Task _handleMessageBatchAsync(
       IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {
     if (messages.Count == 0) {
@@ -462,12 +489,19 @@ public partial class TransportConsumerWorker : BackgroundService {
       // this no-consumer gate against the claim would drop EVERY offloaded message here — before
       // rehydration, with no inbox row written, unrecoverable. Skip the gate for claims; the real
       // type is restored by BodyClaimRehydrator in _tryBuildInboxMessageFromTransportAsync below.
+      // EXEMPTION — composites: a composite is wire-only (IMessage, never IEvent), so NO service
+      // registers a consumer for the composite type itself; its consumers are registered for the
+      // INNER events, which only become addressable once the dispatch seam fans it out (see the
+      // fan-out note below). Running the gate against the composite drops the ENTIRE bundle here,
+      // before any inbox row is written — unrecoverable, and only visible at Debug. See
+      // CompositeInboxFanout.IsCompositeWireType.
       if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)
           && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(msg.EnvelopeType)) {
         var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
         if (innerMessageType is not null
             && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-            && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)) {
+            && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)
+            && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
           _metrics?.InboxMessagesDeduplicated.Add(1);
           continue;
         }
@@ -575,6 +609,10 @@ public partial class TransportConsumerWorker : BackgroundService {
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
+    if (_shouldDiscardForeignTarget(envelope, messageType, messageTypeTag)) {
+      return (null, null);
+    }
+
     if (_shouldDiscardOwnedEcho(envelope, envelopeType, messageType, messageTypeTag)) {
       return (null, null);
     }
@@ -650,6 +688,31 @@ public partial class TransportConsumerWorker : BackgroundService {
       return true;
     }
     return false;
+  }
+
+  /// <summary>
+  /// Directed-message gate: a non-null envelope <see cref="IMessageEnvelope.Target"/> naming a
+  /// DIFFERENT service discards the message before deserialization, inbox storage, or fan-out —
+  /// targeted traffic (repair / control-plane / response) is point-to-point, and every
+  /// non-target's copy is noise by definition. An absent target is broadcast (the default,
+  /// unchanged). When this service's own name is unknown (no instance provider wired) targeted
+  /// messages are ACCEPTED — fail-open: acceptance is idempotent downstream via the event-id
+  /// conflict skip, while a wrong discard could starve the legitimate target.
+  /// </summary>
+  /// <docs>fundamentals/messaging/directed-messages</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
+  private bool _shouldDiscardForeignTarget(
+      IMessageEnvelope envelope,
+      string messageType,
+      KeyValuePair<string, object?> messageTypeTag) {
+    var target = envelope.Target;
+    if (target is null || _serviceName is null
+        || string.Equals(target, _serviceName, StringComparison.Ordinal)) {
+      return false;
+    }
+    LogForeignTargetDiscarded(_logger, messageType, target, _serviceName);
+    _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
+    return true;
   }
 
   /// <summary>
@@ -963,10 +1026,14 @@ public partial class TransportConsumerWorker : BackgroundService {
   public override async Task StopAsync(CancellationToken cancellationToken) {
     _logger.LogInformation("Stopping TransportConsumerWorker");
 
-    if (_linkedCts is not null) {
-      await _linkedCts.CancelAsync();
+    // Idempotent: host teardown calls StopAsync through more than one path (Host.StopAsync and
+    // host disposal); the exchange makes the second call a no-op instead of cancelling an
+    // already-disposed linked CTS. Dispose AFTER base.StopAsync so the base's stopping-token
+    // cancellation never races the linked source's disposal.
+    var linkedCts = Interlocked.Exchange(ref _linkedCts, null);
+    if (linkedCts is not null) {
+      await linkedCts.CancelAsync();
     }
-    _linkedCts?.Dispose();
 
     // Dispose all subscriptions
     foreach (var state in _states.Values) {
@@ -978,6 +1045,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _logger.LogInformation("TransportConsumerWorker stopped");
 
     await base.StopAsync(cancellationToken);
+    linkedCts?.Dispose();
   }
 
   /// <summary>
@@ -1014,6 +1082,15 @@ public partial class TransportConsumerWorker : BackgroundService {
     Message = "Self-echo discarded: {MessageType} from {ServiceName}"
   )]
   private static partial void LogSelfEchoDiscarded(ILogger logger, string messageType, string serviceName);
+
+  /// <summary>Logs that a directed message targeted at a different service was discarded at the receive seam.</summary>
+  /// <docs>fundamentals/messaging/directed-messages</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Directed message discarded: {MessageType} targeted at {Target} — this service is {ServiceName}"
+  )]
+  private static partial void LogForeignTargetDiscarded(ILogger logger, string messageType, string target, string serviceName);
 
   /// <summary>Logs that a detached lifecycle stage failed during fire-and-forget execution.</summary>
   [LoggerMessage(

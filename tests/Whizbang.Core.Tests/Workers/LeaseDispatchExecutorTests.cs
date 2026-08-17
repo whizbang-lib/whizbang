@@ -110,8 +110,19 @@ public class LeaseDispatchExecutorTests {
     var time = _provider();
     using var lease = _newLease(time);
     var dispatchTcs = new TaskCompletionSource();
+    // TaskScheduler.UnobservedTaskException is PROCESS-GLOBAL, and the forced GC below finalizes
+    // abandoned faulted tasks belonging to any concurrently-running test — those fired this
+    // handler and were counted against this assertion (observed: two foreign events under full
+    // suite load, passing in isolation). Tag this test's own fault and count only that; the test
+    // stays self-discriminating because removing the executor's observing continuation makes THIS
+    // marker surface.
+    var marker = $"post-abandon-{Guid.NewGuid():N}";
     var unobserved = new List<UnobservedTaskExceptionEventArgs>();
-    void OnUnobserved(object? s, UnobservedTaskExceptionEventArgs e) => unobserved.Add(e);
+    void OnUnobserved(object? s, UnobservedTaskExceptionEventArgs e) {
+      if (e.Exception?.Flatten().InnerExceptions.Any(x => x.Message == marker) == true) {
+        unobserved.Add(e);
+      }
+    }
     TaskScheduler.UnobservedTaskException += OnUnobserved;
     try {
       var helper = LeaseDispatchExecutor.RunWithLeaseAsync(lease, _ => dispatchTcs.Task);
@@ -119,7 +130,7 @@ public class LeaseDispatchExecutorTests {
       try { await helper; } catch (OperationCanceledException) { /* expected */ }
 
       // Now the abandoned task faults. Without our continuation, this would raise UTE.
-      dispatchTcs.SetException(new InvalidOperationException("post-abandon"));
+      dispatchTcs.SetException(new InvalidOperationException(marker));
 
       // Force the abandoned-task to be GC'd so finalizer runs (where UTE would fire).
       var weak = new WeakReference(dispatchTcs);
@@ -135,6 +146,13 @@ public class LeaseDispatchExecutorTests {
       .Because("the executor's abandonment continuation must observe the abandoned task's exception");
   }
 
+  // Counts TaskCanceledException PROCESS-WIDE, so it only means what it claims while nothing else
+  // is cancelling anything. That held by luck, not by construction: any concurrently-running test
+  // that stops a worker throws TaskCanceledException from Task.Delay and lands in this bag. The
+  // sibling FirstChanceException test was narrowed to its own frames for exactly this reason; this
+  // one cannot be (the throw originates in BCL code, as the comment below explains), so isolation
+  // has to be enforced instead of assumed.
+  [NotInParallel]
   [Test]
   public async Task SuccessfulDispatch_DoesNotThrowFirstChanceOceOnLeaseDisposeAsync() {
     // Phase H step 9 regression lock: the original implementation used

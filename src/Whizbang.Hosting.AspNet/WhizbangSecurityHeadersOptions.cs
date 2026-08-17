@@ -8,6 +8,9 @@ namespace Whizbang.Hosting.AspNet;
 /// </summary>
 /// <docs>fundamentals/security/http-security-headers</docs>
 /// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangSecurityHeadersMiddlewareTests.cs</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangSecurityHeadersMiddlewareTests.cs:Invoke_OptionSetToNull_SuppressesThatHeaderAsync</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangSecurityHeadersMiddlewareTests.cs:Invoke_CustomHeaderValue_IsEmittedAsync</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangSecurityHeadersStartupFilterTests.cs:StartupFilter_Disabled_EmitsNoSecurityHeadersAsync</tests>
 public sealed class WhizbangSecurityHeadersOptions {
   /// <summary>
   /// Master switch. When <c>false</c>, the turnkey middleware becomes a pass-through (no headers, no method

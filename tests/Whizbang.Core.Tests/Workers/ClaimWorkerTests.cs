@@ -55,12 +55,12 @@ public class ClaimWorkerTests {
       return Task.FromResult(BatchToReturn);
     }
 
-    public Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
       lock (_lock) {
         HeartbeatCallCount++;
         if (FirstHeartbeatOrder == 0) { FirstHeartbeatOrder = ++_orderCounter; }
       }
-      return Task.CompletedTask;
+      return Task.FromResult(true);
     }
 
     /// <summary>Resolves once at least <paramref name="n"/> ClaimWorkAsync calls have been observed.</summary>

@@ -28,6 +28,9 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </list>
 /// </remarks>
 /// <docs>operations/observability/metrics</docs>
+/// <tests>tests/Whizbang.Core.Tests/Notifications/PgSharedNotifyConnectionMetricsTests.cs:SignalsReceived_OutboxPayload_TaggedCategoryOutboxAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Notifications/PgSharedNotifyConnectionMetricsTests.cs:ConnectionState_TransitionToAvailable_Records_Plus_OneAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Notifications/PgSharedNotifyConnectionMetricsTests.cs:SignalingMode_AvailableTransition_TaggedListenNotifyAsync</tests>
 public sealed class NotifyMetrics {
 #pragma warning disable CA1707
   /// <summary>The OpenTelemetry meter name for this metrics group.</summary>

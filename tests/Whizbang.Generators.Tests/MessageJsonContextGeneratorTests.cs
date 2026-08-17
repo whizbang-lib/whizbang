@@ -5866,6 +5866,51 @@ public record BulkImported(IReadOnlyList<IMessage> Items) : ICompositeEvent {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_WithCompositeEvent_EnvelopeIsDispatchable_NotJustNameRegisteredAsync() {
+    // A composite's MessageEnvelope<T> was NAME-registered (GetTypeInfoByName found the mapping) but
+    // the generated GetTypeInfoInternal never DISPATCHED it — the registered resolver returned null,
+    // so a transport receiving the composite envelope could not deserialize it: redelivery bundles
+    // arrived, failed typed binding, and were redelivered forever. The name map, the factory, and the
+    // dispatch must cover the SAME type set — a mapping whose resolver cannot serve it is a lie.
+    const string source = @"
+using System.Collections.Generic;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public record BulkImported(IReadOnlyList<IMessage> Items) : ICompositeEvent {
+  public IEnumerable<IMessage> InnerEvents => Items;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var contextCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(contextCode).IsNotNull();
+
+    // The factory exists...
+    await Assert.That(contextCode).Contains("CreateMessageEnvelope_MyApp_Events_BulkImported(JsonSerializerOptions options)");
+    // ...AND GetTypeInfoInternal dispatches to it — without this, the RegisterTypeName mapping
+    // resolves to null and the receive side can never bind the composite envelope.
+    await Assert.That(contextCode).Contains("if (type == typeof(MessageEnvelope<global::MyApp.Events.BulkImported>))")
+      .Because("a name-registered envelope type must be dispatchable by the same resolver");
+    // The factory must carry the two conversion-preserved envelope fields: the wire (serialized
+    // through the attribute-honoring MessageEnvelope<JsonElement> shape) emits "tgt" and "sto",
+    // and a typed receive that drops them un-directs the envelope and re-fires triggers on
+    // state-only backfill.
+    await Assert.That(contextCode).Contains("((MessageEnvelope<global::MyApp.Events.BulkImported>)obj).StateOnly = value")
+      .Because("Phase S: state-only must survive the typed receive");
+    await Assert.That(contextCode).Contains("((MessageEnvelope<global::MyApp.Events.BulkImported>)obj).Target = value")
+      .Because("directed delivery must survive the typed receive");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_WithMixedMessageTypes_GeneratesCorrectBaseTypeRegistrationsAsync() {
     // Arrange - mix of commands and events
     const string source = @"

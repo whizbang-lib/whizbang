@@ -55,6 +55,9 @@ public enum ScopeFilters {
 /// </summary>
 /// <docs>fundamentals/security/scoping#filter-patterns</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs:ScopeFilterExtensions_TenantUser_ReturnsTenantOrUserAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs:ScopeFilterExtensions_TenantPrincipal_ReturnsTenantOrPrincipalAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs:ScopeFilterExtensions_TenantUserOrPrincipal_ReturnsAllThreeAsync</tests>
 public static class ScopeFilterExtensions {
   /// <summary>
   /// Common pattern: Tenant + User isolation.

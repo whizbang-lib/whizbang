@@ -10,6 +10,9 @@ namespace Whizbang.Core.Routing;
 /// </code>
 /// </example>
 /// <docs>fundamentals/dispatcher/routing#message-kind</docs>
+/// <tests>tests/Whizbang.Core.Tests/Routing/MessageKindDetectorTests.cs:Detect_TypeWithCommandAttribute_ReturnsCommandAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Routing/MessageKindDetectorTests.cs:Detect_AttributeOverridesInterface_ReturnsAttributeKindAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Routing/MessageKindTests.cs:Detect_WithMessageKindAttribute_ReturnsAttributeValueAsync</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
 public sealed class MessageKindAttribute(MessageKind kind) : Attribute {
   /// <summary>

@@ -21,6 +21,7 @@ namespace Whizbang.Core.Observability;
 /// </remarks>
 /// <docs>fundamentals/messages/cascade-context#enrichers</docs>
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs</tests>
+/// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs:EnricherPipeline_AccumulatesMetadataFromMultipleEnrichersAsync</tests>
 public interface ICascadeContextEnricher {
   /// <summary>
   /// Enriches the cascade context with additional data.

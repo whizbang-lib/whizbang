@@ -23,6 +23,9 @@ namespace Whizbang.Core.Workers;
 /// are appended after auto-generated inbox and event subscriptions.
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#additional-destinations</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultAdditionalDestinations_IsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:AddTransportConsumer_WithConfigureAction_AddsAdditionalDestinationsAsync</tests>
 public sealed class TransportConsumerConfiguration {
   /// <summary>
   /// Gets the list of additional destinations to subscribe to beyond auto-generated ones.
@@ -41,6 +44,9 @@ public sealed class TransportConsumerConfiguration {
   /// Resilience is always enabled - subscriptions retry with exponential backoff on failure.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_RegistersSubscriptionResilienceOptionsAsSingletonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_PerspectiveBuilder_RegistersResilienceOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
   public SubscriptionResilienceOptions ResilienceOptions { get; } = new();
 }
 
@@ -205,8 +211,13 @@ public static class TransportConsumerBuilderExtensions {
     builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
 
 
-    // Register TransportConsumerWorker as hosted service (always with resilience)
-    builder.Services.AddHostedService<TransportConsumerWorker>();
+    // Register TransportConsumerWorker as hosted service (always with resilience). Singleton +
+    // hosted forward so the SAME instance is also visible as a readiness contributor — Ready
+    // composes its SubscriptionsReady signal, which previously existed but nothing consumed.
+    builder.Services.TryAddSingleton<TransportConsumerWorker>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
+    builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(
+      sp => sp.GetRequiredService<TransportConsumerWorker>()));
 
     // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
     // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +
@@ -339,8 +350,13 @@ public static class TransportConsumerBuilderExtensions {
     builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
 
 
-    // Register TransportConsumerWorker as hosted service (always with resilience)
-    builder.Services.AddHostedService<TransportConsumerWorker>();
+    // Register TransportConsumerWorker as hosted service (always with resilience). Singleton +
+    // hosted forward so the SAME instance is also visible as a readiness contributor — Ready
+    // composes its SubscriptionsReady signal, which previously existed but nothing consumed.
+    builder.Services.TryAddSingleton<TransportConsumerWorker>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
+    builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(
+      sp => sp.GetRequiredService<TransportConsumerWorker>()));
 
     // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
     // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +

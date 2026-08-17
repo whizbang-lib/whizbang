@@ -29,7 +29,10 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 /// </remarks>
 /// <typeparam name="TModel">The perspective model the collective event mutates.</typeparam>
 /// <docs>fundamentals/messaging/collective-events</docs>
-[SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Matches the Whizbang.Data.EFCore.Postgres CollectiveEventApplier<TModel> pattern.")]
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:ApplyAsync_TenantScoped_UpdatesOnlyInScopeRowsAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:ApplyAsync_CohortLargerThanBatchSize_UpdatesEveryRowAcrossBatchesAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:Applier_EventTypeMismatch_ThrowsArgumentAsync</tests>
+[SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Matches the Whizbang.Data.EFCore.Postgres CollectiveEventApplier pattern.")]
 public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
   // Preserve PascalCase property names — they are the jsonb keys (matches CollectiveSettersRewriter).
   private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNamingPolicy = null };

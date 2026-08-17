@@ -260,26 +260,27 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
 
   [Test]
   public async Task FlushAsync_WhenFlushAlreadyInProgress_LogsWarningAndReturnsEmptyAsync() {
-    // Arrange - Use a slow coordinator that will keep flush in progress long enough
+    // Arrange — a GATED coordinator: the first flush signals when it is provably inside the
+    // coordinator (the strategy sets _flushing BEFORE calling it), and blocks until released.
+    // The old SlowWorkCoordinator(300ms) + Task.Delay(50) version raced the first flush's
+    // scheduling under load — 50ms was sometimes not enough for _flushing to be set.
     var logger = new RecordingLogger<IntervalWorkCoordinatorStrategy>();
-    var slowCoordinator = new SlowWorkCoordinator(delayMs: 300);
+    var gatedCoordinator = new GatedWorkCoordinator();
     var instanceProvider = new CoverageTestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      slowCoordinator, instanceProvider, options, logger);
+      gatedCoordinator, instanceProvider, options, logger);
 
     // Queue something so first flush doesn't return immediately on empty
     var messageId = Guid.CreateVersion7();
     sut.QueueOutboxMessage(_createOutboxMessage(messageId));
 
     try {
-      // Start first flush (which will take 300ms due to slow coordinator)
+      // Start first flush; wait until it is INSIDE the coordinator — _flushing is now true.
       var firstFlushTask = sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      await gatedCoordinator.EnteredStore.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-      // Give the first flush a moment to set _flushing = true
-      await Task.Delay(50);
-
-      // Second flush should detect concurrent flush in progress
+      // Second flush deterministically hits the already-in-progress guard.
       var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - second result is empty (concurrent flush returns empty)
@@ -288,6 +289,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       await Assert.That(logger.Messages.Any(m => m.Contains("already in progress") || m.Contains("progress"))).IsTrue()
         .Because("LogFlushAlreadyInProgress should be called");
 
+      gatedCoordinator.ReleaseStore.Release();
       await firstFlushTask;
     } finally {
       await sut.DisposeAsync();
@@ -577,6 +579,43 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
     public async Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
       await Task.Delay(_delayMs, cancellationToken);
     }
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>Signals when a flush is provably INSIDE the coordinator (so the strategy's
+  /// _flushing guard is set) and blocks there until released — the deterministic replacement
+  /// for delay-based concurrent-flush setups.</summary>
+  private sealed class GatedWorkCoordinator : IWorkCoordinator {
+    public TaskCompletionSource EnteredStore { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public SemaphoreSlim ReleaseStore { get; } = new(0, 1);
+
+    public async Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) {
+      EnteredStore.TrySetResult();
+      await ReleaseStore.WaitAsync(cancellationToken);
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCursorCompletion completion,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCursorFailure failure,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

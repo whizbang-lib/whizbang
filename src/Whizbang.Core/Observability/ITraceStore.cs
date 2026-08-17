@@ -9,6 +9,9 @@ namespace Whizbang.Core.Observability;
 /// <docs>fundamentals/persistence/observability</docs>
 /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs</tests>
 /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_StoreAndRetrieve_ShouldStoreAndRetrieveEnvelopeAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByCorrelation_ShouldReturnAllMessagesWithSameCorrelationIdAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithCircularReference_ProtectsAgainstInfiniteLoopAsync</tests>
 public interface ITraceStore {
   /// <summary>
   /// Stores a message envelope trace.

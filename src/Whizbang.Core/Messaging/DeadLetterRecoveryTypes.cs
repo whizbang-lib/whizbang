@@ -4,6 +4,10 @@ namespace Whizbang.Core.Messaging;
 /// Lifecycle of a row in <c>wh_dead_letters</c>. Mirrors the SQL enum mapping.
 /// </summary>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DeadLetterRecoveryPolicyTests.cs:RecoveryStatusEnum_HasExpectedValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:ShouldRecover_HoldForReview_ReturnsFalseAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:ShouldRecover_PermanentlyFailed_ReturnsFalseAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreDeadLetterRecoveryServiceTests.cs:MarkHoldingAsync_FlipsStatusToHoldForReviewAsync</tests>
 public enum DeadLetterRecoveryStatus {
   /// <summary>Awaiting next_recovery_at — eligible for automatic retry.</summary>
   Pending = 0,
@@ -22,6 +26,7 @@ public enum DeadLetterRecoveryStatus {
 /// recovery worker's next scan.
 /// </summary>
 /// <docs>operations/dead-letter-queue/operator-api</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DeadLetterRecoveryPolicyTests.cs:DispositionEnum_HasExpectedValuesAsync</tests>
 public enum DeadLetterDisposition {
   /// <summary>Default — let the recovery policy decide.</summary>
   None = 0,
@@ -46,6 +51,9 @@ public enum DeadLetterDisposition {
 /// <see cref="DeadLetterRecoveryStatus.PermanentlyFailed"/> — useful for reasons that
 /// typically need human attention rather than just more retries.</param>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:GetPolicy_KnownReason_ReturnsConfiguredPolicyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:GetPolicy_MaxAttemptsExceeded_HoldsAfterExhaustionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:GetPolicy_UnknownReasonNotInDictionary_FallsBackToUnknownEntryAsync</tests>
 public sealed record RecoveryPolicy(
   string Name,
   int MaxRecoveryAttempts,
@@ -93,6 +101,9 @@ public sealed record DeadLetterEntry(
 /// for fully programmatic control.
 /// </summary>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:GetPolicy_TransportException_ReturnsMediumRetryAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:GetStreamMode_StreamIdPresent_ReturnsTailAwareAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:EntryWithHoldForReviewStatus_IsSkippedByPolicyAsync</tests>
 public interface IDeadLetterRecoveryPolicy {
   /// <summary>Returns the policy for this entry's <see cref="MessageFailureReason"/>.</summary>
   RecoveryPolicy GetPolicy(DeadLetterEntry entry);
@@ -113,6 +124,9 @@ public interface IDeadLetterRecoveryPolicy {
 /// Configuration for the DLQ recovery subsystem.
 /// </summary>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:GetPolicy_UnknownReasonNotInDictionary_FallsBackToUnknownEntryAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:Constructor_NullOptions_ThrowsArgumentNullExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DeadLetterRecoveryPolicyTests.cs:ThrottledReason_DefaultsToAggressiveRetryAsync</tests>
 public sealed class DeadLetterRecoveryOptions {
   /// <summary>Killswitch — disables the recovery worker entirely. Default <c>true</c>.</summary>
   public bool Enabled { get; set; } = true;

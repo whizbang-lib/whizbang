@@ -7,6 +7,9 @@ namespace Whizbang.Core.Health;
 /// failed connectivity probe against the lifecycle phase.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
+/// <tests>tests/Whizbang.Core.Tests/Health/ConnectivityHealthSourceTests.cs:Always_Migrating_Unreachable_IsFaulted_NotMaskedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/ConnectivityHealthSourceTests.cs:WhenRunning_Migrating_NotProbed_PausedByDesignAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/ConnectivityHealthSourceTests.cs:WhenRunning_Running_Unreachable_FaultedAsync</tests>
 public enum ConnectivityRequirement {
   /// <summary>
   /// Needed from the moment the system connects (e.g. the event-store DB — the migration calls into

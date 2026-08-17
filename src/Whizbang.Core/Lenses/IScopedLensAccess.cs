@@ -8,6 +8,9 @@ namespace Whizbang.Core.Lenses;
 /// <typeparam name="TModel">The read model type to query.</typeparam>
 /// <docs>fundamentals/lenses/scoped-queries#scoped-lens-access</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensAccessTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs:Scope_DelegatesToInnerWithSameArgAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs:DefaultScope_DelegatesToInnerPropertyAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableLensQueryScopedAccessTests.cs:Scope_Global_Query_ReturnsAllRowsAsync</tests>
 public interface IScopedLensAccess<TModel> where TModel : class {
   /// <summary>
   /// Queryable access to full perspective rows with scope filters pre-applied.

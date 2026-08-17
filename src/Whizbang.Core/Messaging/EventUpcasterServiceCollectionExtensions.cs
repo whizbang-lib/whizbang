@@ -11,6 +11,8 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/EventUpcasterRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EventUpcasterRegistrationTests.cs:AddEventUpcaster_RegistersUpcasterAndPipeline_InOrderAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EventUpcasterRegistrationTests.cs:AddEventUpcaster_RegistersAsSingletonAsync</tests>
 public static class EventUpcasterServiceCollectionExtensions {
   /// <summary>
   /// Registers <typeparamref name="TUpcaster"/> as an <see cref="IEventUpcaster"/> (singleton —

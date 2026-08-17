@@ -9,6 +9,9 @@ namespace Whizbang.Core.Perspectives.Hooks;
 /// assignments. Arbitrary (developer-defined) column names are supported on the collective path only.
 /// </summary>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:ApplyTimestamp_ReachesTheHookAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:OverrideTimestamps_SetsUpdatedAt_WithoutBumpAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:UnsupportedStoreColumn_ThrowsAsync</tests>
 public static class ApplyHookColumns {
 #pragma warning disable CA1707 // editorconfig requires all_upper constants; CA1707 forbids underscores — codebase convention is to suppress CA1707 (see CollectiveRouting.SINK_PERSPECTIVE_NAME).
   /// <summary>The <c>updated_at</c> store column (per-event: <c>PerspectiveRow.UpdatedAt</c>).</summary>
@@ -29,6 +32,9 @@ public static class ApplyHookColumns {
 /// paths.
 /// </summary>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:SetProperty_RecordsNameValueAndTypeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:RemoveSetter_RecordsPropertyNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:CollectiveBuilder_RecordsAndWhereAndReplaceWhereAsync</tests>
 public abstract record ApplyHookOp;
 
 /// <summary>
@@ -54,6 +60,20 @@ public sealed record SetColumnOp(string Column, object? Value) : ApplyHookOp;
 /// <c>row.Version++</c> (per-event). A first-class verb because it is not a constant assignment.
 /// </summary>
 public sealed record BumpVersionOp : ApplyHookOp;
+
+/// <summary>
+/// Declares that the applied event is NOT business activity: the row is written, but its business
+/// time (<c>updated_at</c>) is left where it was.
+/// </summary>
+/// <remarks>
+/// For integrity repairs, system backfills, reclassification passes and other maintenance-generated
+/// events, which touch a row without a user or business process having acted on it. Advancing
+/// business time for those would extend retention windows and lift the record to the top of recency
+/// ordering. The default is opt-out — an event counts as activity unless a hook says otherwise —
+/// because forgetting to declare should keep a record alive rather than silently expire it.
+/// </remarks>
+/// <docs>fundamentals/messaging/apply-hooks</docs>
+public sealed record SuppressActivityOp : ApplyHookOp;
 
 /// <summary>
 /// Drop a model-field setter that an earlier stage (the perspective's <c>Apply</c> or a prior hook) added, by

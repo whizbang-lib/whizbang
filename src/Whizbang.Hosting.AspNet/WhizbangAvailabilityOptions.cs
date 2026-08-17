@@ -7,6 +7,9 @@ namespace Whizbang.Hosting.AspNet;
 /// pass-through once the schema is ready. Override to change the mode or turn it off.
 /// </summary>
 /// <docs>resilience/database-availability-middleware</docs>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangAvailabilityStartupFilterTests.cs:Enabled_GatePresent_WriteIsGatedAsync</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangAvailabilityStartupFilterTests.cs:Disabled_NotGatedAsync</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Tests/AddWhizbangAspNetTurnkeyTests.cs:AvailabilityOptions_DefaultToMutationsOnlyAndEnabledAsync</tests>
 public sealed class WhizbangAvailabilityOptions {
   /// <summary>Whether the availability gate is injected. Default <see langword="true"/>.</summary>
   public bool Enabled { get; set; } = true;

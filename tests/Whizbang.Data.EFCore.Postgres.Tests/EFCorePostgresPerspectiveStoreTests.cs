@@ -93,7 +93,7 @@ public class EFCorePostgresPerspectiveStoreTests {
   }
 
   [Test]
-  public async Task UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync() {
+  public async Task UpsertAsync_AdvancesBusinessTimeToTheAppliedEvent_OnUpdateAsync() {
     // Arrange
     var context = CreateInMemoryDbContext();
     var strategy = new InMemoryUpsertStrategy();
@@ -107,20 +107,24 @@ public class EFCorePostgresPerspectiveStoreTests {
         .AsNoTracking()
         .FirstOrDefaultAsync(r => r.Id == testId);
 
-    var originalUpdatedAt = firstRow!.UpdatedAt;
+    var originalCreatedAt = firstRow!.CreatedAt;
 
-    // Small delay to ensure timestamp difference
-    await Task.Delay(10);
+    // Act - update the record, carrying an event whose BUSINESS time is explicit. updated_at is no
+    // longer the wall clock at write, so this asserts an exact value rather than "later than before"
+    // — which also removes the sleep the old wall-clock form needed to guarantee a difference.
+    var secondEvent = new DateTime(2031, 2, 3, 4, 5, 6, DateTimeKind.Utc);
+    await ((IPerspectiveStore<StoreTestModel>)store).UpsertAsync(
+      testId, new StoreTestModel { Name = "Bob", Value = 200 },
+      new PerspectiveScope(), false,
+      new PerspectiveMetadata { EventType = "Updated", Timestamp = secondEvent });
 
-    // Act - update the record
-    await store.UpsertAsync(testId, new StoreTestModel { Name = "Bob", Value = 200 });
-
-    // Assert - UpdatedAt should be newer
     var updatedRow = await context.Set<PerspectiveRow<StoreTestModel>>()
         .FirstOrDefaultAsync(r => r.Id == testId);
 
-    await Assert.That(updatedRow!.UpdatedAt).IsGreaterThan(originalUpdatedAt);
-    await Assert.That(updatedRow.CreatedAt).IsEqualTo(firstRow.CreatedAt); // CreatedAt unchanged
+    await Assert.That(updatedRow!.UpdatedAt).IsEqualTo(secondEvent)
+      .Because("updated_at carries BUSINESS time — the applied event's own timestamp");
+    await Assert.That(updatedRow.CreatedAt).IsEqualTo(originalCreatedAt)
+      .Because("the entity still came into being when it was first created");
   }
 
   [Test]
@@ -578,6 +582,59 @@ public class EFCorePostgresPerspectiveStoreTests {
     var expected = DateTime.UtcNow.AddSeconds(3600);
     await Assert.That(Math.Abs((expiresAt!.Value - expected).TotalSeconds)).IsLessThanOrEqualTo(60)
       .Because("expires_at = now + the registered TTL (a sliding last-activity window).");
+  }
+
+  [Test]
+  public async Task UpsertAsync_TtlRowModel_AnchorsExpiryToAppliedEventTime_NotApplyTimeAsync() {
+    // RowTtl replay-safety anchor: expires_at derives from the APPLIED EVENT's timestamp
+    // (metadata.Timestamp — the runner threads the checkpoint event's time), NOT from the
+    // wall clock at apply time. Re-applying old history (rebuild/rewind) must reproduce the
+    // original window — an idle stream rebuilds BORN-EXPIRED instead of resurrecting with a
+    // fresh TTL. Same anchoring principle as the event-layer AfterTtl (created_at + ttl).
+    var context = CreateInMemoryDbContext();
+    var store = new EFCorePostgresPerspectiveStore<TtlRowStoreModel>(context, "ttl_row_perspective", new InMemoryUpsertStrategy());
+    PerspectiveTtlRegistry.Register(typeof(TtlRowStoreModel), 3600);
+    var testId = _idProvider.NewGuid();
+    Guid replayedEventId = _idProvider.NewGuid();
+    var eventTime = DateTime.UtcNow.AddDays(-100); // replaying century-old history
+
+    await store.UpsertAsync(
+        testId,
+        new TtlRowStoreModel { Name = "replayed" },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        new PerspectiveMetadata {
+          EventId = replayedEventId.ToString("D"),
+          EventType = "TestNamespace.ReplayedEvent",
+          Timestamp = eventTime,
+        });
+
+    var row = await context.Set<PerspectiveRow<TtlRowStoreModel>>().FirstOrDefaultAsync(r => r.Id == testId);
+    var expiresAt = (DateTime?)context.Entry(row!).Property("expires_at").CurrentValue;
+    await Assert.That(expiresAt).IsNotNull();
+    var expected = eventTime.AddSeconds(3600);
+    await Assert.That(Math.Abs((expiresAt!.Value - expected).TotalSeconds)).IsLessThanOrEqualTo(1)
+      .Because("expires_at anchors to the applied event's time + TTL — deterministic under replay, "
+        + "so a rebuild of idle history produces a born-expired row, never a fresh window.");
+  }
+
+  [Test]
+  public async Task UpsertAsync_TtlRowModel_NoMetadataTimestamp_FallsBackToNowAsync() {
+    // Direct store callers (fixtures, seeds) upsert without event metadata — the anchor falls
+    // back to the wall clock so their rows still get an honest full window.
+    var context = CreateInMemoryDbContext();
+    var store = new EFCorePostgresPerspectiveStore<TtlRowStoreModel>(context, "ttl_row_perspective", new InMemoryUpsertStrategy());
+    PerspectiveTtlRegistry.Register(typeof(TtlRowStoreModel), 3600);
+    var testId = _idProvider.NewGuid();
+
+    await store.UpsertAsync(testId, new TtlRowStoreModel { Name = "seeded" });
+
+    var row = await context.Set<PerspectiveRow<TtlRowStoreModel>>().FirstOrDefaultAsync(r => r.Id == testId);
+    var expiresAt = (DateTime?)context.Entry(row!).Property("expires_at").CurrentValue;
+    await Assert.That(expiresAt).IsNotNull();
+    var expected = DateTime.UtcNow.AddSeconds(3600);
+    await Assert.That(Math.Abs((expiresAt!.Value - expected).TotalSeconds)).IsLessThanOrEqualTo(60)
+      .Because("with no event timestamp (default metadata), the anchor falls back to now + TTL.");
   }
 
   [Test]

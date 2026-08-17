@@ -13,6 +13,9 @@ namespace Whizbang.Core.Messaging;
 /// event claiming, lease management, or transport concerns.
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildInPlaceAsync_CallsCompleter_WithSuccessfulCompletionsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildInPlaceAsync_FailedStream_NotInCompletionsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildInPlaceAsync_WithoutCompleterRegistered_StillSucceedsAsync</tests>
 public interface IPerspectiveCheckpointCompleter {
   /// <summary>
   /// Persists the supplied cursor completions. Upserts the <c>wh_perspective_cursors</c>

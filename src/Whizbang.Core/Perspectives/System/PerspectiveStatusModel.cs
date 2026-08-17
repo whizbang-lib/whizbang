@@ -6,6 +6,9 @@ namespace Whizbang.Core.Perspectives.System;
 /// Developers subscribe to system rebuild/migration events which update this model.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives#status-model</docs>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveStatusModel_AllProperties_RoundTripCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveStatusModel_Defaults_AreCorrectAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveStatusModel_WithError_StoresErrorAsync</tests>
 public sealed record PerspectiveStatusModel {
   /// <summary>
   /// Deterministic GUID derived from perspective name.

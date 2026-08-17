@@ -8,6 +8,9 @@ namespace Whizbang.Core.Security.Attributes;
 /// </summary>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:PermissionMissing_OnDeniedQuarantine_DeniesWithQuarantineAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:MultipleDenials_StrictestActionWinsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateAll_PicksStrictestActionAsync</tests>
 public enum DeniedAction {
   /// <summary>
   /// Throw <see cref="UnauthorizedAccessException"/>. The message routes through the

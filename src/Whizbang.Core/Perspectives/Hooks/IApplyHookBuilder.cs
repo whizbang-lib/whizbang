@@ -14,6 +14,9 @@ namespace Whizbang.Core.Perspectives.Hooks;
 /// run the recorded ops against any matching model.
 /// </typeparam>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:SetProperty_IsCarried_AndApplyModelSettersMutatesTheObjectAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:UnsupportedStoreColumn_ThrowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:PerEventRegistry_Marker_Order_And_KeyedOverrideAsync</tests>
 public interface IApplyHookBuilder<TMarker> {
   /// <summary>Assign a model data field to <paramref name="value"/>.</summary>
   /// <typeparam name="TProp">The property type.</typeparam>
@@ -32,6 +35,13 @@ public interface IApplyHookBuilder<TMarker> {
   /// <returns>The same builder for chaining.</returns>
   IApplyHookBuilder<TMarker> BumpVersion();
 
+  /// <summary>
+  /// Declares the applied event NOT to be business activity: the row is written, but its business
+  /// time is left where it was. For integrity repairs, backfills and other maintenance-generated
+  /// events that would otherwise extend retention and lift the record up a recency ordering.
+  /// </summary>
+  IApplyHookBuilder<TMarker> SuppressActivity();
+
   /// <summary>Drop a model-field setter added earlier in the apply, by property. Collective-focused.</summary>
   /// <typeparam name="TProp">The property type.</typeparam>
   /// <param name="selector">A top-level property selector for the setter to remove.</param>
@@ -46,6 +56,9 @@ public interface IApplyHookBuilder<TMarker> {
 /// </summary>
 /// <typeparam name="TMarker">The marker the hook was registered for.</typeparam>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:CollectiveBuilder_RecordsAndWhereAndReplaceWhereAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:SetProperty_RecordsNameValueAndTypeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:RemoveSetter_RecordsPropertyNameAsync</tests>
 public interface ICollectiveApplyHookBuilder<TMarker> : IApplyHookBuilder<TMarker> {
   /// <summary>AND an extra predicate onto the collective cohort <c>WHERE</c>.</summary>
   /// <param name="predicate">A predicate over the model (<c>m =&gt; …</c>).</param>

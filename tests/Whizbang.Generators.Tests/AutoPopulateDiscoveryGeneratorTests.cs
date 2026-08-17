@@ -1185,4 +1185,58 @@ public class AutoPopulateDiscoveryGeneratorTests {
     await Assert.That(code).Contains("GetAllRegistrations");
     await Assert.That(code).Contains("return _registrations;");
   }
+
+  /// <summary>
+  /// Context populates must FILL, never CLOBBER: a caller that explicitly stamped an identity onto
+  /// the message (e.g. an anonymous-request endpoint attributing the action to a resolved account)
+  /// must not have it overwritten by the ambient context — which on an anonymous dispatch is null,
+  /// silently erasing the attribution.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_ContextPopulate_PreservesExplicitStringValueAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderCreatedEvent(
+              Guid OrderId,
+              [property: PopulateFromContext(ContextKind.UserId)] string? CreatedBy = null
+            );
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var populator = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(populator).IsNotNull();
+    await Assert.That(populator)
+      .Contains("string.IsNullOrEmpty(m.CreatedBy) ? _extractUserId(hop) : m.CreatedBy");
+  }
+
+  /// <summary>Guid-typed context targets keep an explicit value too: nullable via ??, non-nullable via an Empty check.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_ContextPopulate_PreservesExplicitGuidValuesAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class AuditCommand {
+              [PopulateFromContext(ContextKind.UserId)] public Guid? AccountId { get; set; }
+              [PopulateFromContext(ContextKind.TenantId)] public Guid TenantId { get; set; }
+            }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var populator = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(populator).IsNotNull();
+    await Assert.That(populator).Contains("(m.AccountId ?? _parseGuid(_extractUserId(hop)))");
+    await Assert.That(populator).Contains(
+      "(m.TenantId == System.Guid.Empty ? (_parseGuid(_extractTenantId(hop)) ?? System.Guid.Empty) : m.TenantId)");
+  }
 }

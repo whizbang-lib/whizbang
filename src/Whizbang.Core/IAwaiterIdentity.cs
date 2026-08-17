@@ -14,6 +14,9 @@ namespace Whizbang.Core;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#awaiter-identity</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:EventCompletionAwaiter_ImplementsIAwaiterIdentityAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:PerspectiveSyncAwaiter_ImplementsIAwaiterIdentityAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:EventCompletionAwaiter_TwoInstances_HaveDifferentIdsAsync</tests>
 public interface IAwaiterIdentity {
   /// <summary>
   /// Gets the unique identifier for this awaiter instance.

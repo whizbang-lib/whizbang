@@ -177,4 +177,71 @@ public class MessageAwaiterTests {
 
     await Assert.That(ex!.Message).Contains("Expected 3 messages but only received 1");
   }
+
+  [Test]
+  public async Task DistinctMessageIdAwaiter_EmptyExpectedSet_ThrowsAsync() {
+    var ex = Assert.Throws<ArgumentException>(() => _ = new DistinctMessageIdAwaiter([]));
+
+    await Assert.That(ex!.ParamName).IsEqualTo("expectedMessageIds");
+  }
+
+  [Test]
+  public async Task DistinctMessageIdAwaiter_DuplicateDelivery_CountsOnceAndCompletesOnAllDistinctAsync() {
+    var first = EnvelopeFactory.Create("first");
+    var second = EnvelopeFactory.Create("second");
+    var third = EnvelopeFactory.Create("third");
+    var awaiter = new DistinctMessageIdAwaiter([
+      first.MessageId.ToString(),
+      second.MessageId.ToString(),
+      third.MessageId.ToString()
+    ]);
+
+    // An at-least-once transport may redeliver a message: the duplicate must not count twice or
+    // complete the awaiter before every distinct expected message has arrived.
+    await awaiter.Handler(first, null, CancellationToken.None);
+    await awaiter.Handler(first, null, CancellationToken.None);
+    await awaiter.Handler(second, null, CancellationToken.None);
+    await Assert.That(awaiter.IsCompleted).IsFalse();
+    await Assert.That(awaiter.DistinctReceivedCount).IsEqualTo(2);
+
+    await awaiter.Handler(third, null, CancellationToken.None);
+
+    await Assert.That(awaiter.IsCompleted).IsTrue();
+    await Assert.That(awaiter.DistinctReceivedCount).IsEqualTo(3);
+    await Assert.That(awaiter.ExpectedCount).IsEqualTo(3);
+    await awaiter.WaitAsync(_longTimeout);
+  }
+
+  [Test]
+  public async Task DistinctMessageIdAwaiter_UnexpectedStraggler_IgnoredAsync() {
+    var expected = EnvelopeFactory.Create("expected");
+    var straggler = EnvelopeFactory.Create("straggler");
+    var awaiter = new DistinctMessageIdAwaiter([expected.MessageId.ToString()]);
+
+    // A stale message an earlier test's drain missed must neither count nor complete the awaiter.
+    await awaiter.Handler(straggler, null, CancellationToken.None);
+    await Assert.That(awaiter.IsCompleted).IsFalse();
+    await Assert.That(awaiter.DistinctReceivedCount).IsEqualTo(0);
+
+    await awaiter.Handler(expected, null, CancellationToken.None);
+
+    await Assert.That(awaiter.IsCompleted).IsTrue();
+    await awaiter.WaitAsync(_longTimeout);
+  }
+
+  [Test]
+  public async Task DistinctMessageIdAwaiter_Timeout_MessageIncludesProgressAsync() {
+    var received = EnvelopeFactory.Create("received");
+    var missing = EnvelopeFactory.Create("missing");
+    var awaiter = new DistinctMessageIdAwaiter([
+      received.MessageId.ToString(),
+      missing.MessageId.ToString()
+    ]);
+    await awaiter.Handler(received, null, CancellationToken.None);
+
+    var ex = await Assert.ThrowsAsync<TimeoutException>(
+      async () => await awaiter.WaitAsync(TimeSpan.Zero));
+
+    await Assert.That(ex!.Message).Contains("Expected 2 distinct messages but only received 1");
+  }
 }

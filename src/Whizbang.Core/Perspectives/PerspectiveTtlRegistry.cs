@@ -27,10 +27,55 @@ public static class PerspectiveTtlRegistry {
   }
 
   /// <summary>
-  /// The registered row TTL (seconds) for <paramref name="modelType"/>, or <c>-1</c> when the model is not a
-  /// TtlRow perspective (its rows never expire).
+  /// A snapshot of every model registered across the loaded assemblies, with its declared TTL in
+  /// seconds. The startup sync reads this to carry each declaration into SQL.
+  /// </summary>
+  /// <remarks>
+  /// Enumerating what module initializers REGISTERED is the only AOT-legal way to discover
+  /// perspectives: assembly scanning needs reflection, which is exactly what the source-generated
+  /// self-registration pattern exists to avoid. Returns a snapshot, so it is safe to enumerate
+  /// while further assemblies initialize.
+  /// </remarks>
+  public static IReadOnlyList<KeyValuePair<Type, int>> RegisteredModels() =>
+    [.. _ttlSecondsByModel];
+
+  private static volatile bool _enabled = true;
+  private static volatile Dictionary<string, int?>? _runtimeOverrides;
+
+  /// <summary>
+  /// Applies the operator rung of the row-retention override ladder (perspective row retention).
+  /// <paramref name="enabled"/> is the global kill switch — when false every model resolves to
+  /// <c>-1</c>, so stamping, the lens expiry filter, and the resurrection probe all stand down
+  /// together (one consult point keeps the seams coherent). <paramref name="overrides"/> maps a
+  /// model's full CLR name to a replacement TTL in seconds (or <c>null</c> to disable retention
+  /// for that model only); an override outranks the generated registration. Called at startup by
+  /// the worker pipeline from <c>PerspectiveRowRetentionOptions</c>; passing
+  /// <c>(true, null)</c> restores pure registered behavior.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveTtlRegistryTests.cs</tests>
+  public static void ApplyRuntimeConfiguration(bool enabled, IReadOnlyDictionary<string, int?>? overrides) {
+    _enabled = enabled;
+    _runtimeOverrides = overrides is null or { Count: 0 }
+      ? null
+      : new Dictionary<string, int?>(overrides, StringComparer.Ordinal);
+  }
+
+  /// <summary>
+  /// The effective row TTL (seconds) for <paramref name="modelType"/>, or <c>-1</c> when the model's rows
+  /// never expire. Resolution order: kill switch → runtime override (by full CLR name) → the generated
+  /// registration → <c>-1</c>.
   /// </summary>
   /// <param name="modelType">The perspective's read-model CLR type.</param>
-  public static int ResolveSeconds(Type modelType) =>
-    modelType is not null && _ttlSecondsByModel.TryGetValue(modelType, out var seconds) ? seconds : -1;
+  public static int ResolveSeconds(Type modelType) {
+    if (modelType is null || !_enabled) {
+      return -1;
+    }
+    var overrides = _runtimeOverrides;
+    if (overrides is not null && modelType.FullName is { } fullName
+        && overrides.TryGetValue(fullName, out var overridden)) {
+      return overridden ?? -1;
+    }
+    return _ttlSecondsByModel.TryGetValue(modelType, out var seconds) ? seconds : -1;
+  }
 }

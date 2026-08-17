@@ -31,4 +31,15 @@ public sealed class SchemaInitializationOptions {
   /// than sitting alive-but-wedged forever. <see langword="null"/> (the default) = no timeout.
   /// </summary>
   public TimeSpan? MigrationTimeout { get; set; }
+
+  /// <summary>
+  /// Delay between background initialization attempts when
+  /// <see cref="NonBlockingSchemaInit"/> is enabled and an attempt fails (including a
+  /// <see cref="MigrationTimeout"/>). The loop is fail-closed WHILE retrying — the schema-ready
+  /// gate stays shut, so nothing touches an unmigrated schema — but it never gives up: a
+  /// transient environment problem (connection exhaustion, a broken pool) recovers, and a pod
+  /// that never re-attempts is a not-ready zombie only a human can fix. Default 30 seconds.
+  /// </summary>
+  /// <docs>data/turnkey-initialization</docs>
+  public TimeSpan InitRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
 }

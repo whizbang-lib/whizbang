@@ -21,6 +21,12 @@ namespace Whizbang.Core.Tests.Workers;
 /// <c>OrphanInboxJanitorExtensionsTests</c> covers the DI extension; this
 /// file targets the worker's own conditional paths so coverage tracks the
 /// log/log-skip outcomes.
+///
+/// <para>The sweep runs in <c>ExecuteAsync</c> — in the background, after the schema gate —
+/// rather than inline in <c>StartAsync</c>. The old shape both BLOCKED host startup (every later
+/// hosted service waited on this purge) and skipped the gate (a purge issued against a possibly
+/// unmigrated schema). Tests drive <c>StartAsync</c> then await the exposed
+/// <c>BackgroundService.ExecuteTask</c> for determinism.</para>
 /// </summary>
 /// <docs>messaging/resilience/orphan-inbox</docs>
 public class OrphanInboxJanitorTests {
@@ -56,7 +62,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(sp, snapshot);
 
     // Should not throw.
-    await janitor.StartAsync(CancellationToken.None);
+    await _runToCompletionAsync(janitor);
   }
 
   /// <summary>
@@ -71,7 +77,7 @@ public class OrphanInboxJanitorTests {
     var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
     var janitor = new OrphanInboxJanitor(sp, snapshot);
 
-    await janitor.StartAsync(CancellationToken.None);
+    await _runToCompletionAsync(janitor);
 
     await Assert.That(coordinator.PurgeCallCount).IsEqualTo(0);
   }
@@ -87,7 +93,7 @@ public class OrphanInboxJanitorTests {
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(sp, snapshot);
 
-    await janitor.StartAsync(CancellationToken.None);
+    await _runToCompletionAsync(janitor);
 
     await Assert.That(coordinator.PurgeCallCount).IsEqualTo(1);
     await Assert.That(coordinator.LastHandledTypeNames!.Count).IsEqualTo(1);
@@ -110,7 +116,7 @@ public class OrphanInboxJanitorTests {
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(sp, snapshot);
 
-    await janitor.StartAsync(CancellationToken.None);
+    await _runToCompletionAsync(janitor);
 
     await Assert.That(coordinator.PurgeCallCount).IsEqualTo(1);
   }
@@ -127,7 +133,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(sp, snapshot);
 
     // Should not bubble out.
-    await janitor.StartAsync(CancellationToken.None);
+    await _runToCompletionAsync(janitor);
   }
 
   /// <summary>
@@ -144,26 +150,61 @@ public class OrphanInboxJanitorTests {
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(sp, snapshot);
 
-    await janitor.StartAsync(CancellationToken.None);
+    await _runToCompletionAsync(janitor);
 
     await Assert.That(coordinator.LastHandledTypeNames!.Count).IsEqualTo(4);
   }
 
   /// <summary>
-  /// <see cref="OrphanInboxJanitor.ExecuteAsync"/> is a no-op placeholder
-  /// (lives behind <c>BackgroundService.StartAsync</c>'s call); call the
-  /// public surface directly so it appears in coverage and so any future
-  /// regression that wires real work into <c>ExecuteAsync</c> is caught.
+  /// The old shape ran the purge inline in <c>StartAsync</c>, so every later hosted service
+  /// waited on it. StartAsync must now return without purging — the sweep is background work.
   /// </summary>
   [Test]
-  public async Task StartAsync_AlsoInvokesBaseExecuteAsync_NoOpAsync() {
+  public async Task StartAsync_ReturnsWithoutBlockingOnThePurgeAsync() {
+    var gate = new SchemaReadyGate();   // NOT ready — the sweep cannot even begin
     var coordinator = new _RecordingCoordinator();
     using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
+
+    await janitor.StartAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+
+    await Assert.That(coordinator.PurgeCallCount).IsEqualTo(0)
+      .Because("host startup must not block on — or be coupled to — the orphan purge");
+
+    gate.MarkReady();
+    await janitor.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(coordinator.PurgeCallCount).IsEqualTo(1)
+      .Because("once migrations complete the sweep must actually run");
+    await janitor.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// The purge is a DELETE against wh_inbox — it must never run before migrations complete.
+  /// </summary>
+  [Test]
+  public async Task Sweep_DoesNotPurgeWhileTheGateIsClosedAsync() {
+    var gate = new SchemaReadyGate();
+    var coordinator = new _RecordingCoordinator();
+    using var sp = _buildProviderWith(coordinator);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
 
     await janitor.StartAsync(CancellationToken.None);
-    // Calling StopAsync also exercises the BackgroundService surface.
+    await Task.Delay(300);
+
+    await Assert.That(coordinator.PurgeCallCount).IsEqualTo(0)
+      .Because("a purge issued against a possibly-unmigrated schema is the second half of the defect");
+
+    gate.MarkReady();
+    await janitor.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
+    await janitor.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>Starts the janitor and awaits its background sweep to completion.</summary>
+  private static async Task _runToCompletionAsync(OrphanInboxJanitor janitor) {
+    await janitor.StartAsync(CancellationToken.None);
+    await janitor.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
     await janitor.StopAsync(CancellationToken.None);
   }
 

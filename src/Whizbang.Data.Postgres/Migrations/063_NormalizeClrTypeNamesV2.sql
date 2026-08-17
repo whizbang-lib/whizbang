@@ -45,7 +45,7 @@ BEGIN
   -- __SCHEMA__ (e.g. 'inventory') resolves to a table that does not exist (42P01).
   SELECT setting_value::INTEGER
   INTO v_current_version
-  FROM wh_settings
+  FROM __SCHEMA__.wh_settings
   WHERE setting_key = 'clr_type_name_format_version';
 
   v_current_version := COALESCE(v_current_version, 1);
@@ -109,7 +109,7 @@ BEGIN
 
   -- Record the new data-format version so this never re-scans on subsequent startups.
   -- Bare wh_settings (unqualified) — see the read above.
-  INSERT INTO wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
+  INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
   VALUES (
     'clr_type_name_format_version', '3', 'integer',
     'Encoding version of stored CLR type names (wh_event_store.aggregate_type, wh_message_type_registry.clr_type_name). 3 = canonical ''+''-nested CLR full name (Type.FullName) for message AND perspective types. Gates the one-time normalization in migration 063.',

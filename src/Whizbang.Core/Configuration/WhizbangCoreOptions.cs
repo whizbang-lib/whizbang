@@ -52,6 +52,9 @@ public sealed class WhizbangCoreOptions {
   /// </example>
   /// </remarks>
   /// <docs>operations/observability/tracing#configuration</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs:Constructor_InitializesTracingOptions_NotNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs:Tracing_VerbosityDefaultsToOff_Async</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs:Tracing_CanBeConfigured_Async</tests>
   public TracingOptions Tracing { get; } = new();
 
   /// <summary>
@@ -118,6 +121,9 @@ public sealed class WhizbangCoreOptions {
   /// explicitly choosing a scope level.
   /// </remarks>
   /// <docs>fundamentals/lenses/scoped-queries#default-scope</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/DefaultQueryScopeOptionsTests.cs:DefaultQueryScope_DefaultsToTenantAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/DefaultQueryScopeOptionsTests.cs:DefaultQueryScope_CanBeSetToGlobalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/DefaultQueryScopeOptionsTests.cs:DefaultQueryScope_CanBeSetToAllValuesAsync</tests>
   public QueryScope DefaultQueryScope { get; set; } = QueryScope.Tenant;
 
   /// <summary>
@@ -126,6 +132,9 @@ public sealed class WhizbangCoreOptions {
   /// Default: true.
   /// </summary>
   /// <docs>operations/configuration/whizbang-options#banner</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/WhizbangStartupLoggerTests.cs:StartAsync_ConfigShowBannerOverridesCodeOption_TrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/WhizbangStartupLoggerTests.cs:StartAsync_ConfigShowBannerOverridesCodeOption_FalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/WhizbangStartupLoggerTests.cs:StartAsync_NullConfiguration_UsesCodeOptionAsync</tests>
   public bool ShowBanner { get; set; } = true;
 
   /// <summary>
@@ -165,6 +174,9 @@ public sealed class WhizbangCoreOptions {
 /// Defines when tag processing occurs in the message dispatch pipeline.
 /// </summary>
 /// <docs>operations/configuration/whizbang-options#tag-processing-mode</docs>
+/// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs:TagProcessingMode_DefaultsToAfterReceptorCompletion_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs:TagProcessingMode_CanBeSetToAsLifecycleStage_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs:LocalInvokeAsync_WithLifecycleStageMode_SkipsImmediateProcessingAsync</tests>
 public enum TagProcessingMode {
   /// <summary>
   /// Process tags immediately after receptor completes (default).

@@ -10,7 +10,7 @@ namespace Whizbang.Core.Serialization;
 /// version, and exposes the <see cref="Current"/> (highest-version) serializer used to write new
 /// blobs.
 /// </summary>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/VersionedJsonSerializerRegistryTests.cs</tests>
 public interface IVersionedJsonSerializerRegistry {
   /// <summary>The current (highest-version) serializer, used to write new blobs.</summary>
@@ -26,7 +26,7 @@ public interface IVersionedJsonSerializerRegistry {
 /// <see cref="IVersionedJsonSerializer.Version"/>. <see cref="Current"/> is the highest version.
 /// AOT-safe — no reflection, serializers are supplied explicitly.
 /// </summary>
-/// <docs>event-upcasting</docs>
+/// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/VersionedJsonSerializerRegistryTests.cs</tests>
 public sealed class VersionedJsonSerializerRegistry : IVersionedJsonSerializerRegistry {
   private readonly Dictionary<int, IVersionedJsonSerializer> _byVersion;

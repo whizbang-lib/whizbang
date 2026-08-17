@@ -65,9 +65,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // EF Core upsert stamps expires_at = now + ttl. Empty for non-TtlRow perspectives (their rows never expire).
   #endregion
 
+  #region ROW_CAP_REGISTRATION
+  // Generated: a [RowCap] perspective registers its per-scope cap via a [ModuleInitializer], the same
+  // turnkey path as the row TTL above, so the startup reconciler can sync it into
+  // wh_perspective_registry and the cap sweep can see the declaration. Empty when no cap is declared —
+  // absent must stay distinct from a cap of zero, which would evict everything.
+  #endregion
+
   #region FULL_HISTORY_REGISTRATION
   // Generated: a [FullHistory] perspective registers its name via a [ModuleInitializer] so the A1 close guard
   // refuses a discard-close of any stream it consumes. Empty for resumable (unmarked) perspectives.
+  #endregion
+
+  #region STREAM_GROUP_REGISTRATION
+  // Generated: each [StreamGroup] membership registers via a [ModuleInitializer] (key + the
+  // Announce/Follow/Bridge dials) so the maintenance cascade computes the eviction closure without
+  // reflection. Empty for perspectives that joined no group — untouchable by cascades.
   #endregion
 
   private readonly IServiceProvider _serviceProvider;
@@ -234,6 +247,28 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Create new model if none exists (null from DB)
     if (currentModel == null) {
+      // Resurrection-on-wake (perspective row retention): for a row-TTL SOURCED perspective a
+      // missing row is ambiguous — a brand-new stream OR a reaped row whose stream just woke.
+      // A Sourced row is the fold of ALL its events, so applying only this batch onto a fresh
+      // model would silently build a corrupt partial row. Probe the log: pre-batch history
+      // means reaped-and-woken — re-fold via the rewind CORE (snapshot floor + tail; the
+      // incoming events are already stored, so the replay includes them). The core variant is
+      // required because RunAsync already holds the apply lock the public RewindAndRunAsync
+      // acquires. Ephemeral perspectives are excluded (rebuild refused; snapshot-floor
+      // semantics govern them) and non-TTL perspectives never reap, so neither ever probes.
+      if (!_isEphemeralPerspective
+          && global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(__MODEL_TYPE_NAME__)) >= 0
+          && events.Count > 0
+          && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, cancellationToken)) {
+        _logger.LogInformation(
+            "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history — resurrecting via re-fold",
+            streamId,
+            perspectiveName
+        );
+        return await _rewindAndRunCoreAsync(
+            streamId, perspectiveName, events[0].MessageId.Value, null, cancellationToken);
+      }
+
       _logger.LogDebug(
           "No existing model found for stream {StreamId} in {PerspectiveName}, creating new model",
           streamId,
@@ -354,6 +389,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var eventsProcessed = 0;
     var lastSuccessfulEventId = lastProcessedEventId;
     string? lastSuccessfulEventType = existingMetadata?.EventType;
+    DateTime? lastSuccessfulEventAt = null;
     var processedEvents = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
@@ -483,6 +519,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         if (pendingPurge) {
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
+          lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
           eventsProcessed++;
           continue;
         }
@@ -498,6 +535,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           }
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
+          lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
           eventsProcessed++;
           continue;
         }
@@ -519,6 +557,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // Advance checkpoint past the failed event so it isn't retried indefinitely
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
+          lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
           eventsProcessed++;
           continue;
         }
@@ -562,6 +601,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
         // Track success
         lastSuccessfulEventId = envelope.MessageId.Value;
+        lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         lastSuccessfulEventType = @event.GetType().FullName ?? eventTypeName;
         eventsProcessed++;
       }
@@ -605,6 +645,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               lastSuccessfulEventId!.Value,
               lastSuccessfulEventType ?? string.Empty,
               checkpointCommitSequence,
+              lastSuccessfulEventAt ?? DateTime.UtcNow,
               cancellationToken,
               lastScope?.FilterByFields(_inheritScopeOnCreate),
               scopeChanged
@@ -756,6 +797,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 lastSuccessfulEventId.Value,
                 lastSuccessfulEventType ?? string.Empty,
                 partialCheckpointCommitSequence,
+                lastSuccessfulEventAt ?? DateTime.UtcNow,
                 cancellationToken,
                 lastScope?.FilterByFields(_inheritScopeOnCreate),
                 scopeChanged
@@ -788,18 +830,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>
   /// Creates an empty model for a new stream.
   /// Initializes the model with the stream ID set to the stream key property.
+  /// Direct construction (no Activator, no reflection): the initializer is
+  /// computed at generation time from the model's shape, so strongly-typed
+  /// stream ids construct through their From(Guid) factory and required
+  /// members are explicitly initialized. AOT-safe.
   /// </summary>
   private __MODEL_TYPE_NAME__ CreateEmptyModel(Guid streamId) {
-    // Create instance using default constructor or Activator
-    var model = System.Activator.CreateInstance<__MODEL_TYPE_NAME__>();
-
-    // Set the stream key property
-    var streamKeyProperty = typeof(__MODEL_TYPE_NAME__).GetProperty("__STREAM_KEY_PROPERTY__");
-    if (streamKeyProperty != null && streamKeyProperty.CanWrite) {
-      streamKeyProperty.SetValue(model, streamId);
-    }
-
-    return model;
+    return new __MODEL_TYPE_NAME__ __EMPTY_MODEL_INITIALIZER__;
   }
 
   /// <summary>
@@ -860,6 +897,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid checkpointEventId,
       string checkpointEventType,
       long? checkpointCommitSequence,
+      DateTime checkpointEventAt,
       CancellationToken cancellationToken,
       PerspectiveScope? scope = null,
       bool forceUpdateScope = false) {
@@ -874,7 +912,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
       EventId = checkpointEventId.ToString("D"),
       EventType = checkpointEventType,
-      Timestamp = DateTime.UtcNow,
+      Timestamp = checkpointEventAt,
       CommitSequence = checkpointCommitSequence
     };
 
@@ -923,6 +961,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     await using IAsyncDisposable? __applyLock = _applyCoordinator is null
         ? null
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
+
+    return await _rewindAndRunCoreAsync(
+        streamId, perspectiveName, triggeringEventId, triggeringCommitSequence, cancellationToken);
+  }
+
+  /// <summary>
+  /// The rewind body, ASSUMING the apply lock is already held. Two callers: the public
+  /// RewindAndRunAsync (acquires the lock above) and RunAsync's resurrection-on-wake branch
+  /// (which runs under the lock RunAsync itself acquired — re-acquiring here would deadlock).
+  /// </summary>
+  private async Task<PerspectiveCursorCompletion> _rewindAndRunCoreAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid triggeringEventId,
+      long? triggeringCommitSequence,
+      CancellationToken cancellationToken = default) {
 
     Guid? replayFromEventId = null;
     __MODEL_TYPE_NAME__? snapshotModel = null;
@@ -1065,9 +1119,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var eventsProcessed = 0;
     Guid? lastSuccessfulEventId = replayFromEventId;
     string? lastSuccessfulEventType = null;
+    DateTime? lastSuccessfulEventAt = null;
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;
     PerspectiveScope? lastScope = null;
+    // The replay FRONTIER — max event id / max local commit_sequence across everything
+    // applied. The checkpoint metadata must carry the frontier, not the origin-order-last
+    // event's stamp: after a replay everything at or below the frontier IS applied (that is
+    // the idempotency floor's meaning), and the upsert's cross-pod lost-update guard rightly
+    // refuses a write whose sequence sits below the stored floor — an origin-order replay's
+    // final event can carry a LOWER local stamp than a backfilled straggler it slotted.
+    Guid? frontierEventId = null;
+    long? frontierCommitSequence = null;
 
     // Slice 24c: intermediate-snapshot tracking. When the rewind interval is configured
     // (> 0) we snapshot every N events DURING the replay, not just at the end. Subsequent
@@ -1097,6 +1160,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // append rates; in practice 1-2 iterations cover the bulk-import case.
     // <docs>fundamentals/perspectives/rewind-invariants</docs>
     // <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs</tests>
+    // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ReconcileRewindScenarioTests.cs</tests>
+    // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs</tests>
     const int MAX_REWIND_CATCH_UP_ITERATIONS = 100;
     var rewindCatchUpIterations = 0;
     var anchorEventId = replayFromEventId;
@@ -1128,10 +1193,27 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         break;
       }
 
-      // Ordering invariant: sort by MessageId before applying. Event-store reads should be
-      // sorted at the source, but this is defensive — replays must be strictly time-ordered.
+      // Ordering invariant — one comparator per batch, chosen by what the batch can prove:
+      // 1) SINGLE-ORIGIN stream (every event carries the same non-empty SourceServiceId and a
+      //    positive SourceCommitSequence): replay in ORIGIN order. A reconciled straggler
+      //    keeps its original origin slot but lands with an arrival-fresh LOCAL sequence — a
+      //    local-order replay would apply it last, which is exactly the arrival-order failure
+      //    the rewind exists to correct.
+      // 2) Otherwise, COMMIT order when every event carries its local stamp — the inversion
+      //    detector is commit-sequence-authoritative (same-millisecond UUIDv7 ids can disagree
+      //    with commit order), and an id-ordered replay would silently undo newer writes.
+      // 3) Any unstamped event (stamper lag) falls the whole batch back to MessageId order —
+      //    a partial mix would interleave two orderings.
       if (events.Count > 1) {
-        events = events.OrderByMessageId().ToList();
+        var firstOrigin = events[0].SourceServiceId;
+        if (firstOrigin != Guid.Empty
+            && events.All(e => e.SourceServiceId == firstOrigin && e.SourceCommitSequence > 0)) {
+          events = events.OrderBy(e => e.SourceCommitSequence).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList();
+        } else if (events.All(e => e.LocalCommitSequence.HasValue)) {
+          events = events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList();
+        } else {
+          events = events.OrderByMessageId().ToList();
+        }
       }
 
       // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
@@ -1145,6 +1227,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Once purge is set, skip applying further events — the model is null
       if (pendingPurge) {
         lastSuccessfulEventId = envelope.MessageId.Value;
+        lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         eventsProcessed++;
         continue;
       }
@@ -1163,6 +1246,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             envelope.MessageId.Value
         );
         lastSuccessfulEventId = envelope.MessageId.Value;
+        lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         eventsProcessed++;
         continue;
       }
@@ -1183,8 +1267,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
 
       lastSuccessfulEventId = envelope.MessageId.Value;
+
+      lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
       lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
       eventsProcessed++;
+      if (frontierEventId is null || string.CompareOrdinal(
+            envelope.MessageId.Value.ToString("D"), frontierEventId.Value.ToString("D")) > 0) {
+        frontierEventId = envelope.MessageId.Value;
+      }
+      if (envelope.LocalCommitSequence is long seq
+          && (frontierCommitSequence is null || seq > frontierCommitSequence.Value)) {
+        frontierCommitSequence = seq;
+      }
 
       // Slice 24c: take an intermediate snapshot every N replayed events. Puts a snapshot
       // at THIS point in the stream's history so future rewinds for late events with
@@ -1219,24 +1313,33 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
       } // closes foreach (var envelope in events)
 
-      // v0.688 — advance the catch-up anchor to the last event we applied so
-      // the next iteration's ReadPolymorphicAsync only returns events appended
-      // since. If for some reason lastSuccessfulEventId didn't advance (e.g.
-      // every event errored in apply), use the read-window's tail as the
-      // anchor to prevent re-reading the same set forever.
-      anchorEventId = lastSuccessfulEventId ?? events[events.Count - 1].MessageId.Value;
+      // v0.688 — advance the catch-up anchor past everything this pass READ so the next
+      // iteration's ReadPolymorphicAsync only returns events appended since. The anchor is
+      // the MAX MessageId of the read window, not the last-APPLIED id: the apply order is
+      // commit order, whose final event need not carry the window's largest id — an
+      // id-anchored refetch from a smaller last-applied id would re-serve (and re-apply)
+      // the window's tail every pass.
+      anchorEventId = events
+        .Select(e => e.MessageId.Value)
+        .OrderBy(id => id.ToString("D"), StringComparer.Ordinal)
+        .Last();
     } // closes while (true)
 
-    // Single atomic write at the end — lenses see pre-replay data until this point
+    // Single atomic write at the end — lenses see pre-replay data until this point.
+    // Checkpoint at the replay FRONTIER (max id / max local sequence applied): the floor's
+    // meaning is "everything at or below is applied", and a frontier below the stored floor
+    // would be refused by the upsert's cross-pod lost-update guard — discarding the very
+    // correction the rewind computed.
     if (eventsProcessed > 0) {
       if (pendingPurge) {
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
       } else if (updatedModel != null) {
-        var replayCheckpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
-            lastSuccessfulEventId!.Value, cancellationToken);
+        var checkpointEventId = frontierEventId ?? lastSuccessfulEventId!.Value;
+        var replayCheckpointCommitSequence = frontierCommitSequence
+            ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
         await SaveModelAndCheckpointAsync(
-            streamId, updatedModel, lastSuccessfulEventId!.Value, lastSuccessfulEventType ?? string.Empty,
-            replayCheckpointCommitSequence, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
+            streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
+            replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
       }
 
       await _perspectiveStore.FlushAsync(cancellationToken);
@@ -1270,7 +1373,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       StreamId = streamId,
       PerspectiveName = perspectiveName,
       PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
-      LastEventId = lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
+      // The cursor tracks the stream FRONTIER — under origin-order replay the last-applied
+      // event need not carry the largest id, and a cursor behind the frontier would re-flag
+      // already-replayed events as stragglers on the next work item.
+      LastEventId = frontierEventId ?? lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
       Status = resultStatus,
       EventsProcessed = eventsProcessed
     };

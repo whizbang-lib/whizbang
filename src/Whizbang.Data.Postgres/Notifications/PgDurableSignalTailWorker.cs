@@ -25,13 +25,16 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+/// <tests>tests/Whizbang.Core.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
 public sealed partial class PgDurableSignalTailWorker(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
   IServiceInstanceProvider instanceProvider,
   ISignalSink sink,
   ILogger<PgDurableSignalTailWorker> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotificationDataSource? notificationDataSource = null,
+  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -39,6 +42,8 @@ public sealed partial class PgDurableSignalTailWorker(
   private readonly ISignalSink _sink = sink ?? throw new ArgumentNullException(nameof(sink));
   private readonly ILogger<PgDurableSignalTailWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
+  private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
 
   /// <summary>Tail interval. Kept modest — the fast path is NOTIFY; this just plugs missed notifies.</summary>
   private static readonly TimeSpan _tickInterval = TimeSpan.FromSeconds(2);
@@ -47,10 +52,24 @@ public sealed partial class PgDurableSignalTailWorker(
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    // The very first act below is INSERTing this pod's cursor into wh_signal_cursors —
+    // a table the migration creates. Hold at the schema gate before any of it.
+    if (_schemaReadyGate is not null) {
+      try {
+        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
+      }
+    }
+
     _wireNameToEntry = _buildWireMap();
 
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    if (resolution.ConnectionString is null) {
+    // Prefer the registered notification data source - the only path that
+    // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
+    // string has had its credentials stripped by Npgsql.
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
       LogNoConnectionString(_logger);
       return;
     }
@@ -58,7 +77,7 @@ public sealed partial class PgDurableSignalTailWorker(
     // Initialize the cursor to the current MAX(id) on first startup so we don't replay pre-startup
     // history. If a cursor row already exists (this pod's second boot), leave it alone.
     try {
-      await _initializeCursorAsync(resolution.ConnectionString, stoppingToken);
+      await _initializeCursorAsync(plan, stoppingToken);
     } catch (OperationCanceledException) {
       return;
     } catch (Exception ex) {
@@ -67,7 +86,7 @@ public sealed partial class PgDurableSignalTailWorker(
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
-        await _tickOnceAsync(resolution.ConnectionString, stoppingToken);
+        await _tickOnceAsync(plan, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
@@ -82,9 +101,8 @@ public sealed partial class PgDurableSignalTailWorker(
     }
   }
 
-  private async Task _initializeCursorAsync(string connectionString, CancellationToken ct) {
-    await using var conn = new NpgsqlConnection(connectionString);
-    await conn.OpenAsync(ct);
+  private async Task _initializeCursorAsync(NotificationConnectionPlan plan, CancellationToken ct) {
+    await using var conn = await plan.OpenAsync(ct);
     await using var cmd = new NpgsqlCommand(@"
       INSERT INTO wh_signal_cursors (instance_id, last_delivered_signal_id, updated_at)
       VALUES (@instance_id, COALESCE((SELECT MAX(id) FROM wh_signals), 0), NOW())
@@ -93,14 +111,13 @@ public sealed partial class PgDurableSignalTailWorker(
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
-  private async Task _tickOnceAsync(string connectionString, CancellationToken ct) {
+  private async Task _tickOnceAsync(NotificationConnectionPlan plan, CancellationToken ct) {
     var map = _wireNameToEntry;
     if (map is null || map.Count == 0) {
       return;   // no signal types discovered — nothing to dispatch
     }
 
-    await using var conn = new NpgsqlConnection(connectionString);
-    await conn.OpenAsync(ct);
+    await using var conn = await plan.OpenAsync(ct);
 
     // Fetch rows > cursor scoped to this instance (broadcast OR my instance-target).
     // ORDER BY id caps memory and preserves emission order; batch size prevents runaway

@@ -11,6 +11,9 @@ namespace Whizbang.Core.Lifecycle;
 /// <param name="Duration">How long the stage took to execute.</param>
 /// <param name="StartedAt">When the stage began executing.</param>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#diagnostics</docs>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/DebugAwareStopwatchTests.cs:StageRecord_Equality_WorksAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/DebugAwareStopwatchTests.cs:StageRecord_Properties_AreAccessibleAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/DebugAwareStopwatchTests.cs:StageRecord_ToString_ContainsStageAsync</tests>
 public sealed record StageRecord(
   LifecycleStage Stage,
   TimeSpan Duration,

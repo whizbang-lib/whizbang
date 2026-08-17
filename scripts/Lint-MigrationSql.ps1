@@ -43,9 +43,18 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Objects that genuinely live in `public` and MUST remain unqualified. Qualifying these is itself a
-# bug (42P01 on a non-public schema). Keep this list tight and reviewed.
-$PublicAllowList = @('wh_settings', 'wh_dead_letter_summary', 'wh_dead_letters', 'wh_log')
+# EMPTY, and it should stay that way. Every framework table belongs to the service schema.
+#
+# This list once held wh_settings, wh_log, wh_dead_letters and wh_dead_letter_summary, described as
+# objects that "genuinely live in public". They did — but only because migrations 028/050/053 omitted
+# the __SCHEMA__ prefix that migration 000 had already established, so they resolved through
+# search_path into public. The rule was written afterwards and codified the omission as intent.
+# Sharing them is not benign: wh_settings.setting_key is the primary key, so co-located services
+# cannot hold different values for debug_mode or any retention knob.
+#
+# Migration 105 carries the state across; qualification is now unconditional. Before adding anything
+# here, be sure the object is genuinely shared BY DESIGN rather than by an omitted prefix.
+$PublicAllowList = @()
 
 # A table reference is introduced by one of these keywords.
 $RefRegex = [regex]::new(
@@ -132,6 +141,91 @@ function Get-Violations {
   return $results
 }
 
+function Remove-SqlCommentsAndStrings([string]$text) {
+  # Length-preserving blanking of -- line comments, /* */ block comments and '...' literals,
+  # so line/column positions still line up with the original text. Dollar-quoted bodies are
+  # left intact: their contents are real code.
+  $n = $text.Length
+  $out = [char[]]::new($n)
+  $state = 'code'
+  $i = 0
+  while ($i -lt $n) {
+    $c = $text[$i]
+    switch ($state) {
+      'code' {
+        if ($c -eq '-' -and $i + 1 -lt $n -and $text[$i + 1] -eq '-') { $state = 'line'; $out[$i] = ' '; $i++; continue }
+        if ($c -eq '/' -and $i + 1 -lt $n -and $text[$i + 1] -eq '*') { $state = 'block'; $out[$i] = ' '; $i++; continue }
+        if ($c -eq "'") { $state = 'str'; $out[$i] = ' '; $i++; continue }
+        $out[$i] = $c; $i++
+      }
+      'line'  { if ($c -eq "`n") { $state = 'code'; $out[$i] = $c } else { $out[$i] = ' ' }; $i++ }
+      'block' {
+        if ($c -eq '*' -and $i + 1 -lt $n -and $text[$i + 1] -eq '/') { $out[$i] = ' '; $out[$i + 1] = ' '; $state = 'code'; $i += 2; continue }
+        $out[$i] = ($c -eq "`n") ? $c : ' '; $i++
+      }
+      'str'   { if ($c -eq "'") { $state = 'code' }; $out[$i] = ($c -eq "`n") ? $c : ' '; $i++ }
+    }
+  }
+  return (-join $out)
+}
+
+function Get-DropColumnViolations {
+  <#
+    Rule 4 — a DROP COLUMN must acknowledge that it does NOT reclaim the space.
+
+    Postgres DROP COLUMN is a catalog operation: the attribute is flagged dropped in
+    pg_attribute and every EXISTING row keeps the column's bytes in the heap, forever.
+    Autovacuum never returns them; only a table rewrite (pg_repack / VACUUM FULL / CLUSTER)
+    does. On a large, hot table that silently multiplies its on-disk footprint and its
+    buffer-cache cost, and nothing in the migration tells the operator a rewrite is owed.
+
+    So each DROP COLUMN needs a RECLAIM: note in a comment on the same line or within the
+    preceding few lines, saying what the operator should do (or why it does not matter here,
+    e.g. a table that is small or empty at this point in the migration order).
+
+    Deliberately NOT baselined: the existing baseline models debt that should ratchet to
+    zero, whereas a DROP COLUMN is a legitimate operation that simply carries an obligation.
+    An inline note travels with the migration and is visible in review; a baseline entry
+    would be neither.
+  #>
+  $results = [System.Collections.Generic.List[object]]::new()
+  $files = Get-ChildItem -Path $MigrationsPath -Filter '*.sql' | Sort-Object Name
+  foreach ($f in $files) {
+    $text = Get-Content -Path $f.FullName -Raw
+    if (-not $text) { continue }
+    # NOTE: deliberately NOT Get-BodyCodeMask — that keeps only function-body code and blanks
+    # everything else, and DROP COLUMN is top-level DDL, so using it here silently matched
+    # nothing. Blank comments and quoted strings only, so a DROP COLUMN written in prose
+    # doesn't trip the rule while real DDL (top-level or inside a body) still does.
+    $masked = Remove-SqlCommentsAndStrings $text
+    $lines = $text -split "`n"
+    $maskedLines = $masked -split "`n"
+    for ($i = 0; $i -lt $maskedLines.Count; $i++) {
+      if ($maskedLines[$i] -notmatch '(?i)\bDROP\s+COLUMN\b') { continue }
+      # Walk up from this line to the end of the PREVIOUS statement, so the search covers the
+      # whole current statement plus the comment block introducing it. A fixed line window is
+      # not good enough — it silently fails a note that happens to be longer than the window,
+      # which is the failure mode this rule exists to prevent. The ';' test runs against the
+      # masked text so a semicolon inside a comment can't end the walk early.
+      $j = $i - 1
+      $block = [System.Collections.Generic.List[string]]::new()
+      $block.Add($lines[$i])
+      while ($j -ge 0) {
+        $block.Add($lines[$j])
+        if ($maskedLines[$j] -match ';') { break }
+        $j--
+      }
+      if (($block -join "`n") -match '(?i)RECLAIM:') { continue }
+      $results.Add([pscustomobject]@{
+          File = $f.Name
+          Line = $i + 1
+          Text = $lines[$i].Trim()
+        })
+    }
+  }
+  return $results
+}
+
 # ---------------------------------------------------------------------------------------------
 $violations = Get-Violations
 
@@ -186,8 +280,8 @@ if ($new) {
     }
   }
   Write-Host ''
-  Write-Host 'Fix: qualify the table with __SCHEMA__. inside the function body (or, if it truly lives'
-  Write-Host 'in public, add it to $PublicAllowList in this script). See writing-migrations.md rule 3.'
+  Write-Host 'Fix: qualify the table with __SCHEMA__. inside the function body. Every framework table'
+  Write-Host 'belongs to the service schema — there are no shared public ones. See rule 3.'
 }
 if ($fixed) {
   $exit = 1
@@ -197,7 +291,29 @@ if ($fixed) {
   Write-Host ''
   Write-Host 'Run:  pwsh scripts/Lint-MigrationSql.ps1 -UpdateBaseline'
 }
+$dropColumn = Get-DropColumnViolations
+if ($dropColumn) {
+  $exit = 1
+  Write-Host ''
+  Write-Host 'DROP COLUMN without a RECLAIM: note (rule 4 — these fail CI):' -ForegroundColor Red
+  foreach ($v in $dropColumn) {
+    Write-Host ("  {0}:{1}  {2}" -f $v.File, $v.Line, $v.Text)
+  }
+  Write-Host ''
+  Write-Host 'Postgres DROP COLUMN does NOT reclaim space: the attribute is flagged dropped in'
+  Write-Host 'pg_attribute and every existing row keeps its bytes in the heap permanently.'
+  Write-Host 'Autovacuum never returns them — only a table rewrite (pg_repack / VACUUM FULL /'
+  Write-Host 'CLUSTER) does. On a large hot table that silently multiplies both the on-disk'
+  Write-Host 'footprint and the buffer-cache cost of every index heap-fetch.'
+  Write-Host ''
+  Write-Host 'Add a comment on or just above the statement, e.g.:'
+  Write-Host '  -- RECLAIM: the dropped bytes persist per existing row; operators should run'
+  Write-Host '  --          pg_repack on <table> after this migration. See <runbook>.'
+  Write-Host 'or, when it genuinely does not matter:'
+  Write-Host '  -- RECLAIM: not required — <table> is created empty earlier in this migration.'
+}
+
 if ($exit -eq 0) {
-  Write-Host "migration SQL lint OK — $($currentKeys.Count) known refs, all baselined; 0 new." -ForegroundColor Green
+  Write-Host "migration SQL lint OK — $($currentKeys.Count) known refs, all baselined; 0 new; DROP COLUMN notes present." -ForegroundColor Green
 }
 exit $exit

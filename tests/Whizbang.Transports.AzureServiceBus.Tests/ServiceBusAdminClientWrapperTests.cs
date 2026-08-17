@@ -125,7 +125,7 @@ public class ServiceBusAdminClientWrapperTests {
   public async Task CreateSubscriptionAsync_WithMaxDeliveryCount_BuildsOptionsAsync() {
     var (wrapper, fake) = _createWrapper();
 
-    await wrapper.CreateSubscriptionAsync("orders-topic", "billing-sub", maxDeliveryCount: 7);
+    await wrapper.CreateSubscriptionAsync("orders-topic", "billing-sub", maxDeliveryCount: 7, lockDuration: TimeSpan.FromMinutes(5));
 
     var options = fake.LastCreateSubscriptionOptions;
     await Assert.That(options).IsNotNull();
@@ -141,7 +141,7 @@ public class ServiceBusAdminClientWrapperTests {
     var (wrapper, fake) = _createWrapper();
 
     await wrapper.CreateSubscriptionAsync(
-      "orders-topic", "billing-sub", requiresSession: true, maxDeliveryCount: 3);
+      "orders-topic", "billing-sub", requiresSession: true, maxDeliveryCount: 3, lockDuration: TimeSpan.FromMinutes(5));
 
     var options = fake.LastCreateSubscriptionOptions;
     await Assert.That(options).IsNotNull();
@@ -149,6 +149,33 @@ public class ServiceBusAdminClientWrapperTests {
     await Assert.That(options.SubscriptionName).IsEqualTo("billing-sub");
     await Assert.That(options.RequiresSession).IsTrue();
     await Assert.That(options.MaxDeliveryCount).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// The reconcile primitive: fetch the live properties, raise ONLY the lock duration, and
+  /// push the same object back — every other broker-side setting rides through untouched.
+  /// </summary>
+  [Test]
+  public async Task UpdateSubscriptionLockDurationAsync_RaisesOnlyTheLockDurationAsync() {
+    var (wrapper, fake) = _createWrapper();
+    fake.SubscriptionResult = ServiceBusModelFactory.SubscriptionProperties(
+      topicName: "orders-topic",
+      subscriptionName: "billing-sub",
+      lockDuration: TimeSpan.FromMinutes(1),
+      requiresSession: true,
+      defaultMessageTimeToLive: TimeSpan.FromDays(14),
+      autoDeleteOnIdle: TimeSpan.FromDays(30),
+      maxDeliveryCount: 7,
+      userMetadata: string.Empty);
+
+    await wrapper.UpdateSubscriptionLockDurationAsync("orders-topic", "billing-sub", TimeSpan.FromMinutes(5));
+
+    var updated = fake.LastUpdatedSubscriptionProperties;
+    await Assert.That(updated).IsNotNull();
+    await Assert.That(updated!.LockDuration).IsEqualTo(TimeSpan.FromMinutes(5));
+    await Assert.That(updated.RequiresSession).IsTrue()
+      .Because("the update must carry the fetched properties, not a fresh default set");
+    await Assert.That(updated.MaxDeliveryCount).IsEqualTo(7);
   }
 
   [Test]
@@ -182,6 +209,41 @@ public class ServiceBusAdminClientWrapperTests {
     await Assert.That(fake.DeleteSubscriptionCalls).IsEqualTo(1);
     await Assert.That(fake.LastTopicName).IsEqualTo("orders-topic");
     await Assert.That(fake.LastSubscriptionName).IsEqualTo("stale-sub");
+  }
+
+  [Test]
+  public async Task GetSubscriptionActiveMessageCountAsync_ReturnsActiveMessageCountAsync() {
+    var (wrapper, fake) = _createWrapper();
+    fake.SubscriptionRuntimeResult = ServiceBusModelFactory.SubscriptionRuntimeProperties(
+      topicName: "orders-topic",
+      subscriptionName: "billing-sub",
+      activeMessageCount: 42);
+
+    var result = await wrapper.GetSubscriptionActiveMessageCountAsync("orders-topic", "billing-sub");
+
+    await Assert.That(result).IsEqualTo(42L);
+  }
+
+  [Test]
+  public async Task GetSubscriptionActiveMessageCountAsync_PassesArgumentsAndCancellationTokenAsync() {
+    using var cts = new CancellationTokenSource();
+    var (wrapper, fake) = _createWrapper();
+
+    _ = await wrapper.GetSubscriptionActiveMessageCountAsync("orders-topic", "billing-sub", cts.Token);
+
+    await Assert.That(fake.LastTopicName).IsEqualTo("orders-topic");
+    await Assert.That(fake.LastSubscriptionName).IsEqualTo("billing-sub");
+    await Assert.That(fake.LastCancellationToken).IsEqualTo(cts.Token);
+  }
+
+  [Test]
+  public async Task GetSubscriptionActiveMessageCountAsync_AdminClientThrows_PropagatesExceptionAsync() {
+    var (wrapper, fake) = _createWrapper();
+    fake.ThrowOnCall = new ServiceBusException(
+      "unreachable", ServiceBusFailureReason.ServiceCommunicationProblem);
+
+    await Assert.That(async () => await wrapper.GetSubscriptionActiveMessageCountAsync("orders-topic", "billing-sub"))
+      .Throws<ServiceBusException>();
   }
 
   // ===== Rule management =====
@@ -297,6 +359,10 @@ public class ServiceBusAdminClientWrapperTests {
       autoDeleteOnIdle: TimeSpan.FromDays(30),
       maxDeliveryCount: 10,
       userMetadata: string.Empty);
+    public SubscriptionRuntimeProperties SubscriptionRuntimeResult { get; set; } = ServiceBusModelFactory.SubscriptionRuntimeProperties(
+      topicName: "default-topic",
+      subscriptionName: "default-sub",
+      activeMessageCount: 0);
     public List<RuleProperties> Rules { get; } = [];
     public Exception? ThrowOnCall { get; set; }
 
@@ -360,6 +426,24 @@ public class ServiceBusAdminClientWrapperTests {
       LastSubscriptionName = subscriptionName;
       LastCancellationToken = cancellationToken;
       return Task.FromResult(Response.FromValue(SubscriptionResult, _rawResponse));
+    }
+
+    public SubscriptionProperties? LastUpdatedSubscriptionProperties { get; private set; }
+
+    public override Task<Response<SubscriptionProperties>> UpdateSubscriptionAsync(
+      SubscriptionProperties subscription, CancellationToken cancellationToken = default) {
+      _throwIfConfigured();
+      LastUpdatedSubscriptionProperties = subscription;
+      return Task.FromResult(Response.FromValue(subscription, _rawResponse));
+    }
+
+    public override Task<Response<SubscriptionRuntimeProperties>> GetSubscriptionRuntimePropertiesAsync(
+      string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      _throwIfConfigured();
+      LastTopicName = topicName;
+      LastSubscriptionName = subscriptionName;
+      LastCancellationToken = cancellationToken;
+      return Task.FromResult(Response.FromValue(SubscriptionRuntimeResult, _rawResponse));
     }
 
     public override Task<Response> DeleteSubscriptionAsync(

@@ -9,6 +9,7 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Populated during startup via reconciliation to enable auto-creation of perspective checkpoints.
 /// </summary>
 /// <docs>fundamentals/messages/message-associations</docs>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ISchemaBuilderContractTests.cs:BuildInfrastructureSchema_IncludesAllRequiredTablesAsync</tests>
 public static class MessageAssociationsSchema {
   /// <summary>
   /// Column name constants for type-safe access.

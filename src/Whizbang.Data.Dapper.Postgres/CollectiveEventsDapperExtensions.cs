@@ -25,6 +25,9 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <see cref="AddCollectiveExecutorDapper{TModel}"/>, supplying the model's <c>wh_per_*</c> table name.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:AddCollectiveEventsDapper_RegistersDispatcherResolverAccessorAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:AddCollectiveEventsDapper_NullEntries_ThrowsAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:AddCollectiveExecutorDapper_NullTableName_ThrowsAsync</tests>
 public static class CollectiveEventsDapperExtensions {
   /// <summary>
   /// Registers <see cref="ICollectiveDispatcher"/>, the built-in <see cref="TenantCollectiveScopeResolver"/>,

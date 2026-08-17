@@ -23,6 +23,9 @@ namespace Whizbang.Core.Transports;
 /// </para>
 /// </remarks>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs:DrainersInvoked_AllReturnNonZero_TotalAccumulatedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs:OneDrainerThrows_OthersStillRunAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs:TransportNames_ExposedForMetricsDimensionAsync</tests>
 public interface ITransportDeadLetterDrainer {
   /// <summary>
   /// Short transport identifier — appears as a metric dimension and a log scope. Examples:

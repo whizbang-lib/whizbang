@@ -6,6 +6,9 @@ namespace Whizbang.Transports.Mutations;
 /// </summary>
 /// <docs>apis/mutations/hooks#context</docs>
 /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationContextTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationContextTests.cs:Context_ShouldImplementIMutationContextAsync</tests>
+/// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationContextTests.cs:Items_ShouldAllowAddingValuesAsync</tests>
+/// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationContextTests.cs:TryGetItem_ShouldReturnTrueForExistingKeyAsync</tests>
 public interface IMutationContext {
   /// <summary>
   /// The cancellation token for the current request.

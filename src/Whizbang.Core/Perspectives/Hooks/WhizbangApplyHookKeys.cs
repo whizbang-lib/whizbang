@@ -10,6 +10,9 @@ namespace Whizbang.Core.Perspectives.Hooks;
 /// string value.
 /// </remarks>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:DefaultKey_IsOverriddenByReRegisteringSameKeyAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerEventApplyHooksTests.cs:OverrideTimestamps_SetsUpdatedAt_WithoutBumpAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:Hook_SetColumn_OverridesDefaultUpdatedAt_AndSkipsVersionBumpAsync</tests>
 public static class WhizbangApplyHookKeys {
 #pragma warning disable CA1707 // editorconfig requires all_upper constants; CA1707 forbids underscores — codebase convention is to suppress CA1707 (see CollectiveRouting.SINK_PERSPECTIVE_NAME).
   /// <summary>

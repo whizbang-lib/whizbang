@@ -16,6 +16,14 @@ namespace Whizbang.Core.Tests;
 /// the ephemeral resolver, the registry populators, the rename tool, and the fingerprint reconciler
 /// blind to every type not declared in the winning assembly.
 /// </summary>
+/// <remarks>
+/// <c>[NotInParallel]</c>, same group as every other mutator of the process-global
+/// <see cref="ServiceRegistrationCallbacks"/> state (the multi-service harness snapshots/clears/
+/// restores it around each service build; TransportConsumerWorkerDiWiringTests does the same):
+/// interleaved with one of those, the harness's temporary clear lands mid-union here and the
+/// contracts catalog vanishes from the assertion — the full-suite flake this group prevents.
+/// </remarks>
+[NotInParallel("WhizbangBackgroundServiceTests")]
 public class ServiceRegistrationCallbacksCatalogUnionTests {
 
   private sealed class HostEvent;

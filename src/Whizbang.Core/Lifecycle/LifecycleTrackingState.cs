@@ -22,6 +22,9 @@ namespace Whizbang.Core.Lifecycle;
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#tracking-state</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:BeginTracking_CreatesTracking_AtEntryStageAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:AdvanceTo_InvokesReceptors_AndUpdatesCurrentStageAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:GetTracking_ReturnsCurrentStage_DuringProcessingAsync</tests>
 internal sealed partial class LifecycleTrackingState(
   Guid eventId,
   IMessageEnvelope envelope,

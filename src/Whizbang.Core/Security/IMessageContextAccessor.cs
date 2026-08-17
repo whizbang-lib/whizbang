@@ -5,6 +5,9 @@ namespace Whizbang.Core.Security;
 /// Similar to IHttpContextAccessor pattern.
 /// </summary>
 /// <docs>fundamentals/security/message-security#message-context-accessor</docs>
+/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityServiceCollectionExtensionsTests.cs:AddWhizbangMessageSecurity_RegistersMessageContextAccessorAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityServiceCollectionExtensionsTests.cs:IMessageContext_ReadsFromMessageContextAccessorAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_WithSecurityContext_SetsUserIdAsync</tests>
 public interface IMessageContextAccessor {
   /// <summary>
   /// Gets or sets the current message context.

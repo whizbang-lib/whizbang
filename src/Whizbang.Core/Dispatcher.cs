@@ -26,6 +26,8 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
 
+using Whizbang.Core.Workers;
+
 namespace Whizbang.Core;
 
 /// <summary>
@@ -60,6 +62,9 @@ public delegate TResult SyncReceptorInvoker<out TResult>(object message);
 /// Generated code creates these delegates with proper type safety - zero reflection.
 /// </summary>
 /// <docs>fundamentals/receptors/receptors#synchronous-receptors</docs>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_SyncReceptor_InvokesSynchronouslyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_VoidSyncReceptor_ExecutesSynchronouslyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_GenericVoid_SyncAttributeWithSyncInvoker_AwaitsPerspectiveAsync</tests>
 public delegate void VoidSyncReceptorInvoker(object message);
 
 /// <summary>
@@ -69,6 +74,7 @@ public delegate void VoidSyncReceptorInvoker(object message);
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ColdBootJourneyE2ETests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 #pragma warning disable CS9113, S107 // CS9113: primary ctor param unread (generated-code backcompat); S107: DI-injection ctor is idiomatic with many params
@@ -100,6 +106,31 @@ public abstract partial class Dispatcher(
     string MemberName,
     string FilePath,
     int LineNumber);
+
+  // Increment 6, the write seam: a dispatch needs the event store and the outbox, which Migrate
+  // provides — so dispatch refuses while the schema gate is closed. Resolved lazily from the
+  // service provider (never a ctor param: generated dispatcher subclasses chain base(...)
+  // positionally, and test fixtures without a gate stay ungated). Volatile-cached after first look.
+  private ISchemaReadyGate? _schemaReadyGateCache;
+  private bool _schemaReadyGateResolved;
+
+  private void _throwIfSchemaNotReady() {
+    if (!_schemaReadyGateResolved) {
+      try {
+        _schemaReadyGateCache = (ISchemaReadyGate?)serviceProvider.GetService(typeof(ISchemaReadyGate));
+        _schemaReadyGateResolved = true;
+      } catch (ObjectDisposedException) {
+        // Shutdown teardown: the dispatcher promises graceful handling of a disposed provider,
+        // and refusing a dispatch that is about to fail on disposal anyway adds nothing.
+        return;
+      }
+    }
+    if (_schemaReadyGateCache is { IsReady: false }) {
+      throw new WhizbangNotReadyException(
+        "dispatch refused: the schema is not ready (Migrate has not completed). Writes need the "
+        + "event store and outbox the migration provides; they resume when it does.");
+    }
+  }
 
   private const string TAG_MESSAGE_TYPE = "whizbang.message.type";
   private const string TAG_MESSAGE_ID = "whizbang.message.id";
@@ -231,6 +262,8 @@ public abstract partial class Dispatcher(
   /// <param name="ns">The namespace to check (typically from a message type).</param>
   /// <returns>True if the namespace is owned by this service.</returns>
   /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_OwnedChildNamespaceCommand_NoReceptor_ReturnsAcceptedWithoutOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_NonMatchingOwnedDomains_CommandRoutesToOutboxAsync</tests>
   private bool _isOwnedNamespace(string? ns) {
     if (string.IsNullOrEmpty(ns) || _ownedDomains.Count == 0) {
       return false;
@@ -278,6 +311,9 @@ public abstract partial class Dispatcher(
   /// waits for the perspective to process them before firing.
   /// </summary>
   /// <docs>fundamentals/perspectives/perspective-sync#dispatcher-integration</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttributeSynced_AwaitsPerspectiveThenInvokesReceptorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttributeTimedOut_FireOnSuccess_ThrowsAndSkipsReceptorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttribute_NoStreamId_SkipsAwaiterAsync</tests>
   private async ValueTask _awaitPerspectiveSyncIfNeededAsync(
       object message,
       Type messageType,
@@ -367,6 +403,8 @@ public abstract partial class Dispatcher(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/perspectives/event-completion#dispatcher-integration</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPerspectiveSyncCoverageTests.cs:LocalInvokeAsync_WithWaitForPerspectives_NoEventCompletionAwaiter_ReturnsNormallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPerspectiveSyncCoverageTests.cs:LocalInvokeAsync_WithWaitForPerspectives_NoScopedTracker_ReturnsNormallyAsync</tests>
   private async ValueTask _waitForPerspectivesIfNeededAsync(DispatchOptions options) {
     // Short-circuit if not waiting for perspectives
     if (!options.WaitForPerspectives) {
@@ -702,6 +740,7 @@ public abstract partial class Dispatcher(
   ) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
+    _throwIfSchemaNotReady();
 
     var sw = Stopwatch.StartNew();
     var messageType = typeof(TMessage);
@@ -812,6 +851,7 @@ public abstract partial class Dispatcher(
   ) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
+    _throwIfSchemaNotReady();
 
     var sw = Stopwatch.StartNew();
     var messageType = typeof(TMessage);
@@ -2788,6 +2828,9 @@ public abstract partial class Dispatcher(
   /// Creates a scope to resolve scoped IReceptorInvoker (Dispatcher is a singleton).
   /// </summary>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithImmediateDetachedReceptors_InvokesScopedInvokerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithReceptorRegistry_NoImmediateDetachedReceptors_SkipsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithTraceStore_NoReceptorRegistry_SkipsImmediateDetachedAsync</tests>
   private async ValueTask _invokeImmediateDetachedReceptorsAsync(
       IMessageEnvelope envelope,
       Type messageType,
@@ -2827,6 +2870,9 @@ public abstract partial class Dispatcher(
   /// Creates a scope to resolve scoped IReceptorInvoker (Dispatcher is a singleton).
   /// </summary>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#post-lifecycle</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPostLifecycleCoverageTests.cs:LocalInvokeAsync_Void_FiresPostLifecycleDetached_WhenReceptorsRegisteredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPostLifecycleCoverageTests.cs:LocalInvokeAsync_Void_FiresBothAsyncAndInline_WhenBothRegisteredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/PostLifecyclePipelineTests.cs:Dispatcher_NoWhenAll_FiresPostLifecycleDetachedAsync</tests>
   private async ValueTask _invokePostLifecycleReceptorsAsync(
       IMessageEnvelope envelope,
       object message,
@@ -2985,6 +3031,7 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore S2955
 
+    _throwIfSchemaNotReady();
     var sw = Stopwatch.StartNew();
     var eventType = eventData.GetType();
     var eventTypeName = eventType.Name;
@@ -3093,6 +3140,7 @@ public abstract partial class Dispatcher(
 
     options.CancellationToken.ThrowIfCancellationRequested();
 
+    _throwIfSchemaNotReady();
     var sw = Stopwatch.StartNew();
     var eventType = eventData.GetType();
     var eventTypeName = eventType.Name;
@@ -3218,6 +3266,9 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <docs>fundamentals/dispatcher/message-cascade#cascade-to-outbox</docs>
   /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:CascadeMessageAsync_EventWithIHasStreamId_InheritsStreamIdFromSourceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_OwnedCommandOutboxMode_IsDowngradedToLocalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_NonOwnedCommandOutboxMode_StaysOnOutboxAsync</tests>
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
   public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
@@ -3547,6 +3598,9 @@ public abstract partial class Dispatcher(
   /// (DispatchModes.Local never reaches the outbox). Sequential await preserves producer-yielded order.
   /// </summary>
   /// <docs>fundamentals/messaging/composite-events#publish-time-local-fan-out</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_AtomicAtomicity_PropagatesChildFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_FansOutAtPublish_ViaDispatchOptionsOverloadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:NonOwnedComposite_DoesNotFanOutAtPublishAsync</tests>
   // S3776: linear loop with one atomicity branch — already minimal.
 #pragma warning disable S3776
   private async Task _fanOutCompositeLocallyAtPublishAsync(object composite, Type compositeType, MessageId messageId) {
@@ -3746,6 +3800,9 @@ public abstract partial class Dispatcher(
   /// <param name="sourceEnvelope">Optional source envelope for context propagation</param>
   /// <param name="eventStoreOnly">If true, stores event without transport delivery</param>
   /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:PublishToOutboxDynamic_EventWithIHasStreamId_InheritsStreamIdFromSourceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:PublishToOutboxDynamic_EventAlreadyHasStreamId_SkipsPropagationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherNoRebroadcastGuardTests.cs:NoRebroadcastSource_IsSuppressedBeforeSerializationAsync</tests>
   protected async Task PublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
     // No-rebroadcast guard (Phase D) — see PublishToOutboxAsync.
     if (NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)) {

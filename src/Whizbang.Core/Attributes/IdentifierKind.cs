@@ -20,6 +20,9 @@ namespace Whizbang.Core.Attributes;
 /// </remarks>
 /// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromIdentifierAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromIdentifierAttributeTests.cs:IdentifierKind_AllValues_AreDistinctAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromIdentifierAttributeTests.cs:IdentifierKind_HasFourValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromIdentifierAttributeTests.cs:IdentifierKind_MessageId_HasExpectedValueAsync</tests>
 public enum IdentifierKind {
   /// <summary>
   /// Populated with the current message's unique identifier.

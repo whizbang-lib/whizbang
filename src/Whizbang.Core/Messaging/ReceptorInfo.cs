@@ -69,6 +69,9 @@ public sealed record ReceptorInfo(
 /// <param name="TimeoutMs">The raw timeout in milliseconds. Use -1 for default.</param>
 /// <param name="FireBehavior">The behavior when sync completes or times out.</param>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorWithSyncAttribute_AwaitsBeforeInvokingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_SyncAttribute_PassesCorrectOptionsToAwaiterAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_MultipleSyncAttributes_AwaitsAllInOrderAsync</tests>
 public sealed record ReceptorSyncAttributeInfo(
     Type PerspectiveType,
     IReadOnlyList<Type>? EventTypes,

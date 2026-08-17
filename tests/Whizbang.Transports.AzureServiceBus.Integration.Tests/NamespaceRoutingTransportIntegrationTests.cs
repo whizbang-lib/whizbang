@@ -166,8 +166,12 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Drain existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
-    // Use CountingMessageAwaiter harness (internally uses RunContinuationsAsynchronously)
-    var awaiter = new CountingMessageAwaiter(expectedCount: 3);
+    // Create the envelopes up front and await THEIR ids: "all delivered" means every distinct
+    // message arrives at least once. A raw receive count is not that contract on an at-least-once
+    // transport — a redelivered duplicate (or a straggler the drain missed) would push the count
+    // past the expectation and fail a delivery that actually succeeded.
+    var envelopes = new[] { _createTestEnvelope(), _createTestEnvelope(), _createTestEnvelope() };
+    var awaiter = new DistinctMessageIdAwaiter([.. envelopes.Select(e => e.MessageId.ToString())]);
 
     var subscription = await transport.SubscribeAsync(
       awaiter.Handler,
@@ -178,14 +182,13 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
       await Task.Delay(500);
 
       // Publish multiple messages
-      for (int i = 0; i < awaiter.ExpectedCount; i++) {
-        var envelope = _createTestEnvelope();
+      foreach (var envelope in envelopes) {
         await transport.PublishAsync(envelope, new TransportDestination("topic-00"));
       }
 
       // Assert - harness handles timeout with diagnostic message
       await awaiter.WaitAsync(TimeSpan.FromSeconds(30));
-      await Assert.That(awaiter.ReceivedCount).IsEqualTo(awaiter.ExpectedCount);
+      await Assert.That(awaiter.DistinctReceivedCount).IsEqualTo(awaiter.ExpectedCount);
     } finally {
       subscription.Dispose();
       await transport.DisposeAsync();

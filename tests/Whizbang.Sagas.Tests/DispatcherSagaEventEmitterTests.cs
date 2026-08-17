@@ -25,6 +25,7 @@ public class DispatcherSagaEventEmitterTests {
 
   /// <summary>A test-only event to drive the dispatcher's generic surface.</summary>
   public sealed class TestEvent : IEvent {
+    [StreamId] public Guid EntityId { get; set; }
     public Guid MessageId { get; set; } = TrackedGuid.NewMedo().Value;
     public DateTimeOffset OccurredAt { get; set; } = DateTimeOffset.UtcNow;
     public Guid? CorrelationId { get; set; }

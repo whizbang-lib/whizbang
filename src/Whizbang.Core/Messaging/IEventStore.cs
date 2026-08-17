@@ -98,6 +98,20 @@ public interface IEventStore {
     Task.FromResult<long?>(null);
 
   /// <summary>
+  /// Perspective row retention (resurrection-on-wake): true when the stream holds any event
+  /// with an id ordered before <paramref name="beforeEventId"/>. The generated runner probes
+  /// this on the row-null branch of a row-TTL Sourced perspective — a missing row plus
+  /// pre-batch history means the row was reaped and the stream just woke, so the runner
+  /// re-folds via the rewind core instead of applying the batch onto a fresh model. Default
+  /// impl returns false (no resurrection — a store that doesn't override keeps today's
+  /// behavior; in-memory test stores are unaffected).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
   /// Appends an event to the specified stream using a raw message (AOT-compatible).
   /// If the message was dispatched through IDispatcher, its envelope is automatically
   /// retrieved from IEnvelopeRegistry, preserving tracing context (hops, correlation, causation).

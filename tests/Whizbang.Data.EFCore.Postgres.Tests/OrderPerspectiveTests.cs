@@ -119,7 +119,10 @@ public class OrderPerspectiveTests {
     await perspective.Update(@event, CancellationToken.None);
     var after = DateTime.UtcNow;
 
-    // Assert - Verify timestamps are set correctly
+    // Assert - business time falls back to NOW for a caller carrying no event metadata (direct
+    // upserts, seeds and fixtures), so the window assertion still holds. With an event supplied it
+    // would instead equal that event's timestamp — see BitemporalWritePathTests, which asserts the
+    // anchored form exactly.
     var saved = await context.Set<PerspectiveRow<Order>>()
       .FirstOrDefaultAsync(r => r.Id == orderId.Value);
 

@@ -358,10 +358,19 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+  public Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
     Guid instanceId,
     int maxPerStream = 100,
+    CancellationToken cancellationToken = default)
+    => FetchOutboxBatchAsync(streamIds, instanceId, maxPerStream, null, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
@@ -372,8 +381,8 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<OutboxBatchRowDto>(
-      "SELECT * FROM fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream)",
-      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream });
+      "SELECT * FROM fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes });
 
     return [.. rows.Select(r => new OutboxBatchRow {
       MessageId = r.message_id,
@@ -393,10 +402,19 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+  public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
     Guid instanceId,
     int maxPerStream = 100,
+    CancellationToken cancellationToken = default)
+    => FetchInboxBatchAsync(streamIds, instanceId, maxPerStream, null, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream,
+    long? maxBytes,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
@@ -407,8 +425,9 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<InboxBatchRowDto>(
-      "SELECT * FROM fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream)",
-      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream });
+      "SELECT * FROM fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      // NULL = count bound only, the pre-byte-budget behavior.
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes });
 
     return [.. rows.Select(r => new InboxBatchRow {
       MessageId = r.message_id,
@@ -697,13 +716,15 @@ public partial class DapperWorkCoordinator(
   #region Phase B: focused IWorkCoordinator methods
 
   /// <inheritdoc />
-  public async Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+  public async Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var metadataJson = request.Metadata is { } meta ? meta.GetRawText() : "{}";
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    await connection.ExecuteAsync(
+    // record_heartbeat returns BOOLEAN (migration 106): false means this instance_id has been
+    // tombstoned in wh_instance_evictions and the caller must stop heartbeating.
+    return await connection.ExecuteScalarAsync<bool>(
       "SELECT record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb)",
       new { request.InstanceId, request.ServiceName, request.HostName, request.ProcessId, Metadata = metadataJson });
   }

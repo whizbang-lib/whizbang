@@ -53,6 +53,10 @@ public class VectorSearchExtensionsTests {
         entity.Property(e => e.Id).HasColumnName("id");
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+        // System-time axis + row expiry as shadow properties, mirroring the generated
+        // configuration so this fixture matches the schema the upsert writes.
+        entity.Property<DateTime?>("sys_created_at").HasColumnName("sys_created_at");
+        entity.Property<DateTime?>("sys_updated_at").HasColumnName("sys_updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
         entity.OwnsOne(e => e.Data, data => data.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata).ToJson("metadata");
