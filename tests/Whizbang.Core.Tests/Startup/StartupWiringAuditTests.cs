@@ -28,11 +28,12 @@ public class StartupWiringAuditTests {
         }
       }
     }
-    public Task<IDutyGrant?> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
       lock (_lock) {
         _asked.Add(duty);
       }
-      return Task.FromResult<IDutyGrant?>(null);   // never grants — non-holders act per declaration
+      // never grants — non-holders act per declaration
+      return Task.FromResult(DutyAttempt.Lost(DutyRefusal.Contended, "held by a peer"));
     }
   }
 

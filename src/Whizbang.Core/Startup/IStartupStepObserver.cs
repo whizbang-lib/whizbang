@@ -19,6 +19,19 @@ public sealed record StartupStepContext(StartupStepDescriptor Descriptor);
 /// <docs>operations/startup/startup-pipeline#hooks</docs>
 public sealed record StartupRunPlan(IReadOnlyList<StartupStepDescriptor> Steps);
 
+/// <summary>
+/// A step blocked waiting on a duty, as observers see it — emitted on a backoff while an
+/// <see cref="NonHolderBehavior.Await"/> wait persists, so a long wait narrates itself instead of
+/// hanging silently (issue #494/#493: a hang with no output gives a consumer nothing to diagnose).
+/// </summary>
+/// <param name="Descriptor">The waiting step's declaration.</param>
+/// <param name="Duty">The duty being contended.</param>
+/// <param name="Waited">How long the step has been waiting so far.</param>
+/// <param name="LastRefusalDetail">The elector's most recent refusal detail, when it gave one.</param>
+/// <docs>operations/startup/startup-pipeline#hooks</docs>
+public sealed record StartupStepWaitContext(
+  StartupStepDescriptor Descriptor, string Duty, TimeSpan Waited, string? LastRefusalDetail);
+
 /// <summary>One completed pipeline run, as observers and the status surface see it.</summary>
 /// <param name="Results">Every step that ran, in execution order, with outcome, duration and reason.</param>
 /// <docs>operations/startup/startup-pipeline#hooks</docs>
@@ -54,4 +67,11 @@ public interface IStartupStepObserver {
 
   /// <summary>The run finished; every step's result is in the summary.</summary>
   ValueTask OnPipelineCompletedAsync(StartupSummary summary, CancellationToken cancellationToken);
+
+  /// <summary>
+  /// A step has been waiting on a contended duty long enough to be worth narrating. Emitted on a
+  /// backoff (never a per-second drumbeat). Default no-op, so existing observers are unaffected.
+  /// </summary>
+  ValueTask OnStepWaitingAsync(StartupStepWaitContext context, CancellationToken cancellationToken)
+    => ValueTask.CompletedTask;
 }
