@@ -8,6 +8,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Ledger;
+using Whizbang.Generators.Sagas;
 using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
@@ -125,21 +126,221 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         .SelectMany(static (aliases, _) => aliases)
         .Collect();
 
+    // Synthesize the saga event types the SAGA generator will emit into this assembly. Source
+    // generators never observe each other's output, so the nine nested event classes a [Saga] type
+    // gains do not exist in the compilation this generator reads — without synthesis the consumer's
+    // own MessageJsonContext carries no JsonTypeInfo for its own saga events and the first
+    // InitiateSagaAsync throws NotSupportedException at serialization. The [Saga] attribute alone
+    // determines the shapes (see SagaEventShapes), so they can be described without the symbols.
+    var sagaEventTypes = context.SyntaxProvider
+        .ForAttributeWithMetadataName(
+            SagaEventShapes.SAGA_ATTRIBUTE,
+            predicate: static (node, _) => node is ClassDeclarationSyntax,
+            transform: static (ctx, ct) => _extractSagaEventTypes(ctx, ct))
+        .Where(static arr => !arr.IsDefaultOrEmpty)
+        .SelectMany(static (arr, _) => arr);
+
+    var genericSagaEventTypes = context.SyntaxProvider
+        .ForAttributeWithMetadataName(
+            SagaEventShapes.SAGA_ATTRIBUTE_GENERIC,
+            predicate: static (node, _) => node is ClassDeclarationSyntax,
+            transform: static (ctx, ct) => _extractSagaEventTypes(ctx, ct))
+        .Where(static arr => !arr.IsDefaultOrEmpty)
+        .SelectMany(static (arr, _) => arr);
+
+    var allSagaEventTypes = sagaEventTypes.Collect()
+        .Combine(genericSagaEventTypes.Collect())
+        .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
+
     // Combine messages + perspective event types with compilation
     var allDiscoveredTypes = messageTypes.Collect().Combine(perspectiveEventTypes.Collect());
     var messagesWithCompilation = allDiscoveredTypes.Combine(context.CompilationProvider);
     var messagesWithLedger = messagesWithCompilation.Combine(renameAliases);
+    var messagesWithSagaEvents = messagesWithLedger.Combine(allSagaEventTypes);
 
     // Generate WhizbangJsonContext from collected message types
     context.RegisterSourceOutput(
-        messagesWithLedger,
+        messagesWithSagaEvents,
         static (ctx, data) => {
           // Merge message types (nullable-filtered) with perspective event types (non-nullable)
-          var messages = data.Left.Left.Left!.Where(static m => m is not null).Select(static m => m!).ToImmutableArray();
-          var combined = messages.AddRange(data.Left.Left.Right);
-          _generateWhizbangJsonContext(ctx, combined, data.Left.Right, data.Right);
+          var messages = data.Left.Left.Left.Left!.Where(static m => m is not null).Select(static m => m!).ToImmutableArray();
+          // Saga events lead: _generateWhizbangJsonContext dedupes by fully qualified name keeping the
+          // FIRST entry, and the synthesized description is the complete one. A consumer who also
+          // hand-restated a saga event partial (a known workaround) would otherwise contribute a
+          // property-less duplicate that wins and silently drops every property from the wire.
+          var combined = data.Right.Select(static e => e.Type).ToImmutableArray()
+              .AddRange(messages)
+              .AddRange(data.Left.Left.Left.Right);
+          var sagaInheritance = data.Right.SelectMany(static e => e.Inheritance).ToImmutableArray();
+          _generateWhizbangJsonContext(ctx, combined, data.Left.Left.Right, data.Left.Right, sagaInheritance);
         }
     );
+  }
+
+  /// <summary>
+  /// Describes the nine event classes the saga generator will emit into a <c>[Saga]</c>-marked
+  /// partial class, as <see cref="JsonMessageTypeInfo"/> entries the JSON context generator can emit
+  /// metadata for. Returns empty when the saga type could not carry generated public nested types
+  /// (non-public, generic, or a non-public containing type), since the generated context — which is
+  /// public — could not reference them.
+  /// </summary>
+  /// <docs>fundamentals/sagas/saga-events</docs>
+  private static ImmutableArray<SagaSynthesizedEvent> _extractSagaEventTypes(
+      GeneratorAttributeSyntaxContext context,
+      CancellationToken ct) {
+
+    if (context.TargetSymbol is not INamedTypeSymbol sagaType || sagaType.IsGenericType) {
+      return ImmutableArray<SagaSynthesizedEvent>.Empty;
+    }
+
+    // The generated JsonTypeInfo lives in a public context class, so every link in the containment
+    // chain must be public for the emitted code to compile.
+    for (var scope = sagaType; scope is not null; scope = scope.ContainingType) {
+      if (scope.DeclaredAccessibility != Accessibility.Public) {
+        return ImmutableArray<SagaSynthesizedEvent>.Empty;
+      }
+    }
+
+    var attribute = context.Attributes.FirstOrDefault();
+    if (attribute is null) {
+      return ImmutableArray<SagaSynthesizedEvent>.Empty;
+    }
+
+    var includeHooks = true;
+    foreach (var namedArgument in attribute.NamedArguments) {
+      if (namedArgument.Key == SagaEventShapes.INCLUDE_HOOKS_ARGUMENT && namedArgument.Value.Value is bool value) {
+        includeHooks = value;
+      }
+    }
+
+    // [Saga<TEventBase>] supplies the base explicitly; [Saga] falls back to SagaEventBase. Either way
+    // the base is a real referenced type, so its properties (MessageId, OccurredAt, correlation ids,
+    // plus whatever a consumer's own base adds) come from the semantic model.
+    var eventBase = attribute.AttributeClass is { TypeArguments.Length: 1 } &&
+                    attribute.AttributeClass.TypeArguments[0] is INamedTypeSymbol explicitBase
+        ? explicitBase
+        : context.SemanticModel.Compilation.GetTypeByMetadataName(SagaEventShapes.DEFAULT_EVENT_BASE);
+
+    var baseProperties = eventBase is null
+        ? []
+        : _extractPropertiesFromType(eventBase);
+
+    var sagaFullyQualifiedName = sagaType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var sagaClrTypeName = _getClrTypeName(sagaType);
+
+    // Inheritance the event base contributes (its own base chain and interfaces), computed once and
+    // re-pointed at each event below — every emitted event inherits exactly this set.
+    var inheritedFromBase = eventBase is null ? [] : _extractInheritanceInfo(eventBase);
+
+    var builder = ImmutableArray.CreateBuilder<SagaSynthesizedEvent>();
+    foreach (var shape in SagaEventShapes.All) {
+      ct.ThrowIfCancellationRequested();
+
+      if (shape.IsHookEvent && !includeHooks) {
+        continue;
+      }
+
+      var eventFullyQualifiedName = $"{sagaFullyQualifiedName}.{shape.ClassName}";
+
+      builder.Add(new SagaSynthesizedEvent(
+          Type: new JsonMessageTypeInfo(
+              FullyQualifiedName: eventFullyQualifiedName,
+              ClrTypeName: $"{sagaClrTypeName}+{shape.ClassName}",
+              SimpleName: shape.ClassName,
+              IsCommand: false,
+              IsEvent: true,
+              IsSerializable: false,
+              IsComposite: false,
+              Properties: _mergeSagaEventProperties(shape, baseProperties),
+              HasParameterizedConstructor: false),
+          Inheritance: _synthesizeSagaEventInheritance(
+              eventFullyQualifiedName, eventBase, inheritedFromBase, shape, context.SemanticModel.Compilation)));
+    }
+
+    return builder.ToImmutable();
+  }
+
+  /// <summary>
+  /// A saga event class the saga generator will emit, described both as a serializable type and as a
+  /// set of polymorphic base relationships. The two travel together because neither can be recovered
+  /// from the compilation — the class does not exist in it yet.
+  /// </summary>
+  private sealed record SagaSynthesizedEvent(
+      JsonMessageTypeInfo Type,
+      ImmutableArray<InheritanceInfo> Inheritance);
+
+  /// <summary>
+  /// Builds the polymorphic base relationships for one emitted saga event, matching what
+  /// <see cref="_extractInheritanceInfo"/> returns for a hand-written class of the same shape: the
+  /// event base itself, everything the event base inherits or implements, and the saga contract
+  /// interface the emitted class carries (plus that interface's own bases). Without this the events
+  /// serialize fine on their own but are missing from every generated <c>CreatePolymorphic_*</c>
+  /// list, so a member typed as the event base or a saga contract interface would not resolve them.
+  ///
+  /// <para>Every saga names its event classes identically, so two sagas in one assembly collide on
+  /// the simple-name discriminator — see <see cref="_assignPolymorphicDiscriminators"/>, which is
+  /// what makes registering them here safe.</para>
+  /// </summary>
+  private static ImmutableArray<InheritanceInfo> _synthesizeSagaEventInheritance(
+      string eventFullyQualifiedName,
+      INamedTypeSymbol? eventBase,
+      InheritanceInfo[] inheritedFromBase,
+      SagaEventShape shape,
+      Compilation compilation) {
+
+    var builder = ImmutableArray.CreateBuilder<InheritanceInfo>();
+
+    if (eventBase is not null) {
+      var eventBaseName = eventBase.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      if (!_isInheritanceChainTerminator(eventBaseName)) {
+        builder.Add(new InheritanceInfo(eventFullyQualifiedName, eventBaseName, IsInterface: false));
+      }
+    }
+
+    // The base's own relationships are the event's too — same names, new derived type.
+    foreach (var inherited in inheritedFromBase) {
+      builder.Add(new InheritanceInfo(eventFullyQualifiedName, inherited.BaseTypeName, inherited.IsInterface));
+    }
+
+    var marker = compilation.GetTypeByMetadataName(shape.MarkerInterface);
+    if (marker is not null) {
+      foreach (var iface in new[] { marker }.Concat(marker.AllInterfaces)) {
+        var interfaceName = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (_isPolymorphicBaseInterface(interfaceName)) {
+          builder.Add(new InheritanceInfo(eventFullyQualifiedName, interfaceName, IsInterface: true));
+        }
+      }
+    }
+
+    return builder.ToImmutable();
+  }
+
+  /// <summary>
+  /// Merges the properties the saga generator declares on an event class with those it inherits from
+  /// the event base. Declared properties win a name collision, matching C# member hiding.
+  ///
+  /// <para>Ordering matches what <see cref="_getAllPropertiesIncludingInherited"/> produces for a
+  /// hand-written type of the same shape: inherited group first, then the declaring type's own group,
+  /// each group in REVERSE source order (that helper reverses a derived-then-base list wholesale). The
+  /// base group already arrives that way — it comes from the same helper — so only the shape table's
+  /// own entries, which are written in emission order for readability, need flipping. Getting this
+  /// right makes the emitted metadata byte-identical to the hand-written equivalent rather than merely
+  /// equivalent, so saga events serialize with the same key order as every other message.</para>
+  /// </summary>
+  private static PropertyInfo[] _mergeSagaEventProperties(SagaEventShape shape, PropertyInfo[] baseProperties) {
+    // Enumerable.Reverse, spelled out: the instance-method form would bind to Array.Reverse and
+    // reorder the shared static shape table in place.
+    var declared = Enumerable.Reverse(shape.Properties)
+        .Select(p => new PropertyInfo(
+            Name: p.Name,
+            Type: p.Type,
+            IsValueType: p.IsValueType,
+            IsInitOnly: false,
+            CanWrite: true))
+        .ToArray();
+
+    var declaredNames = new HashSet<string>(declared.Select(p => p.Name), StringComparer.Ordinal);
+    return [.. baseProperties.Where(p => !declaredNames.Contains(p.Name)), .. declared];
   }
 
   /// <summary>Parses a ledger additional file into rename aliases. Returns empty on a missing/blank/malformed ledger.</summary>
@@ -409,10 +610,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       ImmutableArray<JsonMessageTypeInfo> messages,
       ImmutableArray<PolymorphicTypeInfo> propertyPolymorphicTypes,
-      Compilation compilation) {
+      Compilation compilation,
+      ImmutableArray<InheritanceInfo> synthesizedInheritance) {
 
-    var allInheritanceInfo = _collectAllInheritanceInfo(messages, compilation);
-    var messagePolymorphicTypes = _buildPolymorphicRegistry(allInheritanceInfo, compilation);
+    var allInheritanceInfo = _collectAllInheritanceInfo(messages, compilation).AddRange(synthesizedInheritance);
+    var synthesizedDerivedTypes = new HashSet<string>(
+        synthesizedInheritance.Select(i => i.DerivedTypeName), StringComparer.Ordinal);
+    var messagePolymorphicTypes = _buildPolymorphicRegistry(
+        allInheritanceInfo, compilation, synthesizedDerivedTypes);
 
     // Merge: property-derived types take precedence (they have [JsonDerivedType] attributes)
     var polymorphicTypeDict = new Dictionary<string, PolymorphicTypeInfo>();
@@ -444,7 +649,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       ImmutableArray<JsonMessageTypeInfo> allMessages,
       Compilation compilation,
-      ImmutableArray<RenameAlias> renameAliases) {
+      ImmutableArray<RenameAlias> renameAliases,
+      ImmutableArray<InheritanceInfo> synthesizedInheritance) {
 
     // Deduplicate messages by FullyQualifiedName — perspective models can be discovered
     // through both the nested type path (syntactic predicate) and the perspective class
@@ -486,7 +692,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     _reportCollectionTypeDiagnostics(context, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes);
 
     // Discover and merge polymorphic types
-    var polymorphicTypes = _discoverAndMergePolymorphicTypes(context, messages, propertyPolymorphicTypes, compilation);
+    var polymorphicTypes = _discoverAndMergePolymorphicTypes(
+        context, messages, propertyPolymorphicTypes, compilation, synthesizedInheritance);
 
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
@@ -3314,9 +3521,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // Skip System.* types (object, ValueType, etc.)
       // Also skip C# keyword aliases like "object", "string" which FullyQualifiedFormat may return
-      if (baseTypeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal) ||
-          baseTypeName == "object" ||
-          baseTypeName == "string") {
+      if (_isInheritanceChainTerminator(baseTypeName)) {
         break; // Stop walking up the chain once we hit System types
       }
 
@@ -3335,15 +3540,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var iface in typeSymbol.AllInterfaces) {
       var interfaceName = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-      // Skip System.* interfaces
-      if (interfaceName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
-        continue;
-      }
-
-      // Include Whizbang.Core.ICommand and Whizbang.Core.IEvent for polymorphic collections
-      // Skip other Whizbang.Core.* interfaces (IMessage, IHasId, etc.)
-      if (interfaceName.StartsWith("global::Whizbang.Core.", StringComparison.Ordinal) &&
-          interfaceName != $"global::{I_COMMAND}" && interfaceName != $"global::{I_EVENT}") {
+      if (!_isPolymorphicBaseInterface(interfaceName)) {
         continue;
       }
 
@@ -3358,6 +3555,30 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// True once the base-type walk reaches a type that is not a user polymorphic base — System.*
+  /// (object, ValueType, …) or a C# keyword alias FullyQualifiedFormat may return.
+  /// </summary>
+  private static bool _isInheritanceChainTerminator(string baseTypeName) =>
+      baseTypeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal) ||
+      baseTypeName == "object" ||
+      baseTypeName == "string";
+
+  /// <summary>
+  /// True if an implemented interface should become a polymorphic base. System.* interfaces never
+  /// are; among Whizbang.Core's, only ICommand and IEvent qualify (IMessage, IHasId, … are plumbing).
+  /// Consumer and satellite-package interfaces — including the saga contract interfaces — do.
+  /// </summary>
+  private static bool _isPolymorphicBaseInterface(string interfaceName) {
+    if (interfaceName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
+      return false;
+    }
+
+    return !interfaceName.StartsWith("global::Whizbang.Core.", StringComparison.Ordinal) ||
+           interfaceName == $"global::{I_COMMAND}" ||
+           interfaceName == $"global::{I_EVENT}";
+  }
+
+  /// <summary>
   /// Builds a polymorphic registry by grouping inheritance info by base type.
   /// Excludes base types that already have explicit [JsonPolymorphic] attribute.
   /// </summary>
@@ -3369,7 +3590,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <docs>extending/source-generators/polymorphic-serialization</docs>
   private static ImmutableArray<PolymorphicTypeInfo> _buildPolymorphicRegistry(
       ImmutableArray<InheritanceInfo> allInheritanceInfo,
-      Compilation compilation) {
+      Compilation compilation,
+      ISet<string> synthesizedDerivedTypes) {
 
     // Group inheritance info by base type
     var grouped = allInheritanceInfo
@@ -3390,7 +3612,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var simpleName = _extractSimpleName(baseTypeName);
 
       // Get all derived type names, excluding abstract and non-public types
-      var derivedTypes = _getConcretePublicDerivedTypes(group, compilation);
+      var derivedTypes = _getConcretePublicDerivedTypes(group, compilation, synthesizedDerivedTypes);
       if (derivedTypes.Length == 0) {
         continue;
       }
@@ -3437,11 +3659,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   private static ImmutableArray<string> _getConcretePublicDerivedTypes(
       IGrouping<string, InheritanceInfo> group,
-      Compilation compilation) {
+      Compilation compilation,
+      ISet<string> synthesizedDerivedTypes) {
     return [.. group
         .Select(i => i.DerivedTypeName)
         .Distinct()
-        .Where(derivedName => _isConcretePublicType(derivedName, compilation))];
+        .Where(derivedName =>
+            // Synthesized saga events have no symbol to inspect — they do not exist in this
+            // compilation. They are concrete and public by construction: the saga generator emits
+            // every event as `public sealed partial class`, and synthesis already refused any saga
+            // whose containment chain is not public.
+            synthesizedDerivedTypes.Contains(derivedName) ||
+            _isConcretePublicType(derivedName, compilation))];
   }
 
   /// <summary>
@@ -3526,12 +3755,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var polyType in polymorphicTypes) {
       // Build derived type registrations
+      var discriminators = _assignPolymorphicDiscriminators(polyType.DerivedTypes);
       var registrations = new System.Text.StringBuilder();
       foreach (var derivedType in polyType.DerivedTypes) {
-        var discriminator = _extractSimpleName(derivedType);
         var registration = derivedRegistrationSnippet
             .Replace("__DERIVED_TYPE__", derivedType)
-            .Replace("__DERIVED_TYPE_DISCRIMINATOR__", discriminator);
+            .Replace("__DERIVED_TYPE_DISCRIMINATOR__", discriminators[derivedType]);
         registrations.AppendLine(registration);
       }
 
@@ -3545,6 +3774,41 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// Assigns each derived type its <c>$type</c> discriminator for one polymorphic base.
+  ///
+  /// <para>The simple name is the discriminator — it is the wire format already in stored payloads,
+  /// so it must not change for a base whose derived types have distinct simple names. But simple
+  /// names are NOT unique in general: two types with the same name in different namespaces (or two
+  /// sagas, whose generated event classes are named identically by construction) collide, and STJ
+  /// rejects a duplicate discriminator by throwing when it configures the base — taking down the
+  /// whole base typeinfo, not just the colliding pair. Where that happens, the colliding types
+  /// (and only those) fall back to their fully qualified name, which is unique by definition.</para>
+  ///
+  /// <para>This changes no discriminator that works today: a base whose simple names are already
+  /// distinct emits byte-identical output, and a base with a collision could not be configured at
+  /// all, so it had no working wire format to preserve.</para>
+  /// </summary>
+  /// <returns>Map of fully qualified derived type name to the discriminator to emit.</returns>
+  /// <docs>extending/source-generators/polymorphic-serialization</docs>
+  private static Dictionary<string, string> _assignPolymorphicDiscriminators(ImmutableArray<string> derivedTypes) {
+    var collidingSimpleNames = derivedTypes
+        .GroupBy(_extractSimpleName, StringComparer.Ordinal)
+        .Where(g => g.Count() > 1)
+        .Select(g => g.Key)
+        .ToImmutableHashSet(StringComparer.Ordinal);
+
+    var assigned = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var derivedType in derivedTypes) {
+      var simpleName = _extractSimpleName(derivedType);
+      assigned[derivedType] = collidingSimpleNames.Contains(simpleName)
+          ? derivedType.Replace(PLACEHOLDER_GLOBAL, "")
+          : simpleName;
+    }
+
+    return assigned;
   }
 
   /// <summary>
