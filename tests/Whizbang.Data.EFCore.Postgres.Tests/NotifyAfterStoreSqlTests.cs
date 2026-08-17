@@ -355,6 +355,104 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
   }
 
   // ============================================================================
+  // Hot-stream notify window — the interactive-latency contract
+  // ============================================================================
+  // The v0.686.1 cold-only gate and ClaimWorker's notify-healthy poll relaxation
+  // (NotifyHealthyPollingIntervalMilliseconds = 5 s; bus-wired backstop ~10 s) each
+  // assume the other side covers HOT (already-pinned) streams. Neither does: a hot
+  // stream's store emits no NOTIFY, and the relaxed poll is the only wake source —
+  // so an interactive stream (idle between hops, someone watching each hop) pays
+  // 0-5 s per hop. Bulk import never notices because its claim loop always has
+  // work in hand.
+  //
+  // Contract under test: 'hot_stream_notify_window_ms' in wh_settings bounds
+  // hot-stream NOTIFY emission per stream. 0 = notify on every store (the v0.686
+  // behavior); the bulk-import protection above (SecondCallSameStream /
+  // MixedColdAndHot, whose second store lands *within* any real window) is
+  // unaffected because a real window collapses bursts exactly as the cold-only
+  // gate did.
+
+  [Test]
+  public async Task StoreInboxMessages_HotStreamWindowZero_SecondCallFiresNotifyAsync() {
+    // window=0: a hot (pinned) stream's store must STILL wake the owner. Without
+    // this, the pinned owner's only wake source is the relaxed notify-healthy
+    // claim poll — the interactive-latency gap this window exists to close.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+    await _setHotStreamNotifyWindowMsAsync(conn, 0);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    // First call pins the stream (cold contract, consumed here).
+    var firstJson = $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]";
+    var firstReceived = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, firstJson));
+    await Assert.That(firstReceived).Count().IsEqualTo(1)
+      .Because("Cold first store must notify — the v0.686 contract is unchanged by the window.");
+
+    // Second call, same (now hot) stream, window=0 → must notify again.
+    var secondJson = $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]";
+    var secondReceived = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, secondJson));
+
+    await Assert.That(secondReceived).Count().IsEqualTo(1)
+      .Because("hot_stream_notify_window_ms=0 must restore per-store NOTIFY for hot streams: an interactive stream otherwise waits on the notify-healthy claim poll (5-10 s) for EVERY hop, because the cold-only gate and the relaxed poll each assume the other covers hot streams.");
+    await Assert.That(secondReceived[0].Payload).IsEqualTo("inbox")
+      .Because("The hot-stream wake must ride the same 'inbox' doorbell the cold path uses.");
+  }
+
+  [Test]
+  public async Task StoreOutboxMessages_HotStreamWindowZero_SecondCallFiresOutboxAndPerspectiveNotifyAsync() {
+    // Same contract on the outbox path, and it must cover BOTH payloads: the
+    // 'perspective' doorbell is what makes the read model (what the user actually
+    // sees) refresh promptly, so a hot-stream wake that only re-arms 'outbox'
+    // would still leave the visible state stale until the poll.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+    await _setHotStreamNotifyWindowMsAsync(conn, 0);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    var firstJson = $"[{_outboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId, isEvent: true)}]";
+    _ = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, firstJson));
+
+    var secondJson = $"[{_outboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId, isEvent: true)}]";
+    var secondReceived = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, secondJson));
+
+    var payloads = secondReceived.Select(r => r.Payload).OrderBy(p => p).ToList();
+    await Assert.That(payloads).Contains("outbox")
+      .Because("window=0: the hot stream's second store must re-arm transport pickup immediately.");
+    await Assert.That(payloads).Contains("perspective")
+      .Because("window=0: the perspective doorbell must fire too — read-model freshness IS the user-visible latency.");
+  }
+
+  private static async Task _setHotStreamNotifyWindowMsAsync(NpgsqlConnection conn, int windowMs) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+      VALUES ('hot_stream_notify_window_ms', @val, 'integer', 'test seed')
+      ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value";
+    cmd.Parameters.AddWithValue("val", windowMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  // ============================================================================
   // helpers
   // ============================================================================
 
