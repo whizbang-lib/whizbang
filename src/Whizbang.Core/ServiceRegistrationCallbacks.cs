@@ -51,9 +51,62 @@ public static class ServiceRegistrationCallbacks {
 
   /// <summary>
   /// Callback for registering the generated dispatcher and receptor infrastructure.
-  /// Set by source-generated module initializer in consumer assembly.
+  /// Set by the source-generated module initializer in EVERY Whizbang-compiled assembly that
+  /// declares receptors — the setter therefore ACCUMULATES (each assignment adds a registration)
+  /// instead of overwriting, exactly as <see cref="MessageTypeCatalog"/> does. A single-valued
+  /// setter let the last module initializer win, so one assembly's <c>AddReceptors()</c> silently
+  /// displaced every other's: a message dispatched to a receptor in a displaced assembly simply
+  /// never ran, with no exception, no log line, and no startup diagnostic (issue #491).
+  /// Assigning null clears all registrations (the test-only <see cref="Reset"/> semantics).
   /// </summary>
-  public static Action<IServiceCollection>? Dispatcher { get; set; }
+  public static Action<IServiceCollection>? Dispatcher {
+    get {
+      // A CLOSURE over a frozen snapshot, never a reference to the live list: harnesses save this
+      // property, clear, and later re-assign the saved value — a delegate that read the live list
+      // would then contain itself and recurse without bound (observed as a stack overflow). The
+      // snapshot makes property-based save/restore exact: the saved delegate replays precisely
+      // the set that existed when it was read.
+      lock (_lock) {
+        if (_dispatcherRegistrations.Count == 0) {
+          return null;
+        }
+        var snapshot = _dispatcherRegistrations.ToArray();
+        return services => {
+          foreach (var register in snapshot) {
+            register(services);
+          }
+        };
+      }
+    }
+    set {
+      lock (_lock) {
+        if (value is null) {
+          _dispatcherRegistrations.Clear();
+        } else {
+          _dispatcherRegistrations.Add(value);
+        }
+      }
+    }
+  }
+
+  private static readonly List<Action<IServiceCollection>> _dispatcherRegistrations = [];
+
+  /// <summary>Test-only: snapshot the accumulated dispatcher registrations for save/restore.</summary>
+  internal static IReadOnlyList<Action<IServiceCollection>> SnapshotDispatcherRegistrations() {
+    lock (_lock) {
+      return [.. _dispatcherRegistrations];
+    }
+  }
+
+  /// <summary>Test-only: restore a previously snapshotted dispatcher registration set.</summary>
+  internal static void RestoreDispatcherRegistrations(IReadOnlyList<Action<IServiceCollection>> snapshot) {
+    lock (_lock) {
+      _dispatcherRegistrations.Clear();
+      _dispatcherRegistrations.AddRange(snapshot);
+    }
+  }
+
+
 
   /// <summary>
   /// Callback for registering the generated <see cref="IPinnedIdRegistry"/>.
