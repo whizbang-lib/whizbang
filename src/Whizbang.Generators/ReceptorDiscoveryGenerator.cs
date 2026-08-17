@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Sagas;
 using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
@@ -93,18 +94,130 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Combine(perspectiveCandidates.Collect());
 
     // Combine with compilation to get assembly name for namespace
-    var compilationAndData = context.CompilationProvider.Combine(combined);
+    // Pipeline 3: Synthesize the recovery receptors the SAGA generator will emit into this
+    // assembly. Source generators never observe each other's output, so the three nested receptor
+    // classes a [Saga] type gains do not exist in the compilation this generator reads — without
+    // synthesis they are neither registered nor routed, and the framework-owned completion path
+    // never runs (a saga dispatches every item, every item finishes, and it silently never
+    // completes). The [Saga] attribute alone determines the receptors, so they can be described
+    // without the symbols; see SagaRecoveryReceptorShapes.
+    var sagaReceptors = context.SyntaxProvider
+        .ForAttributeWithMetadataName(
+            SagaEventShapes.SAGA_ATTRIBUTE,
+            predicate: static (node, _) => node is ClassDeclarationSyntax,
+            transform: static (ctx, ct) => _extractSagaRecoveryReceptors(ctx, ct))
+        .Where(static arr => !arr.IsDefaultOrEmpty)
+        .SelectMany(static (arr, _) => arr);
+
+    var genericSagaReceptors = context.SyntaxProvider
+        .ForAttributeWithMetadataName(
+            SagaEventShapes.SAGA_ATTRIBUTE_GENERIC,
+            predicate: static (node, _) => node is ClassDeclarationSyntax,
+            transform: static (ctx, ct) => _extractSagaRecoveryReceptors(ctx, ct))
+        .Where(static arr => !arr.IsDefaultOrEmpty)
+        .SelectMany(static (arr, _) => arr);
+
+    var allSagaReceptors = sagaReceptors.Collect()
+        .Combine(genericSagaReceptors.Collect())
+        .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
+
+    var compilationAndData = context.CompilationProvider.Combine(combined).Combine(allSagaReceptors);
 
     // Generate registration code with awareness of both receptors and perspectives
     context.RegisterSourceOutput(
         compilationAndData,
         static (ctx, data) => {
-          var compilation = data.Left;
-          var receptors = data.Right.Left;
-          var perspectives = data.Right.Right;
-          _generateDispatcherRegistrations(ctx, compilation, receptors!, perspectives);
+          var compilation = data.Left.Left;
+          var receptors = data.Left.Right.Left;
+          var perspectives = data.Left.Right.Right;
+          // Synthesized saga receptors join the discovered ones — everything downstream (DI
+          // registration, dispatcher routing, the receptor registry) is driven off this one array.
+          var allReceptors = receptors
+              .Where(static r => r is not null)
+              .Select(static r => r!)
+              .ToImmutableArray()
+              .AddRange(data.Right);
+          _generateDispatcherRegistrations(ctx, compilation, allReceptors, perspectives);
         }
     );
+  }
+
+  /// <summary>
+  /// Describes the recovery receptors the saga generator will emit into a <c>[Saga]</c>-marked
+  /// partial class, as <see cref="ReceptorInfo"/> entries this generator can register and route.
+  /// Returns empty when the saga generates no service (<c>GenerateService = false</c> suppresses the
+  /// receptors too, since they take that service as their dependency), or when the saga type could
+  /// not carry generated public nested types.
+  /// </summary>
+  /// <docs>fundamentals/sagas/completion-orchestration</docs>
+  private static ImmutableArray<ReceptorInfo> _extractSagaRecoveryReceptors(
+      GeneratorAttributeSyntaxContext context,
+      System.Threading.CancellationToken cancellationToken) {
+
+    if (context.TargetSymbol is not INamedTypeSymbol sagaType || sagaType.IsGenericType) {
+      return ImmutableArray<ReceptorInfo>.Empty;
+    }
+
+    // The generated registrations reference these types from generated public code, so every link in
+    // the containment chain must be public.
+    for (var scope = sagaType; scope is not null; scope = scope.ContainingType) {
+      if (scope.DeclaredAccessibility != Accessibility.Public) {
+        return ImmutableArray<ReceptorInfo>.Empty;
+      }
+    }
+
+    var attribute = context.Attributes.FirstOrDefault();
+    if (attribute is null) {
+      return ImmutableArray<ReceptorInfo>.Empty;
+    }
+
+    foreach (var namedArgument in attribute.NamedArguments) {
+      if (namedArgument.Key == SagaRecoveryReceptorShapes.GENERATE_SERVICE_ARGUMENT &&
+          namedArgument.Value.Value is bool generateService && !generateService) {
+        return ImmutableArray<ReceptorInfo>.Empty;
+      }
+    }
+
+    var sagaFullyQualifiedName = TypeNameHelper.GetFullyQualifiedName(sagaType);
+
+    // The watchdog tick is a real referenced type, so its polymorphism is read from the symbol
+    // rather than assumed. The per-saga events are emitted `sealed`, so they are never polymorphic.
+    var watchdogTickSymbol = context.SemanticModel.Compilation
+        .GetTypeByMetadataName(SagaRecoveryReceptorShapes.WATCHDOG_TICK_EVENT);
+
+    var builder = ImmutableArray.CreateBuilder<ReceptorInfo>();
+    foreach (var shape in SagaRecoveryReceptorShapes.All) {
+      cancellationToken.ThrowIfCancellationRequested();
+
+      string messageType;
+      bool isPolymorphicMessageType;
+      if (shape.SagaEventClassName is not null) {
+        messageType = $"{sagaFullyQualifiedName}.{shape.SagaEventClassName}";
+        isPolymorphicMessageType = false;
+      } else {
+        if (watchdogTickSymbol is null) {
+          continue;
+        }
+        messageType = TypeNameHelper.GetFullyQualifiedName(watchdogTickSymbol);
+        isPolymorphicMessageType = _isPolymorphicType(watchdogTickSymbol);
+      }
+
+      builder.Add(new ReceptorInfo(
+          ClassName: $"{sagaFullyQualifiedName}.{shape.ClassName}",
+          MessageType: messageType,
+          ResponseType: null,
+          LifecycleStages: shape.LifecycleStage is null ? [] : [shape.LifecycleStage],
+          IsSync: false,
+          DefaultRouting: null,
+          SyncAttributes: null,
+          HasTraceAttribute: false,
+          IsMessageAnEvent: true,
+          IsPolymorphicMessageType: isPolymorphicMessageType,
+          HasFireDuringReplayAttribute: false,
+          IsIdempotent: false));
+    }
+
+    return builder.ToImmutable();
   }
 
   /// <summary>
