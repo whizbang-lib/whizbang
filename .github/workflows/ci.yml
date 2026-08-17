@@ -631,10 +631,13 @@ jobs:
           BRANCH="test-status/${{ github.run_id }}"
           git checkout -b "$BRANCH"
           git commit -m "chore(test-status): whizbang run ${{ github.run_id }} (${GITHUB_SHA:0:8})"
-          git push origin "$BRANCH"
+          # Force: a re-run shares the run_id, so a prior attempt that died between its
+          # branch push and PR merge leaves this branch behind — overwrite, don't collide.
+          git push --force origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "chore(test-status): run ${{ github.run_id }}" \
-            --body "Automated live test-status data from [whizbang CI run ${{ github.run_id }}](https://github.com/whizbang-lib/whizbang/actions/runs/${{ github.run_id }})."
+            --body "Automated live test-status data from [whizbang CI run ${{ github.run_id }}](https://github.com/whizbang-lib/whizbang/actions/runs/${{ github.run_id }})." \
+            || echo "PR for $BRANCH already exists (prior attempt) — merging it with the force-pushed content"
           for i in 1 2 3 4 5; do
             gh pr merge "$BRANCH" --squash --delete-branch && exit 0
             echo "merge attempt $i failed; retrying in 5s"
