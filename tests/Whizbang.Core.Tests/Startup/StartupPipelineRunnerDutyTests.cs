@@ -33,13 +33,13 @@ public class StartupPipelineRunnerDutyTests {
     private int _attempts;
     public int Attempts => Volatile.Read(ref _attempts);
     public _grant? Granted { get; private set; }
-    public Task<IDutyGrant?> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
       var attempt = Interlocked.Increment(ref _attempts);
       if (attempt < grantOnAttempt) {
-        return Task.FromResult<IDutyGrant?>(null);
+        return Task.FromResult(DutyAttempt.Lost(DutyRefusal.Contended, "held by a peer"));
       }
       Granted = new _grant(() => { });
-      return Task.FromResult<IDutyGrant?>(Granted);
+      return Task.FromResult(DutyAttempt.Granted(Granted));
     }
   }
 
@@ -155,5 +155,100 @@ public class StartupPipelineRunnerDutyTests {
     };
     public ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) =>
       throw new InvalidOperationException("boom");
+  }
+
+  private sealed class _neverGrantingElector : IDutyElector {
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken)
+      => Task.FromResult(DutyAttempt.Lost(DutyRefusal.Unavailable,
+        "no coordination connection is configured"));   // standing — retrying can never succeed
+  }
+
+  private sealed class _awaitDutyStep : IStartupStep {
+    public StartupStepDescriptor Descriptor { get; } = new() {
+      Name = "AwaitDuty",
+      RequiredCapability = "never-grantable",
+      NonHolderBehavior = NonHolderBehavior.Await,   // the DEFAULT behaviour
+    };
+    public ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken)
+      => new(new StartupStepReport(StartupStepOutcome.Completed));
+  }
+
+  /// <summary>
+  /// Issue #494: an Await step whose duty can never be granted must FAIL, loudly and boundedly —
+  /// not retry forever with a once-a-second Warning as the only evidence. Boot failing loudly
+  /// beats boot hanging silently.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task AwaitDutyStep_WhoseDutyIsNeverGrantable_FailsBoundedlyInsteadOfHangingAsync(CancellationToken cancellationToken) {
+    var runner = new StartupPipelineRunner([new _awaitDutyStep()], dutyElector: new _neverGrantingElector());
+
+    var run = runner.RunAsync(cancellationToken);
+    var winner = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(10), cancellationToken));
+
+    await Assert.That(ReferenceEquals(winner, run)).IsTrue()
+      .Because("issue #494: the run must conclude — a duty the elector reports as unacquirable "
+             + "must not spin the boot forever");
+    var result = (await run).Single();
+    await Assert.That(result.Outcome).IsEqualTo(StartupStepOutcome.Failed);
+    await Assert.That(result.Reason).Contains("never-grantable")
+      .Because("the failure must NAME the duty — a five-minute diagnosis instead of an open-ended one");
+  }
+
+  private sealed class _contendedForeverElector : IDutyElector {
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken)
+      => Task.FromResult(DutyAttempt.Lost(DutyRefusal.Contended, "held by a very slow peer"));
+  }
+
+  private sealed class _waitRecordingObserver : IStartupStepObserver {
+    private readonly List<StartupStepWaitContext> _waits = [];
+    private readonly Lock _lock = new();
+    public IReadOnlyList<StartupStepWaitContext> Waits {
+      get {
+        lock (_lock) {
+          return [.. _waits];
+        }
+      }
+    }
+    public ValueTask OnStepStartingAsync(StartupStepContext context, CancellationToken ct) => default;
+    public ValueTask OnStepCompletedAsync(StartupStepResult result, CancellationToken ct) => default;
+    public ValueTask OnPipelineCompletedAsync(StartupSummary summary, CancellationToken ct) => default;
+    public ValueTask OnStepWaitingAsync(StartupStepWaitContext context, CancellationToken ct) {
+      lock (_lock) {
+        _waits.Add(context);
+      }
+      return default;
+    }
+  }
+
+  /// <summary>
+  /// Issue #493/#494's diagnosability half: a LEGITIMATE wait (contended duty, Await) must narrate
+  /// itself through the observer seam on a backoff — a hang with no output gives a consumer
+  /// nothing to diagnose.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task AwaitDutyStep_WhileContended_NarratesTheWaitThroughObserversAsync(CancellationToken cancellationToken) {
+    var observer = new _waitRecordingObserver();
+    var runner = new StartupPipelineRunner(
+      [new _awaitDutyStep()], [observer], new _contendedForeverElector()) {
+      DutyRetryInterval = TimeSpan.FromMilliseconds(15),
+    };
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+    var run = runner.RunAsync(cts.Token);
+    while (observer.Waits.Count < 2) {
+      cancellationToken.ThrowIfCancellationRequested();
+      await Task.Delay(15, cancellationToken);
+    }
+    await cts.CancelAsync();
+    try { await run; } catch (OperationCanceledException) { /* the wait was legitimately unbounded */ }
+
+    var waits = observer.Waits;
+    await Assert.That(waits[0].Duty).IsEqualTo("never-grantable");
+    await Assert.That(waits[0].LastRefusalDetail).IsEqualTo("held by a very slow peer")
+      .Because("the narration must carry the elector's own words — that detail is the diagnosis");
+    await Assert.That(waits[1].Waited > waits[0].Waited).IsTrue()
+      .Because("each narration reports cumulative wait, on a backoff — never a per-tick drumbeat");
   }
 }

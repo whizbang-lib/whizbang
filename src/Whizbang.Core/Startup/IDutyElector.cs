@@ -53,9 +53,66 @@ public interface IDutyGrant : IAsyncDisposable {
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionE2ETests.cs</tests>
 public interface IDutyElector {
   /// <summary>
-  /// Attempts to win <paramref name="duty"/>. Returns the grant when this instance now holds it,
-  /// or <see langword="null"/> when another instance does — or when this instance has been
-  /// evicted and must not hold exclusive work. Never blocks waiting for the holder.
+  /// Attempts to win <paramref name="duty"/>. Returns a granted attempt when this instance now
+  /// holds it, or a refused attempt that says WHY not — losing the race is the only refusal
+  /// worth retrying, and a caller that cannot tell the reasons apart retries the unretryable
+  /// forever (issue #494). Never blocks waiting for the holder.
   /// </summary>
-  Task<IDutyGrant?> TryAcquireAsync(string duty, CancellationToken cancellationToken);
+  Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Why a duty attempt did not grant. The distinction is load-bearing: <see cref="Contended"/> is
+/// the only refusal that retrying can resolve.
+/// </summary>
+/// <docs>operations/startup/capabilities-and-duties</docs>
+public enum DutyRefusal {
+  /// <summary>Another instance holds the duty. Retry — the holder's release frees it.</summary>
+  Contended,
+
+  /// <summary>
+  /// The elector cannot reach or resolve its coordination primitive at all — typically a missing
+  /// connection configuration. A standing condition: retrying cannot succeed.
+  /// </summary>
+  Unavailable,
+
+  /// <summary>
+  /// This instance may not hold the duty — evicted or unregistered. Needs an operator or a
+  /// restart, not a retry.
+  /// </summary>
+  Refused,
+}
+
+/// <summary>
+/// One acquisition attempt's outcome: either a <see cref="Grant"/>, or a <see cref="Refusal"/>
+/// with the <see cref="Detail"/> a human needs. Exactly one of grant/refusal is present.
+/// </summary>
+/// <docs>operations/startup/capabilities-and-duties</docs>
+public sealed record DutyAttempt {
+  private DutyAttempt(IDutyGrant? grant, DutyRefusal? refusal, string? detail) {
+    Grant = grant;
+    Refusal = refusal;
+    Detail = detail;
+  }
+
+  /// <summary>The grant, when this instance now holds the duty.</summary>
+  public IDutyGrant? Grant { get; }
+
+  /// <summary>Why not, when it does not.</summary>
+  public DutyRefusal? Refusal { get; }
+
+  /// <summary>Human-readable detail for the refusal — what a log line or step reason should say.</summary>
+  public string? Detail { get; }
+
+  /// <summary>This instance now holds the duty.</summary>
+  public static DutyAttempt Granted(IDutyGrant grant) {
+    ArgumentNullException.ThrowIfNull(grant);
+    return new DutyAttempt(grant, null, null);
+  }
+
+  /// <summary>The attempt did not grant, for the stated reason.</summary>
+  public static DutyAttempt Lost(DutyRefusal refusal, string detail) {
+    ArgumentException.ThrowIfNullOrEmpty(detail);
+    return new DutyAttempt(null, refusal, detail);
+  }
 }

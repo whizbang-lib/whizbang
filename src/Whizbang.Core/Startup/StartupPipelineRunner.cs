@@ -188,24 +188,47 @@ public sealed class StartupPipelineRunner {
   /// Runs a step that requires a duty. The holder executes it and releases on completion; a
   /// non-holder does what the descriptor declares: <see cref="NonHolderBehavior.Skip"/> reports
   /// <c>capability not held</c> and carries on, <see cref="NonHolderBehavior.Await"/> keeps
-  /// re-attempting until it wins — the holder's release is the completion signal, and the step's
-  /// own idempotency makes the late winner find nothing to do. That is exactly the behaviour the
-  /// migration advisory lock produces today: losers block, then re-check, then continue.
+  /// re-attempting while the duty is merely <see cref="DutyRefusal.Contended"/> — the holder's
+  /// release is the completion signal, and the step's own idempotency makes the late winner find
+  /// nothing to do. A refusal that retrying cannot resolve — <see cref="DutyRefusal.Unavailable"/>
+  /// or <see cref="DutyRefusal.Refused"/> — FAILS the step, naming the duty and the reason: boot
+  /// failing loudly beats boot hanging silently (issue #494). While a legitimate wait persists,
+  /// observers are told through <see cref="IStartupStepObserver.OnStepWaitingAsync"/> on a
+  /// backoff, so a long wait is narrated rather than a once-a-second Warning nobody sees.
   /// </summary>
   private async ValueTask<StartupStepReport> _executeExclusiveAsync(
       IStartupStep step, StartupStepDescriptor descriptor, CancellationToken cancellationToken) {
-    var grant = await _dutyElector!.TryAcquireAsync(descriptor.RequiredCapability, cancellationToken)
+    var attempt = await _dutyElector!.TryAcquireAsync(descriptor.RequiredCapability, cancellationToken)
       .ConfigureAwait(false);
-    if (grant is null && descriptor.NonHolderBehavior == NonHolderBehavior.Skip) {
+    if (attempt.Grant is null && descriptor.NonHolderBehavior == NonHolderBehavior.Skip) {
       return new StartupStepReport(StartupStepOutcome.Skipped, "capability not held");
     }
-    while (grant is null) {
+
+    var waited = TimeSpan.Zero;
+    var attempts = 0;
+    var nextNarration = 3;
+    while (attempt.Grant is null) {
+      if (attempt.Refusal is not DutyRefusal.Contended) {
+        return new StartupStepReport(StartupStepOutcome.Failed,
+          $"duty '{descriptor.RequiredCapability}' is unacquirable ({attempt.Refusal}): "
+          + $"{attempt.Detail ?? "no detail"} — retrying cannot succeed, failing loudly instead of hanging");
+      }
       cancellationToken.ThrowIfCancellationRequested();
       await Task.Delay(DutyRetryInterval, cancellationToken).ConfigureAwait(false);
-      grant = await _dutyElector.TryAcquireAsync(descriptor.RequiredCapability, cancellationToken)
+      waited += DutyRetryInterval;
+      attempts++;
+      if (attempts >= nextNarration) {
+        // Backoff: attempts 3, 10, 30, then every 60 — legible at the default 1s interval,
+        // fast under test intervals, never a per-second drumbeat.
+        nextNarration = nextNarration switch { 3 => 10, 10 => 30, _ => nextNarration + 60 };
+        await _notifyAsync(o => o.OnStepWaitingAsync(
+          new StartupStepWaitContext(descriptor, descriptor.RequiredCapability, waited, attempt.Detail),
+          cancellationToken)).ConfigureAwait(false);
+      }
+      attempt = await _dutyElector.TryAcquireAsync(descriptor.RequiredCapability, cancellationToken)
         .ConfigureAwait(false);
     }
-    await using (grant.ConfigureAwait(false)) {
+    await using (attempt.Grant.ConfigureAwait(false)) {
       return await _executeAsync(step, cancellationToken).ConfigureAwait(false);
     }
   }

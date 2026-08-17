@@ -76,11 +76,13 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     var attempts = await Task.WhenAll(pods.Select(pod =>
       _electorFor(pod).TryAcquireAsync("migrator", cancellationToken)));
 
-    var grants = attempts.Where(g => g is not null).ToList();
+    var grants = attempts.Select(a => a.Grant).Where(g => g is not null).ToList();
+    await Assert.That(attempts.Count(a => a.Refusal == DutyRefusal.Contended)).IsEqualTo(4)
+      .Because("the losers lost the RACE — a retryable refusal, and now the elector says so");
     await Assert.That(grants.Count).IsEqualTo(1)
       .Because("a duty is exclusive: five contenders, one holder — that is what election means");
 
-    var winner = pods[Array.FindIndex(attempts, g => g is not null)];
+    var winner = pods[Array.FindIndex(attempts, a => a.Grant is not null)];
     await Assert.That(await _holdsAsync(winner.InstanceId, "migrator", cancellationToken)).IsTrue()
       .Because("the lock decides, the row reports — and they must agree once the dust settles");
     foreach (var pod in pods.Where(p => p.InstanceId != winner.InstanceId)) {
@@ -94,7 +96,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     await Assert.That(await _holdsAsync(winner.InstanceId, "migrator", cancellationToken)).IsFalse()
       .Because("a clean release deletes the holding — tenure ended, the row says so");
     var loser = pods.First(p => p.InstanceId != winner.InstanceId);
-    await using var takeover = await _electorFor(loser).TryAcquireAsync("migrator", cancellationToken);
+    await using var takeover = (await _electorFor(loser).TryAcquireAsync("migrator", cancellationToken)).Grant;
     await Assert.That(takeover).IsNotNull()
       .Because("a released duty is always one somebody is about to take — no reaper needed");
     await Assert.That(await _holdsAsync(loser.InstanceId, "migrator", cancellationToken)).IsTrue();
@@ -158,17 +160,19 @@ public class DutyElectionE2ETests : EFCoreTestBase {
       await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    await using var grant = await _electorFor(pod).TryAcquireAsync("maintainer", cancellationToken);
+    var evictedAttempt = await _electorFor(pod).TryAcquireAsync("maintainer", cancellationToken);
 
-    await Assert.That(grant).IsNull()
+    await Assert.That(evictedAttempt.Grant).IsNull()
       .Because("the fence reaches exclusive work: an evicted instance that wins the primitive is "
              + "refused at recording, releases what it won, and stands down");
+    await Assert.That(evictedAttempt.Refusal).IsEqualTo(DutyRefusal.Refused)
+      .Because("issue #494: not a race — retrying cannot help, and the caller must be able to tell");
     await Assert.That(await _holdsAsync(pod.InstanceId, "maintainer", cancellationToken)).IsFalse();
 
     // And the released lock is genuinely free — a live instance takes it immediately.
     var live = new _pod();
     await _joinFleetAsync(live, cancellationToken);
-    await using var liveGrant = await _electorFor(live).TryAcquireAsync("maintainer", cancellationToken);
+    await using var liveGrant = (await _electorFor(live).TryAcquireAsync("maintainer", cancellationToken)).Grant;
     await Assert.That(liveGrant).IsNotNull();
   }
 
@@ -180,7 +184,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     await _joinFleetAsync(victim, cancellationToken);
     await _joinFleetAsync(successor, cancellationToken);
 
-    var grant = await _electorFor(victim).TryAcquireAsync("migrator", cancellationToken);
+    var grant = (await _electorFor(victim).TryAcquireAsync("migrator", cancellationToken)).Grant;
     await Assert.That(grant).IsNotNull();
 
     // The OOMKill shape: terminate the backend session holding the duty lock, without any clean
@@ -203,7 +207,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
       .Because("fencing: a grant whose session died is a grant another instance may already hold — "
              + "the holder must learn this before its next unit of exclusive work");
 
-    await using var takeover = await _electorFor(successor).TryAcquireAsync("migrator", cancellationToken);
+    await using var takeover = (await _electorFor(successor).TryAcquireAsync("migrator", cancellationToken)).Grant;
     await Assert.That(takeover).IsNotNull()
       .Because("a clean OR dirty death releases the session lock server-side; the next attempt wins");
     await Assert.That(await _holdsAsync(successor.InstanceId, "migrator", cancellationToken)).IsTrue();

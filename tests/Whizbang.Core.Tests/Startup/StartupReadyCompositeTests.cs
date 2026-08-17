@@ -281,4 +281,78 @@ public class StartupReadyCompositeTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  private sealed class _capturingLogger : Microsoft.Extensions.Logging.ILogger<StartupReadyService> {
+    private readonly List<string> _entries = [];
+    private readonly Lock _lock = new();
+    public IReadOnlyList<string> Entries {
+      get {
+        lock (_lock) {
+          return [.. _entries];
+        }
+      }
+    }
+    IDisposable? Microsoft.Extensions.Logging.ILogger.BeginScope<TState>(TState state) => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_lock) {
+        _entries.Add(formatter(state, exception));
+      }
+    }
+  }
+
+  /// <summary>
+  /// Issue #493: a fail-closed wait must never be a SILENT wait. While the composite is blocked
+  /// on a contributor, it says so — naming the contributor — on a backoff.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task StartedAsync_WhileBlockedOnAContributor_NarratesWhatItIsWaitingOnAsync(CancellationToken cancellationToken) {
+    var state = new StartupPipelineState();
+    await new StartupPipelineRunner([], [state]).RunAsync(cancellationToken);   // pipeline drained
+    var slow = new _tcsContributor("slow-transport");
+    var logger = new _capturingLogger();
+    var service = new StartupReadyService(state, new StartupReadySignal(), [slow], logger) {
+      WaitProbeInterval = TimeSpan.FromMilliseconds(15),
+    };
+
+    var started = service.StartedAsync(cancellationToken);
+    while (!logger.Entries.Any(e => e.Contains("slow-transport"))) {
+      cancellationToken.ThrowIfCancellationRequested();
+      await Task.Delay(15, cancellationToken);
+    }
+
+    await Assert.That(logger.Entries.Any(e =>
+        e.Contains("not ready") && e.Contains("slow-transport"))).IsTrue()
+      .Because("a 16-minute hang that logs nothing gives a consumer nothing to bisect against — "
+             + "the wait must name what it is waiting on");
+
+    slow.MarkReady();
+    await started.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+  }
+
+  /// <summary>The other silent shape: the pipeline never even started (a host without the
+  /// pipeline worker, a gate that never opens). The narration must say THAT, not nothing.</summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task StartedAsync_WhenThePipelineNeverStarted_SaysSoAsync(CancellationToken cancellationToken) {
+    var logger = new _capturingLogger();
+    var service = new StartupReadyService(new StartupPipelineState(), new StartupReadySignal(), [], logger) {
+      WaitProbeInterval = TimeSpan.FromMilliseconds(15),
+    };
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+    var started = service.StartedAsync(cts.Token);
+    while (!logger.Entries.Any(e => e.Contains("no run has started"))) {
+      cancellationToken.ThrowIfCancellationRequested();
+      await Task.Delay(15, cancellationToken);
+    }
+    await cts.CancelAsync();
+    try { await started; } catch (OperationCanceledException) { /* fail-closed, as designed */ }
+
+    await Assert.That(logger.Entries.Any(e => e.Contains("no run has started"))).IsTrue()
+      .Because("'not started' and 'started but stuck' are different diagnoses; the narration must distinguish them");
+  }
 }

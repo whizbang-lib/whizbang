@@ -49,14 +49,18 @@ public sealed partial class PgDutyElector(
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
 
   /// <inheritdoc />
-  public async Task<IDutyGrant?> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+  public async Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrEmpty(duty);
 
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
     if (!plan.IsAvailable) {
       LogNoConnection(_logger, duty);
-      return null;
+      // A standing condition, not a race: no coordination connection is configured at all.
+      // Saying so is what lets the caller fail loudly instead of retrying forever (issue #494).
+      return DutyAttempt.Lost(DutyRefusal.Unavailable,
+        $"no notification connection is available to contend for duty '{duty}' — "
+        + "configure Whizbang:Database (ConnectionStringKey / DirectConnectionString)");
     }
     if (!plan.UsesDataSource && resolution.Source == NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback) {
       // Session locks do not survive transaction pooling; the duty would silently un-hold itself.
@@ -72,7 +76,7 @@ public sealed partial class PgDutyElector(
         var won = await tryLock.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         if (won is not true) {
           await connection.DisposeAsync().ConfigureAwait(false);
-          return null;
+          return DutyAttempt.Lost(DutyRefusal.Contended, "advisory lock held by another instance");
         }
       }
 
@@ -92,12 +96,14 @@ public sealed partial class PgDutyElector(
           }
           await connection.DisposeAsync().ConfigureAwait(false);
           LogRefused(_logger, duty, _instanceProvider.InstanceId);
-          return null;
+          return DutyAttempt.Lost(DutyRefusal.Refused,
+            $"instance {_instanceProvider.InstanceId} is evicted or unregistered — "
+            + "the capability record refused it; an operator or a fresh instance id is required");
         }
       }
 
       LogAcquired(_logger, duty, _instanceProvider.InstanceId);
-      return new PgDutyGrant(connection, key, duty, _instanceProvider.InstanceId, _logger);
+      return DutyAttempt.Granted(new PgDutyGrant(connection, key, duty, _instanceProvider.InstanceId, _logger));
     } catch {
       await connection.DisposeAsync().ConfigureAwait(false);
       throw;
