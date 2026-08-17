@@ -101,7 +101,7 @@ public class PerspectiveRowDestructionSeamSqlTests : EFCoreTestBase {
   public async Task Hold_BlocksTheCapSweep_TooAsync(CancellationToken cancellationToken) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(cancellationToken);
-    await _arrangeAsync(conn, ttlSeconds: null, capPerScope: 1);
+    await _arrangeAsync(conn, ttlSeconds: null, capPerScope: 1, acknowledged: true);
     var newest = Guid.NewGuid();
     var overflow = Guid.NewGuid();
     await _seedRowAsync(conn, newest, "user-1", idleHours: 1);
@@ -111,12 +111,12 @@ public class PerspectiveRowDestructionSeamSqlTests : EFCoreTestBase {
 
     await coordinator.HoldPerspectiveRowDestructionAsync(
       [new PerspectiveRowRef(TABLE, overflow)], DateTimeOffset.UtcNow.AddHours(1), cancellationToken);
-    await coordinator.ReapPerspectiveRowCapsAsync(cancellationToken);
+    await coordinator.ReapPerspectiveRowCapsAsync(cancellationToken: cancellationToken);
     await Assert.That(await _survivesAsync(conn, overflow)).IsTrue()
       .Because("stamping expires_at could never hold the cap sweep — the hold table must, on every eviction path");
 
     await coordinator.ReleasePerspectiveRowHoldsAsync([new PerspectiveRowRef(TABLE, overflow)], cancellationToken);
-    await coordinator.ReapPerspectiveRowCapsAsync(cancellationToken);
+    await coordinator.ReapPerspectiveRowCapsAsync(cancellationToken: cancellationToken);
     await Assert.That(await _survivesAsync(conn, overflow)).IsFalse();
     await Assert.That(await _survivesAsync(conn, newest)).IsTrue();
   }
@@ -177,10 +177,9 @@ public class PerspectiveRowDestructionSeamSqlTests : EFCoreTestBase {
     var coordinator = _coordinator(ctx);
 
     var beforeAck = await coordinator.GetPerspectiveRowsAboutToReapAsync([CLR_TYPE], cancellationToken: cancellationToken);
-    await Assert.That(beforeAck.Where(t => t.Reason == "ttl")).Count().IsEqualTo(0)
-      .Because("unacknowledged enforcement destroys nothing on the expiry side, so the collect offers nothing there");
-    await Assert.That(beforeAck.Where(t => t.Reason == "cap").Select(t => t.RowId)).Contains(capOverflow)
-      .Because("the cap sweep is not acknowledgement-gated, and predicate parity must reflect that asymmetry");
+    await Assert.That(beforeAck).Count().IsEqualTo(0)
+      .Because("unacknowledged enforcement destroys NOTHING — since 113 the cap sweep carries the "
+             + "same gate as the expiry sweep, and the collect's parity reflects it");
 
     var backlog = await coordinator.CountPerspectiveRetentionBacklogAsync(CLR_TYPE, cancellationToken);
     await Assert.That(backlog).IsGreaterThanOrEqualTo(1L)
@@ -190,6 +189,8 @@ public class PerspectiveRowDestructionSeamSqlTests : EFCoreTestBase {
     var afterAck = await coordinator.GetPerspectiveRowsAboutToReapAsync([CLR_TYPE], cancellationToken: cancellationToken);
     await Assert.That(afterAck.Where(t => t.Reason == "ttl").Select(t => t.RowId)).Contains(expired)
       .Because("acknowledgement un-gates enforcement — the C# API this feature adds");
+    await Assert.That(afterAck.Where(t => t.Reason == "cap").Select(t => t.RowId)).Contains(capOverflow)
+      .Because("acknowledgement un-gates BOTH sides now");
   }
 
   [Test]

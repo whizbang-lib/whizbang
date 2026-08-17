@@ -218,19 +218,12 @@ public sealed partial class PerspectiveRebuilder(
       return;
     }
 
-    // Direct announcers across all followed groups.
-    var announcers = new HashSet<Type>();
-    foreach (var membership in followMemberships) {
-      foreach (var sibling in PerspectiveStreamGroupRegistry.RegisteredModels()) {
-        if (sibling == model) {
-          continue;
-        }
-        if (PerspectiveStreamGroupRegistry.Resolve(sibling)
-              .Any(m => m.Key == membership.Key && m.Announce)) {
-          announcers.Add(sibling);
-        }
-      }
-    }
+    // Every announcer whose evictions can REACH this follower — direct group siblings plus
+    // whatever a Bridge carries across. Reachability shares Compute's dial semantics, so the
+    // witness set and the live cascade can never disagree about who evicts whom.
+    var membershipMap = PerspectiveStreamGroupRegistry.RegisteredModels()
+      .ToDictionary(m => m, PerspectiveStreamGroupRegistry.Resolve);
+    var announcers = StreamGroupClosure.ReachableAnnouncers(model, membershipMap);
     if (announcers.Count == 0) {
       return;
     }

@@ -266,7 +266,7 @@ public sealed partial class MaintenanceWorker(
       Whizbang.Core.Messaging.PerspectiveRowReapResult? capResult = null;
       if (await coordinator.TryClaimRowCapSweepAsync(
             TimeSpan.FromMinutes(_options.RowCapSweepClaimWindowMinutes), ct).ConfigureAwait(false)) {
-        capResult = await coordinator.ReapPerspectiveRowCapsAsync(ct).ConfigureAwait(false);
+        capResult = await coordinator.ReapPerspectiveRowCapsAsync(_options.RowReapBatchSize, ct).ConfigureAwait(false);
       }
       if (ttlResult.RowsAffected > 0 || (capResult?.RowsAffected ?? 0) > 0) {
         LogRowSweepCompleted(_logger, ttlResult.RowsAffected, ttlResult.Status,
@@ -277,6 +277,17 @@ public sealed partial class MaintenanceWorker(
       // group closure and evict the same streams from sibling perspectives — same cycle, through
       // the same guards. Zero-cost when no perspective declared a group.
       releasedByGuard.AddRange(await _cascadeStreamGroupEvictionsAsync(coordinator, sp, ct).ConfigureAwait(false));
+
+      // Settled apply-path folding: streams idle past the window fold their shape once (the
+      // watermark makes once a mechanism). Non-destructive, fleet-claimed, bounded.
+      if (await coordinator.TryClaimSettledFoldSweepAsync(
+            TimeSpan.FromHours(_options.SettledFoldClaimWindowHours), ct).ConfigureAwait(false)) {
+        var folded = await coordinator.FoldSettledApplyPathsAsync(
+          TimeSpan.FromDays(_options.SettledFoldIdleDays), _options.SettledFoldBatchSize, ct).ConfigureAwait(false);
+        if (folded > 0) {
+          LogSettledFold(_logger, folded);
+        }
+      }
 
       // PostDestruction for the seam: the rows this cycle released, after the sweeps ran. Never
       // blocks destruction — a throwing observer is logged and ignored.
@@ -781,6 +792,10 @@ public sealed partial class MaintenanceWorker(
     Message = "Stream-group cascade failed; the journal retries next maintenance cycle")]
   private static partial void LogStreamGroupCascadeFailed(ILogger logger, Exception ex);
 
+  [LoggerMessage(EventId = 46, Level = LogLevel.Information,
+    Message = "Settled apply-path fold: {FoldedCount} idle stream(s) folded into the signature counts")]
+  private static partial void LogSettledFold(ILogger logger, int foldedCount);
+
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Stuck inbox row sentinel: message_id={MessageId} type={MessageType} stream={StreamId} attempts={Attempts} since={ClaimedSince:o} — row claimed past MaxInboxAttempts but never drained. Investigate; see operations/observability/stuck-row-sentinel.")]
   static partial void LogStuckInboxRow(ILogger logger, Guid messageId, string messageType, Guid? streamId, int attempts, DateTime claimedSince);
@@ -901,4 +916,13 @@ public sealed class MaintenanceWorkerOptions {
   /// Default 1000; leftovers are claimed next cycle.
   /// </summary>
   public int RowCascadeDrainLimit { get; set; } = 1000;
+
+  /// <summary>Idle days before a stream counts as settled and folds its apply path. Default 90.</summary>
+  public int SettledFoldIdleDays { get; set; } = 90;
+
+  /// <summary>Streams folded per settled-fold sweep. Default 1000.</summary>
+  public int SettledFoldBatchSize { get; set; } = 1000;
+
+  /// <summary>Minimum hours between settled folds service-wide (fleet watermark). Default 24.</summary>
+  public int SettledFoldClaimWindowHours { get; set; } = 24;
 }
