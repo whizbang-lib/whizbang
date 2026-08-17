@@ -55,6 +55,118 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     await Assert.That(captured[0][0].MessageId).IsEqualTo(msg.MessageId);
   }
 
+  // ===== audit generation through the wrapper (issue #500) =====
+  // The wrapper bypasses the inner strategy for outbox writes, and audit generation
+  // (AuditOutboxMessageBuilder via AddOutboxMessage) lived only on the inner path — so
+  // wrapping ANY strategy silently killed the audit trail. The wrapper must build the
+  // EventAudited message itself and ride it on the same batch.
+
+  [Test]
+  public async Task QueueOutboxMessageAsync_AuditedEvent_AppendsEventAuditedToSameBatchAsync() {
+    var captured = new List<OutboxMessage>();
+    var twoSeen = new TaskCompletionSource();
+
+    await using var batch = new SlidingWindowOutboxBatchStrategy(
+      flush: (msgs, ct) => {
+        lock (captured) {
+          captured.AddRange(msgs);
+          if (captured.Count >= 2) { twoSeen.TrySetResult(); }
+        }
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(200),
+        MaxSize = 100,
+      });
+
+    var inner = new RecordingInnerStrategy();
+    var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
+    options.EnableEventAudit();
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch, options);
+
+    var msg = _eventOutboxMessage(_idProvider.NewGuid());
+    await sut.QueueOutboxMessageAsync(msg);
+
+    await twoSeen.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    List<OutboxMessage> snapshot;
+    lock (captured) { snapshot = [.. captured]; }
+    await Assert.That(snapshot.Count).IsEqualTo(2)
+      .Because("an audited domain event must yield exactly two batched messages: the event itself and its EventAudited companion. The inner strategy is bypassed on this path, so the wrapper must generate the audit — otherwise auditing dies silently for every consumer with outbox batching enabled (issue #500).");
+    await Assert.That(snapshot.Any(m => m.MessageId == msg.MessageId)).IsTrue()
+      .Because("the domain event still rides the batch.");
+    var audit = snapshot.FirstOrDefault(m => m.MessageId != msg.MessageId);
+    await Assert.That(audit).IsNotNull();
+    await Assert.That(audit!.Destination).IsEqualTo(Whizbang.Core.SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION)
+      .Because("the companion must be the audit relay message bound for the audit topic.");
+    await Assert.That(audit.MessageType).Contains("EventAudited");
+    await Assert.That(inner.QueueOutboxCallCount).IsEqualTo(0)
+      .Because("audit generation must not reintroduce inner-strategy delegation — the per-stream batching win stays intact.");
+  }
+
+  [Test]
+  public async Task QueueOutboxMessageAsync_AuditDisabled_OnlyDomainMessageBatchedAsync() {
+    var captured = new List<OutboxMessage>();
+    var flushed = new TaskCompletionSource();
+
+    await using var batch = new SlidingWindowOutboxBatchStrategy(
+      flush: (msgs, ct) => {
+        lock (captured) { captured.AddRange(msgs); }
+        flushed.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(200),
+        MaxSize = 100,
+      });
+
+    var inner = new RecordingInnerStrategy();
+    // No SystemEventOptions at all — the pre-audit wiring shape. Nothing extra may be batched.
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+
+    await sut.QueueOutboxMessageAsync(_eventOutboxMessage(_idProvider.NewGuid()));
+    await flushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    List<OutboxMessage> snapshot;
+    lock (captured) { snapshot = [.. captured]; }
+    await Assert.That(snapshot.Count).IsEqualTo(1)
+      .Because("without EnableEventAudit the wrapper must batch only the domain event — audit generation is strictly opt-in.");
+  }
+
+  [Test]
+  public async Task QueueOutboxMessageAsync_NonEventMessage_NoAuditCompanionAsync() {
+    var captured = new List<OutboxMessage>();
+    var flushed = new TaskCompletionSource();
+
+    await using var batch = new SlidingWindowOutboxBatchStrategy(
+      flush: (msgs, ct) => {
+        lock (captured) { captured.AddRange(msgs); }
+        flushed.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(200),
+        MaxSize = 100,
+      });
+
+    var inner = new RecordingInnerStrategy();
+    var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
+    options.EnableEventAudit();
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch, options);
+
+    // IsEvent = false (commands, non-event messages) — never audited, mirroring AddOutboxMessage.
+    await sut.QueueOutboxMessageAsync(_outboxMessage(_idProvider.NewGuid()));
+    await flushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    List<OutboxMessage> snapshot;
+    lock (captured) { snapshot = [.. captured]; }
+    await Assert.That(snapshot.Count).IsEqualTo(1)
+      .Because("only events are audited; non-event messages must not grow an audit companion.");
+  }
+
   // ===== sync path: throws (forces callers to migrate to async) =====
 
   [Test]
@@ -154,6 +266,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         Hops = [],
       },
     };
+  }
+
+  private OutboxMessage _eventOutboxMessage(Guid streamId) {
+    var msg = _outboxMessage(streamId);
+    return msg with { IsEvent = true };
   }
 
   private InboxMessage _inboxMessage(Guid streamId) {
