@@ -29,6 +29,7 @@ namespace Whizbang.Core.Startup;
 /// </remarks>
 /// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>
 public sealed partial class TableRewriteStartupStep : IStartupStep {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly MaintenanceWorkerOptions _options;

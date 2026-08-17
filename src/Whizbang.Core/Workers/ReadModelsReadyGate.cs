@@ -28,6 +28,7 @@ public sealed class WhizbangNotReadyException : InvalidOperationException {
 /// full composite would make them wait on transport provisioning they do not use.
 /// </summary>
 /// <docs>operations/startup/startup-pipeline#seams</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ColdBootJourneyE2ETests.cs</tests>
 public interface IReadModelsReadyGate {
   /// <summary>True once the read models are consistent; pure synchronous query.</summary>
   bool IsReady { get; }

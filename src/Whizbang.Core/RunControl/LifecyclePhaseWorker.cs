@@ -13,11 +13,12 @@ namespace Whizbang.Core.RunControl;
 /// <see cref="LifecyclePhase.Connecting"/> longer before the migration.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
-internal sealed class LifecyclePhaseWorker : BackgroundService {
+public sealed class LifecyclePhaseWorker : BackgroundService {
   private readonly IWhizbangLifecycleState _lifecycle;
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IReadModelsReadyGate? _readModelsReadyGate;
 
+  /// <summary>Creates the driver over the lifecycle machine and the gates it projects.</summary>
   public LifecyclePhaseWorker(
       IWhizbangLifecycleState lifecycle, ISchemaReadyGate schemaReadyGate,
       IReadModelsReadyGate? readModelsReadyGate = null) {
@@ -28,6 +29,7 @@ internal sealed class LifecyclePhaseWorker : BackgroundService {
     _readModelsReadyGate = readModelsReadyGate;
   }
 
+  /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     await _lifecycle.AdvanceToAsync(LifecyclePhase.Connecting, stoppingToken).ConfigureAwait(false);
     await _lifecycle.AdvanceToAsync(LifecyclePhase.Migrating, stoppingToken).ConfigureAwait(false);

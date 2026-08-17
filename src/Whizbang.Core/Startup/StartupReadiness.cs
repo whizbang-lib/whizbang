@@ -78,6 +78,7 @@ public sealed class StartupReadySignal : IStartupReadySignal {
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupReadyCompositeTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Integration.Tests/ServiceBusConsumerWorkerIntegrationTests.cs</tests>
 public sealed partial class StartupReadyService : IHostedLifecycleService {
   private readonly IStartupPipelineState _pipelineState;
   private readonly StartupReadySignal _signal;

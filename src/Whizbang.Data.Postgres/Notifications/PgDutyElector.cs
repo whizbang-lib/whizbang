@@ -32,6 +32,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </remarks>
 /// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionE2ETests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>
 public sealed partial class PgDutyElector(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,

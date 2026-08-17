@@ -104,6 +104,51 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     }
   }
 
+  /// <summary>
+  /// Increment 4's missing e2e arm: the Ready composite is withheld until the REAL broker
+  /// subscription completes — in-proc signals prove the wiring, this proves it against the wire.
+  /// </summary>
+  /// <code-under-test>src/Whizbang.Core/Startup/StartupReadiness.cs</code-under-test>
+  [Test]
+  public async Task Ready_IsWithheldUntilTheRealBrokerSubscriptionCompletesAsync() {
+    var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
+    await transport.InitializeAsync();
+
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
+    services.AddScoped<IWorkCoordinatorStrategy>(_ => new CapturingWorkCoordinatorStrategy([]));
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new ServiceBusConsumerWorker(
+      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions, new TestConsumerLogger(), new OrderedStreamProcessor(),
+      new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("topic-00", "sub-00-a")] });
+
+    // The pipeline itself is drained (no blocking steps) — readiness now hangs ONLY on the broker.
+    var state = new Whizbang.Core.Startup.StartupPipelineState();
+    await new Whizbang.Core.Startup.StartupPipelineRunner([], [state]).RunAsync(CancellationToken.None);
+    var signal = new Whizbang.Core.Startup.StartupReadySignal();
+    var readyService = new Whizbang.Core.Startup.StartupReadyService(state, signal, [worker]);
+
+    var startedTask = readyService.StartedAsync(CancellationToken.None);
+    await Task.Delay(TimeSpan.FromSeconds(2));
+    await Assert.That(signal.IsReady).IsFalse()
+      .Because("the composite must wait on the real subscription, not on the passage of time — "
+             + "\"started\" is not \"subscribed\"");
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      await startedTask.WaitAsync(TimeSpan.FromSeconds(60));
+      await Assert.That(signal.IsReady).IsTrue()
+        .Because("the worker subscribed against the real broker, so the composite may now flip");
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
   [Test]
   public async Task Worker_MessageWithSecurityContext_EstablishesContextDuringHandlingAsync() {
     // Arrange

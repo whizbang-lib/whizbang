@@ -74,6 +74,7 @@ public delegate void VoidSyncReceptorInvoker(object message);
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ColdBootJourneyE2ETests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 #pragma warning disable CS9113, S107 // CS9113: primary ctor param unread (generated-code backcompat); S107: DI-injection ctor is idiomatic with many params
