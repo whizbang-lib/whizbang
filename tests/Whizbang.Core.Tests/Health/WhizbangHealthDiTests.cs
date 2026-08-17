@@ -30,7 +30,7 @@ public class WhizbangHealthDiTests {
     var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
 
     await Assert.That(result.Components.Count).IsEqualTo(1);
-    await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy); // Migrating is ready under the Lenient default
+    await Assert.That(result.Status).IsEqualTo(HealthStatus.Degraded); // Migrating: visible-but-serving under the Lenient default
   }
 
   [Test]

@@ -19,5 +19,10 @@ public sealed class SchemaReadyHealthCheck(ISchemaReadyGate schemaReadyGate) : I
       HealthCheckContext context, CancellationToken cancellationToken = default)
     => Task.FromResult(_schemaReadyGate.IsReady
       ? HealthCheckResult.Healthy("Schema is initialized.")
-      : HealthCheckResult.Unhealthy("Schema initialization has not completed."));
+      // Degraded, not Unhealthy: schema-initializing is an intentional startup condition, not a
+      // fault. Degraded keeps a bounded-timeout rollout alive (HTTP 200) and the pod in rotation —
+      // the availability gate and data-plane seams refuse what cannot be served yet — while the
+      // condition stays visible. Unhealthy made every migration longer than the deploy timeout a
+      // rollback.
+      : HealthCheckResult.Degraded("Schema initialization has not completed."));
 }
