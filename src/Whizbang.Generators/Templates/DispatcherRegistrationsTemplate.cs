@@ -101,30 +101,40 @@ namespace Whizbang.Core.Generated {
       // Uses TryAdd to allow user override if needed
       services.TryAddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
 
-      services.AddSingleton<IDispatcher>(sp => {
-        var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
-        var traceStore = sp.GetService<ITraceStore>();
-        var jsonOptions = sp.GetService<JsonSerializerOptions>();
-        var topicRegistry = sp.GetService<ITopicRegistry>();
-        var topicRoutingStrategy = sp.GetService<ITopicRoutingStrategy>();
-        var envelopeSerializer = sp.GetService<IEnvelopeSerializer>();
-        var envelopeRegistry = sp.GetService<IEnvelopeRegistry>();
-        var outboxRoutingStrategy = sp.GetService<IOutboxRoutingStrategy>();
-        // IReceptorRegistry is singleton - safe to resolve here
-        // IReceptorInvoker is scoped - resolved by workers per-message, not by Dispatcher
-        var receptorRegistry = sp.GetService<IReceptorRegistry>();
-
-        // Perspective sync tracking services (singleton tracker + scoped tracker resolved per-call)
-        // Note: IScopedEventTracker is scoped, but we pass null here and Dispatcher resolves it per-call
-        var syncEventTracker = sp.GetService<global::Whizbang.Core.Perspectives.Sync.ISyncEventTracker>();
-        var trackedEventTypeRegistry = sp.GetService<global::Whizbang.Core.Perspectives.Sync.ITrackedEventTypeRegistry>();
-
-        // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
-        // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, receptorRegistry, scopedEventTracker: null, syncEventTracker, trackedEventTypeRegistry);
-      });
+      services.AddSingleton<IDispatcher>(sp => _createGeneratedDispatcher(sp));
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
+      // Issue #491: receptor discovery is source-only and every Whizbang-compiled assembly
+      // registers a dispatcher, of which DI resolves the last — so THIS assembly's routing tables
+      // are also contributed as an IReceptorLookup. The winning dispatcher (whichever assembly's)
+      // falls back to these foreign lookups, so a receptor declared here still runs when another
+      // assembly's dispatcher wins resolution. TryAddEnumerable dedupes by implementation type,
+      // so repeated registration calls contribute this assembly's lookup exactly once.
+      services.TryAddEnumerable(ServiceDescriptor.Singleton<global::Whizbang.Core.IReceptorLookup, GeneratedDispatcher>(
+        sp => _createGeneratedDispatcher(sp)));
       return services;
+    }
+
+    private static GeneratedDispatcher _createGeneratedDispatcher(IServiceProvider sp) {
+      var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
+      var traceStore = sp.GetService<ITraceStore>();
+      var jsonOptions = sp.GetService<JsonSerializerOptions>();
+      var topicRegistry = sp.GetService<ITopicRegistry>();
+      var topicRoutingStrategy = sp.GetService<ITopicRoutingStrategy>();
+      var envelopeSerializer = sp.GetService<IEnvelopeSerializer>();
+      var envelopeRegistry = sp.GetService<IEnvelopeRegistry>();
+      var outboxRoutingStrategy = sp.GetService<IOutboxRoutingStrategy>();
+      // IReceptorRegistry is singleton - safe to resolve here
+      // IReceptorInvoker is scoped - resolved by workers per-message, not by Dispatcher
+      var receptorRegistry = sp.GetService<IReceptorRegistry>();
+
+      // Perspective sync tracking services (singleton tracker + scoped tracker resolved per-call)
+      // Note: IScopedEventTracker is scoped, but we pass null here and Dispatcher resolves it per-call
+      var syncEventTracker = sp.GetService<global::Whizbang.Core.Perspectives.Sync.ISyncEventTracker>();
+      var trackedEventTypeRegistry = sp.GetService<global::Whizbang.Core.Perspectives.Sync.ITrackedEventTypeRegistry>();
+
+      // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
+      // The Dispatcher will resolve them per-call from the active service provider
+      return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, receptorRegistry, scopedEventTracker: null, syncEventTracker, trackedEventTypeRegistry);
     }
 
     /// <summary>

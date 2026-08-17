@@ -55,6 +55,50 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     await Assert.That(dispatcher).Contains("OrderCreated");
   }
 
+  /// <summary>
+  /// Issue #491: every assembly's generated dispatcher must ALSO expose its routing tables as an
+  /// IReceptorLookup (implemented on the class, registered TryAddEnumerable) — that is what lets
+  /// the winning dispatcher route receptors declared in OTHER assemblies instead of silently
+  /// dropping them.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_EmitsTheReceptorLookupContributionAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderCreated : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default) {
+    return new OrderCreated { OrderId = message.OrderId };
+  }
+}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).Contains("global::Whizbang.Core.IReceptorLookup")
+      .Because("the generated dispatcher IS this assembly's lookup — same tables, composable");
+
+    var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
+    await Assert.That(registrations).Contains("TryAddEnumerable")
+      .Because("one lookup per assembly, deduped by generated type");
+    await Assert.That(registrations!).Contains("IReceptorLookup, GeneratedDispatcher");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithVoidReceptor_GeneratesDispatcherAsync() {
