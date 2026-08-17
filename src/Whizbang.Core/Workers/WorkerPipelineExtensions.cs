@@ -18,6 +18,8 @@ namespace Whizbang.Core.Workers;
 /// just the worker pipeline (e.g., to host workers in a separate process).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+/// <tests>tests/Whizbang.Core.Tests/Startup/StartupWiringAuditTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public static class WorkerPipelineExtensions {
   /// <summary>
   /// Registers the new work-pump worker pipeline (HeartbeatWorker, ClaimWorker, InboxHandlerWorker,
