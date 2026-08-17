@@ -936,6 +936,7 @@ public interface IWorkCoordinator {
   /// <docs>proposals/pre-destruction-seam</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(
+    int batchSize = 5000,
     CancellationToken cancellationToken = default) =>
     Task.FromResult(new PerspectiveRowReapResult(0, "unsupported"));
 
@@ -1059,6 +1060,33 @@ public interface IWorkCoordinator {
   Task<int> FoldStreamApplyPathsAsync(
     IReadOnlyCollection<Guid> streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Folds SETTLED streams — idle past the window, not yet folded — into the persisted apply-path
+  /// signatures. Non-destructive and bounded; the watermark makes it fold-exactly-once by
+  /// mechanism. Default: 0.
+  /// </summary>
+  /// <param name="idleWindow">How long a stream must be idle to count as settled.</param>
+  /// <param name="limit">Streams folded per invocation.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
+  Task<int> FoldSettledApplyPathsAsync(
+    TimeSpan idleWindow,
+    int limit = 1000,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Claims one settled-fold sweep for the calling instance — the same first-instance-wins
+  /// CAS-watermark discipline as <see cref="TryClaimRowCapSweepAsync"/>. Default true.
+  /// </summary>
+  /// <param name="claimWindow">Minimum interval between settled folds service-wide.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
+  Task<bool> TryClaimSettledFoldSweepAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult(true);
 
   /// <summary>
   /// The staged rebuild's presence reconcile: deletes the follower table's rows whose id is absent

@@ -2411,12 +2411,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <inheritdoc />
   public Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(
-      CancellationToken cancellationToken = default) =>
+      int batchSize = 5000, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
       var fn = BuildSchemaQualifiedName(schema, "reap_perspective_row_caps");
 #pragma warning disable S2077
-      cmd.CommandText = $"SELECT rows_affected, status FROM {fn}()";
+      cmd.CommandText = $"SELECT rows_affected, status FROM {fn}(@batch)";
 #pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("batch", batchSize));
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
         ? new PerspectiveRowReapResult(reader.GetInt32(0), reader.GetString(1))
@@ -2571,6 +2572,29 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return result is int deleted ? deleted : 0;
     }, cancellationToken);
   }
+
+  /// <inheritdoc />
+  public Task<int> FoldSettledApplyPathsAsync(
+      TimeSpan idleWindow, int limit = 1000, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var fn = BuildSchemaQualifiedName(schema, "fold_settled_apply_paths");
+#pragma warning disable S2077
+      cmd.CommandText = $"SELECT {fn}(@idle, @lim)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("idle", (long)idleWindow.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("lim", limit));
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is int folded ? folded : 0;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<bool> TryClaimSettledFoldSweepAsync(
+    TimeSpan claimWindow,
+    CancellationToken cancellationToken = default) =>
+    _tryClaimWatermarkAsync(
+      "settled_fold_last_run",
+      "Last claimed settled apply-path fold — first instance to CAS this watermark folds idle streams; siblings skip.",
+      claimWindow, cancellationToken);
 
   /// <inheritdoc />
   public Task<int> FoldStreamApplyPathsAsync(

@@ -155,6 +155,50 @@ public class EphemeralPointerPruneSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Prune_FoldsTheStreamShape_BeforeDiscardingPointersAsync() {
+    // The pointer prune is the LAST holder of an ephemeral stream's event sequence — once the old
+    // pointers go, the apply path is unreconstructible. Fold-before-discard: the prune folds the
+    // stream's full current shape into wh_apply_paths (watermarked) BEFORE the DELETE.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+
+    var streamId = Guid.NewGuid();
+    const string eventType = "Whizbang.Tests.PruneFold";
+    var e1 = Guid.NewGuid();
+    var e2 = Guid.NewGuid();
+    var e3 = Guid.NewGuid();
+    await _commitAsync(connection, e1, streamId, eventType, flags: 8);
+    await _commitAsync(connection, e2, streamId, eventType, flags: 8);
+    await _commitAsync(connection, e3, streamId, eventType, flags: 8);
+    foreach (var e in new[] { e1, e2, e3 }) {
+      await _reapBodyAsync(connection, e);
+      await _agePointerAsync(connection, e, 200);
+    }
+    await _enableDeepMaintenanceAsync(connection, true);
+
+    var (rows, status) = await _pruneAsync(connection);
+    await Assert.That(status).IsEqualTo("ok");
+    await Assert.That(rows).IsEqualTo(2L);
+
+    // The shape folded with EVERY pointer still present — three same-type events RLE to one
+    // "Type+" element — even though two of the three pointers are now gone.
+    await using (var shape = connection.CreateCommand()) {
+      shape.CommandText = "SELECT stream_count FROM wh_apply_paths WHERE path = ARRAY[@t || '+']::text[]";
+      shape.Parameters.AddWithValue("t", eventType);
+      await Assert.That((long?)await shape.ExecuteScalarAsync() is long n ? n : 0L).IsEqualTo(1L)
+        .Because("the fold ran BEFORE the discard, over the full pointer sequence — pruning must "
+               + "never silently erase a stream from the flow census");
+    }
+    await using (var wm = connection.CreateCommand()) {
+      wm.CommandText = "SELECT count(*) FROM wh_apply_fold_watermarks WHERE stream_id = @sid";
+      wm.Parameters.AddWithValue("sid", streamId);
+      await Assert.That((long)(await wm.ExecuteScalarAsync())!).IsEqualTo(1L)
+        .Because("the prune's fold is watermarked like every other fold site — a later settled "
+               + "sweep or re-close cannot double-count the stream");
+    }
+  }
+
+  [Test]
   public async Task Prune_DisabledByDefault_IsNoOpAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

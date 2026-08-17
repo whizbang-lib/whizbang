@@ -27,6 +27,11 @@ public class PerspectiveRowSweepTests {
   private sealed class RowSweepCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<PerspectiveRowDestructionTarget> Collectable { get; init; } = [];
     public bool CapClaimResult { get; init; } = true;
+    public bool SettledFoldClaimResult { get; init; } = true;
+    public int SettledFoldCalls { get; private set; }
+    public TimeSpan SettledFoldIdle { get; private set; }
+    public int SettledFoldLimit { get; private set; }
+    public int LastCapBatchSize { get; private set; }
     public IReadOnlyCollection<string>? CollectedFor { get; private set; }
     public List<(PerspectiveRowRef Row, DateTimeOffset Until)> Held { get; } = [];
     public List<PerspectiveRowRef> Released { get; } = [];
@@ -65,9 +70,20 @@ public class PerspectiveRowSweepTests {
       return Task.FromResult(new PerspectiveRowReapResult(0, "ok"));
     }
 
-    public Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(CancellationToken cancellationToken = default) {
+    public Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(int batchSize = 5000, CancellationToken cancellationToken = default) {
       CapReapCalls++;
+      LastCapBatchSize = batchSize;
       return Task.FromResult(new PerspectiveRowReapResult(0, "ok"));
+    }
+
+    public Task<bool> TryClaimSettledFoldSweepAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) =>
+      Task.FromResult(SettledFoldClaimResult);
+
+    public Task<int> FoldSettledApplyPathsAsync(TimeSpan idleWindow, int limit = 1000, CancellationToken cancellationToken = default) {
+      SettledFoldCalls++;
+      SettledFoldIdle = idleWindow;
+      SettledFoldLimit = limit;
+      return Task.FromResult(1);
     }
 
     public Task<bool> TryClaimRowCapSweepAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) =>
@@ -104,7 +120,8 @@ public class PerspectiveRowSweepTests {
       typeof(GuardedModel).FullName!, "wh_per_guarded", rowId, null, doc.RootElement.Clone(), reason);
   }
 
-  private static MaintenanceWorker _buildWorker(RowSweepCoordinator coordinator, RecordingGuard? guard) {
+  private static MaintenanceWorker _buildWorker(
+      RowSweepCoordinator coordinator, RecordingGuard? guard, MaintenanceWorkerOptions? options = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     if (guard is not null) {
@@ -116,7 +133,7 @@ public class PerspectiveRowSweepTests {
     return new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       gate,
-      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
+      Options.Create(options ?? new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
   }
 
@@ -215,5 +232,43 @@ public class PerspectiveRowSweepTests {
       .Because("one guard's failure must not stall the whole retention step; the held rows are safe");
     await Assert.That(guard.AfterReap).Count().IsEqualTo(0)
       .Because("nothing was released, so PostDestruction has nothing to report");
+  }
+
+  [Test]
+  public async Task SettledFold_RunsBehindTheFleetClaim_WithTheConfiguredWindowAsync() {
+    var coordinator = new RowSweepCoordinator();
+    var options = new MaintenanceWorkerOptions { IntervalMinutes = 1, SettledFoldIdleDays = 30, SettledFoldBatchSize = 250 };
+
+    await _buildWorker(coordinator, guard: null, options).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.SettledFoldCalls).IsEqualTo(1)
+      .Because("idle streams only fold when something CALLS the fold — the maintenance cycle is "
+             + "that caller, so a stream that never closes still gets its shape counted");
+    await Assert.That(coordinator.SettledFoldIdle).IsEqualTo(TimeSpan.FromDays(30));
+    await Assert.That(coordinator.SettledFoldLimit).IsEqualTo(250)
+      .Because("the fold is bounded per sweep — leftovers fold on later cycles, never one giant scan");
+  }
+
+  [Test]
+  public async Task SettledFold_ClaimLoser_SkipsAsync() {
+    var coordinator = new RowSweepCoordinator { SettledFoldClaimResult = false };
+
+    await _buildWorker(coordinator, guard: null).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.SettledFoldCalls).IsEqualTo(0)
+      .Because("the settled fold is fleet-claimed like the cap sweep — one instance per window, "
+             + "not every pod scanning the same idle streams");
+  }
+
+  [Test]
+  public async Task CapSweep_ReceivesTheBatchBound_NotAnUnboundedScanAsync() {
+    var coordinator = new RowSweepCoordinator();
+    var options = new MaintenanceWorkerOptions { IntervalMinutes = 1, RowReapBatchSize = 123 };
+
+    await _buildWorker(coordinator, guard: null, options).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.LastCapBatchSize).IsEqualTo(123)
+      .Because("the cap sweep used to rank and evict EVERYTHING over the cap in one statement; the "
+             + "worker now hands it the same batch bound the expiry sweep gets");
   }
 }
