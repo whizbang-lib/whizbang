@@ -8,9 +8,9 @@ using Whizbang.Hosting.AspNet;
 namespace Whizbang.Hosting.AspNet.Tests;
 
 /// <summary>
-/// Covers <see cref="SchemaReadyHealthCheck"/>: Unhealthy until the schema-ready gate signals, then
-/// Healthy — the readiness signal that keeps a non-blocking-init host out of traffic rotation during
-/// migration without failing liveness.
+/// Covers <see cref="SchemaReadyHealthCheck"/>: Degraded until the schema-ready gate signals, then
+/// Healthy — visible-but-serving (HTTP 200), so a bounded-timeout rollout completes during a long
+/// migration while the availability gate and data-plane seams refuse what cannot be served yet.
 /// </summary>
 public class SchemaReadyHealthCheckTests {
 
@@ -22,12 +22,14 @@ public class SchemaReadyHealthCheckTests {
   }
 
   [Test]
-  public async Task NotReady_ReportsUnhealthyAsync() {
+  public async Task NotReady_ReportsDegradedNotUnhealthyAsync() {
     var check = new SchemaReadyHealthCheck(new FakeGate(ready: false));
 
     var result = await check.CheckHealthAsync(new HealthCheckContext());
 
-    await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);
+    await Assert.That(result.Status).IsEqualTo(HealthStatus.Degraded)
+      .Because("an intentional startup condition must not roll a deployment back — Unhealthy made "
+             + "every migration longer than the deploy timeout a rollback");
   }
 
   [Test]

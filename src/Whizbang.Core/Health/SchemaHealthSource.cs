@@ -12,7 +12,8 @@ namespace Whizbang.Core.Health;
 /// A ready gate is <see cref="ComponentState.Operational"/>; otherwise it is
 /// <see cref="ComponentState.Connecting"/>/<see cref="ComponentState.Starting"/> while connecting and
 /// <see cref="ComponentState.Migrating"/> while the migration runs. Under the Lenient default,
-/// <c>Migrating</c> maps to <b>ready</b> — so a long non-blocking startup migration stays in rotation
+/// <c>Migrating</c> maps to <b>Degraded-but-serving</b> (HTTP 200) — so a long non-blocking startup
+/// migration stays in rotation, a bounded-timeout rollout completes, and the state stays visible
 /// instead of being rolled back, while a genuine failure escalates warning → failure.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>

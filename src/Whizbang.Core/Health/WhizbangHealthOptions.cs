@@ -3,7 +3,7 @@ namespace Whizbang.Core.Health;
 /// <summary>
 /// Configures how Whizbang maps managed-resource states to health, per component. The
 /// <see cref="Default"/> policy applies to every component unless overridden in <see cref="Components"/>.
-/// Default of defaults is <see cref="HealthPolicy.Lenient"/> — intentional states are healthy, so a
+/// Default of defaults is <see cref="HealthPolicy.Lenient"/> — intentional states are Degraded-but-serving, so a
 /// service stays ready and serving during a long startup migration.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>

@@ -27,10 +27,12 @@ public class WhizbangHealthAggregatorTests {
     => new(sources, options);
 
   [Test]
-  public async Task LenientDefault_Migrating_IsReadyAsync() {
+  public async Task LenientDefault_Migrating_IsDegradedButServingAsync() {
     var result = await _agg(new WhizbangHealthOptions(), new FakeSource("schema", ComponentState.Migrating))
       .EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
-    await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
+    await Assert.That(result.Status).IsEqualTo(HealthStatus.Degraded)
+      .Because("Degraded is HTTP 200 — the rollout completes and the pod serves — while the "
+             + "migration stays visible; plain Healthy hid it from every dashboard");
   }
 
   [Test]
@@ -77,10 +79,10 @@ public class WhizbangHealthAggregatorTests {
   public async Task StrictOverride_DoesNotAffectOtherComponentsAsync() {
     var options = new WhizbangHealthOptions();
     options.Components["schema"] = HealthPolicy.Strict;
-    // A different component, migrating, still Lenient -> Ready.
+    // A different component, migrating, still Lenient -> Degraded-but-serving.
     var result = await _agg(options, new FakeSource("event-store", ComponentState.Migrating))
       .EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
-    await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
+    await Assert.That(result.Status).IsEqualTo(HealthStatus.Degraded);
   }
 
   [Test]
@@ -98,10 +100,10 @@ public class WhizbangHealthAggregatorTests {
   [Test]
   [Arguments(ComponentState.Connecting)]
   [Arguments(ComponentState.Draining)]
-  public async Task LenientDefault_IntentionalState_IsReadyAsync(ComponentState state) {
+  public async Task LenientDefault_IntentionalState_IsDegradedButServingAsync(ComponentState state) {
     var result = await _agg(new WhizbangHealthOptions(), new FakeSource("transport", state))
       .EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
-    await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
+    await Assert.That(result.Status).IsEqualTo(HealthStatus.Degraded);
   }
 
   [Test]

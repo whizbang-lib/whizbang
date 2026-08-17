@@ -24,10 +24,11 @@ public class WhizbangManagedHealthCheckTests {
     => new(new WhizbangHealthAggregator(sources, new WhizbangHealthOptions()), probe);
 
   [Test]
-  public async Task Readiness_MigratingUnderLenient_IsHealthyAsync() {
+  public async Task Readiness_MigratingUnderLenient_IsDegradedButServingAsync() {
     var result = await _check(HealthProbe.Readiness, new FakeSource("schema", ComponentState.Migrating))
       .CheckHealthAsync(new HealthCheckContext());
-    await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
+    await Assert.That(result.Status).IsEqualTo(HealthStatus.Degraded)
+      .Because("HTTP 200 — bounded-timeout rollouts complete — while the migration stays visible");
   }
 
   [Test]
