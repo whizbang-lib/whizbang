@@ -53,9 +53,15 @@ public static class WorkCoordinatorStrategyFactory {
     ArgumentNullException.ThrowIfNull(inner);
     ArgumentNullException.ThrowIfNull(sp);
     var outboxBatch = sp.GetService<IOutboxBatchStrategy>();
-    return outboxBatch is null
-      ? inner
-      : new StreamAffinityWorkCoordinatorStrategy(inner, outboxBatch);
+    if (outboxBatch is null) {
+      return inner;
+    }
+    // Audit generation lives in the inner strategies' AddOutboxMessage path, which this
+    // wrapper's outbox route bypasses — so the wrapper must build audit messages itself
+    // (see QueueOutboxMessageAsync). Resolve the same options the inner strategies use.
+    var systemEventOptions = sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value;
+    var logger = sp.GetService<ILogger<StreamAffinityWorkCoordinatorStrategy>>();
+    return new StreamAffinityWorkCoordinatorStrategy(inner, outboxBatch, systemEventOptions, logger);
   }
 
   private static ScopedWorkCoordinatorStrategy _createScoped(IServiceProvider sp) {

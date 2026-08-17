@@ -23,10 +23,14 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamAffinityWorkCoordinatorStrategyTests.cs</tests>
 public sealed class StreamAffinityWorkCoordinatorStrategy(
     IWorkCoordinatorStrategy inner,
-    IOutboxBatchStrategy outboxBatch
+    IOutboxBatchStrategy outboxBatch,
+    Whizbang.Core.SystemEvents.SystemEventOptions? systemEventOptions = null,
+    Microsoft.Extensions.Logging.ILogger? logger = null
 ) : IWorkCoordinatorStrategy, IWorkFlusher {
   private readonly IWorkCoordinatorStrategy _inner = inner ?? throw new ArgumentNullException(nameof(inner));
   private readonly IOutboxBatchStrategy _outboxBatch = outboxBatch ?? throw new ArgumentNullException(nameof(outboxBatch));
+  private readonly Whizbang.Core.SystemEvents.SystemEventOptions? _systemEventOptions = systemEventOptions;
+  private readonly Microsoft.Extensions.Logging.ILogger? _logger = logger;
 
   /// <inheritdoc />
   /// <remarks>
@@ -42,9 +46,25 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
   }
 
   /// <inheritdoc />
+  /// <remarks>
+  /// Audit generation (issue #500): the inner strategies build <c>EventAudited</c> companions
+  /// inside <c>WorkCoordinatorQueues.AddOutboxMessage</c>, which this route bypasses — so the
+  /// wrapper builds the companion itself and rides it on the same batch. Appending directly
+  /// (rather than deferring like the inner path's <c>PendingAuditMessages</c>) is safe here
+  /// because the batcher flushes straight to <c>IWorkCoordinator.StoreOutboxMessagesAsync</c>;
+  /// no lifecycle stages run over batch items, so the post-lifecycle deferral the inner path
+  /// needs does not apply.
+  /// </remarks>
   public async Task QueueOutboxMessageAsync(OutboxMessage message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
     await _outboxBatch.AppendAsync(message, cancellationToken).ConfigureAwait(false);
+
+    if (message.IsEvent && _systemEventOptions?.EventAuditEnabled == true) {
+      var auditMessage = Whizbang.Core.SystemEvents.AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _systemEventOptions, _logger);
+      if (auditMessage != null) {
+        await _outboxBatch.AppendAsync(auditMessage, cancellationToken).ConfigureAwait(false);
+      }
+    }
   }
 
   /// <inheritdoc />
