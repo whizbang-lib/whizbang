@@ -134,4 +134,43 @@ public class StreamGroupClosureTests {
     await Assert.That(cascade.Select(c => c.Model)).DoesNotContain(typeof(B))
       .Because("a seed came from the journal — its row is already gone; the cascade is the receivers only");
   }
+
+  [Test]
+  public async Task ReachableAnnouncers_FollowsBridges_SoPresenceSeesTheWholeReachAsync() {
+    // d follows g2 only. Directly, its announcers are b and e. With b bridging g1's evictions INTO
+    // g2, an eviction at a also reaches d — so a's surviving rows are legitimate presence witnesses
+    // for d, and dropping d's rows that only a still holds would erase live data.
+    var bridged = StreamGroupClosure.ReachableAnnouncers(typeof(D), _scenario(bBridgesG2: true));
+
+    await Assert.That(bridged).Contains(typeof(A))
+      .Because("a → g1 → b —bridge→ g2 → d: reachability must walk the same dials the cascade walks");
+    await Assert.That(bridged).Contains(typeof(B));
+    await Assert.That(bridged).Contains(typeof(E));
+    await Assert.That(bridged).DoesNotContain(typeof(D))
+      .Because("a perspective is never its own announcer");
+  }
+
+  [Test]
+  public async Task ReachableAnnouncers_WithoutTheBridge_StopsAtTheGroupBoundaryAsync() {
+    var direct = StreamGroupClosure.ReachableAnnouncers(typeof(D), _scenario(bBridgesG2: false));
+
+    await Assert.That(direct).DoesNotContain(typeof(A))
+      .Because("without Bridge on b's g2 membership, a's evictions never reach d — counting a as a "
+             + "presence witness would keep rows the cascade can no longer clean");
+    await Assert.That(direct).Contains(typeof(B));
+    await Assert.That(direct).Contains(typeof(E));
+  }
+
+  [Test]
+  public async Task ReachableAnnouncers_ListenOnlyCandidate_IsNotAnAnnouncerAsync() {
+    var memberships = new Dictionary<Type, IReadOnlyList<StreamGroupMembership>> {
+      [typeof(A)] = [_m("g1", announce: false)],
+      [typeof(B)] = [_m("g1")],
+    };
+
+    var announcers = StreamGroupClosure.ReachableAnnouncers(typeof(B), memberships);
+
+    await Assert.That(announcers).DoesNotContain(typeof(A))
+      .Because("a listen-only membership never announces, so its rows are not presence evidence");
+  }
 }

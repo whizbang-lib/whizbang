@@ -71,4 +71,42 @@ public static class StreamGroupClosure {
 
     return [.. received.Select(r => (r.Item1, r.Item2))];
   }
+
+  // The probe row id is opaque to Compute — reachability only cares whether the follower entry
+  // appears in the cascade, never which row.
+  private static readonly Guid _probeRowId = Guid.Empty;
+
+  /// <summary>
+  /// The models whose evictions can REACH the given follower through the group graph — direct
+  /// announcers plus everything a Bridge carries across. This is the presence-reconcile witness
+  /// set: after a rebuild, a follower row survives if ANY reachable announcer still holds it,
+  /// because only evictions originating inside this set can ever have removed it.
+  /// </summary>
+  /// <param name="follower">The rebuilt follower model.</param>
+  /// <param name="memberships">Each participating model's memberships (typically from
+  /// <see cref="PerspectiveStreamGroupRegistry"/>).</param>
+  /// <returns>The models that can announce an eviction the follower would receive.</returns>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamGroupClosureTests.cs:ReachableAnnouncers_FollowsBridges_SoPresenceSeesTheWholeReachAsync</tests>
+  public static IReadOnlyList<Type> ReachableAnnouncers(
+      Type follower,
+      IReadOnlyDictionary<Type, IReadOnlyList<StreamGroupMembership>> memberships) {
+    ArgumentNullException.ThrowIfNull(follower);
+    ArgumentNullException.ThrowIfNull(memberships);
+
+    // Probe each candidate with a single-seed cascade: the candidate reaches the follower exactly
+    // when the follower lands in that cascade. Reusing Compute keeps reachability and the live
+    // cascade on the SAME dial semantics by construction — they can never drift apart.
+    var reachable = new List<Type>();
+    foreach (var candidate in memberships.Keys) {
+      if (candidate == follower) {
+        continue;
+      }
+      var cascade = Compute([(candidate, _probeRowId)], memberships);
+      if (cascade.Any(entry => entry.Model == follower)) {
+        reachable.Add(candidate);
+      }
+    }
+    return reachable;
+  }
 }
