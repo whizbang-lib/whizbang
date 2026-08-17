@@ -33,6 +33,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PoisonOutboxLoopSqlTests.cs</tests>
 public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
