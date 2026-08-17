@@ -156,4 +156,130 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     await ((IHostedService)listener).StopAsync(CancellationToken.None);
     await ((IHostedService)sharedConn).StopAsync(CancellationToken.None);
   }
+
+  [Test]
+  public async Task ClaimWorker_StoreIntoDrainedHotStream_EdgeDoorbellWakesOwnerAsync() {
+    // The end-to-end "quick responses" lock for migration 114's empty→non-empty edge:
+    // a REAL store_inbox_messages call into a HOT (pinned) but DRAINED stream must wake
+    // the owning worker's claim loop well before the polling interval would. This is the
+    // exact interactive-hop scenario: the consumer caught up, the stream idled, the next
+    // message arrives — under the cold-only gate nothing rang and the hop waited on the
+    // 5 s notify-healthy poll.
+    //
+    // Sequencing: the first store (which pins the stream to this instance and rings the
+    // brand-new-stream doorbell) and the drain-mark both happen BEFORE the listener
+    // starts, so that doorbell is dropped by design (pg_notify to a channel nobody
+    // LISTENs on) and the only signal that can produce the measured second claim is the
+    // second store's edge doorbell.
+    var coord = new TimestampingCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var listenerConfig = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var listenerInstanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(listenerConfig);
+    var ownerInstanceId = listenerInstanceProvider.InstanceId;
+
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+
+    await using (var reg = conn.CreateCommand()) {
+      reg.CommandText = @"
+        INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@id, 'test-svc', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)
+        ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = NOW()";
+      reg.Parameters.AddWithValue("id", ownerInstanceId);
+      await reg.ExecuteNonQueryAsync();
+    }
+
+    var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var firstMsgId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    await _storeInboxMessageAsync(conn, ownerInstanceId, firstMsgId, streamId);
+    await using (var drain = conn.CreateCommand()) {
+      drain.CommandText = "UPDATE wh_inbox SET processed_at = NOW() WHERE message_id = @mid";
+      drain.Parameters.AddWithValue("mid", firstMsgId);
+      _ = await drain.ExecuteNonQueryAsync();
+    }
+
+    var listenerOptions = new WhizbangNotificationOptions {
+      DirectConnectionString = ConnectionString,
+      SignalingMode = WorkSignalingMode.ListenNotify
+    };
+    var sharedConn = new PgSharedNotifyConnection(
+      Options.Create(listenerOptions),
+      listenerConfig,
+      listenerInstanceProvider,
+      NullLogger<PgSharedNotifyConnection>.Instance,
+      connectionStringFallback: null,
+      timeProvider: null);
+    var listener = new PgWorkNotificationListener(
+      sharedConn, sharedConn, listenerInstanceProvider,
+      NullLogger<PgWorkNotificationListener>.Instance);
+
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      listener,
+      gate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 5_000,
+        PollingMaxIntervalMilliseconds = 60_000
+      }),
+      NullLogger<ClaimWorker>.Instance);
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    await ((IHostedService)sharedConn).StartAsync(cts.Token);
+    var probeDeadline = DateTimeOffset.UtcNow.AddSeconds(15);
+    while (!sharedConn.IsAvailable && DateTimeOffset.UtcNow < probeDeadline) { await Task.Delay(50); }
+    await ((IHostedService)listener).StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
+
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+    while (!listener.IsHealthy && DateTimeOffset.UtcNow < deadline) { await Task.Delay(50); }
+    await Assert.That(listener.IsHealthy).IsTrue();
+    while (coord.ClaimCallTimes.Count == 0 && DateTimeOffset.UtcNow < deadline) { await Task.Delay(50); }
+    await Assert.That(coord.ClaimCallTimes.Count).IsGreaterThanOrEqualTo(1)
+      .Because("worker should have completed at least the first claim before the measured store");
+
+    // The measured hop: a real store into the drained hot stream. Its edge doorbell —
+    // NOT the 5 s poll — must produce the next claim.
+    var notifyAt = DateTimeOffset.UtcNow;
+    await _storeInboxMessageAsync(conn, ownerInstanceId, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(), streamId);
+
+    await coord.SecondCallSeen.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    var secondCallAt = coord.ClaimCallTimes[1];
+    var wakeLatency = secondCallAt - notifyAt;
+
+    await Assert.That(wakeLatency).IsLessThan(TimeSpan.FromSeconds(2))
+      .Because("store into a drained hot stream → edge NOTIFY (migration 114) → OnSignal → RequestImmediatePoll → claim; under the cold-only gate nothing rang for hot streams and this hop paid the 5 s notify-healthy poll.");
+
+    await worker.StopAsync(CancellationToken.None);
+    await ((IHostedService)listener).StopAsync(CancellationToken.None);
+    await ((IHostedService)sharedConn).StopAsync(CancellationToken.None);
+  }
+
+  private static async Task _storeInboxMessageAsync(NpgsqlConnection conn, Guid instanceId, Guid messageId, Guid streamId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT COUNT(*) FROM store_inbox_messages(@p_msgs::jsonb, @p_inst, NOW() + INTERVAL '5 minutes', NOW(), 10000)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_msgs", NpgsqlTypes.NpgsqlDbType.Jsonb) {
+      Value = $$"""
+        [{
+          "MessageId": "{{messageId}}",
+          "HandlerName": "TestHandler",
+          "EnvelopeType": "Whizbang.Core.Observability.MessageEnvelope`1[[Test.X, Test]], Whizbang.Core",
+          "MessageType": "Test.X, Test",
+          "Envelope": {"p":1},
+          "Metadata": {},
+          "Scope": null,
+          "StreamId": "{{streamId}}",
+          "IsEvent": true
+        }]
+        """
+    });
+    cmd.Parameters.AddWithValue("p_inst", instanceId);
+    _ = await cmd.ExecuteScalarAsync();
+  }
 }
