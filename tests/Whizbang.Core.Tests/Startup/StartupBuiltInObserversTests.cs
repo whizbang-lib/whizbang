@@ -50,8 +50,12 @@ public class StartupBuiltInObserversTests {
     var durations = new List<(double Value, string? Step, string? Outcome)>();
     var outcomes = new List<(long Value, string? Step, string? Outcome)>();
     using var listener = new MeterListener();
+    // Pin to THIS test's instrument instances, not the meter NAME: InstrumentPublished fires for
+    // every meter in the process, and other tests create meters with the same name — a name-based
+    // filter collects their concurrent measurements too (observed as an intermittent
+    // "expected 1 duration, found 2" under parallel test execution).
     listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Meter.Name == StartupPipelineMetrics.METER_NAME) {
+      if (ReferenceEquals(instrument, metrics.StepDuration) || ReferenceEquals(instrument, metrics.StepOutcomes)) {
         l.EnableMeasurementEvents(instrument);
       }
     };
