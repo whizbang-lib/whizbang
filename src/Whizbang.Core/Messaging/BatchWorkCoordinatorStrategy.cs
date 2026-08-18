@@ -389,10 +389,13 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       LogBatchSizeReached(_logger, _options.BatchSize);
     }
 
-    // Skip lifecycle — background thread, no ambient context
+    // Lifecycle stages run here too (issue #485): delivery must not depend on WHICH trigger
+    // flushed. The old "background thread, no ambient context" skip was stale —
+    // LifecycleInvocationHelper reconstructs each message from its envelope (trace context from
+    // hops, payload deserialized, fresh scope per message) and reads no ambient state.
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.BatchSize, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.BatchSize, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringBatchFlush(_logger, ex);
@@ -413,10 +416,12 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       LogDebounceTimerFired(_logger, _options.IntervalMilliseconds);
     }
 
-    // Skip lifecycle — background thread, no ambient context
+    // Lifecycle stages run here too (issue #485) — see the BatchSize trigger above; a quiet-period
+    // flush is the common case on low-traffic services, and skipping made stage delivery a
+    // function of traffic shape.
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.Debounce, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.Debounce, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringDebounceFlush(_logger, ex);
@@ -461,6 +466,9 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     }
 
     try {
+      // Disposal is the ONE deliberate lifecycle skip (issue #485 kept it): a shutdown drain's
+      // backgrounded stage halves would race process exit, so the drain stores durably and the
+      // stages are deliberately not run.
       await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.Manual, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
