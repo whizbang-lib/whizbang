@@ -27,8 +27,16 @@ public class OutboxSchemaTests {
     var columns = OutboxSchema.Table.Columns;
 
     // Assert - Verify column count
-    // 20 base columns + flags (Slice 2' — EventFlags bitmask replaces the W3-slice-9 is_composite + Slice-2 is_collective booleans).
-    await Assert.That(columns).Count().IsEqualTo(21);
+    // 20 base columns + flags (Slice 2' — EventFlags bitmask replaces the W3-slice-9 is_composite + Slice-2 is_collective booleans)
+    // + coalesce_group (tag-bound coalescing: the group a pending single belongs to; NULL = normal shippable row).
+    await Assert.That(columns).Count().IsEqualTo(22);
+
+    var coalesceGroup = columns.First(c => c.Name == "coalesce_group");
+    await Assert.That(coalesceGroup.DataType).IsEqualTo(WhizbangDataType.STRING);
+    await Assert.That(coalesceGroup.MaxLength).IsNull()
+      .Because("coalesce_group is TEXT — tag strings are host vocabulary, not bounded identifiers");
+    await Assert.That(coalesceGroup.Nullable).IsTrue()
+      .Because("NULL means a normal immediately-claimable row; only coalesce-pending rows carry a group");
 
     // Verify each column definition
     var messageId = columns[0];
@@ -138,6 +146,7 @@ public class OutboxSchemaTests {
     var attempts = OutboxSchema.Columns.ATTEMPTS;
     var createdAt = OutboxSchema.Columns.CREATED_AT;
     var publishedAt = OutboxSchema.Columns.PUBLISHED_AT;
+    var coalesceGroup = OutboxSchema.Columns.COALESCE_GROUP;
 
     // Assert - Verify constants match column names
     await Assert.That(messageId).IsEqualTo("message_id");
@@ -150,6 +159,7 @@ public class OutboxSchemaTests {
     await Assert.That(attempts).IsEqualTo("attempts");
     await Assert.That(createdAt).IsEqualTo("created_at");
     await Assert.That(publishedAt).IsEqualTo("published_at");
+    await Assert.That(coalesceGroup).IsEqualTo("coalesce_group");
   }
 
   [Test]

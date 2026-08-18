@@ -152,6 +152,16 @@ public sealed class DefaultMessageSecurityContextProvider(
         return null;
       }
 
+      // System events (EventAudited, CommandAudited, ...) are framework TELEMETRY, not user
+      // actions. One minted for a background/bulk flow has no interactive principal to extract
+      // BY DESIGN — its attribution (TenantId, UserId, Scope) rides in the payload as data.
+      // Hard-failing attribution here dead-letters the audit record the event carries, so the
+      // act of auditing would destroy the audit trail. Degrade to an unattributed (null)
+      // context instead; callers fall back to envelope.GetCurrentScope() or proceed anonymous.
+      if (typeof(SystemEvents.ISystemEvent).IsAssignableFrom(payloadType)) {
+        return null;
+      }
+
       // Check if envelope already carries scope from an upstream security check.
       // After outbox/transport serialization, the typed message may have no extractor,
       // but the envelope's hops contain the ScopeDelta from the original authentication.

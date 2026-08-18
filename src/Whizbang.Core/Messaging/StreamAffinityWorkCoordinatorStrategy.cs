@@ -25,12 +25,14 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
     IWorkCoordinatorStrategy inner,
     IOutboxBatchStrategy outboxBatch,
     Whizbang.Core.SystemEvents.SystemEventOptions? systemEventOptions = null,
-    Microsoft.Extensions.Logging.ILogger? logger = null
+    Microsoft.Extensions.Logging.ILogger? logger = null,
+    Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
 ) : IWorkCoordinatorStrategy, IWorkFlusher {
   private readonly IWorkCoordinatorStrategy _inner = inner ?? throw new ArgumentNullException(nameof(inner));
   private readonly IOutboxBatchStrategy _outboxBatch = outboxBatch ?? throw new ArgumentNullException(nameof(outboxBatch));
   private readonly Whizbang.Core.SystemEvents.SystemEventOptions? _systemEventOptions = systemEventOptions;
   private readonly Microsoft.Extensions.Logging.ILogger? _logger = logger;
+  private readonly Whizbang.Core.Tags.CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
 
   /// <inheritdoc />
   /// <remarks>
@@ -57,11 +59,16 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
   /// </remarks>
   public async Task QueueOutboxMessageAsync(OutboxMessage message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
+    // Tag-bound coalescing: this route bypasses WorkCoordinatorQueues.AddOutboxMessage, so the
+    // wrapper is a mint seam of its own — stamp group + max-delay floor before the append,
+    // mirroring the inner path (same rule for the audit companion below).
+    message = _coalesceResolver?.ApplyCoalescePolicy(message) ?? message;
     await _outboxBatch.AppendAsync(message, cancellationToken).ConfigureAwait(false);
 
     if (message.IsEvent && _systemEventOptions?.EventAuditEnabled == true) {
       var auditMessage = Whizbang.Core.SystemEvents.AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _systemEventOptions, _logger);
       if (auditMessage != null) {
+        auditMessage = _coalesceResolver?.ApplyCoalescePolicy(auditMessage) ?? auditMessage;
         await _outboxBatch.AppendAsync(auditMessage, cancellationToken).ConfigureAwait(false);
       }
     }

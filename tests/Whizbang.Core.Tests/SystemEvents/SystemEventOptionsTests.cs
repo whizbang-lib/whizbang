@@ -17,6 +17,31 @@ public class SystemEventOptionsTests {
   }
 
   [Test]
+  public async Task AuditShipSlideSeconds_DefaultsTo15Async() {
+    // The sliding-window audit shipper is ON by default: audit is durable, not real-time.
+    var options = new SystemEventOptions();
+
+    await Assert.That(options.AuditShipSlideSeconds).IsEqualTo(15);
+  }
+
+  [Test]
+  public async Task AuditShipMaxDelaySeconds_DefaultsTo120Async() {
+    // The safety floor: an audit single unshipped past this deadline ships individually —
+    // degraded, never lost.
+    var options = new SystemEventOptions();
+
+    await Assert.That(options.AuditShipMaxDelaySeconds).IsEqualTo(120);
+  }
+
+  [Test]
+  public async Task AuditShipMaxBatchCount_DefaultsTo500Async() {
+    // Cap on inner events per shipped composite (matches the redelivery pump's chunk default).
+    var options = new SystemEventOptions();
+
+    await Assert.That(options.AuditShipMaxBatchCount).IsEqualTo(500);
+  }
+
+  [Test]
   public async Task EnableAudit_SetsAuditEnabled_ReturnsThisForFluentApiAsync() {
     // Arrange
     var options = new SystemEventOptions();

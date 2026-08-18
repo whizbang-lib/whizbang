@@ -120,10 +120,36 @@ public static class ServiceCollectionExtensions {
         }
       }
 #pragma warning restore S3267
+
+      // Merge coalesce bindings too — last-wins per tag applies across AddWhizbang calls,
+      // consistent with the single-call Coalesce() semantics.
+      foreach (var binding in coreOptions.Tags.CoalesceBindings) {
+        existing.UseCoalesceBinding(binding.Key, binding.Value);
+      }
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);
     }
+
+    // Tag-policy startup validation: the reserved sys- tag prefix and coalesce-binding
+    // ambiguity are checked when the host starts (a hosted service so every assembly's
+    // [ModuleInitializer] has populated MessageTagRegistry by then); a violation aborts
+    // host.RunAsync() instead of shipping under a policy nobody declared.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, TagPolicyStartupValidator>());
+
+    // Coalesce-group resolver: the AOT tag lookup the outbox mint seams consult to stamp
+    // tag-bound coalesce groups + max-delay floors. Singleton — it caches per-type-name
+    // resolution over the (post-startup immutable) tag registry and bindings. Resolution-time
+    // is where the built-in audit binding (EnableAudit's knobs -> Coalesce(SystemTags.AUDIT))
+    // is applied: all registration ordering has settled by then, and add-if-absent semantics
+    // keep any host binding for the tag in charge.
+    services.TryAddSingleton(sp => {
+      var tagOptions = sp.GetRequiredService<TagOptions>();
+      SystemEvents.SystemEventCoalesceDefaults.Apply(
+        tagOptions,
+        sp.GetService<IOptions<SystemEvents.SystemEventOptions>>()?.Value);
+      return new CoalesceGroupResolver(tagOptions, sp.GetService<TimeProvider>());
+    });
 
     // Register TracingOptions with IOptions pattern
     _configureTracingOptions(services, coreOptions);

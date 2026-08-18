@@ -195,6 +195,18 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<LeaseRenewalWorker>();
     services.TryAddSingleton<InboxHandlerWorker>();
     services.TryAddSingleton<MaintenanceWorker>();
+    // Tag-bound coalescing shipper. Registered unconditionally like every worker — bindings
+    // finalize after AddWhizbang (e.g. EnableAudit registers the built-in audit binding later
+    // in composition), so the "no coalesce binding" decision lives in ExecuteAsync, which
+    // parks without ever touching the coordinator. Explicit factory: the resolver and
+    // TimeProvider are optional dependencies.
+    services.TryAddSingleton(sp => new CoalesceShipWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<ISchemaReadyGate>(),
+      sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
+      sp.GetService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
+      sp.GetService<TimeProvider>(),
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>()));
     // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
     // registration constructable (the F2-era lesson: extensions must be self-contained).
     services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
@@ -336,6 +348,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<LeaseRenewalWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxHandlerWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<MaintenanceWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<CoalesceShipWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<IntegrityCheckpointWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<IntegrityAuditWorker>());

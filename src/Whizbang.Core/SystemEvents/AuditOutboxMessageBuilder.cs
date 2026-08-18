@@ -98,6 +98,11 @@ public static partial class AuditOutboxMessageBuilder {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
+    // No floor stamping here: the sliding-ship safety floor (ScheduledFor = now + MaxDelay) and
+    // the sys-audit group ride the GENERIC coalesce mint path — EventAudited carries
+    // [SystemAuditTag], EnableAudit() registers the built-in Coalesce(SystemTags.AUDIT) binding,
+    // and CoalesceGroupResolver stamps at every mint seam. The builder builds; the resolver
+    // stamps. Slide = 0 registers no binding, keeping immediate per-event shipping.
     var auditEventType = typeof(EventAudited);
     return new OutboxMessage {
       MessageId = auditEnvelope.MessageId.Value,

@@ -3369,6 +3369,183 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<Whizbang.Core.Messaging.CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(
+    CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var tableName = BuildSchemaQualifiedName(schema, "wh_outbox");
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+      (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = (NpgsqlCommand)__scope.Connection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
+    // Served by idx_outbox_coalesce_pending (coalesce_group, created_at) — only pending
+    // singles ever live in that partial index.
+    cmd.CommandText = $@"
+      SELECT coalesce_group, COUNT(*)::bigint, MIN(created_at), MAX(created_at)
+      FROM {tableName}
+      WHERE coalesce_group IS NOT NULL AND processed_at IS NULL
+      GROUP BY coalesce_group";
+#pragma warning restore S2077
+
+    var results = new List<Whizbang.Core.Messaging.CoalesceGroupStats>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new Whizbang.Core.Messaging.CoalesceGroupStats {
+        Group = reader.GetString(0),
+        PendingCount = reader.GetInt64(1),
+        OldestCreatedAt = reader.GetFieldValue<DateTimeOffset>(2),
+        NewestCreatedAt = reader.GetFieldValue<DateTimeOffset>(3),
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<OutboxMessage>> FetchPendingCoalesceAsync(
+    string group,
+    int limit,
+    CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(group);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var tableName = BuildSchemaQualifiedName(schema, "wh_outbox");
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+      (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = (NpgsqlCommand)__scope.Connection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
+    // FOR UPDATE SKIP LOCKED: two shippers folding the same group at the same instant
+    // partition the rows instead of colliding (the residual fetch→complete race dedups at the
+    // consumer's inbox via identity-preserving composites).
+    cmd.CommandText = $@"
+      SELECT message_id, stream_id, destination, message_type, envelope_type,
+             event_data::text, metadata::text, is_event, scheduled_for
+      FROM {tableName}
+      WHERE coalesce_group = @p_group AND processed_at IS NULL
+      ORDER BY created_at
+      LIMIT @p_limit
+      FOR UPDATE SKIP LOCKED";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("p_group", group));
+    cmd.Parameters.Add(new NpgsqlParameter("p_limit", limit));
+
+    var envelopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
+      ?? throw new InvalidOperationException("No JsonTypeInfo for MessageEnvelope<JsonElement>.");
+    var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata))
+      ?? throw new InvalidOperationException("No JsonTypeInfo for EnvelopeMetadata.");
+
+    var results = new List<OutboxMessage>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      var messageId = reader.GetGuid(0);
+      var envelope = JsonSerializer.Deserialize(reader.GetString(5), envelopeTypeInfo) as IMessageEnvelope<JsonElement>
+        ?? throw new InvalidOperationException($"Failed to deserialize envelope for coalesce-pending message {messageId}.");
+      EnvelopeMetadata metadata;
+      try {
+        metadata = JsonSerializer.Deserialize(reader.GetString(6), metadataTypeInfo) as EnvelopeMetadata
+          ?? new EnvelopeMetadata { MessageId = new Whizbang.Core.ValueObjects.MessageId(messageId), Hops = [] };
+      } catch (JsonException) {
+        // Legacy/minimal metadata (e.g. '{}' without the required keys) — the fold only needs
+        // the envelope payload; synthesize the minimal metadata rather than stranding the row.
+        metadata = new EnvelopeMetadata { MessageId = new Whizbang.Core.ValueObjects.MessageId(messageId), Hops = [] };
+      }
+
+      results.Add(new OutboxMessage {
+        MessageId = messageId,
+        StreamId = await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(1),
+        Destination = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(2),
+        MessageType = reader.GetString(3),
+        EnvelopeType = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(4),
+        Envelope = envelope,
+        Metadata = metadata,
+        IsEvent = reader.GetBoolean(7),
+        ScheduledFor = await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false)
+          ? null
+          : reader.GetFieldValue<DateTimeOffset>(8),
+        CoalesceGroup = group,
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  public async Task CompleteCoalesceFoldAsync(
+    IReadOnlyList<Guid> foldedIds,
+    OutboxMessage[] compositeMessages,
+    int partitionCount,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(foldedIds);
+    ArgumentNullException.ThrowIfNull(compositeMessages);
+    if (foldedIds.Count == 0) {
+      return;
+    }
+
+    var json = _serializeNewOutboxMessages(compositeMessages);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "store_outbox_messages");
+    var tableName = BuildSchemaQualifiedName(schema, "wh_outbox");
+
+#pragma warning disable S2077 // Schema-qualified names built from validated schema constant
+    var storeSql = $"SELECT * FROM {functionName}({{0}}::jsonb, NULL::uuid, NULL::timestamptz, {{1}}, {{2}})";
+    var completeSql = $"UPDATE {tableName} SET processed_at = NOW() WHERE message_id = ANY({{0}}) AND processed_at IS NULL";
+#pragma warning restore S2077
+
+    var foldedIdArray = foldedIds is Guid[] arr ? arr : [.. foldedIds];
+
+    // ONE transaction: the composite row(s) appear and the folded singles complete together —
+    // a single is either still pending (floor intact) or folded (composite exists), never both,
+    // never neither. BeginTransactionAsync MUST run inside the connection's execution strategy:
+    // an unwrapped user transaction throws under the retrying strategy.
+    var strategy = _dbContext.Database.CreateExecutionStrategy();
+    await strategy.ExecuteAsync(async () => {
+      await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+      var now = DateTime.UtcNow;
+      await _dbContext.Database.ExecuteSqlRawAsync(storeSql, [json, now, partitionCount], cancellationToken);
+      await _dbContext.Database.ExecuteSqlRawAsync(
+        completeSql,
+        [new NpgsqlParameter { Value = foldedIdArray, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid }],
+        cancellationToken);
+      await transaction.CommitAsync(cancellationToken);
+    });
+  }
+
+  /// <inheritdoc />
+  public async Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(group);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var tableName = BuildSchemaQualifiedName(schema, "wh_outbox");
+
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
+    // The deadline degrade: clearing group + floor moves the row into the eligible-scan index,
+    // so the normal pump ships it individually. Explicit transition, never a query union.
+    var sql = $@"
+      UPDATE {tableName}
+      SET coalesce_group = NULL, scheduled_for = NULL
+      WHERE coalesce_group = {{0}} AND scheduled_for <= NOW() AND processed_at IS NULL";
+#pragma warning restore S2077
+
+    var released = 0;
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      released = await _dbContext.Database.ExecuteSqlRawAsync(sql, [group], cancellationToken);
+    }, logger: _logger, cancellationToken: cancellationToken);
+    return released;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<Whizbang.Core.Messaging.StuckRow>> FindStuckOutboxRowsAsync(
     int maxAttempts,
     int limit,

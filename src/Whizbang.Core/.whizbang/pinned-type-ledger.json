@@ -122,6 +122,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "4cdff50e-b094-4bb8-b6ef-acc86ce2469e",
+      "clrTypeName": "Whizbang.Core.Messaging.CoalescedEventsComposite",
+      "kind": "message",
+      "formerNames": []
+    },
+    {
       "pinnedId": "7d2a9c4e-5b83-4f1a-9e67-0c8d3b2a1f54",
       "clrTypeName": "Whizbang.Core.Messaging.IntegrityCheckpoint",
       "kind": "event",
@@ -179,6 +185,12 @@
       "pinnedId": "d4e8c1a6-9b03-4f27-8a5e-1c7b2d9e6f04",
       "clrTypeName": "Whizbang.Core.Perspectives.Compacted",
       "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "d7a2b7c4-8e15-4f4a-9c3e-5b1a2f9e6d01",
+      "clrTypeName": "Whizbang.Core.SystemEvents.AuditEventsComposite",
+      "kind": "message",
       "formerNames": []
     },
     {

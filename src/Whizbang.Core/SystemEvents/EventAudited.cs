@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Audit;
+using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.SystemEvents;
 
@@ -42,6 +43,11 @@ namespace Whizbang.Core.SystemEvents;
 /// </example>
 /// <docs>fundamentals/events/system-events#audit</docs>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
+// The framework audit tag: membership in the sys-audit coalesce group. EnableAudit() binds the
+// built-in coalesce policy to this tag, so audit singles ride the generic tag-bound coalescing
+// machinery — zero audit-specific shipping code. Tag set explicitly at the usage site because
+// the MessageTagDiscoveryGenerator reads only what is syntactically present here.
+[SystemAuditTag(Tag = SystemTags.AUDIT)]
 [PinnedId("a917ce3a-52ce-4c20-92de-99ab649c2ebe")]
 public sealed record EventAudited : ISystemEvent {
   /// <summary>

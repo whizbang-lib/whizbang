@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
+using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Messaging;
 
@@ -13,8 +14,9 @@ namespace Whizbang.Core.Messaging;
 /// helpers. This is a composition helper -- each strategy owns an instance and delegates
 /// queue operations to it while keeping its own FlushAsync, logging, and lifecycle logic.
 /// </summary>
-internal sealed class WorkCoordinatorQueues(ILogger? logger = null) {
+internal sealed class WorkCoordinatorQueues(ILogger? logger = null, CoalesceGroupResolver? coalesceResolver = null) {
   private readonly ILogger _logger = logger ?? NullLogger.Instance;
+  private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
   internal readonly List<OutboxMessage> OutboxMessages = [];
   internal readonly List<OutboxMessage> PendingAuditMessages = [];
   internal readonly List<InboxMessage> InboxMessages = [];
@@ -28,6 +30,10 @@ internal sealed class WorkCoordinatorQueues(ILogger? logger = null) {
   /// is an event, a corresponding audit message is generated and queued separately.
   /// </summary>
   internal void AddOutboxMessage(OutboxMessage message, SystemEventOptions? systemEventOptions) {
+    // Tag-bound coalescing: a message whose type carries an enabled coalesce-bound tag is
+    // stamped with its group + max-delay floor HERE, so the single is durable in the same
+    // transaction as its cause but invisible to the claim pump until folded or released.
+    message = Stamp(message);
     OutboxMessages.Add(message);
 
     // Generate audit outbox message for event messages when audit is enabled.
@@ -36,10 +42,20 @@ internal sealed class WorkCoordinatorQueues(ILogger? logger = null) {
     if (message.IsEvent && systemEventOptions?.EventAuditEnabled == true) {
       var auditMessage = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, systemEventOptions, _logger);
       if (auditMessage != null) {
-        PendingAuditMessages.Add(auditMessage);
+        // The audit companion rides the SAME generic path — with the built-in sys-audit
+        // binding registered, this is where it gains its group + floor.
+        PendingAuditMessages.Add(Stamp(auditMessage));
       }
     }
   }
+
+  /// <summary>
+  /// Runs a message through the coalesce resolver (no-op when none is wired). Exposed so
+  /// strategies can stamp messages that enter queues without passing AddOutboxMessage
+  /// (the deferred-channel drain).
+  /// </summary>
+  internal OutboxMessage Stamp(OutboxMessage message) =>
+    _coalesceResolver?.ApplyCoalescePolicy(message) ?? message;
 
   /// <summary>
   /// Adds an inbox message to the queue.

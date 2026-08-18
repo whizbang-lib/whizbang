@@ -134,6 +134,11 @@ public static class OutboxSchema {
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(0)
+      ),
+      new ColumnDefinition(
+        Name: Columns.COALESCE_GROUP,
+        DataType: WhizbangDataType.STRING,  // TEXT — no MaxLength
+        Nullable: true
       )
     ),
     Indexes: ImmutableArray.Create(
@@ -203,6 +208,15 @@ public static class OutboxSchema {
     public const string CREATED_AT = "created_at";
     public const string PUBLISHED_AT = "published_at";
     public const string PROCESSED_AT = "processed_at";
+    /// <summary>
+    /// Tag-bound coalescing (see <c>fundamentals/messages/message-tags#coalescing</c>): the
+    /// coalesce group a pending single belongs to, stamped at mint when the message type
+    /// carries a coalesce-bound tag. NULL = a normal immediately-claimable row. Rows with a
+    /// group are excluded from the claim path's eligible scan by index predicate until a
+    /// coalesce worker folds them into a composite or releases them at their deadline.
+    /// </summary>
+    public const string COALESCE_GROUP = "coalesce_group";
+
     /// <summary>
     /// Event-categorization bitmask (Slice 2'). Stores
     /// <c>Whizbang.Core.Messaging.EventFlags</c> as an INTEGER, mirroring
