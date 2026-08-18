@@ -343,6 +343,9 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("      }");
     sb.AppendLine("    }");
     sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  /// <inheritdoc />");
+    sb.AppendLine("  public IEnumerable<MessageTagRegistration> GetAllTags() => _tags;");
     sb.AppendLine("}");
     sb.AppendLine();
     sb.AppendLine(XML_DOC_SUMMARY_OPEN);

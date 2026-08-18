@@ -50,6 +50,20 @@ public static class MessageTagRegistry {
   }
 
   /// <summary>
+  /// Enumerates every tag registration across all registered registries. The surface startup
+  /// validation of tag policies rides (see <c>TagPolicyValidator</c>).
+  /// </summary>
+  /// <returns>All tag registrations from every registered registry.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagRegistryGetAllTagsTests.cs:GetAllTags_StaticAggregate_IncludesGeneratedRegistrationsFromThisAssemblyAsync</tests>
+  public static IEnumerable<MessageTagRegistration> GetAllTags() {
+    foreach (var registry in AssemblyRegistry<IMessageTagRegistry>.GetOrderedContributions()) {
+      foreach (var tag in registry.GetAllTags()) {
+        yield return tag;
+      }
+    }
+  }
+
+  /// <summary>
   /// Count of registered tag registries (for diagnostics/testing).
   /// </summary>
   public static int Count => AssemblyRegistry<IMessageTagRegistry>.Count;

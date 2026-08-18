@@ -25,4 +25,17 @@ public interface IMessageTagRegistry {
   /// <param name="messageType">The message type to look up.</param>
   /// <returns>Tag registrations for the message type, or empty if none found.</returns>
   IEnumerable<MessageTagRegistration> GetTagsFor(Type messageType);
+
+  /// <summary>
+  /// Enumerates every tag registration this registry holds. Startup validation of tag
+  /// policies (reserved <c>sys-</c> prefix, coalesce-binding ambiguity) rides this surface —
+  /// the per-type lookup cannot answer "which tags exist at all".
+  /// </summary>
+  /// <remarks>
+  /// Default implementation returns empty so hand-written registries (test fakes, older
+  /// generated code) keep compiling; generated registries override it with their full table.
+  /// </remarks>
+  /// <returns>All registrations, or empty when the registry predates enumeration.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagRegistryGetAllTagsTests.cs:GetAllTags_DefaultInterfaceMember_ReturnsEmptyAsync</tests>
+  IEnumerable<MessageTagRegistration> GetAllTags() => [];
 }

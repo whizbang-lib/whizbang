@@ -120,10 +120,22 @@ public static class ServiceCollectionExtensions {
         }
       }
 #pragma warning restore S3267
+
+      // Merge coalesce bindings too — last-wins per tag applies across AddWhizbang calls,
+      // consistent with the single-call Coalesce() semantics.
+      foreach (var binding in coreOptions.Tags.CoalesceBindings) {
+        existing.UseCoalesceBinding(binding.Key, binding.Value);
+      }
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);
     }
+
+    // Tag-policy startup validation: the reserved sys- tag prefix and coalesce-binding
+    // ambiguity are checked when the host starts (a hosted service so every assembly's
+    // [ModuleInitializer] has populated MessageTagRegistry by then); a violation aborts
+    // host.RunAsync() instead of shipping under a policy nobody declared.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, TagPolicyStartupValidator>());
 
     // Register TracingOptions with IOptions pattern
     _configureTracingOptions(services, coreOptions);

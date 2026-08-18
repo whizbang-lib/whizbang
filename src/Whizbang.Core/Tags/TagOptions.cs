@@ -32,11 +32,17 @@ namespace Whizbang.Core.Tags;
 /// <tests>Whizbang.Core.Tests/Tags/TagOptionsTests.cs</tests>
 public sealed class TagOptions {
   private readonly List<TagHookRegistration> _hookRegistrations = [];
+  private readonly Dictionary<string, CoalescePolicyOptions> _coalesceBindings = new(StringComparer.Ordinal);
 
   /// <summary>
   /// Gets the registered hook configurations.
   /// </summary>
   public IReadOnlyList<TagHookRegistration> HookRegistrations => _hookRegistrations;
+
+  /// <summary>
+  /// Gets the coalesce policies bound per tag. See <see cref="Coalesce(string, Action{CoalescePolicyOptions})"/>.
+  /// </summary>
+  public IReadOnlyDictionary<string, CoalescePolicyOptions> CoalesceBindings => _coalesceBindings;
 
   /// <summary>
   /// Size in bytes at which the tag processor logs a warning for a built payload.
@@ -180,6 +186,78 @@ public sealed class TagOptions {
   /// <returns>This options instance for chaining.</returns>
   internal TagOptions UseHookRegistration(TagHookRegistration registration) {
     _hookRegistrations.Add(registration);
+    return this;
+  }
+
+  /// <summary>
+  /// Binds a coalesce policy to <paramref name="tag"/>: outbox singles whose message type
+  /// carries the tag are folded by the sliding-window batcher into composite envelopes instead
+  /// of shipping individually. Tags classify; policies bind — no attribute or field on the
+  /// message types themselves.
+  /// </summary>
+  /// <remarks>
+  /// Registration is <b>last-wins per tag</b>: a later binding for the same tag replaces the
+  /// earlier one entirely. That is the shipped-default-override mechanism — built-in bindings
+  /// (e.g. the audit binding registered by <c>EnableAudit()</c>) are registered first, and a
+  /// host binding for the same tag replaces them.
+  /// </remarks>
+  /// <param name="tag">The tag string the policy binds to (e.g. <c>SystemTags.Audit</c>).</param>
+  /// <param name="configure">Configures the policy knobs; unset knobs keep the defaults (15 / 120 / 500 / Independent).</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <example>
+  /// <code>
+  /// services.AddWhizbang(options => {
+  ///   options.Tags.Coalesce("notification-digest", c => {
+  ///     c.SlideSeconds = 15;
+  ///     c.MaxDelaySeconds = 120;
+  ///     c.MaxBatchCount = 500;
+  ///   });
+  /// });
+  /// </code>
+  /// </example>
+  /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsCoalesceTests.cs:Coalesce_RegistersBindingForTagAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsCoalesceTests.cs:Coalesce_LastWinsPerTag_ReplacesNotMergesAsync</tests>
+  public TagOptions Coalesce(string tag, Action<CoalescePolicyOptions> configure) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+    ArgumentNullException.ThrowIfNull(configure);
+
+    var policy = new CoalescePolicyOptions();
+    configure(policy);
+    _coalesceBindings[tag] = policy;  // last-wins per tag
+    return this;
+  }
+
+  /// <summary>
+  /// Registers a built-in coalesce binding with add-if-absent semantics: it behaves as
+  /// "registered FIRST" regardless of the order the host composed its registrations in, so a
+  /// host binding for the same tag always survives. Framework use only (e.g. the audit
+  /// binding derived from <c>SystemEventOptions</c>).
+  /// </summary>
+  /// <param name="tag">The tag string the built-in policy binds to.</param>
+  /// <param name="policy">The built-in policy instance.</param>
+  /// <returns>This options instance for chaining.</returns>
+  internal TagOptions UseCoalesceBindingDefault(string tag, CoalescePolicyOptions policy) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+    ArgumentNullException.ThrowIfNull(policy);
+
+    _coalesceBindings.TryAdd(tag, policy);
+    return this;
+  }
+
+  /// <summary>
+  /// Overwrites (or adds) a coalesce binding from an existing policy instance.
+  /// Used internally for merging bindings when AddWhizbang() is called multiple times —
+  /// last-wins per tag applies across calls too.
+  /// </summary>
+  /// <param name="tag">The tag string the policy binds to.</param>
+  /// <param name="policy">The policy instance to bind.</param>
+  /// <returns>This options instance for chaining.</returns>
+  internal TagOptions UseCoalesceBinding(string tag, CoalescePolicyOptions policy) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+    ArgumentNullException.ThrowIfNull(policy);
+
+    _coalesceBindings[tag] = policy;
     return this;
   }
 }
