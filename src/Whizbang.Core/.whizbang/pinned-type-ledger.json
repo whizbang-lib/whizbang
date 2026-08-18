@@ -122,6 +122,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "4cdff50e-b094-4bb8-b6ef-acc86ce2469e",
+      "clrTypeName": "Whizbang.Core.Messaging.CoalescedEventsComposite",
+      "kind": "message",
+      "formerNames": []
+    },
+    {
       "pinnedId": "7d2a9c4e-5b83-4f1a-9e67-0c8d3b2a1f54",
       "clrTypeName": "Whizbang.Core.Messaging.IntegrityCheckpoint",
       "kind": "event",

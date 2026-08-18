@@ -53,4 +53,14 @@ public sealed class CoalescePolicyOptions {
   /// groups that genuinely want all-or-nothing.
   /// </summary>
   public FanoutAtomicity Atomicity { get; set; } = FanoutAtomicity.Independent;
+
+  /// <summary>
+  /// Builds the composite the coalesce shipper folds a batch of pending singles into.
+  /// Null (default) uses the generic raw-carry <see cref="CoalescedEventsComposite"/>; the
+  /// built-in audit binding supplies <c>AuditEventsComposite</c> through this seam. Factories
+  /// are plain code — this is what keeps composite construction AOT-safe (no reflection over
+  /// composite types at fold time).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_BindingFactory_BuildsTheBindingsCompositeAsync</tests>
+  public Func<CoalesceFoldBatch, CompositeEventBase>? CompositeFactory { get; set; }
 }

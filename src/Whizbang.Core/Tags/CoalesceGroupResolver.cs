@@ -62,6 +62,12 @@ public sealed class CoalesceGroupResolver {
   /// callers use to skip per-message work entirely when the feature is unused.
   /// </summary>
   public bool HasEnabledBindings => _tagOptions.CoalesceBindings.Any(b => b.Value.SlideSeconds > 0);
+  /// <summary>
+  /// The enabled coalesce groups (tags with a SlideSeconds &gt; 0 binding), for the shipper's
+  /// recovery pass and tick-interval derivation.
+  /// </summary>
+  public IReadOnlyList<string> EnabledGroups =>
+    [.. _tagOptions.CoalesceBindings.Where(b => b.Value.SlideSeconds > 0).Select(b => b.Key)];
 
   /// <summary>
   /// Returns the enabled coalesce policy bound to <paramref name="group"/>, or null when the

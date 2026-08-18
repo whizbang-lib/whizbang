@@ -1897,6 +1897,76 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<StuckRow>>([]);
 
+  /// <summary>
+  /// Per-group statistics over coalesce-pending outbox rows
+  /// (<c>coalesce_group IS NOT NULL AND processed_at IS NULL</c>) — the coalesce shipper's
+  /// per-tick view for its quiet-window / max-delay firing decisions. Served by the
+  /// worker index (<c>idx_outbox_coalesce_pending</c>); only pending singles ever live in it.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Stats per pending group; empty when nothing is pending (or for non-SQL fakes).</returns>
+  /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoalesceFoldCoordinatorSqlTests.cs:GetPendingCoalesceGroupStats_ReturnsPerGroupCountsAndAgesAsync</tests>
+  Task<IReadOnlyList<CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(CancellationToken cancellationToken = default)
+    // Default no-op for test fakes and stores without coalescing support.
+    => Task.FromResult<IReadOnlyList<CoalesceGroupStats>>([]);
+
+  /// <summary>
+  /// Fetches up to <paramref name="limit"/> pending singles for <paramref name="group"/>,
+  /// oldest first, as full <see cref="OutboxMessage"/> rows. SQL implementations use
+  /// <c>FOR UPDATE SKIP LOCKED</c> so two shippers folding the same group at the same instant
+  /// partition the rows instead of colliding. The residual fetch→complete race window is
+  /// tolerated by design: composites are identity-preserving, so a double-folded single
+  /// dedups at the consumer's inbox rather than double-delivering.
+  /// </summary>
+  /// <param name="group">The coalesce group (tag string).</param>
+  /// <param name="limit">Maximum rows to fetch (the binding's MaxBatchCount).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The fetched pending singles; empty when the group has drained.</returns>
+  /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoalesceFoldCoordinatorSqlTests.cs:FetchPendingCoalesce_ReturnsOldestFirstUpToLimitAsync</tests>
+  Task<IReadOnlyList<OutboxMessage>> FetchPendingCoalesceAsync(string group, int limit, CancellationToken cancellationToken = default)
+    // Default no-op for test fakes and stores without coalescing support.
+    => Task.FromResult<IReadOnlyList<OutboxMessage>>([]);
+
+  /// <summary>
+  /// Completes one fold IN ONE TRANSACTION: inserts <paramref name="compositeMessages"/> as
+  /// immediately-shippable outbox rows (via the store seam, so the doorbell and partition
+  /// stamping behave exactly as any store) and marks the <paramref name="foldedIds"/> singles
+  /// processed. Crash-safety falls out of the transaction: a single is either still pending
+  /// (floor intact) or folded (composite exists) — never both, never neither.
+  /// </summary>
+  /// <param name="foldedIds">Message ids of the singles this fold bundles.</param>
+  /// <param name="compositeMessages">The built composite outbox message(s).</param>
+  /// <param name="partitionCount">Partition count for the store seam.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoalesceFoldCoordinatorSqlTests.cs:CompleteCoalesceFold_InsertsCompositeAndCompletesSinglesAtomicallyAsync</tests>
+  Task CompleteCoalesceFoldAsync(
+    IReadOnlyList<Guid> foldedIds,
+    OutboxMessage[] compositeMessages,
+    int partitionCount,
+    CancellationToken cancellationToken = default)
+    // Default no-op for test fakes and stores without coalescing support.
+    => Task.CompletedTask;
+
+  /// <summary>
+  /// The deadline-degrade release: clears <c>coalesce_group</c> and <c>scheduled_for</c> on
+  /// <paramref name="group"/>'s rows whose floor has matured
+  /// (<c>scheduled_for &lt;= NOW() AND processed_at IS NULL</c>), moving them into the
+  /// eligible-scan index so the normal pump ships them individually. Run once on shipper
+  /// startup (recovery) and each tick as a backstop — degraded is slower, never lost, and the
+  /// transition is explicit and counted, never a silent query union.
+  /// </summary>
+  /// <param name="group">The coalesce group (tag string).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of rows released.</returns>
+  /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoalesceFoldCoordinatorSqlTests.cs:ReleaseMaturedCoalesce_ReleasesOnlyMaturedRows_AndClaimShipsThemAsync</tests>
+  Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default)
+    // Default no-op for test fakes and stores without coalescing support.
+    => Task.FromResult(0);
+
   /// <summary>Mirror of <see cref="FindStuckOutboxRowsAsync"/> for <c>wh_inbox</c>.</summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
   Task<IReadOnlyList<StuckRow>> FindStuckInboxRowsAsync(
@@ -2328,6 +2398,28 @@ public record OutboxMessage {
   /// <tests>tests/Whizbang.Core.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_BoundTag_StampsGroupAndMaxDelayFloorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CoalesceMintStampingTests.cs:AddOutboxMessage_BoundTag_StampsGroupAndFloorAsync</tests>
   public string? CoalesceGroup { get; init; }
+}
+/// <summary>
+/// Per-group view over coalesce-pending outbox rows, returned by
+/// <see cref="IWorkCoordinator.GetPendingCoalesceGroupStatsAsync"/>. The coalesce shipper
+/// fires a fold when the group has gone quiet (<see cref="NewestCreatedAt"/> older than the
+/// binding's SlideSeconds) or overdue (<see cref="OldestCreatedAt"/> older than
+/// MaxDelaySeconds).
+/// </summary>
+/// <docs>fundamentals/messages/message-tags#coalescing</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_GroupQuiet_FoldsAsync</tests>
+public sealed record CoalesceGroupStats {
+  /// <summary>The coalesce group (tag string).</summary>
+  public required string Group { get; init; }
+
+  /// <summary>Pending (unprocessed, still-grouped) singles in the group.</summary>
+  public required long PendingCount { get; init; }
+
+  /// <summary>Creation instant of the group's oldest pending single.</summary>
+  public required DateTimeOffset OldestCreatedAt { get; init; }
+
+  /// <summary>Creation instant of the group's newest pending single.</summary>
+  public required DateTimeOffset NewestCreatedAt { get; init; }
 }
 
 

@@ -401,6 +401,48 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
+  public async Task TryExpand_CoalescedEventsComposite_DeliversEachInnerAsync() {
+    // The GENERIC coalesce carrier (the default a coalesce binding ships with) must expand
+    // exactly like the audit-specific one: raw carry, identity preservation, one first-class
+    // child per folded single.
+    var streamId = Guid.NewGuid();
+    var wireType = "Contracts.RecordCaptured, Contracts";
+    var idA = Guid.NewGuid();
+    var idB = Guid.NewGuid();
+    var composite = new CoalescedEventsComposite {
+      StreamId = streamId,
+      InnerPayloads = [
+        _raw("{\"Name\":\"first\"}"),
+        _raw("{\"Name\":\"second\"}"),
+      ],
+      InnerTypeNames = [wireType, wireType],
+      InnerEventIds = [idA, idB],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    await Assert.That(result.Children[0].MessageType).IsEqualTo(wireType);
+    await Assert.That(result.Children[0].MessageId).IsEqualTo(idA)
+      .Because("identity preservation: a single that raced its floor dedups at the consumer's inbox");
+    await Assert.That(result.Children[1].MessageId).IsEqualTo(idB);
+    await Assert.That(result.Children[0].Envelope.Payload.GetProperty("Name").GetString()).IsEqualTo("first")
+      .Because("raw carry: the folded single's stored wire JSON rides verbatim — no rehydration");
+  }
+
+  [Test]
+  public async Task CoalescedEventsComposite_DefaultsToIndependentAtomicityAsync() {
+    // Coalesce groups bundle self-contained records; the binding may opt into Atomic, but the
+    // carrier's default must stay Independent so one poison inner dead-letters alone.
+    var composite = new CoalescedEventsComposite();
+
+    await Assert.That(composite.Atomicity).IsEqualTo(FanoutAtomicity.Independent);
+  }
+
+  [Test]
   public async Task TryExpand_RawComposite_TypeNameCountMismatch_FailsAsync() {
     var composite = new RedeliveryComposite {
       StreamId = Guid.NewGuid(),
