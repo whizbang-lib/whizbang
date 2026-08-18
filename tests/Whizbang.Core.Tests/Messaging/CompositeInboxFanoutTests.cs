@@ -353,6 +353,54 @@ public class CompositeInboxFanoutTests {
   }
 
   [Test]
+  public async Task TryExpand_AuditEventsComposite_DeliversEachInnerEventAuditedAsync() {
+    // The batched audit shipper folds pending EventAudited singles into one AuditEventsComposite
+    // (raw carry + identity preservation — the singles' payloads are already wire JSON, and their
+    // original message ids make a fold/deadline race dedup at the consumer's inbox instead of
+    // double-recording). The fan-out must deliver each inner as its own child inbox message: an
+    // ISystemEvent inner expands exactly like a domain-event inner.
+    var streamId = Guid.NewGuid();
+    var auditWireType = typeof(Whizbang.Core.SystemEvents.EventAudited).AssemblyQualifiedName!;
+    var idA = Guid.NewGuid();
+    var idB = Guid.NewGuid();
+    var composite = new Whizbang.Core.SystemEvents.AuditEventsComposite {
+      StreamId = streamId,
+      InnerPayloads = [
+        _raw("{\"Id\":\"" + idA + "\",\"OriginalEventType\":\"Contracts.SomethingHappened\"}"),
+        _raw("{\"Id\":\"" + idB + "\",\"OriginalEventType\":\"Contracts.SomethingElseHappened\"}"),
+      ],
+      InnerTypeNames = [auditWireType, auditWireType],
+      InnerEventIds = [idA, idB],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    await Assert.That(result.Children[0].MessageType).IsEqualTo(auditWireType)
+      .Because("each child must be a first-class EventAudited delivery — same wire type the " +
+               "per-event singles would have carried.");
+    await Assert.That(result.Children[0].MessageId).IsEqualTo(idA)
+      .Because("identity preservation: a single that also shipped individually at the deadline " +
+               "must dedup at the consumer's inbox, not double-record.");
+    await Assert.That(result.Children[1].MessageId).IsEqualTo(idB);
+    await Assert.That(result.Children[0].Envelope.Payload.GetProperty("OriginalEventType").GetString())
+      .IsEqualTo("Contracts.SomethingHappened")
+      .Because("raw carry: the audit record's stored wire JSON rides verbatim — no rehydration.");
+  }
+
+  [Test]
+  public async Task AuditEventsComposite_IsNonAtomic_OneBadRecordMustNotSinkSiblingsAsync() {
+    // Audit records are independent facts; a poison record must dead-letter alone, never take its
+    // siblings with it. Lock the carrier's atomicity so a future refactor cannot flip it.
+    var composite = new Whizbang.Core.SystemEvents.AuditEventsComposite();
+
+    await Assert.That(composite.Atomicity).IsEqualTo(FanoutAtomicity.Independent);
+  }
+
+  [Test]
   public async Task TryExpand_RawComposite_TypeNameCountMismatch_FailsAsync() {
     var composite = new RedeliveryComposite {
       StreamId = Guid.NewGuid(),

@@ -182,6 +182,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "d7a2b7c4-8e15-4f4a-9c3e-5b1a2f9e6d01",
+      "clrTypeName": "Whizbang.Core.SystemEvents.AuditEventsComposite",
+      "kind": "message",
+      "formerNames": []
+    },
+    {
       "pinnedId": "9d574533-0ca6-4e83-a2ed-6519eab10257",
       "clrTypeName": "Whizbang.Core.SystemEvents.CommandAudited",
       "kind": "event",
