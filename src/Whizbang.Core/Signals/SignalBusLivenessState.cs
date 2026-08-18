@@ -57,12 +57,19 @@ public sealed class SignalBusLivenessState {
   /// <summary>Threshold at which missed doorbells degrade the component (from <see cref="SignalBusOptions"/>).</summary>
   public int MissedDoorbellThreshold { get; init; } = 3;
 
+  /// <summary>
+  /// Raised after every probe verdict lands (startup and each re-probe), with the verdict.
+  /// Lets tests and observers await a specific probe cycle instead of polling the state.
+  /// </summary>
+  public event Action<bool>? ProbeCompleted;
+
   /// <summary>Record a probe verdict (startup or periodic re-probe).</summary>
   public void MarkProbeResult(bool success, DateTimeOffset at, string? failedTransport = null) {
     Volatile.Write(ref _lastProbeTicks, at.UtcTicks);
     _failedTransport = success ? null : failedTransport;
     Volatile.Write(ref _verdict, success ? VERDICT_VERIFIED : VERDICT_FAILED);
     _firstProbe.TrySetResult(success);
+    ProbeCompleted?.Invoke(success);
   }
 
   /// <summary>Record that a wire signal arrived (called by transports on receive).</summary>

@@ -72,6 +72,84 @@ public class SignalBusProbeTests {
     await Assert.That(report.Detail!).Contains("DeadTransport");
   }
 
+  /// <summary>Delivers its first probe (loops back like the in-memory transport), then goes dead —
+  /// the mid-run listener death the periodic re-probe exists to catch.</summary>
+  private sealed class DiesAfterFirstProbeTransport : ISignalTransport {
+    private ISignalSink? _sink;
+    private int _published;
+
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) {
+      _sink = sink;
+      return Task.CompletedTask;
+    }
+
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
+      where TSignal : ISignal {
+      return Interlocked.Increment(ref _published) == 1 && _sink is not null
+        ? _sink.ReceiveAsync(signal, cancellationToken)
+        : ValueTask.CompletedTask;
+    }
+  }
+
+  private sealed class ThrowingTransport : ISignalTransport {
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
+      where TSignal : ISignal => throw new InvalidOperationException("wire exploded");
+  }
+
+  [Test]
+  [Timeout(30_000)]
+  public async Task HostedStart_ThrowingTransport_ProbeMarksFailed_LoopSurvivesAsync(CancellationToken cancellationToken) {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbangSignalBus();
+    services.AddSingleton<ISignalTransport>(new ThrowingTransport());
+
+    await using var provider = services.BuildServiceProvider();
+    await _startAllHostedServicesAsync(provider);
+    var state = provider.GetRequiredService<SignalBusLivenessState>();
+
+    var verified = await state.FirstProbe.WaitAsync(cancellationToken);
+
+    await Assert.That(verified).IsFalse()
+      .Because("a probe that throws is an unverified route, never a silent pass");
+    await Assert.That(state.Report().State).IsEqualTo(ComponentState.Degraded);
+  }
+
+  [Test]
+  [Timeout(30_000)]
+  public async Task ReProbe_TransportDiesAfterFirstPass_LaterProbeDegradesAsync(CancellationToken cancellationToken) {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbangSignalBus();
+    services.AddSingleton<ISignalTransport>(new DiesAfterFirstProbeTransport());
+    services.Configure<SignalBusOptions>(o => {
+      o.ProbeTimeoutMilliseconds = 50;
+      o.ReProbeIntervalMilliseconds = 30;
+    });
+
+    await using var provider = services.BuildServiceProvider();
+    var state = provider.GetRequiredService<SignalBusLivenessState>();
+    var degraded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    state.ProbeCompleted += verdict => {
+      if (!verdict) {
+        degraded.TrySetResult();
+      }
+    };
+
+    await _startAllHostedServicesAsync(provider);
+
+    var firstVerdict = await state.FirstProbe.WaitAsync(cancellationToken);
+    await Assert.That(firstVerdict).IsTrue()
+      .Because("the transport delivers its first probe — the route starts healthy");
+
+    await degraded.Task.WaitAsync(cancellationToken);
+    await Assert.That(state.WireRouteVerified).IsEqualTo(false)
+      .Because("the periodic re-probe must catch a listener that died after startup");
+    await Assert.That(state.Report().State).IsEqualTo(ComponentState.Degraded);
+  }
+
   [Test]
   public async Task Report_ConsecutiveMissedDoorbells_DegradesAtThreshold_DoorbellWakeResetsAsync() {
     var state = new SignalBusLivenessState { MissedDoorbellThreshold = 3 };

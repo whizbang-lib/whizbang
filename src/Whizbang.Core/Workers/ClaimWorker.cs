@@ -35,6 +35,9 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly ILogger<ClaimWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
   private readonly ISignalBus? _signalBus;
+  private readonly SignalBusLivenessState? _busLiveness;
+  private int _doorbellSinceLastClaim;
+  private bool _lastClaimWasEmpty;
   private ISignalSubscription? _outboxSignalSub;
   private ISignalSubscription? _inboxSignalSub;
   private ISignalSubscription? _perspectiveSignalSub;
@@ -72,7 +75,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     IInboxDrainChannel? inboxDrainChannel = null,
     INotifySignalingGate? signalingGate = null,
     IPinnedConnectionPool? pinnedPool = null,
-    ISignalBus? signalBus = null) {
+    ISignalBus? signalBus = null,
+    SignalBusLivenessState? busLiveness = null) {
 #pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -89,6 +93,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     _inboxDrainChannel = inboxDrainChannel;
     _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
     _signalBus = signalBus;
+    _busLiveness = busLiveness;
 
     // F1 unify-now: bus signals for outbox/inbox/perspective work-available replace the raw
     // WorkSignalCategory subscription for those categories. Push transport (NOTIFY) and pull
@@ -211,6 +216,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// must not sit out the spacing nap either.
   /// </summary>
   public void SignalNewWork() {
+    Volatile.Write(ref _doorbellSinceLastClaim, 1);
     RequestImmediatePoll();
     try {
       Volatile.Read(ref _napCts)?.Cancel();
@@ -320,6 +326,23 @@ public sealed partial class ClaimWorker : BackgroundService {
         var signature = _workSignature(batch);
         _lastClaimWasRepeat = hadWork && signature == _lastWorkSignature;
         _lastWorkSignature = signature;
+
+        // Doorbell-liveness accounting (issue #505): on the empty→non-empty edge the store
+        // guarantees a doorbell rings, so FRESH work discovered there by a plain poll — while the
+        // gate believes NOTIFY is healthy — means doorbells are being dropped somewhere between
+        // pg_notify and this worker. The flag is consumed per claim; a doorbell-preceded discovery
+        // resets the streak. Startup catch-up never counts: it requires a previously-observed
+        // empty claim, and _lastClaimWasEmpty starts false.
+        var doorbellRang = Interlocked.Exchange(ref _doorbellSinceLastClaim, 0) == 1;
+        if (_busLiveness is not null && _lastClaimWasEmpty && hadWork && !_lastClaimWasRepeat
+            && (_signalingGate?.IsAvailable ?? false)) {
+          if (doorbellRang) {
+            _busLiveness.RecordDoorbellWake();
+          } else {
+            _busLiveness.RecordMissedDoorbell();
+          }
+        }
+        _lastClaimWasEmpty = !hadWork;
 
         if (hadWork) {
           if (_lastClaimWasRepeat) {
