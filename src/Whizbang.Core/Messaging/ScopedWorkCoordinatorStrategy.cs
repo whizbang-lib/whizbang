@@ -257,6 +257,8 @@ public partial class ScopedWorkCoordinatorStrategy(
             outboxFailures, inboxFailures, WorkBatchOptions.SkipInboxClaiming, _dependencies.LifecycleMessageDeserializer,
             _logger, _dependencies.TracingOptions, _metrics, _lifecycleMetrics,
             WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
+            // Disposal drain: the ONE deliberate lifecycle skip (issue #485 kept it) — a
+            // shutdown's backgrounded stage halves would race process exit.
             SkipLifecycle: true),
           ct: default
         );

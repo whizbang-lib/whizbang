@@ -39,6 +39,11 @@ public sealed partial class ClaimWorker : BackgroundService {
   private ISignalSubscription? _inboxSignalSub;
   private ISignalSubscription? _perspectiveSignalSub;
   private readonly SemaphoreSlim _wake = new(0, 1);
+
+  // The current repeat-claim spacing nap, when one is in progress. SignalNewWork cancels it so a
+  // genuinely NEW row never sits out the nap; completion-feedback wakes (RequestImmediatePoll)
+  // deliberately cannot reach it. Null outside the nap window.
+  private CancellationTokenSource? _napCts;
   private int _consecutiveEmptyPolls;
 
   /// <summary>
@@ -112,10 +117,10 @@ public sealed partial class ClaimWorker : BackgroundService {
     // process_work_batch used to provide. Must remain attached for the lifetime of the
     // worker; BackgroundService disposal handles cleanup.
     if (_outboxChannel is not null) {
-      _outboxChannel.OnNewWorkAvailable += RequestImmediatePoll;
+      _outboxChannel.OnNewWorkAvailable += SignalNewWork;
     }
     if (_inboxChannel is not null) {
-      _inboxChannel.OnNewInboxWorkAvailable += RequestImmediatePoll;
+      _inboxChannel.OnNewInboxWorkAvailable += SignalNewWork;
     }
   }
 
@@ -129,13 +134,13 @@ public sealed partial class ClaimWorker : BackgroundService {
       return;
     }
     if (_signalBus is null && category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox) {
-      RequestImmediatePoll();
+      SignalNewWork();
     }
   }
 
   private ValueTask _wakeOnSignal<TSignal>(TSignal signal) where TSignal : ISignal {
     _ = signal;
-    RequestImmediatePoll();
+    SignalNewWork();
     return ValueTask.CompletedTask;
   }
 
@@ -197,6 +202,22 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// consumers in tests.
   /// </summary>
   public event Action<WorkBatch>? OnBatchClaimed;
+
+  /// <summary>
+  /// Wake for NEW work (a store-level doorbell or a strategy persisting fresh rows) — as opposed
+  /// to <see cref="RequestImmediatePoll"/>, which the system's own completion-feedback traffic
+  /// also pulls. The distinction matters to the repeat-claim spacing: completion feedback must
+  /// not defeat the spacing (see ClaimWorkerReemissionBackoffTests), but a genuinely new row
+  /// must not sit out the spacing nap either.
+  /// </summary>
+  public void SignalNewWork() {
+    RequestImmediatePoll();
+    try {
+      Volatile.Read(ref _napCts)?.Cancel();
+    } catch (ObjectDisposedException) {
+      // The nap ended between the read and the cancel — the permit above covers the wake.
+    }
+  }
 
   /// <summary>External wake — call from notification listener or local channel writer.</summary>
   public void RequestImmediatePoll() {
@@ -339,7 +360,19 @@ public sealed partial class ClaimWorker : BackgroundService {
         if (_lastClaimWasRepeat) {
           var floorMs = Math.Min(_computeAdaptivePollWaitMs(), _options.PollingMaxIntervalMilliseconds);
           if (floorMs > 0) {
-            await Task.Delay(floorMs, stoppingToken);
+            // Interruptible nap: a NEW-WORK doorbell (SignalNewWork) cancels it so a fresh row
+            // proceeds straight to the wake wait below, where the permit the doorbell released
+            // is already pending. Completion-feedback wakes cannot reach this token — letting
+            // them would reintroduce the re-offer spin loop this spacing exists to damp.
+            using var napCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            Volatile.Write(ref _napCts, napCts);
+            try {
+              await Task.Delay(floorMs, napCts.Token);
+            } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
+              // Nap cut short by new work — fall through to the wake wait.
+            } finally {
+              Volatile.Write(ref _napCts, null);
+            }
           }
         }
         if (_signalBus is not null) {

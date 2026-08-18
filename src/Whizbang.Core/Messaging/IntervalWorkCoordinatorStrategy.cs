@@ -387,10 +387,12 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       return;
     }
 
-    // Fire and forget flush on timer — skip lifecycle (background thread, no ambient context)
+    // Fire and forget flush on timer. Lifecycle stages run here too (issue #485): delivery must
+    // not depend on WHICH trigger flushed — LifecycleInvocationHelper reconstructs each message
+    // from its envelope and reads no ambient state, so the old background-thread skip was stale.
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, trigger: "timer", skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, trigger: "timer", skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringIntervalFlush(_logger, ex);
@@ -435,6 +437,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     }
 
     try {
+      // Disposal is the ONE deliberate lifecycle skip (issue #485 kept it): a shutdown drain's
+      // backgrounded stage halves would race process exit.
       await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, trigger: "disposal", skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
