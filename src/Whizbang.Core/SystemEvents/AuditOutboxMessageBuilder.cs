@@ -98,21 +98,14 @@ public static partial class AuditOutboxMessageBuilder {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
-    // Sliding-ship safety floor: with the batched shipper enabled (AuditShipSlideSeconds > 0),
-    // the single is minted DEFERRED — durable in the SAME transaction as the audited event, but
-    // invisible to the normal claim pump until the max-delay deadline. A shipper folds it into a
-    // batched composite well before then; if none ever runs, the single ships individually at the
-    // deadline: degraded, never lost. Slide = 0 keeps today's immediate per-event shipping.
-    // Stamped HERE (not at the append seams) so every mint path — the queued strategy path and
-    // the stream-affinity batcher path — carries the same floor.
-    DateTimeOffset? scheduledFor = options.AuditShipSlideSeconds > 0
-      ? DateTimeOffset.UtcNow.AddSeconds(options.AuditShipMaxDelaySeconds)
-      : null;
-
+    // No floor stamping here: the sliding-ship safety floor (ScheduledFor = now + MaxDelay) and
+    // the sys-audit group ride the GENERIC coalesce mint path — EventAudited carries
+    // [SystemAuditTag], EnableAudit() registers the built-in Coalesce(SystemTags.AUDIT) binding,
+    // and CoalesceGroupResolver stamps at every mint seam. The builder builds; the resolver
+    // stamps. Slide = 0 registers no binding, keeping immediate per-event shipping.
     var auditEventType = typeof(EventAudited);
     return new OutboxMessage {
       MessageId = auditEnvelope.MessageId.Value,
-      ScheduledFor = scheduledFor,
       Destination = AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION,
       Envelope = auditEnvelope,
       Metadata = new EnvelopeMetadata {

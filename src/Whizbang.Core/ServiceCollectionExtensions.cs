@@ -139,10 +139,17 @@ public static class ServiceCollectionExtensions {
 
     // Coalesce-group resolver: the AOT tag lookup the outbox mint seams consult to stamp
     // tag-bound coalesce groups + max-delay floors. Singleton — it caches per-type-name
-    // resolution over the (post-startup immutable) tag registry and bindings.
-    services.TryAddSingleton(sp => new CoalesceGroupResolver(
-      sp.GetRequiredService<TagOptions>(),
-      sp.GetService<TimeProvider>()));
+    // resolution over the (post-startup immutable) tag registry and bindings. Resolution-time
+    // is where the built-in audit binding (EnableAudit's knobs -> Coalesce(SystemTags.AUDIT))
+    // is applied: all registration ordering has settled by then, and add-if-absent semantics
+    // keep any host binding for the tag in charge.
+    services.TryAddSingleton(sp => {
+      var tagOptions = sp.GetRequiredService<TagOptions>();
+      SystemEvents.SystemEventCoalesceDefaults.Apply(
+        tagOptions,
+        sp.GetService<IOptions<SystemEvents.SystemEventOptions>>()?.Value);
+      return new CoalesceGroupResolver(tagOptions, sp.GetService<TimeProvider>());
+    });
 
     // Register TracingOptions with IOptions pattern
     _configureTracingOptions(services, coreOptions);
