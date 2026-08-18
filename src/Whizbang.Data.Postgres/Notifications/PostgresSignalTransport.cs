@@ -34,7 +34,9 @@ public sealed partial class PostgresSignalTransport(
   IServiceInstanceProvider instanceProvider,
   ILogger<PostgresSignalTransport> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
-  INotificationDataSource? notificationDataSource = null
+  INotificationDataSource? notificationDataSource = null,
+  SignalBusLivenessState? busLiveness = null,
+  TimeProvider? timeProvider = null
 ) : ISignalTransport {
   /// <summary>Broadcast channel every instance listens on.</summary>
   internal const string BROADCAST_CHANNEL = "wh_signal_broadcast";
@@ -46,6 +48,8 @@ public sealed partial class PostgresSignalTransport(
   private readonly ILogger<PostgresSignalTransport> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
+  private readonly SignalBusLivenessState? _busLiveness = busLiveness;
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   private ISignalSink? _sink;
   private IDisposable? _broadcastSubscription;
@@ -81,8 +85,15 @@ public sealed partial class PostgresSignalTransport(
   /// <inheritdoc />
   public async ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
     where TSignal : ISignal {
-    if (_typeToWireName is null || !_typeToWireName.TryGetValue(typeof(TSignal), out var wireName)) {
-      // Not in the registry — cannot route on the wire (the type must be a discoverable ISignal).
+    if (_typeToWireName is null) {
+      // Routing maps are built in StartAsync — this publish beat the hosted start (or the bus was
+      // never started at all). Say THAT, not "not in the registry": the misleading version of
+      // this message hid a fleet-wide dead doorbell route for weeks (issue #505).
+      LogPublishBeforeStart(_logger, typeof(TSignal).FullName ?? typeof(TSignal).Name);
+      return;
+    }
+    if (!_typeToWireName.TryGetValue(typeof(TSignal), out var wireName)) {
+      // Genuinely not in the registry — cannot route on the wire (the type must be a discoverable ISignal).
       LogUnregisteredSignal(_logger, typeof(TSignal).FullName ?? typeof(TSignal).Name);
       return;
     }
@@ -166,6 +177,9 @@ public sealed partial class PostgresSignalTransport(
   }
 
   private void _onNotification(string payload) {
+    // Any payload arriving here proves the wire route is alive end-to-end — stamp it for the
+    // doorbell-liveness monitor before any routing decision (even unknown wire-names count).
+    _busLiveness?.MarkWireSignalReceived(_time.GetUtcNow());
     var sink = _sink;
     var map = _wireNameToEntry;
     if (sink is null || map is null) {
@@ -217,4 +231,9 @@ public sealed partial class PostgresSignalTransport(
   [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
     Message = "PostgresSignalTransport: dispatch for wire-name {WireName} threw; other signals continue")]
   static partial void LogDispatchThrew(ILogger logger, string wireName, Exception ex);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
+    Message = "PostgresSignalTransport.PublishAsync: transport not started — StartAsync has not run, so signal {SignalType} cannot be routed to the wire. " +
+              "The signal bus is hosted by SignalBusHostedService (AddWhizbangSignalBus); if this repeats after startup, the bus was never started")]
+  static partial void LogPublishBeforeStart(ILogger logger, string signalType);
 }

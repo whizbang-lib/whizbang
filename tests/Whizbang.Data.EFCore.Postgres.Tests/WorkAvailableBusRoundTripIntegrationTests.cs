@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -172,6 +173,74 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
 
+    await ((IHostedService)shared).StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// The #505 regression lock: a DI-HOSTED bus — started by the host's IHostedService pipeline
+  /// alone, with NO manual <see cref="SignalBus.StartAsync"/> anywhere — must deliver a SQL
+  /// doorbell to a typed subscriber. Every sibling test above starts the bus by hand, which is
+  /// exactly the neuter that let "the bus is registered but never started in production" stay
+  /// invisible: transports never subscribed, every wire doorbell was dropped, and all work pumps
+  /// ran at poll cadence. This test would have failed for as long as that gap existed.
+  /// </summary>
+  [Test]
+  public async Task Perspective_SqlNotify_DiHostedBus_NoManualStart_ReachesSubscriberAsync() {
+    var opts = new WhizbangNotificationOptions {
+      DirectConnectionString = ConnectionString,
+      SignalingMode = WorkSignalingMode.ListenNotify,
+    };
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var instance = new ServiceInstanceProvider(cfg);
+    using var shared = new PgSharedNotifyConnection(
+      Options.Create(opts), cfg, instance,
+      NullLogger<PgSharedNotifyConnection>.Instance,
+      connectionStringFallback: null,
+      timeProvider: null);
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    await ((IHostedService)shared).StartAsync(cts.Token);
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+    while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(50, cts.Token);
+    }
+    await Assert.That(shared.IsAvailable).IsTrue();
+
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(cfg);
+    services.AddSingleton(Options.Create(opts));
+    services.AddSingleton<IServiceInstanceProvider>(instance);
+    services.AddSingleton<ISharedNotifyConnection>(shared);
+    services.AddWhizbangSignalBus();
+    services.AddSingleton<ISignalTransport, PostgresSignalTransport>();
+    await using var provider = services.BuildServiceProvider();
+
+    var bus = provider.GetRequiredService<ISignalBus>();
+    var received = new TaskCompletionSource<WorkPerspectiveAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var sub = bus.Subscribe<WorkPerspectiveAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
+
+    // The HOST starts the bus — the seam under test. No SignalBus.StartAsync call anywhere here.
+    foreach (var hosted in provider.GetServices<IHostedService>()) {
+      await hosted.StartAsync(cts.Token);
+    }
+    await Task.Delay(200, cts.Token);   // LISTEN resync
+
+    var streamId = Guid.NewGuid();
+    await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
+    await _invokeNotifyInstanceOwnersAsync("perspective", streamId);
+
+    await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+
+    // Bonus lock on the wire-route self-test: the hosted probe must have verified the REAL
+    // Postgres transport end to end (pg_notify to own channel, back through typed dispatch).
+    var liveness = provider.GetRequiredService<SignalBusLivenessState>();
+    var probeVerdict = await liveness.FirstProbe.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    await Assert.That(probeVerdict).IsTrue();
+
+    foreach (var hosted in provider.GetServices<IHostedService>()) {
+      await hosted.StopAsync(CancellationToken.None);
+    }
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
 }
