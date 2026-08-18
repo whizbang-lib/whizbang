@@ -117,6 +117,40 @@ public sealed class SystemEventOptions {
   public Func<string, string?>? EventDescriptionHumanizer { get; set; }
 
   /// <summary>
+  /// Quiet window (seconds) for the sliding-window audit shipper: pending audit singles are folded
+  /// into a batched composite once no new singles have arrived for this long. <c>0</c> bypasses the
+  /// batcher entirely — every audit message ships immediately and individually (the pre-batching
+  /// behavior), and no <see cref="AuditShipMaxDelaySeconds"/> floor is stamped at mint.
+  /// Default: 15.
+  /// </summary>
+  /// <remarks>
+  /// Audit is <b>durable, not real-time</b>: per-event audit singles under a bulk workload multiply
+  /// broker traffic by the event count and can exhaust a throttled namespace's credits. The sliding
+  /// window trades bounded latency (capped by <see cref="AuditShipMaxDelaySeconds"/>) for
+  /// order-of-magnitude fewer transport messages.
+  /// </remarks>
+  /// <docs>fundamentals/events/system-events#audit-shipping</docs>
+  public int AuditShipSlideSeconds { get; set; } = 15;
+
+  /// <summary>
+  /// Safety floor (seconds): when <see cref="AuditShipSlideSeconds"/> &gt; 0, every audit single is
+  /// minted with <c>ScheduledFor = now + AuditShipMaxDelaySeconds</c>. The single stays durable in
+  /// the same transaction as the audited event but is invisible to the normal claim pump until the
+  /// deadline — if no shipper folds it first, it ships individually at the deadline (degraded,
+  /// never lost). Also the hard cap on how long the shipper may keep sliding under continuous
+  /// arrivals. Default: 120.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#audit-shipping</docs>
+  public int AuditShipMaxDelaySeconds { get; set; } = 120;
+
+  /// <summary>
+  /// Maximum audit records folded into one shipped composite; a larger pending set splits into
+  /// multiple composites. Default: 500.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#audit-shipping</docs>
+  public int AuditShipMaxBatchCount { get; set; } = 500;
+
+  /// <summary>
   /// Enables <see cref="EventAudited"/> system events.
   /// When enabled, an EventAudited is emitted for each domain event appended.
   /// </summary>

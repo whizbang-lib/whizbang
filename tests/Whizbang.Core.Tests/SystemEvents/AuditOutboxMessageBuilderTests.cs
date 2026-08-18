@@ -543,6 +543,65 @@ public class AuditOutboxMessageBuilderTests {
 
   #endregion
 
+  #region TryBuildAuditMessage - Sliding-Ship Safety Floor (ScheduledFor)
+
+  [Test]
+  public async Task TryBuildAuditMessage_SlidingShipEnabled_StampsScheduledForAtMaxDelayFloorAsync() {
+    // With the sliding-window shipper enabled (AuditShipSlideSeconds > 0, the default), the audit
+    // single is minted DEFERRED: ScheduledFor = now + AuditShipMaxDelaySeconds. It stays durable in
+    // the SAME transaction as the audited event but is invisible to the normal claim pump until the
+    // deadline — the shipper folds it earlier; if the shipper never runs, it ships individually at
+    // the deadline (degraded, never lost).
+    var message = _createOutboxMessage(isEvent: true);
+    var options = _createOptions(auditEnabled: true);
+    var before = DateTimeOffset.UtcNow;
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+
+    var after = DateTimeOffset.UtcNow;
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.ScheduledFor).IsNotNull()
+      .Because("the max-delay floor is what makes the batcher safe to defer to — durable, not real-time.");
+    await Assert.That(result.ScheduledFor!.Value)
+      .IsGreaterThanOrEqualTo(before.AddSeconds(options.AuditShipMaxDelaySeconds));
+    await Assert.That(result.ScheduledFor!.Value)
+      .IsLessThanOrEqualTo(after.AddSeconds(options.AuditShipMaxDelaySeconds));
+    await Assert.That(message.ScheduledFor).IsNull()
+      .Because("the floor applies to the audit companion only — the audited domain event is untouched.");
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_SlideZero_KeepsImmediatePerEventShippingAsync() {
+    // AuditShipSlideSeconds = 0 is the bypass: no batcher, no floor — today's per-event immediate
+    // audit messages, unchanged.
+    var message = _createOutboxMessage(isEvent: true);
+    var options = _createOptions(auditEnabled: true);
+    options.AuditShipSlideSeconds = 0;
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.ScheduledFor).IsNull()
+      .Because("slide = 0 bypasses the batcher entirely — the single must be claimable immediately.");
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_CustomMaxDelay_FloorTracksTheKnobAsync() {
+    var message = _createOutboxMessage(isEvent: true);
+    var options = _createOptions(auditEnabled: true);
+    options.AuditShipMaxDelaySeconds = 600;
+    var before = DateTimeOffset.UtcNow;
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+
+    var after = DateTimeOffset.UtcNow;
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.ScheduledFor!.Value).IsGreaterThanOrEqualTo(before.AddSeconds(600));
+    await Assert.That(result.ScheduledFor!.Value).IsLessThanOrEqualTo(after.AddSeconds(600));
+  }
+
+  #endregion
+
   #region ResolveEventType - Null Return on Failure
 
   [Test]
