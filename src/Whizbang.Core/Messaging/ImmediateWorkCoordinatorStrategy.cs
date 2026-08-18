@@ -36,7 +36,8 @@ public partial class ImmediateWorkCoordinatorStrategy(
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null,
   IOptions<SystemEventOptions>? systemEventOptions = null,
-  IWorkChannelWriter? workChannelWriter = null
+  IWorkChannelWriter? workChannelWriter = null,
+  Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
 #pragma warning restore S107
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -51,7 +52,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly SystemEventOptions? _systemEventOptions = systemEventOptions?.Value;
-  private readonly WorkCoordinatorQueues _queues = new(logger);
+  private readonly WorkCoordinatorQueues _queues = new(logger, coalesceResolver);
 
   /// <summary>
   /// Queues an outbox message for immediate flush.
@@ -139,8 +140,14 @@ public partial class ImmediateWorkCoordinatorStrategy(
     // are picked up here and included in the current work batch.
     if (_deferredChannel?.HasPending == true) {
       var deferredMessages = _deferredChannel.DrainAll();
-      // Prepend deferred messages to the queue
-      _queues.OutboxMessages.InsertRange(0, deferredMessages);
+      // Prepend deferred messages to the queue. The deferred channel bypasses
+      // AddOutboxMessage, so this drain is a mint seam of its own — coalesce stamping
+      // must run here too (events published outside transaction context, including the
+      // audit event-store decorator's mints, arrive this way).
+      var index = 0;
+      foreach (var deferred in deferredMessages) {
+        _queues.OutboxMessages.Insert(index++, _queues.Stamp(deferred));
+      }
       if (_logger != null) {
         LogDeferredChannelDrained(_logger, deferredMessages.Count);
       }

@@ -137,6 +137,13 @@ public static class ServiceCollectionExtensions {
     // host.RunAsync() instead of shipping under a policy nobody declared.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, TagPolicyStartupValidator>());
 
+    // Coalesce-group resolver: the AOT tag lookup the outbox mint seams consult to stamp
+    // tag-bound coalesce groups + max-delay floors. Singleton — it caches per-type-name
+    // resolution over the (post-startup immutable) tag registry and bindings.
+    services.TryAddSingleton(sp => new CoalesceGroupResolver(
+      sp.GetRequiredService<TagOptions>(),
+      sp.GetService<TimeProvider>()));
+
     // Register TracingOptions with IOptions pattern
     _configureTracingOptions(services, coreOptions);
 

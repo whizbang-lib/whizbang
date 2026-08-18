@@ -2313,7 +2313,23 @@ public record OutboxMessage {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/OutboxMessageScheduledForTests.cs:OutboxMessage_ScheduledFor_PropertyExistsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/OutboxMessageScheduledForTests.cs:OutboxMessage_ScheduledFor_DefaultIsNullAsync</tests>
   public DateTimeOffset? ScheduledFor { get; init; }
+
+  /// <summary>
+  /// The coalesce group this message is pending under, or null (default) for a normal
+  /// immediately-shippable message. Stamped at the mint seams (see
+  /// <see cref="Whizbang.Core.Tags.CoalesceGroupResolver"/>) when the message's type carries a
+  /// tag with an enabled coalesce binding, always together with the
+  /// <see cref="ScheduledFor"/> max-delay floor. Persisted to <c>wh_outbox.coalesce_group</c>;
+  /// rows with a non-null group are excluded from the claim path's eligible scan by index
+  /// predicate until a coalesce worker folds them into a composite (marking them processed) or
+  /// releases them (group and floor cleared) at the deadline.
+  /// </summary>
+  /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_BoundTag_StampsGroupAndMaxDelayFloorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CoalesceMintStampingTests.cs:AddOutboxMessage_BoundTag_StampsGroupAndFloorAsync</tests>
+  public string? CoalesceGroup { get; init; }
 }
+
 
 /// <summary>
 /// Represents an inbox message to be stored in process_work_batch.
