@@ -206,4 +206,127 @@ public class ClaimWorkerReemissionBackoffTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  /// <summary>
+  /// The other side of the spacing coin (live forensic: v7-timestamp deltas of 8.4s/5.3s on an
+  /// interactive workload, interleaved with sub-second samples). The spacing nap runs as an
+  /// uninterruptible delay BEFORE the wake-permit wait, so a NEW-WORK doorbell (store-level
+  /// NOTIFY → bus → SignalNewWork) that lands mid-nap is swallowed: the permit is released but
+  /// the nap keeps sleeping, and the fresh row waits out the remainder — up to the full
+  /// notify-healthy floor (5s in production) per hop. New work must interrupt the nap; ONLY
+  /// completion-feedback wakes (RequestImmediatePoll) may not.
+  /// </summary>
+  [Test]
+  public async Task RepeatedWorkSet_NewWorkDoorbellDuringSpacing_ClaimsPromptlyAsync() {
+    var coord = new ReemittingCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      schemaGate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        PollingMaxIntervalMilliseconds = 10_000,
+        // The gate reports available, so this IS the spacing nap length — production's 5s
+        // floor scaled to 3s so the RED failure (claim 3 waits out the nap) is unmistakable
+        // against the 1s promptness bound without slowing the suite unduly.
+        NotifyHealthyPollingIntervalMilliseconds = 3_000,
+      }),
+      NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate());
+
+    // Drive the first two claims promptly (completion-feedback shape), so claim 2 is the
+    // re-offer that engages the spacing. Stop pulling the lever after that: the nap that
+    // follows claim 2 must be interrupted by the DOORBELL below, not by feedback wakes.
+    var fed = 0;
+    coord.AfterClaim = () => {
+      if (Interlocked.Increment(ref fed) <= 1) {
+        worker.RequestImmediatePoll();
+      }
+    };
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Give the loop a moment to enter the spacing nap that follows the re-offer claim, then
+    // ring the new-work doorbell mid-nap.
+    await Task.Delay(300);
+    var doorbellAt = DateTimeOffset.UtcNow;
+    worker.SignalNewWork();
+
+    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(8));
+    var wakeLatency = coord.ClaimCallTimes[2] - doorbellAt;
+
+    await Assert.That(wakeLatency).IsLessThan(TimeSpan.FromSeconds(1))
+      .Because(
+        "a NEW-WORK doorbell must interrupt the repeat-claim spacing nap — otherwise a fresh row "
+        + "that arrives mid-nap waits out the remainder of the notify-healthy floor (0-5s per hop "
+        + "in production; two unlucky hops measured at 8.4s end-to-end on an interactive workload)");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// The guard that keeps the fix honest: completion-feedback wakes must STILL not defeat the
+  /// spacing at nap scale. Same shape as the doorbell test, but the mid-nap wake is
+  /// RequestImmediatePoll — claim 3 must wait out the nap.
+  /// </summary>
+  [Test]
+  public async Task RepeatedWorkSet_CompletionFeedbackDuringSpacing_StillWaitsOutTheNapAsync() {
+    var coord = new ReemittingCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      schemaGate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        PollingMaxIntervalMilliseconds = 10_000,
+        NotifyHealthyPollingIntervalMilliseconds = 3_000,
+      }),
+      NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate());
+
+    var fed = 0;
+    coord.AfterClaim = () => {
+      if (Interlocked.Increment(ref fed) <= 1) {
+        worker.RequestImmediatePoll();
+      }
+    };
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Task.Delay(300);
+    worker.RequestImmediatePoll();
+
+    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(8));
+    var gap2to3 = coord.ClaimCallTimes[2] - coord.ClaimCallTimes[1];
+
+    await Assert.That(gap2to3).IsGreaterThan(TimeSpan.FromSeconds(2))
+      .Because(
+        "completion-feedback wakes exist precisely so the loop's own traffic re-arms the permit; "
+        + "letting them interrupt the spacing nap would reintroduce the re-offer spin loop the "
+        + "spacing was built to damp. Only NEW-WORK doorbells may cut the nap short.");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
 }
