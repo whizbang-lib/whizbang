@@ -82,12 +82,16 @@ public static class WorkerPipelineExtensions {
             "offload", store.CheckConnectivityAsync, lifecycle, "offload store unreachable");
     });
 
-    // signal-bus: ASSUMED-HEALTHY placeholder. Its real dependency is the same Postgres the event-store/DB
-    // source already probes (wh_signals + LISTEN/NOTIFY), so a DB outage that breaks the signal bus already
-    // surfaces there. TODO: a dedicated notify-connection liveness probe if finer signal is wanted.
+    // signal-bus: a REAL source over SignalBusLivenessState — the wire-route self-test verdict plus
+    // the doorbell-liveness accounting. A failed loopback probe or a streak of work discovered by
+    // poll with no doorbell reports Degraded (still serves, but every hop pays the poll interval).
+    // Replaces the assumed-healthy placeholder that could never degrade (issue #505). The state is
+    // TryAdd'd here too so this wiring works regardless of registration order with AddWhizbangSignalBus.
+    services.TryAddSingleton<Signals.SignalBusLivenessState>();
     services.AddSingleton<Health.IWhizbangHealthSource>(sp =>
-      Health.ConnectivityHealthSource.AssumedHealthy(
-        "signal-bus", sp.GetRequiredService<IWhizbangLifecycleState>()));
+      new Health.SignalBusHealthSource(
+        sp.GetRequiredService<Signals.SignalBusLivenessState>(),
+        sp.GetRequiredService<IWhizbangLifecycleState>()));
 
     // Run-control (killswitch) plane + the driver that advances the lifecycle phase from the schema
     // gate (Migrating at startup, Ready once migrations complete), so any registered run-control
