@@ -30,6 +30,9 @@ public static class SignalBusServiceCollectionExtensions {
     // never subscribe and every wire doorbell is silently dropped (issue #505). TryAddEnumerable
     // keys on the implementation type, so repeated AddWhizbangSignalBus calls stay idempotent.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, SignalBusHostedService>());
+    // Shared state behind the signal-bus health component: probe verdicts, last wire arrival,
+    // doorbell-liveness accounting. Written by the probe loop / transports / claim loop.
+    services.TryAddSingleton<SignalBusLivenessState>();
     return services;
   }
 }
