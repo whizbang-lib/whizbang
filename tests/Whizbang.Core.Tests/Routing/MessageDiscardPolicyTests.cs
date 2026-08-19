@@ -201,4 +201,62 @@ public class MessageDiscardPolicyTests {
     await Assert.That(tagSnapshots[0]["topic"]).IsEqualTo("topic.a");
     await Assert.That(tagSnapshots[0]["subscription"]).IsEqualTo("sub-1");
   }
+
+  // ============================================================
+  // Composite exemption — a composite event type (redelivery bundle, coalesced batch, audit
+  // composite) never has a receptor or perspective consumer; its consumers are the INNER events,
+  // addressable only after the dispatch-seam fan-out. Both no-consumer gates that this policy
+  // backs (transport receive + inbox dispatch) must keep composites, or the entire bundle is
+  // discarded before fan-out — invisibly (Debug + counter only). The receive gate is handed the
+  // ENVELOPE-wrapped wire name; the inbox gate is handed the payload type name — both shapes
+  // must resolve through the catalog stamp.
+  // ============================================================
+
+  private static MessageDiscardPolicy _newPolicyWithCatalog(Meter meter) {
+    var registry = new TestRegistry(); // composite type has NO consumer — faithful to every service
+    var logger = new RecordingLogger<MessageDiscardPolicy>();
+    var markerResolver = new EventMarkerResolver(new Whizbang.Core.Generated.GeneratedMessageTypeCatalog());
+    return new MessageDiscardPolicy(registry, logger, meter, routingOptions: null, markerResolver: markerResolver);
+  }
+
+  [Test]
+  public async Task EvaluateReceive_CompositeEnvelopeName_NoConsumer_IsKeptAsync() {
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.CompositeReceive");
+    var policy = _newPolicyWithCatalog(meter);
+
+    var decision = policy.EvaluateReceive(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.RedeliveryComposite, Whizbang.Core]], Whizbang.Core",
+      topic: "inbox",
+      subscription: "svc-inbox");
+
+    await Assert.That(decision.ShouldDiscard).IsFalse()
+      .Because("a composite has no receptor anywhere by design — discarding it at receive drops the "
+             + "whole bundle before its inner events can fan out (the repair-starvation regression)");
+  }
+
+  [Test]
+  public async Task EvaluateInbox_CompositePayloadName_NoConsumer_IsKeptAsync() {
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.CompositeInbox");
+    var policy = _newPolicyWithCatalog(meter);
+
+    var decision = policy.EvaluateInbox("Whizbang.Core.Messaging.RedeliveryComposite, Whizbang.Core");
+
+    await Assert.That(decision.ShouldDiscard).IsFalse()
+      .Because("an inbox row holding a composite must reach the dispatch-seam fan-out — the "
+             + "RegistryChanged discard would delete the stored bundle after the transport already "
+             + "accepted it");
+  }
+
+  [Test]
+  public async Task EvaluateReceive_PlainUnconsumedType_WithCatalogWired_StillDiscardsAsync() {
+    // Guard: wiring the marker resolver must not weaken the gate for ordinary unconsumed types.
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.CompositeNarrow");
+    var policy = _newPolicyWithCatalog(meter);
+
+    var decision = policy.EvaluateReceive(UNCONSUMED_TYPE, topic: "inbox", subscription: "svc-inbox");
+
+    await Assert.That(decision.ShouldDiscard).IsTrue();
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
+  }
 }
+

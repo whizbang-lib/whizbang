@@ -436,4 +436,84 @@ public class AsbReceiveDecisionMakerTests {
     }],
     DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Local, Source = MessageSource.Local },
   };
+
+  // ============================================================
+  // Composites — a composite event (redelivery bundle, coalesced batch, audit composite) is
+  // wire-only: NO service registers a receptor or perspective for the composite type itself; its
+  // consumers are the INNER events, which only become addressable after the dispatch-seam fan-out.
+  //
+  // REGRESSION observed on a consumer fleet: every stream-integrity RedeliveryComposite served by
+  // an origin was ack+dropped here as NoLocalConsumer — at EVERY service including the requester —
+  // so repair deficits never closed and the repair drain re-requested forever (amplifying broker
+  // ops-rate load). The worker-level no-consumer gates already exempt composites
+  // (CompositeInboxFanout.IsCompositeWireType); this transport-level filter must too. The payload
+  // is TYPED here (the envelope deserialized), so the marker interface is the authoritative check.
+  // ============================================================
+
+  [Test]
+  public async Task Decide_CompositePayload_NoLocalConsumer_ReturnsProcessNotDropAsync() {
+    var decider = new AsbReceiveDecisionMaker();
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var compositeTypeInfo = (JsonTypeInfo<MessageEnvelope<RedeliveryComposite>>)
+      combinedOptions.GetTypeInfo(typeof(MessageEnvelope<RedeliveryComposite>));
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    using var innerDoc = JsonDocument.Parse("""{"Name":"restored-by-repair"}""");
+    var envelope = new MessageEnvelope<RedeliveryComposite> {
+      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      Payload = new RedeliveryComposite {
+        StreamId = streamId,
+        InnerPayloads = [innerDoc.RootElement.Clone()],
+        InnerTypeNames = ["MyApp.Events.SomethingHappened, MyApp.Contracts"],
+        InnerEventIds = [(Guid)TrackedGuid.NewMedo()],
+        OriginServiceId = (Guid)TrackedGuid.NewMedo(),
+        InnerCommitSequences = [42L],
+      },
+      Hops = [new MessageHop {
+        Type = HopType.Current,
+        ServiceInstance = new ServiceInstanceInfo {
+          InstanceId = (Guid)TrackedGuid.NewMedo(),
+          ServiceName = "origin-service",
+          HostName = "origin-host",
+          ProcessId = 1,
+        },
+        Timestamp = DateTimeOffset.UtcNow,
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox, Source = MessageSource.Outbox },
+      Target = "this-service",
+    };
+    var body = JsonSerializer.Serialize(envelope, compositeTypeInfo);
+    var props = _withEnvelopeType(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.RedeliveryComposite, Whizbang.Core]], Whizbang.Core");
+
+    // Faithful to every real service: nothing consumes the composite type itself.
+    static bool _isHandledLocally(Type t) => false;
+
+    var decision = decider.Decide(props, body, (_, _) => compositeTypeInfo, combinedOptions, _isHandledLocally);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process)
+      .Because("a composite has no receptor anywhere by design — dropping it as NoLocalConsumer "
+             + "silently discards the whole bundle before the dispatch seam can fan out its inner "
+             + "events, which is exactly the repair-starvation regression this test pins");
+    await Assert.That(decision.Reason).IsEqualTo("Ok");
+  }
+
+  [Test]
+  public async Task Decide_PlainUnconsumedPayload_StillDrops_CompositeExemptionIsNarrowAsync() {
+    // Guard: the composite exemption must not weaken the slice-2 filter for ordinary payloads.
+    var decider = new AsbReceiveDecisionMaker();
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var envelope = _makeEnvelope();
+    var body = JsonSerializer.Serialize(envelope, typeInfo);
+
+    static bool _isHandledLocally(Type t) => false;
+
+    var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Reason).IsEqualTo("NoLocalConsumer");
+  }
 }
+
