@@ -405,7 +405,18 @@ public partial class PerspectiveWorker(
       _perspectiveSignalSubscribed = true;
     }
 
-    await _initializePerspectiveRegistryAsync();
+    var isPerspectiveHost = await _initializePerspectiveRegistryAsync();
+    if (!isPerspectiveHost) {
+      // Turnkey park: the core worker pipeline hosts this worker unconditionally, so a host
+      // with NO perspective registry at all must cost NOTHING — no startup-repair queries, no
+      // drain loop, no poll cadence, no database connections. Before the core registration
+      // such hosts had no PerspectiveWorker at all; this restores exactly that footprint.
+      // (A registry that exists but is empty proceeds: rewind scan + loop still service
+      // leftover rows from removed perspectives.) The startup-scan barrier completes
+      // immediately: there are no read models to protect.
+      _startupScanTcs.TrySetResult();
+      return;
+    }
     _processInitialCheckpoints();
     await _reconcileOrphanedLifecyclesAsync(stoppingToken);
     await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
@@ -614,18 +625,25 @@ public partial class PerspectiveWorker(
     }
   }
 
-  private async Task _initializePerspectiveRegistryAsync() {
+  /// <summary>
+  /// Initializes the per-event-type perspective map from the registry. Returns false ONLY when
+  /// no <see cref="IPerspectiveRunnerRegistry"/> is registered at all — the host was never a
+  /// perspective host and the caller parks the worker entirely. A registry that is PRESENT but
+  /// EMPTY (perspectives removed) returns true: orphan reconciliation skips on the empty map,
+  /// but the rewind scan and drain loop still run to service leftover rows.
+  /// </summary>
+  private async Task<bool> _initializePerspectiveRegistryAsync() {
     await using var startupScope = _scopeFactory.CreateAsyncScope();
     var registry = startupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
     if (registry == null) {
       LogPerspectiveRegistryNotAvailableAtStartup(_logger);
-      return;
+      return false;
     }
 
     var registeredPerspectives = registry.GetRegisteredPerspectives();
     if (registeredPerspectives.Count == 0) {
       LogNoPerspectivesRegistered(_logger);
-      return;
+      return true;
     }
 
     LogRegisteredPerspectivesHeader(_logger, registeredPerspectives.Count);
@@ -637,6 +655,7 @@ public partial class PerspectiveWorker(
     }
 
     _perspectivesPerEventType = _buildPerspectivesPerEventTypeMap(registeredPerspectives);
+    return true;
   }
 
   private static Dictionary<string, IReadOnlyList<string>> _buildPerspectivesPerEventTypeMap(

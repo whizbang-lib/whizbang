@@ -141,9 +141,19 @@ internal sealed class AsbReceiveDecisionMaker {
     // silently AckAndDrop EVERY offloaded message before it can rehydrate. Skip the filter for claims
     // — the transport SqlFilter already matched this service's owned namespace, and the rehydrated
     // original type flows through normal dispatch. (Regression: a production bulk-status-transition no-op.)
+    // EXCEPTION — composites: a composite event (redelivery bundle, coalesced batch, audit
+    // composite) is wire-only; NO service registers a receptor or perspective for the composite
+    // type itself — its consumers are the INNER events, addressable only after the dispatch-seam
+    // fan-out. Running this filter against the composite type ack+drops the ENTIRE bundle at
+    // every receiver (including the service that requested it), invisibly — the worker-level
+    // no-consumer gates already exempt composites via CompositeInboxFanout.IsCompositeWireType,
+    // and this transport-level filter must mirror that. The payload is typed here, so the marker
+    // interface is the authoritative check. (Regression: stream-integrity repair bundles never
+    // landed; deficits re-requested forever, amplifying broker ops-rate load.)
     var payloadType = envelope.Payload?.GetType();
     if (isHandledLocally != null && payloadType != null
         && envelope.Payload is not Whizbang.Core.Offloads.BodyClaimEnvelopePayload
+        && envelope.Payload is not Whizbang.Core.Messaging.ICompositeEvent
         && !isHandledLocally(payloadType)
         && !_isAbsorbedNamespace(payloadType, absorbedNamespaces)) {
       return new AsbReceiveDecision {

@@ -86,6 +86,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   private readonly ILogger<MessageDiscardPolicy> _logger;
   private readonly Counter<long> _skippedCounter;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
+  private readonly IEventMarkerResolver? _markerResolver;
 
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
   /// <summary>OTel meter name for the discard counter.</summary>
@@ -102,14 +103,20 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// <param name="routingOptions">Routing options; supplies the <see cref="RoutingOptions.AbsorbedNamespaces"/>
   /// allow-list so unconsumed events on an absorbed namespace are kept (persisted) rather than dropped.
   /// Optional — when null, no namespace is absorbed and behavior is unchanged.</param>
+  /// <param name="markerResolver">Catalog-backed event-marker lookup; lets the no-consumer gates
+  /// recognize composite payload types (which never have receptors — their consumers are the inner
+  /// events, addressable only after fan-out) and keep them. Optional — when null, composites are
+  /// not exempted (legacy behavior).</param>
   public MessageDiscardPolicy(
       IReceptorRegistryQuery registry,
       ILogger<MessageDiscardPolicy> logger,
       Meter meter,
-      IOptions<RoutingOptions>? routingOptions = null) {
+      IOptions<RoutingOptions>? routingOptions = null,
+      IEventMarkerResolver? markerResolver = null) {
     _registry = registry ?? throw new ArgumentNullException(nameof(registry));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     ArgumentNullException.ThrowIfNull(meter);
+    _markerResolver = markerResolver;
     _absorbedNamespaces = routingOptions?.Value.AbsorbedNamespaces
       ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     _skippedCounter = meter.CreateCounter<long>(
@@ -124,6 +131,9 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
     if (_isBodyClaimEnvelope(payloadClrType)) {
+      return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
+    }
+    if (_isCompositeType(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
     // Keep the message if a consumer exists OR its namespace is absorbed (persist-for-later, even with no
@@ -158,6 +168,9 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     if (_isBodyClaimEnvelope(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
+    if (_isCompositeType(payloadClrType)) {
+      return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
+    }
     return _registry.HasAnyConsumer(payloadClrType)
       ? new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None)
       : new MessageDiscardDecision(
@@ -182,6 +195,21 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// </summary>
   private static bool _isBodyClaimEnvelope(string payloadClrType) =>
     payloadClrType.Contains(nameof(Whizbang.Core.Offloads.BodyClaimEnvelopePayload), System.StringComparison.Ordinal);
+
+  /// <summary>
+  /// True when the type name (payload CLR name, or an envelope-wrapped wire name — callers pass
+  /// both shapes) resolves through the catalog union to a type stamped
+  /// <see cref="EventFlags.Composite"/>. A composite never has a receptor or perspective consumer;
+  /// its consumers are the INNER events, addressable only after the dispatch-seam fan-out — so
+  /// both no-consumer gates this policy backs must keep it. Null resolver = no exemption (legacy).
+  /// </summary>
+  private bool _isCompositeType(string payloadClrType) {
+    if (_markerResolver is null) {
+      return false;
+    }
+    var name = EnvelopeTypeNameHelper.ExtractInnerTypeName(payloadClrType) ?? payloadClrType;
+    return CompositeInboxFanout.IsCompositeWireType(name, _markerResolver);
+  }
 
   /// <inheritdoc />
   public void RecordDiscard(

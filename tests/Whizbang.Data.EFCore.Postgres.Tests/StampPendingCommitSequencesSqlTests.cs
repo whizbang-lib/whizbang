@@ -229,15 +229,14 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
   // ============================================================================
 
   /// <summary>
-  /// Stamping IS the perspective-visibility event: fetch paths hide events until
-  /// <c>commit_sequence</c> lands, and the commit-time doorbell has already been consumed by
-  /// the time a FENCED batch finally stamps. Without a post-stamp doorbell the apply waits
-  /// for the relaxed backstop cadence — measured end-to-end as visibility quantized to the
-  /// 5 s notify-healthy poll. The stamp function must ring
-  /// <c>notify_instance_owners('perspective', stamped stream ids)</c> whenever it stamps rows.
+  /// Stamping IS the perspective-visibility event for a FENCED batch: fetch paths hide events
+  /// until <c>commit_sequence</c> lands, and the commit-time doorbell has already been consumed
+  /// by the time the fence clears. The stamper's fenced-retry drain therefore calls with
+  /// <c>p_notify_owners := TRUE</c> and the stamp must ring
+  /// <c>notify_instance_owners('perspective', stamped stream ids)</c>.
   /// </summary>
   [Test]
-  public async Task Stamp_StampedRows_RingsPerspectiveDoorbellForOwnersAsync() {
+  public async Task Stamp_NotifyOwnersRequested_RingsPerspectiveDoorbellAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
@@ -252,13 +251,40 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
 
     var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
-      var stamped = await _stampAsync(conn, batchSize: 10);
+      var stamped = await _stampAsync(conn, batchSize: 10, notifyOwners: true);
       await Assert.That(stamped).IsEqualTo(1);
     });
 
     await Assert.That(received).Contains("perspective")
-      .Because("rows became fetchable only at stamp time, so the stamp must ring the owning "
-             + "instance's doorbell — the commit-time doorbell cannot cover a fenced stamp");
+      .Because("rows became fetchable only at stamp time, so the fenced-drain stamp must ring the "
+             + "owning instance's doorbell — the commit-time doorbell cannot cover a fenced stamp");
+  }
+
+  /// <summary>
+  /// Steady-state stamping must NOT ring: the commit-time doorbell is alive and about to do
+  /// the same job, and per-batch rings during bulk stamping (startup backlogs, imports) herd
+  /// every owner's wake loops — observed as connection-pool exhaustion in tightly-pooled hosts.
+  /// </summary>
+  [Test]
+  public async Task Stamp_DefaultCall_StampsButDoesNotRingDoorbellAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    await _pinStreamAsync(conn, streamId, instanceId);
+    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
+
+    var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
+      var stamped = await _stampAsync(conn, batchSize: 10);
+      await Assert.That(stamped).IsEqualTo(1);
+    });
+
+    await Assert.That(received).IsEmpty()
+      .Because("steady-state stamps keep the pre-make-up-doorbell rate — only the fenced-retry "
+             + "drain opts into the ring");
   }
 
   [Test]
@@ -270,12 +296,12 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, instanceId);
 
     var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
-      var stamped = await _stampAsync(conn, batchSize: 10);
+      var stamped = await _stampAsync(conn, batchSize: 10, notifyOwners: true);
       await Assert.That(stamped).IsEqualTo(0);
     });
 
     await Assert.That(received).IsEmpty()
-      .Because("an empty stamp is the steady-state idle tick — it must not ring doorbells");
+      .Because("an empty stamp must not ring doorbells even when the caller opted in — there is nothing to announce");
   }
 
   // ============================================================================
@@ -342,9 +368,14 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     return conn;
   }
 
-  private static async Task<int> _stampAsync(NpgsqlConnection conn, int batchSize) {
+  private static async Task<int> _stampAsync(NpgsqlConnection conn, int batchSize, bool? notifyOwners = null) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT stamp_pending_commit_sequences(@bs)";
+    if (notifyOwners is null) {
+      cmd.CommandText = "SELECT stamp_pending_commit_sequences(@bs)";
+    } else {
+      cmd.CommandText = "SELECT stamp_pending_commit_sequences(@bs, @notify)";
+      cmd.Parameters.AddWithValue("notify", notifyOwners.Value);
+    }
     cmd.Parameters.AddWithValue("bs", batchSize);
     var result = await cmd.ExecuteScalarAsync();
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
