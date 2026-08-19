@@ -225,8 +225,99 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
   }
 
   // ============================================================================
+  // post-stamp perspective doorbell (fenced-visibility wake)
+  // ============================================================================
+
+  /// <summary>
+  /// Stamping IS the perspective-visibility event: fetch paths hide events until
+  /// <c>commit_sequence</c> lands, and the commit-time doorbell has already been consumed by
+  /// the time a FENCED batch finally stamps. Without a post-stamp doorbell the apply waits
+  /// for the relaxed backstop cadence — measured end-to-end as visibility quantized to the
+  /// 5 s notify-healthy poll. The stamp function must ring
+  /// <c>notify_instance_owners('perspective', stamped stream ids)</c> whenever it stamps rows.
+  /// </summary>
+  [Test]
+  public async Task Stamp_StampedRows_RingsPerspectiveDoorbellForOwnersAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
+
+    var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
+      var stamped = await _stampAsync(conn, batchSize: 10);
+      await Assert.That(stamped).IsEqualTo(1);
+    });
+
+    await Assert.That(received).Contains("perspective")
+      .Because("rows became fetchable only at stamp time, so the stamp must ring the owning "
+             + "instance's doorbell — the commit-time doorbell cannot cover a fenced stamp");
+  }
+
+  [Test]
+  public async Task Stamp_NothingStamped_DoesNotRingDoorbellAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
+      var stamped = await _stampAsync(conn, batchSize: 10);
+      await Assert.That(stamped).IsEqualTo(0);
+    });
+
+    await Assert.That(received).IsEmpty()
+      .Because("an empty stamp is the steady-state idle tick — it must not ring doorbells");
+  }
+
+  // ============================================================================
   // helpers
   // ============================================================================
+
+  private static async Task _registerInstanceAsync(NpgsqlConnection conn, Guid instanceId) {
+    await using var reg = conn.CreateCommand();
+    reg.CommandText = @"
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+      VALUES (@id, 'test-svc', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)
+      ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = NOW()";
+    reg.Parameters.AddWithValue("id", instanceId);
+    await reg.ExecuteNonQueryAsync();
+  }
+
+  private static async Task<List<string>> _captureNotificationsAsync(
+      NpgsqlConnection conn, string channel, Func<Task> emit) {
+    var received = new List<string>();
+    void handler(object sender, NpgsqlNotificationEventArgs args) {
+      if (string.Equals(args.Channel, channel, StringComparison.Ordinal)) {
+        received.Add(args.Payload);
+      }
+    }
+    conn.Notification += handler;
+    try {
+      // Instance doorbell channels contain hyphens (GUID) — the identifier must be quoted.
+      await using (var listen = conn.CreateCommand()) {
+        listen.CommandText = $"LISTEN \"{channel}\"";
+        await listen.ExecuteNonQueryAsync();
+      }
+
+      await emit();
+
+      // Force a roundtrip so any pending NOTIFYs dispatch to the handler before we read.
+      await using var ping = conn.CreateCommand();
+      ping.CommandText = "SELECT 1";
+      _ = await ping.ExecuteScalarAsync();
+    } finally {
+      conn.Notification -= handler;
+      await using var unlisten = conn.CreateCommand();
+      unlisten.CommandText = $"UNLISTEN \"{channel}\"";
+      await unlisten.ExecuteNonQueryAsync();
+    }
+    return received;
+  }
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
