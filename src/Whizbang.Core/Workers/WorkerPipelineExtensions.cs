@@ -189,6 +189,14 @@ public static class WorkerPipelineExtensions {
     // a channel surface, IHostedService resolution would recurse on itself.
     services.TryAddSingleton<HeartbeatWorker>();
     services.TryAddSingleton<ClaimWorker>();
+    // Turnkey: PerspectiveWorker is core pipeline, not a per-assembly generated registration.
+    // The generated AddPerspectiveRunners() also TryAdd-registers it for back-compat (both
+    // sides dedupe: TryAddSingleton by service type, AddHostedService by implementation type
+    // via TryAddEnumerable), but the core registration is the one that survives multi-assembly
+    // hosts whose generated registration callbacks get stripped — the silent
+    // worker-never-starts signature. Without a runner registry the worker parks with a
+    // structured warning, so perspective-less services host it harmlessly.
+    services.TryAddSingleton<PerspectiveWorker>();
     services.TryAddSingleton<OutboxCompletionFlushWorker>();
     services.TryAddSingleton<PerspectiveCompletionFlushWorker>();
     services.TryAddSingleton<FailureFlushWorker>();
@@ -342,6 +350,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsWarmUp>();
     services.AddHostedService(sp => sp.GetRequiredService<HeartbeatWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<ClaimWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<PerspectiveWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<PerspectiveCompletionFlushWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<FailureFlushWorker>());
