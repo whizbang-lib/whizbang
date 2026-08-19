@@ -185,19 +185,39 @@ public sealed partial class PgCommitOrderStamperWorker(
           _setLeader(true);
 
           try {
+            var skipWakeWait = false;
             while (!stoppingToken.IsCancellationRequested) {
               // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
-              // the same stamp.
-              try {
-                var effectiveInterval = ComputeEffectivePollingInterval(
-                  _stamperOptions,
-                  _notifySignalingGate?.IsAvailable);
-                _ = await _wake.WaitAsync(effectiveInterval, stoppingToken);
-              } catch (OperationCanceledException) { break; }
+              // the same stamp. Skipped when the previous iteration left known work behind
+              // (mid-drain or fenced) — pending work never waits on an external wake.
+              if (!skipWakeWait) {
+                try {
+                  var effectiveInterval = ComputeEffectivePollingInterval(
+                    _stamperOptions,
+                    _notifySignalingGate?.IsAvailable);
+                  _ = await _wake.WaitAsync(effectiveInterval, stoppingToken);
+                } catch (OperationCanceledException) { break; }
+              }
+              skipWakeWait = false;
 
               var stamped = await _stampOnceAsync(lockConn, stoppingToken);
               _ = Interlocked.Add(ref _totalStamped, stamped);
               OnStampCompleted?.Invoke(stamped);
+
+              if (stamped > 0) {
+                // A full batch may have left more behind — drain immediately instead of
+                // waiting for another wake.
+                skipWakeWait = true;
+              } else if (await _hasPendingUnstampedAsync(lockConn, stoppingToken)) {
+                // Fenced: unstamped rows exist but an in-flight same-database transaction
+                // holds the ordering fence, so this wake stamped nothing. The rows' own
+                // committing wake has already fired and will not repeat — without this
+                // retry they would sit invisible to perspective fetches until the next
+                // external backstop tick. Keep re-stamping on the tight interval until
+                // the fence clears and the pending set drains.
+                try { await Task.Delay(_stamperOptions.FencedRetryInterval, stoppingToken); } catch (OperationCanceledException) { break; }
+                skipWakeWait = true;
+              }
             }
           } catch (OperationCanceledException) {
             // shutdown — fall through to finally
@@ -294,6 +314,17 @@ public sealed partial class PgCommitOrderStamperWorker(
     cmd.Parameters.AddWithValue("bs", _stamperOptions.BatchSize);
     var result = await cmd.ExecuteScalarAsync(ct);
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <summary>
+  /// Cheap fenced-work probe — hits the idx_event_store_unstamped partial index. Same
+  /// unqualified addressing as <see cref="_stampOnceAsync"/> (search_path-resolved).
+  /// </summary>
+  private static async Task<bool> _hasPendingUnstampedAsync(NpgsqlConnection conn, CancellationToken ct) {
+    await using var cmd = new NpgsqlCommand(
+      "SELECT EXISTS(SELECT 1 FROM wh_event_store WHERE commit_sequence IS NULL)", conn);
+    var result = await cmd.ExecuteScalarAsync(ct);
+    return result is true;
   }
 
   private void _setLeader(bool isLeader) {

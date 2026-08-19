@@ -45,6 +45,18 @@ public sealed class CommitOrderStamperOptions {
   public TimeSpan LeaderElectionRetry { get; set; } = TimeSpan.FromMilliseconds(1500);
 
   /// <summary>
+  /// Retry cadence while unstamped rows remain after a stamp call returned zero — that is,
+  /// the per-database ordering fence is held by an in-flight same-database transaction. The
+  /// leader keeps re-stamping at this interval until the pending set drains, so stamping
+  /// latency after the fence clears is bounded by this value instead of by the next external
+  /// wake (a later commit's NOTIFY or the backup tick). Without it, a commit whose own wake
+  /// landed while any older transaction was still open sat unstamped — and therefore
+  /// invisible to perspective fetches — until the backstop cadence fired. Default 250 ms.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence#fenced-retry</docs>
+  public TimeSpan FencedRetryInterval { get; set; } = TimeSpan.FromMilliseconds(250);
+
+  /// <summary>
   /// Maximum rows stamped per <c>stamp_pending_commit_sequences</c> call. Larger values
   /// reduce per-call overhead under heavy load but increase per-call latency. Default 1000.
   /// </summary>
