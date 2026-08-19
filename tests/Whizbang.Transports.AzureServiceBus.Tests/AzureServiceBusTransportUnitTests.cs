@@ -226,6 +226,26 @@ public class AzureServiceBusTransportUnitTests {
   }
 
   [Test]
+  public async Task EnableOpsRateSelfCheck_DefaultsToTrueAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.EnableOpsRateSelfCheck).IsTrue()
+      .Because("the idle ops-rate failure mode is invisible to message metrics and logs nothing when healthy — the self-check must be on by default to be worth anything");
+  }
+
+  [Test]
+  public async Task OpsRateWarningThreshold_DefaultsTo100Async() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.OpsRateWarningThresholdPerSecond).IsEqualTo(100d)
+      .Because("an ASB Standard namespace shares ~1,000 ops/sec across the whole fleet; one instance projecting >100 ops/sec of idle churn burns over a tenth of it doing nothing");
+  }
+
+  [Test]
   public async Task PublishMaxConcurrency_DefaultsTo200Async() {
     // Arrange & Act
     var options = new AzureServiceBusOptions();

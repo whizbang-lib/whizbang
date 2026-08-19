@@ -265,6 +265,37 @@ public class AzureServiceBusOptions {
 
   #endregion
 
+  #region Idle Ops-Rate Self-Check
+
+  /// <summary>
+  /// When true, the transport projects its worst-case idle broker-operation rate every time a
+  /// session-enabled subscription starts (<c>subscriptions × MaxConcurrentSessions /
+  /// SessionIdleTimeout</c>) and logs a structured warning when the projection crosses
+  /// <see cref="OpsRateWarningThresholdPerSecond"/>. This catches configurations whose receive
+  /// machinery alone can exhaust a namespace's shared request quota at idle — a failure mode
+  /// that is invisible to message-level metrics and logs nothing when healthy.
+  /// Default: true
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableOpsRateSelfCheck_DefaultsToTrueAsync</tests>
+  public bool EnableOpsRateSelfCheck { get; set; } = true;
+
+  /// <summary>
+  /// Projected idle operations per second above which the self-check warns. An ASB Standard
+  /// namespace's request quota is on the order of 1,000 ops/sec shared by every producer and
+  /// consumer in the namespace, so a single instance projecting more than 100 ops/sec of pure
+  /// idle churn is spending over a tenth of a Standard namespace doing nothing — and fleets
+  /// multiply per-instance spend. The turnkey defaults project ≈3.3 ops/sec per subscription;
+  /// the old hair-trigger configuration (200 sessions / 1 s idle timeout) projects 200 ops/sec
+  /// per subscription and is exactly what this threshold flags.
+  /// Default: 100
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:OpsRateWarningThreshold_DefaultsTo100Async</tests>
+  public double OpsRateWarningThresholdPerSecond { get; set; } = 100;
+
+  #endregion
+
   #region Receive Liveness Watchdog
 
   /// <summary>

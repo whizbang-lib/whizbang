@@ -238,7 +238,9 @@ public class ServiceCollectionExtensionsTests {
       ("InitialRetryDelay", "00:00:02"),
       ("MaxRetryDelay", "00:01:00"),
       ("BackoffMultiplier", "3.5"),
-      ("RetryIndefinitely", "false")));
+      ("RetryIndefinitely", "false"),
+      ("EnableOpsRateSelfCheck", "false"),
+      ("OpsRateWarningThresholdPerSecond", "250.5")));
 
     // Act
     services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
@@ -265,6 +267,8 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(options.MaxRetryDelay).IsEqualTo(TimeSpan.FromMinutes(1));
     await Assert.That(options.BackoffMultiplier).IsEqualTo(3.5);
     await Assert.That(options.RetryIndefinitely).IsFalse();
+    await Assert.That(options.EnableOpsRateSelfCheck).IsFalse();
+    await Assert.That(options.OpsRateWarningThresholdPerSecond).IsEqualTo(250.5);
   }
 
   [Test]
