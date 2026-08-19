@@ -1287,7 +1287,7 @@ try {
     function Ensure-BuildExists {
         # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
         $anyDll = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch "[/\\]\.worktrees[/\\]" } |
+            Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Select-Object -First 1
 
@@ -1323,7 +1323,7 @@ try {
         Ensure-BuildExists
         # Find all test DLLs and filter by tag
         $tagFilteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch "[/\\]\.worktrees[/\\]" } |
+            Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { $_.Name -notmatch $excludePattern } |
             Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
@@ -1383,7 +1383,7 @@ try {
         Ensure-BuildExists
         # Filter by WhizbangTestType property in .csproj files
         $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch "[/\\]\.worktrees[/\\]" } |
+            Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
             Where-Object { Test-IsIntegrationTest $_ } |
@@ -1405,7 +1405,7 @@ try {
         Ensure-BuildExists
         # Filter by WhizbangTestType property - only include Unit tests
         $unitTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch "[/\\]\.worktrees[/\\]" } |
+            Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
             Where-Object { Test-IsUnitTest $_ } |
@@ -1427,7 +1427,7 @@ try {
         Ensure-BuildExists
         # Filter to projects with WhizbangTestType of Unit or Integration (not Benchmark)
         $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch "[/\\]\.worktrees[/\\]" } |
+            Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
             Where-Object { (Test-IsUnitTest $_) -or (Test-IsIntegrationTest $_) } |

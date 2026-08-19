@@ -1,5 +1,6 @@
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
@@ -34,9 +35,21 @@ public static class ServiceCollectionExtensions {
   ) {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-    // Configure options
-    var options = new AzureServiceBusOptions();
-    configureOptions?.Invoke(options);
+    // Registration-time snapshot: DI-shape decisions (whether the admin client is registered)
+    // must be made while the container is still mutable, so they see the code callback only.
+    // Runtime knobs are resolved through the options pipeline below, where configuration
+    // (Whizbang:Transports:AzureServiceBus) post-configures OVER the callback — an operator
+    // can correct any runtime value without a redeploy.
+    var registrationOptions = new AzureServiceBusOptions();
+    configureOptions?.Invoke(registrationOptions);
+
+    services.AddOptions<AzureServiceBusOptions>();
+    if (configureOptions is not null) {
+      services.Configure(configureOptions);
+    }
+
+    services.TryAddSingleton<Microsoft.Extensions.Options.IPostConfigureOptions<AzureServiceBusOptions>>(sp =>
+      new AzureServiceBusOptionsPostConfigure(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 
     // Get JSON options from registry (includes all registered contexts via ModuleInitializer)
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
@@ -50,6 +63,7 @@ public static class ServiceCollectionExtensions {
     var existingRegistration = services.Any(sd => sd.ServiceType == typeof(Azure.Messaging.ServiceBus.ServiceBusClient));
     if (!existingRegistration) {
       services.AddSingleton(sp => {
+        var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AzureServiceBusOptions>>().Value;
         var logger = sp.GetService<ILogger<AzureServiceBusConnectionRetry>>();
         if (logger?.IsEnabled(LogLevel.Information) == true) {
           var initialAttempts = options.InitialRetryAttempts;
@@ -63,8 +77,10 @@ public static class ServiceCollectionExtensions {
     }
 
     // Auto-register admin client when AutoProvisionInfrastructure is enabled
-    // This allows the transport to auto-create topics and subscriptions
-    if (options.AutoProvisionInfrastructure) {
+    // This allows the transport to auto-create topics and subscriptions.
+    // Registration-time decision by design: it shapes the container, so only the code
+    // callback can influence it — configuration cannot (see AzureServiceBusOptionsPostConfigure).
+    if (registrationOptions.AutoProvisionInfrastructure) {
       var hasAdminClient = services.Any(sd => sd.ServiceType == typeof(IServiceBusAdminClient));
       if (!hasAdminClient) {
         services.AddSingleton<IServiceBusAdminClient>(_ => {
@@ -76,6 +92,7 @@ public static class ServiceCollectionExtensions {
 
     // Register transport as singleton, injecting shared client and optional admin client
     services.AddSingleton<ITransport>(sp => {
+      var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AzureServiceBusOptions>>().Value;
       var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
       var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
 

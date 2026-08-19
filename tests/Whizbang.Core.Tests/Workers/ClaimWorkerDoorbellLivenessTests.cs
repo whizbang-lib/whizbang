@@ -89,7 +89,7 @@ public class ClaimWorkerDoorbellLivenessTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   }
 
-  private static ClaimWorker _buildWorker(EdgeCoordinator coord, SignalBusLivenessState liveness) {
+  private static ClaimWorker _buildWorker(EdgeCoordinator coord, SignalBusLivenessState liveness, int pollingIntervalMs = 50) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
@@ -101,8 +101,8 @@ public class ClaimWorkerDoorbellLivenessTests {
       new NoOpWorkNotificationListener(),
       schemaGate,
       Options.Create(new ClaimWorkerOptions {
-        PollingIntervalMilliseconds = 50,
-        PollingMaxIntervalMilliseconds = 2_000,
+        PollingIntervalMilliseconds = pollingIntervalMs,
+        PollingMaxIntervalMilliseconds = Math.Max(2_000, pollingIntervalMs),
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
       NullLogger<ClaimWorker>.Instance,
@@ -135,13 +135,18 @@ public class ClaimWorkerDoorbellLivenessTests {
   public async Task FreshWorkOnEmptyEdge_DoorbellPreceded_NoMissRecordedAsync() {
     var coord = new EdgeCoordinator();
     var liveness = new SignalBusLivenessState();
-    var worker = _buildWorker(coord, liveness);
+    // Polling parked far out: every claim past the first must be doorbell-driven. With a tight
+    // poll, a saturated test host can slip a poll-fired claim in BETWEEN call #1 and the test
+    // thread's SignalNewWork below — discovering the fresh work without a doorbell and
+    // recording a miss this test asserts against.
+    var worker = _buildWorker(coord, liveness, pollingIntervalMs: 60_000);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
     worker.SignalNewWork();
     await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    worker.SignalNewWork();
     await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(liveness.ConsecutiveMissedDoorbells)

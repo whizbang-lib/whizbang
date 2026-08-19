@@ -131,14 +131,17 @@ public sealed partial class ClaimWorker : BackgroundService {
 
   private void _onSignal(WorkSignalCategory category) {
     // OrphanRedistribute has no typed signal yet, so it always wakes via this legacy path.
-    // Outbox/Inbox: post-unify-now they wake via the bus (see ctor _signalBus.Subscribe calls).
-    // When the bus isn't wired (legacy DI / tests), fall through to the legacy wake so the
-    // pre-unify-now NOTIFY→ClaimWorker regression tests stay green.
+    // Outbox/Inbox/Perspective: post-unify-now they wake via the bus (see ctor
+    // _signalBus.Subscribe calls). When the bus isn't wired (legacy DI / tests), fall through
+    // to the legacy wake so the pre-unify-now NOTIFY→ClaimWorker regression tests stay green.
+    // Perspective matters here: ClaimWorker is the only claimer of perspective streams, and
+    // the post-stamp doorbell (migration 117) rings with the 'perspective' payload — dropping
+    // it quantizes fenced perspective visibility to the poll cadence.
     if (category is WorkSignalCategory.OrphanRedistribute) {
       RequestImmediatePoll();
       return;
     }
-    if (_signalBus is null && category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox) {
+    if (_signalBus is null && category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox or WorkSignalCategory.Perspective) {
       SignalNewWork();
     }
   }

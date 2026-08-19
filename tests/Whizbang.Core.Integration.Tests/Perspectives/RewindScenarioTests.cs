@@ -293,6 +293,14 @@ public class RewindScenarioTests {
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await coordinator.WaitForAllArrivalsProcessedAsync(TimeSpan.FromSeconds(20));
+    // De-flake: arrivals-processed is the coordinator's bookkeeping signal, not the handler
+    // signal the asserts below count — under host load the final rewind-driven inline fires
+    // trail it, and cancelling in that window cuts the worker mid-rewind (reads as a missed
+    // fire). Wait on the asserted signal itself, bounded; a genuine miss still fails below.
+    await Whizbang.Testing.Async.AsyncTestHelpers.WaitForConditionAsync(
+      () => spy.Invocations.Count(i => i.Stage == LifecycleStage.PostPerspectiveInline) >= total,
+      TimeSpan.FromSeconds(10),
+      timeoutMessage: "expected all 30 PostPerspectiveInline fires before shutdown");
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 

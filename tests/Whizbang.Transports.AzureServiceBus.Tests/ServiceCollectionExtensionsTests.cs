@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -204,6 +205,126 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(capturedOptions.AutoProvisionInfrastructure).IsTrue();
     await Assert.That(capturedOptions.MaxConcurrentCalls).IsEqualTo(200);
     await Assert.That(capturedOptions.PublishMaxConcurrency).IsEqualTo(200);
+  }
+
+  // --- configuration binding: Whizbang:Transports:AzureServiceBus ---
+
+  private static IConfiguration _configWith(params (string Key, string Value)[] pairs) {
+    var section = "Whizbang:Transports:AzureServiceBus:";
+    var data = pairs.ToDictionary(p => section + p.Key, p => (string?)p.Value);
+    return new ConfigurationBuilder().AddInMemoryCollection(data).Build();
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_BindsEveryRuntimeKnobFromConfigurationAsync() {
+    // Arrange — every configuration-bindable property set to a non-default value
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(
+      ("SendTimeout", "00:00:45"),
+      ("MaxConcurrentCalls", "64"),
+      ("PublishMaxConcurrency", "32"),
+      ("MaxAutoLockRenewalDuration", "00:07:00"),
+      ("SubscriptionLockDuration", "00:04:00"),
+      ("MaxDeliveryAttempts", "7"),
+      ("DefaultSubscriptionName", "ops-sub"),
+      ("EnableSessions", "false"),
+      ("MaxConcurrentSessions", "24"),
+      ("SessionIdleTimeout", "00:00:42"),
+      ("PrefetchCount", "11"),
+      ("EnableReceiveLivenessWatchdog", "false"),
+      ("ReceiveLivenessProbeInterval", "00:00:30"),
+      ("ReceiveLivenessSilenceThreshold", "00:10:00"),
+      ("InitialRetryAttempts", "3"),
+      ("InitialRetryDelay", "00:00:02"),
+      ("MaxRetryDelay", "00:01:00"),
+      ("BackoffMultiplier", "3.5"),
+      ("RetryIndefinitely", "false"),
+      ("EnableOpsRateSelfCheck", "false"),
+      ("OpsRateWarningThresholdPerSecond", "250.5")));
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    // Assert — operators can reach every runtime knob without a code deploy
+    await Assert.That(options.SendTimeout).IsEqualTo(TimeSpan.FromSeconds(45));
+    await Assert.That(options.MaxConcurrentCalls).IsEqualTo(64);
+    await Assert.That(options.PublishMaxConcurrency).IsEqualTo(32);
+    await Assert.That(options.MaxAutoLockRenewalDuration).IsEqualTo(TimeSpan.FromMinutes(7));
+    await Assert.That(options.SubscriptionLockDuration).IsEqualTo(TimeSpan.FromMinutes(4));
+    await Assert.That(options.MaxDeliveryAttempts).IsEqualTo(7);
+    await Assert.That(options.DefaultSubscriptionName).IsEqualTo("ops-sub");
+    await Assert.That(options.EnableSessions).IsFalse();
+    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(24);
+    await Assert.That(options.SessionIdleTimeout).IsEqualTo(TimeSpan.FromSeconds(42));
+    await Assert.That(options.PrefetchCount).IsEqualTo(11);
+    await Assert.That(options.EnableReceiveLivenessWatchdog).IsFalse();
+    await Assert.That(options.ReceiveLivenessProbeInterval).IsEqualTo(TimeSpan.FromSeconds(30));
+    await Assert.That(options.ReceiveLivenessSilenceThreshold).IsEqualTo(TimeSpan.FromMinutes(10));
+    await Assert.That(options.InitialRetryAttempts).IsEqualTo(3);
+    await Assert.That(options.InitialRetryDelay).IsEqualTo(TimeSpan.FromSeconds(2));
+    await Assert.That(options.MaxRetryDelay).IsEqualTo(TimeSpan.FromMinutes(1));
+    await Assert.That(options.BackoffMultiplier).IsEqualTo(3.5);
+    await Assert.That(options.RetryIndefinitely).IsFalse();
+    await Assert.That(options.EnableOpsRateSelfCheck).IsFalse();
+    await Assert.That(options.OpsRateWarningThresholdPerSecond).IsEqualTo(250.5);
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_ConfigurationOverridesCodeCallbackAsync() {
+    // Arrange — code callback sets one value, configuration sets another for the same knob
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(("MaxConcurrentSessions", "64")));
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING, o => {
+      o.MaxConcurrentSessions = 24;
+      o.SessionIdleTimeout = TimeSpan.FromSeconds(5);
+    });
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    // Assert — configuration wins where set (an operator can correct a baked-in value without
+    // a redeploy); the code callback survives where configuration is silent
+    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(64)
+      .Because("a deploy-time configuration override must beat the compiled-in callback value");
+    await Assert.That(options.SessionIdleTimeout).IsEqualTo(TimeSpan.FromSeconds(5))
+      .Because("callback values stand wherever configuration does not speak");
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_NoConfigurationRegistered_CallbackAndDefaultsApplyAsync() {
+    // Arrange — no IConfiguration in the container at all
+    var services = new ServiceCollection();
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING, o => o.PrefetchCount = 17);
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    // Assert
+    await Assert.That(options.PrefetchCount).IsEqualTo(17);
+    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(200);
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_AutoProvisionInfrastructure_IsCodeOnlyAsync() {
+    // Arrange — AutoProvisionInfrastructure shapes DI at registration time (whether the admin
+    // client is registered), so it is deliberately NOT configuration-bindable: a config value
+    // could not re-shape a container that is already built.
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(("AutoProvisionInfrastructure", "false")));
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    // Assert — the code default stands and the admin client stays registered
+    await Assert.That(options.AutoProvisionInfrastructure).IsTrue()
+      .Because("AutoProvisionInfrastructure is a registration-time DI-shape decision, not a runtime knob");
+    await Assert.That(services.Count(sd => sd.ServiceType == typeof(IServiceBusAdminClient))).IsEqualTo(1);
   }
 
   // --- transport factory: offline initialization paths ---

@@ -39,6 +39,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
+  private int _sessionSubscriptionCount;
 
   /// <summary>
   /// Initializes a new instance of AzureServiceBusTransport with a shared ServiceBusClient.
@@ -787,7 +788,37 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       () => sessionProcessor.StartProcessingAsync(CancellationToken.None));
 
     await sessionProcessor.StartProcessingAsync(cancellationToken);
+    _runIdleOpsRateSelfCheck(topicName, subscriptionName);
     return subscription;
+  }
+
+  /// <summary>
+  /// Idle ops-rate self-check: re-projects this instance's cumulative worst-case idle broker-op
+  /// rate each time a session subscription starts, and warns when the projection crosses the
+  /// configured threshold. Runs at subscribe time because that is when the configuration becomes
+  /// knowable — the failure mode it guards against (receive machinery consuming the namespace's
+  /// shared request quota at idle) produces no errors and no message-level signal of its own.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbOpsRateSelfCheckWiringTests.cs</tests>
+  private void _runIdleOpsRateSelfCheck(string topicName, string subscriptionName) {
+    var sessionSubscriptions = Interlocked.Increment(ref _sessionSubscriptionCount);
+    if (!_options.EnableOpsRateSelfCheck) {
+      return;
+    }
+
+    var projection = AsbOpsRateSelfCheck.Evaluate(_options, sessionSubscriptions);
+    if (projection.ExceedsThreshold) {
+      _logger.LogWarning(
+        "Transport idle ops-rate self-check: {SessionSubscriptions} session subscription(s) × MaxConcurrentSessions={MaxConcurrentSessions} / SessionIdleTimeout={SessionIdleTimeout} projects {ProjectedOpsPerSecond:F1} idle broker ops/sec for this instance (threshold {ThresholdPerSecond:F0}/sec; latest subscription {TopicName}/{SubscriptionName}). Every expiring accept is a billable namespace request even with zero messages flowing, and a fleet multiplies this per-instance spend — raise SessionIdleTimeout or lower MaxConcurrentSessions, or raise OpsRateWarningThresholdPerSecond / disable EnableOpsRateSelfCheck if the namespace tier has quota to burn.",
+        sessionSubscriptions,
+        _options.MaxConcurrentSessions,
+        _options.SessionIdleTimeout,
+        projection.ProjectedIdleOpsPerSecond,
+        projection.ThresholdPerSecond,
+        topicName,
+        subscriptionName);
+    }
   }
 
   /// <summary>
@@ -1040,6 +1071,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           () => sessionProcessor.StartProcessingAsync(CancellationToken.None));
 
         await sessionProcessor.StartProcessingAsync(cancellationToken);
+        _runIdleOpsRateSelfCheck(topicName, subscriptionName);
       } else {
         // Create standard processor (no session/FIFO guarantees)
         var processorOptions = new ServiceBusProcessorOptions {
