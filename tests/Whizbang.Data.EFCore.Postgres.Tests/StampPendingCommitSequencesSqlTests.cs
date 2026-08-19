@@ -244,7 +244,11 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     var instanceId = (Guid)TrackedGuid.NewMedo();
     await _registerInstanceAsync(conn, instanceId);
 
+    // The representative fenced scenario: the stream is already PINNED to its owner (the
+    // commit-time doorbell claimed it before the fence lifted), so the post-stamp notify
+    // routes through notify_instance_owners Step 1 to the owning instance's channel.
     var streamId = (Guid)TrackedGuid.NewMedo();
+    await _pinStreamAsync(conn, streamId, instanceId);
     await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
 
     var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
@@ -277,6 +281,17 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
   // ============================================================================
   // helpers
   // ============================================================================
+
+  private static async Task _pinStreamAsync(NpgsqlConnection conn, Guid streamId, Guid instanceId) {
+    await using var pin = conn.CreateCommand();
+    pin.CommandText = @"
+      INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, last_activity_at)
+      VALUES (@sid, 0, @iid, NOW())
+      ON CONFLICT (stream_id) DO UPDATE SET assigned_instance_id = @iid";
+    pin.Parameters.AddWithValue("sid", streamId);
+    pin.Parameters.AddWithValue("iid", instanceId);
+    await pin.ExecuteNonQueryAsync();
+  }
 
   private static async Task _registerInstanceAsync(NpgsqlConnection conn, Guid instanceId) {
     await using var reg = conn.CreateCommand();
